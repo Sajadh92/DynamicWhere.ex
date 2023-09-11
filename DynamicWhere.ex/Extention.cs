@@ -399,17 +399,16 @@ public static class Extention
             throw new ApplicationException(ErrorCode.SetsUniqueSort);
         }
 
+        bool hasNotIntersection = segment.ConditionSets.OrderBy(x => x.Sort).Skip(1).Any(x => x.Intersection == null);
+
+        if (hasNotIntersection)
+        {
+            throw new ApplicationException(ErrorCode.RequiredIntersection);
+        }
+
         List<ConditionSet> sets = segment.ConditionSets.OrderBy(x => x.Sort).ToList();
 
         sets[0].Intersection = null;
-
-        for (int i = 1; i < sets.Count; i++)
-        {
-            if (sets[i].Intersection == null)
-            {
-                throw new ApplicationException(ErrorCode.RequiredIntersection);
-            }
-        }
 
         return sets;
     }

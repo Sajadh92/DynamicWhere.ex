@@ -155,6 +155,47 @@ public static class Extention
 
         switch (condition.DataType)
         {
+            case DataType.Guid:
+            {
+                switch (condition.Operator)
+                {
+                    case Operator.Equal:
+                    {
+                        return $"({condition.Field} != null && {condition.Field} == \"{condition.Values[0]}\")";
+                    }
+
+                    case Operator.NotEqual:
+                    {
+                        return $"({condition.Field} != null && {condition.Field} != \"{condition.Values[0]}\")";
+                    }
+
+                    case Operator.In:
+                    {
+                        var conditions = condition.Values.Select(value => $"{condition.Field} == \"{value}\"");
+
+                        return $"({condition.Field} != null && ({string.Join(" || ", conditions)}))";
+                    }
+
+                    case Operator.NotIn:
+                    {
+                        var conditions = condition.Values.Select(value => $"{condition.Field} != \"{value}\"");
+
+                        return $"({condition.Field} != null && ({string.Join(" && ", conditions)}))";
+                    }
+
+                    case Operator.IsNull:
+                    {
+                        return $"({condition.Field} == null)";
+                    }
+
+                    case Operator.IsNotNull:
+                    {
+                        return $"({condition.Field} != null)";
+                    }
+                }
+            }
+            break;
+
             case DataType.Text:
             {
                 switch (condition.Operator)

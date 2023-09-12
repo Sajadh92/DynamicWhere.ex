@@ -2,6 +2,7 @@
 
 public enum DataType
 {
+    Guid,
     Text,
     Number,
     Boolean,

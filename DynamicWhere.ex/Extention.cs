@@ -202,45 +202,92 @@ public static class Extention
                 {
                     case Operator.Equal:
                     {
+                        return $"({condition.Field} != null && {condition.Field} == \"{condition.Values[0]}\")";
+                    }
+
+                    case Operator.IEqual:
+                    {
                         return $"({condition.Field} != null && {condition.Field}.ToLower() == \"{condition.Values[0].ToLower()}\")";
                     }
 
                     case Operator.NotEqual:
+                    {
+                        return $"({condition.Field} != null && {condition.Field} != \"{condition.Values[0]}\")";
+                    }
+
+                    case Operator.INotEqual:
                     {
                         return $"({condition.Field} != null && {condition.Field}.ToLower() != \"{condition.Values[0].ToLower()}\")";
                     }
 
                     case Operator.Contains:
                     {
+                        return $"({condition.Field} != null && {condition.Field}.Contains(\"{condition.Values[0]}\"))";
+                    }
+
+                    case Operator.IContains:
+                    {
                         return $"({condition.Field} != null && {condition.Field}.ToLower().Contains(\"{condition.Values[0].ToLower()}\"))";
                     }
 
                     case Operator.NotContains:
+                    {
+                        return $"({condition.Field} != null && !{condition.Field}.Contains(\"{condition.Values[0]}\"))";
+                    }
+
+                    case Operator.INotContains:
                     {
                         return $"({condition.Field} != null && !{condition.Field}.ToLower().Contains(\"{condition.Values[0].ToLower()}\"))";
                     }
 
                     case Operator.StartsWith:
                     {
+                        return $"({condition.Field} != null && {condition.Field}.StartsWith(\"{condition.Values[0]}\"))";
+                    }
+
+                    case Operator.IStartsWith:
+                    {
                         return $"({condition.Field} != null && {condition.Field}.ToLower().StartsWith(\"{condition.Values[0].ToLower()}\"))";
                     }
 
                     case Operator.NotStartsWith:
+                    {
+                        return $"({condition.Field} != null && !{condition.Field}.StartsWith(\"{condition.Values[0]}\"))";
+                    }
+
+                    case Operator.INotStartsWith:
                     {
                         return $"({condition.Field} != null && !{condition.Field}.ToLower().StartsWith(\"{condition.Values[0].ToLower()}\"))";
                     }
 
                     case Operator.EndsWith:
                     {
+                        return $"({condition.Field} != null && {condition.Field}.EndsWith(\"{condition.Values[0]}\"))";
+                    }
+
+                    case Operator.IEndsWith:
+                    {
                         return $"({condition.Field} != null && {condition.Field}.ToLower().EndsWith(\"{condition.Values[0].ToLower()}\"))";
                     }
 
                     case Operator.NotEndsWith:
                     {
+                        return $"({condition.Field} != null && !{condition.Field}.EndsWith(\"{condition.Values[0]}\"))";
+                    }
+
+                    case Operator.INotEndsWith:
+                    {
                         return $"({condition.Field} != null && !{condition.Field}.ToLower().EndsWith(\"{condition.Values[0].ToLower()}\"))";
                     }
 
                     case Operator.In:
+                    {
+                        var conditions = condition.Values.Select(value => $"{condition.Field} == \"{value}\"");
+
+                        return $"({condition.Field} != null && ({string.Join(" || ", conditions)}))";
+                    }
+
+                    case Operator.IIn:
                     {
                         var conditions = condition.Values.Select(value => $"{condition.Field}.ToLower() == \"{value.ToLower()}\"");
 
@@ -248,6 +295,13 @@ public static class Extention
                     }
 
                     case Operator.NotIn:
+                    {
+                        var conditions = condition.Values.Select(value => $"{condition.Field} != \"{value}\"");
+
+                        return $"({condition.Field} != null && ({string.Join(" && ", conditions)}))";
+                    }
+
+                    case Operator.INotIn:
                     {
                         var conditions = condition.Values.Select(value => $"{condition.Field}.ToLower() != \"{value.ToLower()}\"");
 

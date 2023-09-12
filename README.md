@@ -34,33 +34,44 @@ The `DataType` enum provides support for various data types when defining condit
 - `Number`: Represents numeric data.
 - `Boolean`: Represents boolean data.
 - `DateTime`: Represents date and time data.
+- `Guid`: Represents globally unique identifier (GUID) data.
 
-You can use the `DataType` enum to specify the data type for your dynamic query conditions, making it easier to work with different types of data.
+You can use the `DataType` enum to specify the data type for your dynamic query conditions, making it easier to work with different types of data, including GUIDs.
 
 #### `Operator`
 
-The `Operator` enum offers a comprehensive set of logical comparison operators for constructing dynamic queries. It includes the following operators:
+The `Operator` enum offers a comprehensive set of logical comparison operators for constructing dynamic queries. It now includes both case-sensitive and case-insensitive versions of certain operators, allowing for greater flexibility in query construction. The operators are:
 
 - `Equal`: Equality comparison.
+- `IEqual`: Case-insensitive equality comparison.
 - `NotEqual`: Inequality comparison.
+- `INotEqual`: Case-insensitive inequality comparison.
 - `GreaterThan`: Greater than comparison.
 - `GreaterThanOrEqual`: Greater than or equal to comparison.
 - `LessThan`: Less than comparison.
 - `LessThanOrEqual`: Less than or equal to comparison.
 - `Contains`: Substring containment check.
+- `IContains`: Case-insensitive substring containment check.
 - `NotContains`: Negation of substring containment check.
+- `INotContains`: Negation of case-insensitive substring containment check.
 - `StartsWith`: Prefix check.
+- `IStartsWith`: Case-insensitive prefix check.
 - `NotStartsWith`: Negation of prefix check.
+- `INotStartsWith`: Negation of case-insensitive prefix check.
 - `EndsWith`: Suffix check.
+- `IEndsWith`: Case-insensitive suffix check.
 - `NotEndsWith`: Negation of suffix check.
+- `INotEndsWith`: Negation of case-insensitive suffix check.
 - `In`: Membership check.
+- `IIn`: Case-insensitive membership check.
 - `NotIn`: Negation of membership check.
+- `INotIn`: Negation of case-insensitive membership check.
 - `Between`: Range comparison.
 - `NotBetween`: Negation of range comparison.
 - `IsNull`: Null check.
 - `IsNotNull`: Negation of null check.
 
-These operators can be used in combination with the library's extension methods to create complex dynamic queries with ease.
+These operators can be used in combination with the library's extension methods to create complex dynamic queries with both case-sensitive and case-insensitive comparisons, providing greater flexibility in query construction.
 
 #### `Connector`
 

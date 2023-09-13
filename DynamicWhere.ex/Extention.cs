@@ -491,14 +491,14 @@ public static class Extention
 
         if (hasDublicateSort)
         {
-            throw new ApplicationException(ErrorCode.SetsUniqueSort);
+            throw new LogicException(ErrorCode.SetsUniqueSort);
         }
 
         bool hasNotIntersection = segment.ConditionSets.OrderBy(x => x.Sort).Skip(1).Any(x => x.Intersection == null);
 
         if (hasNotIntersection)
         {
-            throw new ApplicationException(ErrorCode.RequiredIntersection);
+            throw new LogicException(ErrorCode.RequiredIntersection);
         }
 
         List<ConditionSet> sets = segment.ConditionSets.OrderBy(x => x.Sort).ToList();
@@ -514,14 +514,14 @@ public static class Extention
 
         if (hasDublicateSort)
         {
-            throw new ApplicationException(ErrorCode.ConditionsUniqueSort);
+            throw new LogicException(ErrorCode.ConditionsUniqueSort);
         }
 
         hasDublicateSort = group.SubConditionGroups.GroupBy(x => x.Sort).Select(x => x.Count()).Any(x => x > 1);
 
         if (hasDublicateSort)
         {
-            throw new ApplicationException(ErrorCode.SubConditionsGroupsUniqueSort);
+            throw new LogicException(ErrorCode.SubConditionsGroupsUniqueSort);
         }
     }
 
@@ -529,57 +529,58 @@ public static class Extention
     {
         if (string.IsNullOrWhiteSpace(condition.Field))
         {
-            throw new ApplicationException(ErrorCode.InvalidField);
+            throw new LogicException(ErrorCode.InvalidField);
         }
 
         List<string> properties = typeof(T).GetProperties().Select(x => x.Name).ToList();
 
         if (!properties.Contains(condition.Field ?? "@"))
         {
-            throw new ApplicationException(ErrorCode.InvalidField);
+            throw new LogicException(ErrorCode.InvalidField);
         }
 
         if (condition.Operator == Operator.Between || condition.Operator == Operator.NotBetween)
         {
             if (condition.Values.Count != 2)
             {
-                throw new ApplicationException(ErrorCode.RequiredTwoValue);
+                throw new LogicException(ErrorCode.RequiredTwoValue);
             }
 
             if (string.IsNullOrWhiteSpace(condition.Values[0]) || string.IsNullOrWhiteSpace(condition.Values[1]))
             {
-                throw new ApplicationException(ErrorCode.InvalidValue);
+                throw new LogicException(ErrorCode.InvalidValue);
             }
         }
-        else if (condition.Operator == Operator.In || condition.Operator == Operator.NotIn)
+        else if (condition.Operator == Operator.In || condition.Operator == Operator.NotIn ||
+                 condition.Operator == Operator.IIn || condition.Operator == Operator.INotIn)
         {
             if (condition.Values.Count == 0)
             {
-                throw new ApplicationException(ErrorCode.RequiredValues);
+                throw new LogicException(ErrorCode.RequiredValues);
             }
 
             if (condition.Values.Any(x => string.IsNullOrWhiteSpace(x)))
             {
-                throw new ApplicationException(ErrorCode.InvalidValue);
+                throw new LogicException(ErrorCode.InvalidValue);
             }
         }
         else if (condition.Operator == Operator.IsNull || condition.Operator == Operator.IsNotNull)
         {
             if (condition.Values.Count != 0)
             {
-                throw new ApplicationException(ErrorCode.NotRequiredValues);
+                throw new LogicException(ErrorCode.NotRequiredValues);
             }
         }
         else
         {
             if (condition.Values.Count != 1)
             {
-                throw new ApplicationException(ErrorCode.RequiredOneValue(condition.Operator.ToString()));
+                throw new LogicException(ErrorCode.RequiredOneValue(condition.Operator.ToString()));
             }
 
             if (string.IsNullOrWhiteSpace(condition.Values[0]))
             {
-                throw new ApplicationException(ErrorCode.InvalidValue);
+                throw new LogicException(ErrorCode.InvalidValue);
             }
         }
     }

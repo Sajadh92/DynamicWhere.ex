@@ -3,17 +3,23 @@ using System.Linq.Dynamic.Core;
 
 namespace DynamicWhere.ex;
 
-public static class Extention
+/// <summary>
+/// Provides extension methods for working with IQueryable and applying custom query logic based on a Segment.
+/// </summary>
+public static class Extension
 {
     /// <summary>
-    /// Filters an IQueryable based on the specified Segment's conditions.
+    /// Asynchronously retrieves a list of entities from the IQueryable with optional filtering based on a Segment.
     /// </summary>
-    /// <typeparam name="T">The type of elements in the query.</typeparam>
-    /// <param name="query">The source IQueryable.</param>
-    /// <param name="segment">The Segment containing conditions for filtering.</param>
-    /// <returns>A filtered list of elements of type T.</returns>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The IQueryable to retrieve entities from.</param>
+    /// <param name="segment">The Segment containing filter conditions.</param>
+    /// <returns>A List of entities that match the filter conditions in the Segment.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when query or segment is null.</exception>
+    /// <exception cref="LogicException">Thrown when the Segment contains invalid data.</exception>
     public static async Task<List<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment)
     {
+        // Validate input parameters.
         if (query == null)
         {
             throw new ArgumentNullException(nameof(query));
@@ -24,27 +30,33 @@ public static class Extention
             throw new ArgumentNullException(nameof(segment));
         }
 
-        var sets = segment.ValidateAndGetSets();
+        // Validate and retrieve ConditionSets from the Segment.
+        List<ConditionSet> sets = segment.ValidateAndGetSets();
 
         if (sets.Count == 0)
         {
+            // No filter conditions, return all results.
             return await query.ToListAsync();
         }
 
+        // Store filtered data sets.
         List<(int sort, Intersection? intersection, List<T> list)> dataSets = new();
 
-        foreach (var set in sets.OrderBy(x => x.Sort))
+        foreach (ConditionSet? set in sets.OrderBy(x => x.Sort))
         {
-            var queryable = query.Where(set.ConditionGroup);
+            // Apply filter conditions from ConditionGroup.
+            IQueryable<T> queryable = query.Where(set.ConditionGroup);
 
-            var list = await queryable.ToListAsync();
+            // Materialize the filtered data and store it.
+            List<T> list = await queryable.ToListAsync();
 
             dataSets.Add(new(set.Sort, set.Intersection, list));
         }
 
-        var result = dataSets.OrderBy(x => x.sort).First().list;
+        // Combine and apply Intersection operations to the data sets.
+        List<T> result = dataSets.OrderBy(x => x.sort).First().list;
 
-        foreach (var (sort, intersection, list) in dataSets.OrderBy(x => x.sort).Skip(1))
+        foreach ((int sort, Intersection? intersection, List<T> list) in dataSets.OrderBy(x => x.sort).Skip(1))
         {
             switch (intersection)
             {
@@ -72,14 +84,17 @@ public static class Extention
     }
 
     /// <summary>
-    /// Filters an IQueryable based on the specified ConditionGroup.
+    /// Applies filtering conditions to the IQueryable based on a ConditionGroup.
     /// </summary>
-    /// <typeparam name="T">The type of elements in the query.</typeparam>
-    /// <param name="query">The source IQueryable.</param>
-    /// <param name="group">The ConditionGroup specifying the filter conditions.</param>
-    /// <returns>An IQueryable with the applied filter conditions.</returns>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The IQueryable to filter.</param>
+    /// <param name="group">The ConditionGroup containing filtering conditions.</param>
+    /// <returns>The filtered IQueryable based on the ConditionGroup.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when query or group is null.</exception>
+    /// <exception cref="LogicException">Thrown when the ConditionGroup contains invalid data</exception>
     public static IQueryable<T> Where<T>(this IQueryable<T> query, ConditionGroup group)
     {
+        // Validate input parameters.
         if (query == null)
         {
             throw new ArgumentNullException(nameof(query));
@@ -90,6 +105,7 @@ public static class Extention
             throw new ArgumentNullException(nameof(group));
         }
 
+        // Convert ConditionGroup to a string representation and apply filtering.
         string where = group.AsString<T>();
 
         if (string.IsNullOrWhiteSpace(where))
@@ -101,14 +117,17 @@ public static class Extention
     }
 
     /// <summary>
-    /// Filters an IQueryable based on the specified Condition.
+    /// Applies filtering conditions to the IQueryable based on a Condition.
     /// </summary>
-    /// <typeparam name="T">The type of elements in the query.</typeparam>
-    /// <param name="query">The source IQueryable.</param>
-    /// <param name="condition">The Condition specifying the filter condition.</param>
-    /// <returns>An IQueryable with the applied filter condition.</returns>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The IQueryable to filter.</param>
+    /// <param name="condition">The Condition containing filtering conditions.</param>
+    /// <returns>The filtered IQueryable based on the Condition.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when query or condition is null.</exception>
+    /// <exception cref="LogicException">Thrown when the Condition contains invalid data</exception>
     public static IQueryable<T> Where<T>(this IQueryable<T> query, Condition condition)
     {
+        // Validate input parameters.
         if (query == null)
         {
             throw new ArgumentNullException(nameof(query));
@@ -119,6 +138,7 @@ public static class Extention
             throw new ArgumentNullException(nameof(condition));
         }
 
+        // Convert Condition to a string representation and apply filtering.
         string where = condition.AsString<T>();
 
         if (string.IsNullOrWhiteSpace(where))
@@ -127,508 +147,5 @@ public static class Extention
         }
 
         return query.Where(where);
-    }
-
-    /// <summary>
-    /// Converts a ConditionGroup to its string representation.
-    /// </summary>
-    /// <typeparam name="T">The type of elements being filtered.</typeparam>
-    /// <param name="group">The ConditionGroup to convert to a string.</param>
-    /// <returns>A string representation of the ConditionGroup.</returns>
-    private static string AsString<T>(this ConditionGroup group)
-    {
-        group.Validate();
-
-        string connector = group.Connector switch
-        {
-            Connector.And => " && ",
-            Connector.Or => " || ",
-            _ => string.Empty
-        };
-
-        List<string> conditions = new();
-
-        foreach (Condition condition in group.Conditions.OrderBy(x => x.Sort))
-        {
-            string conditionAsString = condition.AsString<T>();
-
-            if (!string.IsNullOrWhiteSpace(conditionAsString))
-            {
-                conditions.Add(conditionAsString);
-            }
-        }
-
-        foreach (ConditionGroup subGroup in group.SubConditionGroups.OrderBy(x => x.Sort))
-        {
-            string subGroupConditionsAsString = subGroup.AsString<T>();
-
-            if (!string.IsNullOrWhiteSpace(subGroupConditionsAsString))
-            {
-                conditions.Add(subGroupConditionsAsString);
-            }
-        }
-
-        if (conditions.Any())
-        {
-            return $"({string.Join(connector, conditions)})";
-        }
-
-        return string.Empty;
-    }
-
-    /// <summary>
-    /// Converts a Condition to its string representation.
-    /// </summary>
-    /// <typeparam name="T">The type of elements being filtered.</typeparam>
-    /// <param name="condition">The Condition to convert to a string.</param>
-    /// <returns>A string representation of the Condition.</returns>
-    private static string AsString<T>(this Condition condition)
-    {
-        condition.Validate<T>();
-
-        switch (condition.DataType)
-        {
-            case DataType.Guid:
-            {
-                switch (condition.Operator)
-                {
-                    case Operator.Equal:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} == \"{condition.Values[0]}\")";
-                    }
-
-                    case Operator.NotEqual:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} != \"{condition.Values[0]}\")";
-                    }
-
-                    case Operator.In:
-                    {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} == \"{value}\"");
-
-                        return $"({condition.Field} != null && ({string.Join(" || ", conditions)}))";
-                    }
-
-                    case Operator.NotIn:
-                    {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} != \"{value}\"");
-
-                        return $"({condition.Field} != null && ({string.Join(" && ", conditions)}))";
-                    }
-
-                    case Operator.IsNull:
-                    {
-                        return $"({condition.Field} == null)";
-                    }
-
-                    case Operator.IsNotNull:
-                    {
-                        return $"({condition.Field} != null)";
-                    }
-                }
-            }
-            break;
-
-            case DataType.Text:
-            {
-                switch (condition.Operator)
-                {
-                    case Operator.Equal:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} == \"{condition.Values[0]}\")";
-                    }
-
-                    case Operator.IEqual:
-                    {
-                        return $"({condition.Field} != null && {condition.Field}.ToLower() == \"{condition.Values[0].ToLower()}\")";
-                    }
-
-                    case Operator.NotEqual:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} != \"{condition.Values[0]}\")";
-                    }
-
-                    case Operator.INotEqual:
-                    {
-                        return $"({condition.Field} != null && {condition.Field}.ToLower() != \"{condition.Values[0].ToLower()}\")";
-                    }
-
-                    case Operator.Contains:
-                    {
-                        return $"({condition.Field} != null && {condition.Field}.Contains(\"{condition.Values[0]}\"))";
-                    }
-
-                    case Operator.IContains:
-                    {
-                        return $"({condition.Field} != null && {condition.Field}.ToLower().Contains(\"{condition.Values[0].ToLower()}\"))";
-                    }
-
-                    case Operator.NotContains:
-                    {
-                        return $"({condition.Field} != null && !{condition.Field}.Contains(\"{condition.Values[0]}\"))";
-                    }
-
-                    case Operator.INotContains:
-                    {
-                        return $"({condition.Field} != null && !{condition.Field}.ToLower().Contains(\"{condition.Values[0].ToLower()}\"))";
-                    }
-
-                    case Operator.StartsWith:
-                    {
-                        return $"({condition.Field} != null && {condition.Field}.StartsWith(\"{condition.Values[0]}\"))";
-                    }
-
-                    case Operator.IStartsWith:
-                    {
-                        return $"({condition.Field} != null && {condition.Field}.ToLower().StartsWith(\"{condition.Values[0].ToLower()}\"))";
-                    }
-
-                    case Operator.NotStartsWith:
-                    {
-                        return $"({condition.Field} != null && !{condition.Field}.StartsWith(\"{condition.Values[0]}\"))";
-                    }
-
-                    case Operator.INotStartsWith:
-                    {
-                        return $"({condition.Field} != null && !{condition.Field}.ToLower().StartsWith(\"{condition.Values[0].ToLower()}\"))";
-                    }
-
-                    case Operator.EndsWith:
-                    {
-                        return $"({condition.Field} != null && {condition.Field}.EndsWith(\"{condition.Values[0]}\"))";
-                    }
-
-                    case Operator.IEndsWith:
-                    {
-                        return $"({condition.Field} != null && {condition.Field}.ToLower().EndsWith(\"{condition.Values[0].ToLower()}\"))";
-                    }
-
-                    case Operator.NotEndsWith:
-                    {
-                        return $"({condition.Field} != null && !{condition.Field}.EndsWith(\"{condition.Values[0]}\"))";
-                    }
-
-                    case Operator.INotEndsWith:
-                    {
-                        return $"({condition.Field} != null && !{condition.Field}.ToLower().EndsWith(\"{condition.Values[0].ToLower()}\"))";
-                    }
-
-                    case Operator.In:
-                    {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} == \"{value}\"");
-
-                        return $"({condition.Field} != null && ({string.Join(" || ", conditions)}))";
-                    }
-
-                    case Operator.IIn:
-                    {
-                        var conditions = condition.Values.Select(value => $"{condition.Field}.ToLower() == \"{value.ToLower()}\"");
-
-                        return $"({condition.Field} != null && ({string.Join(" || ", conditions)}))";
-                    }
-
-                    case Operator.NotIn:
-                    {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} != \"{value}\"");
-
-                        return $"({condition.Field} != null && ({string.Join(" && ", conditions)}))";
-                    }
-
-                    case Operator.INotIn:
-                    {
-                        var conditions = condition.Values.Select(value => $"{condition.Field}.ToLower() != \"{value.ToLower()}\"");
-
-                        return $"({condition.Field} != null && ({string.Join(" && ", conditions)}))";
-                    }
-
-                    case Operator.IsNull:
-                    {
-                        return $"({condition.Field} == null)";
-                    }
-
-                    case Operator.IsNotNull:
-                    {
-                        return $"({condition.Field} != null)";
-                    }
-                }
-            }
-            break;
-
-            case DataType.Number:
-            {
-                switch (condition.Operator)
-                {
-                    case Operator.Equal:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} == {condition.Values[0]})";
-                    }
-
-                    case Operator.NotEqual:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} != {condition.Values[0]})";
-                    }
-
-                    case Operator.GreaterThan:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} > {condition.Values[0]})";
-                    }
-
-                    case Operator.GreaterThanOrEqual:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} >= {condition.Values[0]})";
-                    }
-
-                    case Operator.LessThan:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} < {condition.Values[0]})";
-                    }
-
-                    case Operator.LessThanOrEqual:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} <= {condition.Values[0]})";
-                    }
-
-                    case Operator.In:
-                    {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} == {value}");
-
-                        return $"({condition.Field} != null && ({string.Join(" || ", conditions)}))";
-                    }
-
-                    case Operator.NotIn:
-                    {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} != {value}");
-
-                        return $"({condition.Field} != null && ({string.Join(" && ", conditions)}))";
-                    }
-
-                    case Operator.Between:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} >= {condition.Values[0]} && {condition.Field} <= {condition.Values[1]})";
-                    }
-
-                    case Operator.NotBetween:
-                    {
-                        return $"({condition.Field} != null && ({condition.Field} < {condition.Values[0]} || {condition.Field} > {condition.Values[1]}))";
-                    }
-
-                    case Operator.IsNull:
-                    {
-                        return $"({condition.Field} == null)";
-                    }
-
-                    case Operator.IsNotNull:
-                    {
-                        return $"({condition.Field} != null)";
-                    }
-                }
-            }
-            break;
-
-            case DataType.Boolean:
-            {
-                switch (condition.Operator)
-                {
-                    case Operator.Equal:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} == {condition.Values[0]})";
-                    }
-
-                    case Operator.NotEqual:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} != {condition.Values[0]})";
-                    }
-
-                    case Operator.IsNull:
-                    {
-                        return $"({condition.Field} == null)";
-                    }
-
-                    case Operator.IsNotNull:
-                    {
-                        return $"({condition.Field} != null)";
-                    }
-                }
-            }
-            break;
-
-            case DataType.DateTime:
-            {
-                switch (condition.Operator)
-                {
-                    case Operator.Equal:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} == \"{condition.Values[0]}\")";
-                    }
-
-                    case Operator.NotEqual:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} != \"{condition.Values[0]}\")";
-                    }
-
-                    case Operator.GreaterThan:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} > \"{condition.Values[0]}\")";
-                    }
-
-                    case Operator.GreaterThanOrEqual:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} >= \"{condition.Values[0]}\")";
-                    }
-
-                    case Operator.LessThan:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} < \"{condition.Values[0]}\")";
-                    }
-
-                    case Operator.LessThanOrEqual:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} <= \"{condition.Values[0]}\")";
-                    }
-
-                    case Operator.Between:
-                    {
-                        return $"({condition.Field} != null && {condition.Field} >= \"{condition.Values[0]}\" && {condition.Field} <= \"{condition.Values[1]}\")";
-                    }
-
-                    case Operator.NotBetween:
-                    {
-                        return $"({condition.Field} != null && ({condition.Field} < \"{condition.Values[0]}\" || {condition.Field} > \"{condition.Values[1]}\"))";
-                    }
-
-                    case Operator.IsNull:
-                    {
-                        return $"({condition.Field} == null)";
-                    }
-
-                    case Operator.IsNotNull:
-                    {
-                        return $"({condition.Field} != null)";
-                    }
-                }
-            }
-            break;
-        }
-
-        return string.Empty;
-    }
-
-    /// <summary>
-    /// Validates and retrieves a list of ConditionSets from a Segment.
-    /// </summary>
-    /// <param name="segment">The Segment containing ConditionSets.</param>
-    /// <returns>A list of validated ConditionSets.</returns>
-    private static List<ConditionSet> ValidateAndGetSets(this Segment segment)
-    {
-        if (segment.ConditionSets.Count == 0)
-        {
-            return new();
-        }
-
-        bool hasDublicateSort = segment.ConditionSets.GroupBy(x => x.Sort).Select(x => x.Count()).Any(x => x > 1);
-
-        if (hasDublicateSort)
-        {
-            throw new LogicException(ErrorCode.SetsUniqueSort);
-        }
-
-        bool hasNotIntersection = segment.ConditionSets.OrderBy(x => x.Sort).Skip(1).Any(x => x.Intersection == null);
-
-        if (hasNotIntersection)
-        {
-            throw new LogicException(ErrorCode.RequiredIntersection);
-        }
-
-        List<ConditionSet> sets = segment.ConditionSets.OrderBy(x => x.Sort).ToList();
-
-        sets[0].Intersection = null;
-
-        return sets;
-    }
-
-    /// <summary>
-    /// Validates a ConditionGroup for duplicate sort values.
-    /// </summary>
-    /// <param name="group">The ConditionGroup to validate.</param>
-    private static void Validate(this ConditionGroup group)
-    {
-        bool hasDublicateSort = group.Conditions.GroupBy(x => x.Sort).Select(x => x.Count()).Any(x => x > 1);
-
-        if (hasDublicateSort)
-        {
-            throw new LogicException(ErrorCode.ConditionsUniqueSort);
-        }
-
-        hasDublicateSort = group.SubConditionGroups.GroupBy(x => x.Sort).Select(x => x.Count()).Any(x => x > 1);
-
-        if (hasDublicateSort)
-        {
-            throw new LogicException(ErrorCode.SubConditionsGroupsUniqueSort);
-        }
-    }
-
-    /// <summary>
-    /// Validates a Condition for correctness based on the type and operator.
-    /// </summary>
-    /// <typeparam name="T">The type of elements being filtered.</typeparam>
-    /// <param name="condition">The Condition to validate.</param>
-    private static void Validate<T>(this Condition condition)
-    {
-        if (string.IsNullOrWhiteSpace(condition.Field))
-        {
-            throw new LogicException(ErrorCode.InvalidField);
-        }
-
-        List<string> properties = typeof(T).GetProperties().Select(x => x.Name).ToList();
-
-        if (!properties.Contains(condition.Field ?? "@"))
-        {
-            throw new LogicException(ErrorCode.InvalidField);
-        }
-
-        if (condition.Operator == Operator.Between || condition.Operator == Operator.NotBetween)
-        {
-            if (condition.Values.Count != 2)
-            {
-                throw new LogicException(ErrorCode.RequiredTwoValue);
-            }
-
-            if (string.IsNullOrWhiteSpace(condition.Values[0]) || string.IsNullOrWhiteSpace(condition.Values[1]))
-            {
-                throw new LogicException(ErrorCode.InvalidValue);
-            }
-        }
-        else if (condition.Operator == Operator.In || condition.Operator == Operator.NotIn ||
-                 condition.Operator == Operator.IIn || condition.Operator == Operator.INotIn)
-        {
-            if (condition.Values.Count == 0)
-            {
-                throw new LogicException(ErrorCode.RequiredValues);
-            }
-
-            if (condition.Values.Any(x => string.IsNullOrWhiteSpace(x)))
-            {
-                throw new LogicException(ErrorCode.InvalidValue);
-            }
-        }
-        else if (condition.Operator == Operator.IsNull || condition.Operator == Operator.IsNotNull)
-        {
-            if (condition.Values.Count != 0)
-            {
-                throw new LogicException(ErrorCode.NotRequiredValues);
-            }
-        }
-        else
-        {
-            if (condition.Values.Count != 1)
-            {
-                throw new LogicException(ErrorCode.RequiredOneValue(condition.Operator.ToString()));
-            }
-
-            if (string.IsNullOrWhiteSpace(condition.Values[0]))
-            {
-                throw new LogicException(ErrorCode.InvalidValue);
-            }
-        }
     }
 }

@@ -5,6 +5,13 @@ namespace DynamicWhere.ex;
 
 public static class Extention
 {
+    /// <summary>
+    /// Filters an IQueryable based on the specified Segment's conditions.
+    /// </summary>
+    /// <typeparam name="T">The type of elements in the query.</typeparam>
+    /// <param name="query">The source IQueryable.</param>
+    /// <param name="segment">The Segment containing conditions for filtering.</param>
+    /// <returns>A filtered list of elements of type T.</returns>
     public static async Task<List<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment)
     {
         if (query == null)
@@ -64,6 +71,13 @@ public static class Extention
         return result;
     }
 
+    /// <summary>
+    /// Filters an IQueryable based on the specified ConditionGroup.
+    /// </summary>
+    /// <typeparam name="T">The type of elements in the query.</typeparam>
+    /// <param name="query">The source IQueryable.</param>
+    /// <param name="group">The ConditionGroup specifying the filter conditions.</param>
+    /// <returns>An IQueryable with the applied filter conditions.</returns>
     public static IQueryable<T> Where<T>(this IQueryable<T> query, ConditionGroup group)
     {
         if (query == null)
@@ -86,6 +100,13 @@ public static class Extention
         return query.Where(where);
     }
 
+    /// <summary>
+    /// Filters an IQueryable based on the specified Condition.
+    /// </summary>
+    /// <typeparam name="T">The type of elements in the query.</typeparam>
+    /// <param name="query">The source IQueryable.</param>
+    /// <param name="condition">The Condition specifying the filter condition.</param>
+    /// <returns>An IQueryable with the applied filter condition.</returns>
     public static IQueryable<T> Where<T>(this IQueryable<T> query, Condition condition)
     {
         if (query == null)
@@ -108,6 +129,12 @@ public static class Extention
         return query.Where(where);
     }
 
+    /// <summary>
+    /// Converts a ConditionGroup to its string representation.
+    /// </summary>
+    /// <typeparam name="T">The type of elements being filtered.</typeparam>
+    /// <param name="group">The ConditionGroup to convert to a string.</param>
+    /// <returns>A string representation of the ConditionGroup.</returns>
     private static string AsString<T>(this ConditionGroup group)
     {
         group.Validate();
@@ -149,6 +176,12 @@ public static class Extention
         return string.Empty;
     }
 
+    /// <summary>
+    /// Converts a Condition to its string representation.
+    /// </summary>
+    /// <typeparam name="T">The type of elements being filtered.</typeparam>
+    /// <param name="condition">The Condition to convert to a string.</param>
+    /// <returns>A string representation of the Condition.</returns>
     private static string AsString<T>(this Condition condition)
     {
         condition.Validate<T>();
@@ -480,6 +513,11 @@ public static class Extention
         return string.Empty;
     }
 
+    /// <summary>
+    /// Validates and retrieves a list of ConditionSets from a Segment.
+    /// </summary>
+    /// <param name="segment">The Segment containing ConditionSets.</param>
+    /// <returns>A list of validated ConditionSets.</returns>
     private static List<ConditionSet> ValidateAndGetSets(this Segment segment)
     {
         if (segment.ConditionSets.Count == 0)
@@ -508,6 +546,10 @@ public static class Extention
         return sets;
     }
 
+    /// <summary>
+    /// Validates a ConditionGroup for duplicate sort values.
+    /// </summary>
+    /// <param name="group">The ConditionGroup to validate.</param>
     private static void Validate(this ConditionGroup group)
     {
         bool hasDublicateSort = group.Conditions.GroupBy(x => x.Sort).Select(x => x.Count()).Any(x => x > 1);
@@ -525,6 +567,11 @@ public static class Extention
         }
     }
 
+    /// <summary>
+    /// Validates a Condition for correctness based on the type and operator.
+    /// </summary>
+    /// <typeparam name="T">The type of elements being filtered.</typeparam>
+    /// <param name="condition">The Condition to validate.</param>
     private static void Validate<T>(this Condition condition)
     {
         if (string.IsNullOrWhiteSpace(condition.Field))

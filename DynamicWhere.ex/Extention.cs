@@ -62,18 +62,21 @@ public static class Extension
             {
                 case Intersection.Union:
                 {
+                    // apply union operation to the result and the current list.
                     result = result.Union(list).ToList();
                 }
                 break;
 
                 case Intersection.Intersect:
                 {
+                    // apply intersect operation to the result and the current list.
                     result = result.Intersect(list).ToList();
                 }
                 break;
 
                 case Intersection.Except:
                 {
+                    // apply except operation to the result and the current list.
                     result = result.Except(list).ToList();
                 }
                 break;
@@ -108,11 +111,13 @@ public static class Extension
         // Convert ConditionGroup to a string representation and apply filtering.
         string where = group.AsString<T>();
 
+        // If the resulting where string is null or empty, return the original query.
         if (string.IsNullOrWhiteSpace(where))
         {
             return query;
         }
 
+        // Apply the filter to the query and return the result.
         return query.Where(where);
     }
 
@@ -141,11 +146,13 @@ public static class Extension
         // Convert Condition to a string representation and apply filtering.
         string where = condition.AsString<T>();
 
+        // If the resulting where string is null or empty, return the original query.
         if (string.IsNullOrWhiteSpace(where))
         {
             return query;
         }
 
+        // Apply the filter to the query and return the result.
         return query.Where(where);
     }
 
@@ -200,11 +207,53 @@ public static class Extension
         // Convert OrderBy to a string representation and apply ordering.
         string orderBy = order.AsString<T>();
 
+        // If the resulting order string is empty or whitespace, return the original query.
         if (string.IsNullOrWhiteSpace(orderBy))
         {
             return query;
         }
 
+        // apply the ordering to the query and return the result.
+        return query.OrderBy(orderBy);
+    }
+
+    /// <summary>
+    /// Orders the elements of an <see cref="IQueryable{T}"/> sequence based on a list of <see cref="OrderBy"/> instances.
+    /// </summary>
+    /// <typeparam name="T">The type of elements in the sequence.</typeparam>
+    /// <param name="query">The source <see cref="IQueryable{T}"/> sequence to order.</param>
+    /// <param name="orders">A list of <see cref="OrderBy"/> instances that define the sorting criteria.</param>
+    /// <returns>
+    /// An <see cref="IQueryable{T}"/> that contains elements from the input sequence ordered as specified by the list of <see cref="OrderBy"/> instances.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="orders"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when the <paramref name="orders"/> contains invalid data</exception>""
+    public static IQueryable<T> Order<T>(this IQueryable<T> query, List<OrderBy> orders)
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (orders == null)
+        {
+            throw new ArgumentNullException(nameof(orders));
+        }
+
+        // Concatenate the individual order strings into a single comma-separated string.
+        string orderBy = string.Join(",", orders
+                               .OrderBy(x => x.Sort)
+                               .Select(x => x.AsString<T>())
+                               .Where(x => !string.IsNullOrWhiteSpace(x)));
+
+        // If the resulting order string is empty or whitespace, return the original query.
+        if (string.IsNullOrWhiteSpace(orderBy))
+        {
+            return query;
+        }
+
+        // Apply the ordering to the query and return the result.
         return query.OrderBy(orderBy);
     }
 }

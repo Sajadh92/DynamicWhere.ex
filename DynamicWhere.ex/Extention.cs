@@ -4,19 +4,19 @@ using System.Linq.Dynamic.Core;
 namespace DynamicWhere.ex;
 
 /// <summary>
-/// Provides extension methods for working with IQueryable and applying custom query logic based on a Segment.
+/// Provides extension methods for working with <see cref="IQueryable{T}"/> and applying custom query logic.
 /// </summary>
 public static class Extension
 {
     /// <summary>
-    /// Asynchronously retrieves a list of entities from the IQueryable with optional filtering based on a Segment.
+    /// Asynchronously retrieves a list of entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Segment"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
-    /// <param name="query">The IQueryable to retrieve entities from.</param>
-    /// <param name="segment">The Segment containing filter conditions.</param>
-    /// <returns>A List of entities that match the filter conditions in the Segment.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when query or segment is null.</exception>
-    /// <exception cref="LogicException">Thrown when the Segment contains invalid data.</exception>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="segment">The <see cref="Segment"/> containing filter conditions.</param>
+    /// <returns>A List of entities that match the filter conditions in the <see cref="Segment"/>.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="segment"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when the <paramref name="segment"/> contains invalid data.</exception>
     public static async Task<List<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment)
     {
         // Validate input parameters.
@@ -84,14 +84,14 @@ public static class Extension
     }
 
     /// <summary>
-    /// Applies filtering conditions to the IQueryable based on a ConditionGroup.
+    /// Applies filtering conditions to the <see cref="IQueryable{T}"/> based on a <see cref="ConditionGroup"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
-    /// <param name="query">The IQueryable to filter.</param>
-    /// <param name="group">The ConditionGroup containing filtering conditions.</param>
-    /// <returns>The filtered IQueryable based on the ConditionGroup.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when query or group is null.</exception>
-    /// <exception cref="LogicException">Thrown when the ConditionGroup contains invalid data</exception>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to filter.</param>
+    /// <param name="group">The <see cref="ConditionGroup"/> containing filtering conditions.</param>
+    /// <returns>The filtered <see cref="IQueryable{T}"/> based on the <see cref="ConditionGroup"/>.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="group"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when the <paramref name="group"/> contains invalid data</exception>
     public static IQueryable<T> Where<T>(this IQueryable<T> query, ConditionGroup group)
     {
         // Validate input parameters.
@@ -117,14 +117,14 @@ public static class Extension
     }
 
     /// <summary>
-    /// Applies filtering conditions to the IQueryable based on a Condition.
+    /// Applies filtering conditions to the <see cref="IQueryable{T}"/> based on a <see cref="Condition"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
-    /// <param name="query">The IQueryable to filter.</param>
-    /// <param name="condition">The Condition containing filtering conditions.</param>
-    /// <returns>The filtered IQueryable based on the Condition.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when query or condition is null.</exception>
-    /// <exception cref="LogicException">Thrown when the Condition contains invalid data</exception>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to filter.</param>
+    /// <param name="condition">The <see cref="Condition"/> containing filtering conditions.</param>
+    /// <returns>The filtered <see cref="IQueryable{T}"/> based on the <see cref="Condition"/>.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="condition"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when the <paramref name="condition"/> contains invalid data</exception>
     public static IQueryable<T> Where<T>(this IQueryable<T> query, Condition condition)
     {
         // Validate input parameters.
@@ -150,12 +150,13 @@ public static class Extension
     }
 
     /// <summary>
-    /// Paginates the elements of an IQueryable sequence based on the specified PageBy object.
+    /// Paginates the elements of an <see cref="IQueryable{T}"/> sequence based on the specified <see cref="PageBy"/> object.
     /// </summary>
     /// <typeparam name="T">The type of elements in the sequence.</typeparam>
-    /// <param name="query">The IQueryable sequence to paginate.</param>
-    /// <param name="page">The PageBy object containing pagination information.</param>
-    /// <returns>An IQueryable sequence representing a single page of data.</returns>
+    /// <param name="query">The <see cref="IQueryable{T}"/> sequence to paginate.</param>
+    /// <param name="page">The <see cref="PageBy"/> object containing pagination information.</param>
+    /// <returns>An <see cref="IQueryable{T}"/> sequence representing a single page of data.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="page"/> is null.</exception>
     public static IQueryable<T> Page<T>(this IQueryable<T> query, PageBy page)
     {
         // Validate input parameters.

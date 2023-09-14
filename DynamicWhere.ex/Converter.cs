@@ -396,4 +396,18 @@ internal static class Converter
 
         return string.Empty;
     }
+
+    /// <summary>
+    /// Converts an <see cref="OrderBy"/> instance into a string representation for SQL sorting.
+    /// </summary>
+    /// <typeparam name="T">The type to validate the field name against.</typeparam>
+    /// <param name="order">The <see cref="OrderBy"/> instance to convert.</param>
+    /// <returns>A string representation of the order-by clause for SQL sorting.</returns>
+    /// <exception cref="LogicException">Thrown if the field name is invalid or empty.</exception>
+    public static string AsString<T>(this OrderBy order)
+    {
+        order.Validate<T>();
+
+        return $"{order.Field} {(order.Direction == Direction.Ascending ? "asc" : "desc")}";
+    }
 }

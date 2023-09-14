@@ -173,4 +173,37 @@ public static class Extension
         // and then take the specified number of items for the page.
         return query.Skip((page.PageNumber - 1) * page.PageSize).Take(page.PageSize);
     }
+
+    /// <summary>
+    /// Orders the elements of an <see cref="IQueryable{T}"/> sequence based on the specified <see cref="OrderBy"/> instance.
+    /// </summary>
+    /// <typeparam name="T">The type of elements in the sequence.</typeparam>
+    /// <param name="query">The source <see cref="IQueryable{T}"/> sequence to order.</param>
+    /// <param name="order">The <see cref="OrderBy"/> instance that defines the sorting criteria.</param>
+    /// <returns>An <see cref="IQueryable{T}"/> that contains elements from the input sequence ordered as specified by the <see cref="OrderBy"/> instance.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="order"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when the <paramref name="order"/> contains invalid data</exception>"
+    public static IQueryable<T> Order<T>(this IQueryable<T> query, OrderBy order)
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (order == null)
+        {
+            throw new ArgumentNullException(nameof(order));
+        }
+
+        // Convert OrderBy to a string representation and apply ordering.
+        string orderBy = order.AsString<T>();
+
+        if (string.IsNullOrWhiteSpace(orderBy))
+        {
+            return query;
+        }
+
+        return query.OrderBy(orderBy);
+    }
 }

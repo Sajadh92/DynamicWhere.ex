@@ -152,6 +152,24 @@ internal static class Validator
     }
 
     /// <summary>
+    /// Validates an <see cref="OrderBy"/> instance to ensure it has a valid field name.
+    /// </summary>
+    /// <typeparam name="T">The type to validate the field name against.</typeparam>
+    /// <param name="order">The <see cref="OrderBy"/> instance to validate.</param>
+    /// <exception cref="LogicException">Thrown if the field name is invalid or empty.</exception>
+    public static void Validate<T>(this OrderBy order)
+    {
+        // Check if the field name is provided and not empty.
+        if (string.IsNullOrWhiteSpace(order.Field))
+        {
+            throw new LogicException(ErrorCode.InvalidField);
+        }
+
+        // Validate the field name against the specified type.
+        order.Field.Validate<T>();
+    }
+
+    /// <summary>
     /// Validates a string representing a property name within a nested object hierarchy for a given type.
     /// </summary>
     /// <typeparam name="T">The type in which the property name is validated.</typeparam>

@@ -92,6 +92,15 @@ The `Intersection` enum is used to define how multiple sets of conditions should
 
 These intersection types are valuable when you need to apply logical operations to multiple sets of conditions in your dynamic queries.
 
+#### `Direction`
+
+The `Direction` enum is used to specify the sorting direction in queries. It includes the following sorting directions:
+
+- `Ascending`: Represents ascending sorting direction.
+- `Descending`: Represents descending sorting direction.
+
+You can use the `Direction` enum when defining sorting preferences for your queries to control whether the results should be sorted in ascending or descending order.
+
 ### Classes
 
 The **DynamicWhere.ex** library includes the following classes that enable you to construct dynamic queries:
@@ -136,6 +145,37 @@ The `Segment` class serves as the top-level container for dynamic queries. It in
 - `ConditionSets`: A list of `ConditionSet` objects representing multiple sets of conditions within a query.
 
 You can use the `Segment` class to organize and manage multiple sets of conditions in your dynamic queries.
+
+#### `OrderBy`
+
+The `OrderBy` class is used to configure sorting in dynamic queries. It includes the following properties:
+
+- `Sort`: An integer representing the sort order.
+- `Field`: A string indicating the field or property by which to sort the query results.
+- `Direction`: An instance of the `Direction` enum, specifying the sorting direction, which can be either ascending or descending. The default direction is ascending.
+
+You can use the `OrderBy` class to specify how the query results should be sorted based on the chosen field and sorting direction. It plays a crucial role in customizing the order of your dynamic query results.
+
+By utilizing the `OrderBy` class in your dynamic queries, you can achieve precise control over the sorting behavior, ensuring that the results are organized according to your requirements.
+
+#### `PageBy`
+
+The `PageBy` class is used to configure pagination settings for dynamic queries. It includes the following properties:
+
+- `PageNumber`: An integer representing the desired page number.
+- `PageSize`: An integer indicating the number of items to display per page.
+
+By utilizing the `PageBy` class in your dynamic queries, you can control the pagination behavior, specifying which page of results to retrieve and how many items should be displayed on each page. This is essential for managing large sets of data and presenting it to users in a user-friendly manner.
+
+#### `Filter`
+
+The `Filter` class serves as a configuration container for dynamic queries. It encompasses the following components:
+
+- `ConditionGroup`: Represents a condition group that contains a list of conditions and a logical operator. This allows you to create complex queries with multiple conditions.
+- `Orders`: A list of order-by criteria that specify how the query results should be sorted.
+- `Page`: Pagination settings that determine the page number and the number of items to display per page.
+
+By utilizing the `Filter` class, you can conveniently define conditions, sorting rules, and pagination settings for your dynamic queries, providing flexibility and control over your data retrieval and presentation.
 
 These classes provide a powerful foundation for constructing dynamic queries using the **DynamicWhere.ex** library.
 
@@ -209,21 +249,113 @@ var filteredQuery = query.Where(condition);
 
 These extension methods empower you to build dynamic queries by composing conditions and filter your data based on flexible criteria.
 
+### Additional Extension Methods
+
+#### `Page<T>(this IQueryable<T> query, Page page)`
+
+This extension method allows you to apply pagination to an IQueryable, specifying the page number and page size.
+
+**Usage:**
+
+```csharp
+// Assuming you have an IQueryable<T> query and a Page page defined
+var pagedQuery = query.Page(page);
+```
+
+**Documentation:**
+
+- **Parameters:**
+  - `query` (IQueryable<T>): The queryable source to apply pagination to.
+  - `page` (Page): The page object specifying the page number and page size.
+
+- **Return Value:**
+  - `IQueryable<T>`: A new queryable instance with pagination applied.
+
+---
+
+#### `Order<T>(this IQueryable<T> query, OrderBy order)`
+
+This extension method allows you to order the results of an IQueryable based on a specified `OrderBy` configuration.
+
+**Usage:**
+
+```csharp
+// Assuming you have an IQueryable<T> query and an OrderBy order defined
+var orderedQuery = query.Order(order);
+```
+
+**Documentation:**
+
+- **Parameters:**
+  - `query` (IQueryable<T>): The queryable source to order.
+  - `order` (OrderBy): The order-by configuration specifying the field and sorting direction.
+
+- **Return Value:**
+  - `IQueryable<T>`: A new queryable instance with the specified ordering applied.
+
+---
+
+#### `Order<T>(this IQueryable<T> query, List<OrderBy> orders)`
+
+This extension method allows you to order the results of an IQueryable based on a list of `OrderBy` configurations.
+
+**Usage:**
+
+```csharp
+// Assuming you have an IQueryable<T> query and a List<OrderBy> orders defined
+var orderedQuery = query.Order(orders);
+```
+
+**Documentation:**
+
+- **Parameters:**
+  - `query` (IQueryable<T>): The queryable source to order.
+  - `orders` (List<OrderBy>): A list of order-by configurations specifying the fields and sorting directions.
+
+- **Return Value:**
+  - `IQueryable<T>`: A new queryable instance with the specified ordering applied.
+
+---
+
+#### `Filter<T>(this IQueryable<T> query, Filter filter)`
+
+This extension method allows you to filter an IQueryable based on a `Filter` configuration, including conditions, sorting, and pagination.
+
+**Usage:**
+
+```csharp
+// Assuming you have an IQueryable<T> query and a Filter filter defined
+var filteredQuery = query.Filter(filter);
+```
+
+**Documentation:**
+
+- **Parameters:**
+  - `query` (IQueryable<T>): The queryable source to filter.
+  - `filter` (Filter): The filter configuration specifying conditions, sorting, and pagination.
+
+- **Return Value:**
+  - `IQueryable<T>`: A new queryable instance with the specified filtering, ordering, and pagination applied.
+
+These additional extension methods extend your capabilities to filter, order, and paginate data within your dynamic queries for more comprehensive data manipulation.
+
 ## JSON Examples
 
-### Condition Example
+### `Condition` 
+
+* Condition with a single value
 
 ```json
 {
   "Sort": 1,
   "Field": "ProductName",
   "DataType": "Text",
-  "Operator": "Contains",
+  "Operator": "Equal",
   "Values": ["apple"]
 }
 ```
 
-### Condition Group Example 
+### `Condition Group`
 
 * Condition Group with 3 Conditions and 2 Subgroups
 * Each Subgroup with 2 Conditions
@@ -302,7 +434,7 @@ These extension methods empower you to build dynamic queries by composing condit
 }
 ```
 
-### Segment Example 
+### `Segment` 
 
 * Segment with 2 Sets
 * Each Set with a Condition Group
@@ -468,13 +600,120 @@ These extension methods empower you to build dynamic queries by composing condit
 
 These JSON examples demonstrate various scenarios of conditions, condition groups, and segments that can be used with the library.
 
+### `PageBy`
+
+In this example, we specify that we want to retrieve the second page of data, with each page containing 10 items.
+
+```json
+{
+  "PageNumber": 2,
+  "PageSize": 10
+}
+```
+
+### `OrderBy`
+
+This JSON example represents an ordering configuration where we want to sort the data by the "ProductName" field in ascending order.
+
+```json
+{
+  "Sort": 1,
+  "Field": "ProductName",
+  "Direction": "Ascending"
+}
+```
+
+### `Filter`
+
+This JSON example represents a filter configuration with the following components:
+
+- `ConditionGroup`: A set of conditions combined using the "And" logical operator.
+  - Condition 1: Filter products in the "Electronics" category.
+  - Condition 2: Filter products with a price greater than 100.
+- `Orders`: Specifies the ordering criteria.
+  - Order 1: Sort products by "ProductName" in ascending order.
+  - Order 2: Then sort products by "Price" in descending order.
+- `Page`: Specifies that we want the first page of results with a page size of 20 items.
+
+```json
+{
+  "ConditionGroup": {
+    "Connector": "And",
+    "Conditions": [
+      {
+        "Sort": 1,
+        "Field": "Category",
+        "DataType": "Text",
+        "Operator": "Equal",
+        "Values": ["Electronics"]
+      },
+      {
+        "Sort": 2,
+        "Field": "Price",
+        "DataType": "Number",
+        "Operator": "GreaterThan",
+        "Values": ["100"]
+      }
+    ]
+  },
+  "Orders": [
+    {
+      "Sort": 1,
+      "Field": "ProductName",
+      "Direction": "Ascending"
+    },
+    {
+      "Sort": 2,
+      "Field": "Price",
+      "Direction": "Descending"
+    }
+  ],
+  "Page": {
+    "PageNumber": 1,
+    "PageSize": 20
+  }
+}
+```
+
+These JSON examples demonstrate how you can configure `PageBy`, `OrderBy`, and `Filter` settings for dynamic querying of data.
+
 ## License
 
 This library is released under a free and open-source license, allowing you to use it in your projects without restrictions.
 
-## Changelog
+## Change Log
 
-- Version 1: Initial release
+All notable changes to the **DynamicWhere.ex** library will be documented in this section.
+
+### [v1.4.0] - 2023-09-14
+
+#### Added
+
+- Added support for pagination, allowing users to specify page numbers and page sizes using the `PageBy` class.
+- Implemented the ability to define sorting criteria using the `OrderBy` class.
+- Introduced the `Filter` class, enabling users to configure complex dynamic queries.
+
+### [v1.3.0] - 2023-09-13
+
+#### Refactored
+
+- Refactored and improved codebase for better maintainability.
+- Added comprehensive documentation, summaries, and comments to enhance code readability.
+- Introduced meaningful names and structuring to make code cleaner and more understandable.
+
+### [v1.2.0] - 2023-09-12
+
+#### Added
+
+- Added support for the GUID data type, allowing filtering and comparisons using GUID values.
+- Enabled case-insensitive comparisons for text data types.
+- Introduced the ability to specify nested property names in conditions.
+
+### [v1.0.0] - 2023-09-11
+
+#### Initial Release
+
+- The **DynamicWhere.ex** library is released, providing dynamic querying capabilities for LINQ queries.
 
 ## Credits
 

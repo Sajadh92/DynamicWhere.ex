@@ -256,4 +256,30 @@ public static class Extension
         // Apply the ordering to the query and return the result.
         return query.OrderBy(orderBy);
     }
+
+    /// <summary>
+    /// Applies a <see cref="Filter"/> to an <see cref="IQueryable{T}"/> data source based on the provided filter criteria.
+    /// </summary>
+    /// <typeparam name="T">The type of elements in the data source.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> data source to filter.</param>
+    /// <param name="filter">The <see cref="Filter"/> criteria containing a condition group, order-by criteria, and pagination settings.</param>
+    /// <returns>An <see cref="IQueryable{T}"/> data source with the filter applied.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when the <paramref name="filter"/> contains invalid data</exception>
+    public static IQueryable<T> Filter<T>(this IQueryable<T> query, Filter filter)
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (filter == null)
+        {
+            throw new ArgumentNullException(nameof(filter));
+        }
+
+        // Apply the filter to the query and return the result.
+        return query.Where(filter.ConditionGroup).Order(filter.Orders).Page(filter.Page);
+    }
 }

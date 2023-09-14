@@ -148,4 +148,29 @@ public static class Extension
 
         return query.Where(where);
     }
+
+    /// <summary>
+    /// Paginates the elements of an IQueryable sequence based on the specified PageBy object.
+    /// </summary>
+    /// <typeparam name="T">The type of elements in the sequence.</typeparam>
+    /// <param name="query">The IQueryable sequence to paginate.</param>
+    /// <param name="page">The PageBy object containing pagination information.</param>
+    /// <returns>An IQueryable sequence representing a single page of data.</returns>
+    public static IQueryable<T> Page<T>(this IQueryable<T> query, PageBy page)
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (page == null)
+        {
+            throw new ArgumentNullException(nameof(page));
+        }
+
+        // Skip the required number of items to reach the desired page,
+        // and then take the specified number of items for the page.
+        return query.Skip((page.PageNumber - 1) * page.PageSize).Take(page.PageSize);
+    }
 }

@@ -279,7 +279,24 @@ public static class Extension
             throw new ArgumentNullException(nameof(filter));
         }
 
-        // Apply the filter to the query and return the result.
-        return query.Where(filter.ConditionGroup).Order(filter.Orders).Page(filter.Page);
+        // Apply the filter criteria to the query.
+        if (filter.ConditionGroup != null)
+        {
+            query = query.Where(filter.ConditionGroup);
+        }
+
+        // Apply the order-by criteria to the query.
+        if (filter.Orders != null)
+        {
+            query = query.Order(filter.Orders);
+        }
+
+        // Apply the pagination criteria to the query.
+        if (filter.Page != null)
+        {
+            query = query.Page(filter.Page);
+        }
+
+        return query;
     }
 }

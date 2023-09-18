@@ -691,6 +691,15 @@ This library is released under a free and open-source license, allowing you to u
 
 All notable changes to the **DynamicWhere.ex** library will be documented in this section.
 
+### [v1.4.1] - 2023-09-18
+
+#### Enhanced Flexibility
+
+- The `Filter` configuration in dynamic queries has been improved for greater flexibility.
+- `ConditionGroup`, `Orders`, and `Page` objects are now nullable within the `Filter` class.
+- This change allows you to use any combination of `ConditionGroup`, `Orders`, or `Page` based on your specific query requirements.
+- If any of these objects are set to `null`, they will not impact the query, providing more adaptable and versatile query configurations.
+
 ### [v1.4.0] - 2023-09-14
 
 #### Added

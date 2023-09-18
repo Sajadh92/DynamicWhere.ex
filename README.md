@@ -22,11 +22,11 @@ Getting started with the library is straightforward. Simply install it via NuGet
 
 **DynamicWhere.ex** provides enums, classes, and extension methods to simplify the construction of dynamic filter expressions. You can define conditions, condition groups, and sets using objects, allowing you to specify complex filtering logic in a structured way.
 
-### Enums
+### **`Enums`**
 
 The **DynamicWhere.ex** library includes the following enums to support dynamic querying capabilities:
 
-#### `DataType`
+#### **`DataType`**
 
 The `DataType` enum provides support for various data types when defining conditions in dynamic queries. It includes the following values:
 
@@ -38,7 +38,7 @@ The `DataType` enum provides support for various data types when defining condit
 
 You can use the `DataType` enum to specify the data type for your dynamic query conditions, making it easier to work with different types of data, including GUIDs.
 
-#### `Operator`
+#### **`Operator`**
 
 The `Operator` enum offers a comprehensive set of logical comparison operators for constructing dynamic queries. It now includes both case-sensitive and case-insensitive versions of certain operators, allowing for greater flexibility in query construction. The operators are:
 
@@ -73,7 +73,7 @@ The `Operator` enum offers a comprehensive set of logical comparison operators f
 
 These operators can be used in combination with the library's extension methods to create complex dynamic queries with both case-sensitive and case-insensitive comparisons, providing greater flexibility in query construction.
 
-#### `Connector`
+#### **`Connector`**
 
 The `Connector` enum provides logical connectors that allow you to combine conditions within a query. It includes the following connectors:
 
@@ -82,7 +82,7 @@ The `Connector` enum provides logical connectors that allow you to combine condi
 
 You can use these connectors to specify how conditions should be combined in your dynamic queries, enabling flexible query construction.
 
-#### `Intersection`
+#### **`Intersection`**
 
 The `Intersection` enum is used to define how multiple sets of conditions should be combined in a query. It includes the following intersection types:
 
@@ -92,7 +92,7 @@ The `Intersection` enum is used to define how multiple sets of conditions should
 
 These intersection types are valuable when you need to apply logical operations to multiple sets of conditions in your dynamic queries.
 
-#### `Direction`
+#### **`Direction`**
 
 The `Direction` enum is used to specify the sorting direction in queries. It includes the following sorting directions:
 
@@ -101,11 +101,13 @@ The `Direction` enum is used to specify the sorting direction in queries. It inc
 
 You can use the `Direction` enum when defining sorting preferences for your queries to control whether the results should be sorted in ascending or descending order.
 
-### Classes
+---
+
+### **`Classes`**
 
 The **DynamicWhere.ex** library includes the following classes that enable you to construct dynamic queries:
 
-#### `Condition`
+#### **`Condition`**
 
 The `Condition` class represents an individual condition in a dynamic query. It contains the following properties:
 
@@ -117,7 +119,7 @@ The `Condition` class represents an individual condition in a dynamic query. It 
 
 You can create instances of the `Condition` class to define individual conditions within your dynamic queries.
 
-#### `ConditionGroup`
+#### **`ConditionGroup`**
 
 The `ConditionGroup` class represents a group of conditions that are logically combined within a dynamic query. It includes the following properties:
 
@@ -128,7 +130,7 @@ The `ConditionGroup` class represents a group of conditions that are logically c
 
 You can use the `ConditionGroup` class to create complex conditions by combining multiple conditions and nesting groups as needed.
 
-#### `ConditionSet`
+#### **`ConditionSet`**
 
 The `ConditionSet` class represents a set of conditions in a dynamic query. It includes the following properties:
 
@@ -138,7 +140,7 @@ The `ConditionSet` class represents a set of conditions in a dynamic query. It i
 
 You can use the `ConditionSet` class to create sets of conditions and specify how those conditions should be combined within your dynamic queries.
 
-#### `Segment`
+#### **`Segment`**
 
 The `Segment` class serves as the top-level container for dynamic queries. It includes the following property:
 
@@ -146,7 +148,7 @@ The `Segment` class serves as the top-level container for dynamic queries. It in
 
 You can use the `Segment` class to organize and manage multiple sets of conditions in your dynamic queries.
 
-#### `OrderBy`
+#### **`OrderBy`**
 
 The `OrderBy` class is used to configure sorting in dynamic queries. It includes the following properties:
 
@@ -158,7 +160,7 @@ You can use the `OrderBy` class to specify how the query results should be sorte
 
 By utilizing the `OrderBy` class in your dynamic queries, you can achieve precise control over the sorting behavior, ensuring that the results are organized according to your requirements.
 
-#### `PageBy`
+#### **`PageBy`**
 
 The `PageBy` class is used to configure pagination settings for dynamic queries. It includes the following properties:
 
@@ -167,23 +169,25 @@ The `PageBy` class is used to configure pagination settings for dynamic queries.
 
 By utilizing the `PageBy` class in your dynamic queries, you can control the pagination behavior, specifying which page of results to retrieve and how many items should be displayed on each page. This is essential for managing large sets of data and presenting it to users in a user-friendly manner.
 
-#### `Filter`
+#### **`Filter`**
 
 The `Filter` class serves as a configuration container for dynamic queries. It encompasses the following components:
 
-- `ConditionGroup`: Represents a condition group that contains a list of conditions and a logical operator. This allows you to create complex queries with multiple conditions.
-- `Orders`: A list of order-by criteria that specify how the query results should be sorted.
-- `Page`: Pagination settings that determine the page number and the number of items to display per page.
+- `ConditionGroup` (nullable): Represents a condition group that contains a list of conditions and a logical operator. This allows you to create complex queries with multiple conditions. If set to `null`, it will not affect the query.
+- `Orders` (nullable): A list of order-by criteria that specify how the query results should be sorted. If set to `null`, it will not affect the query's sorting.
+- `Page` (nullable): Pagination settings that determine the page number and the number of items to display per page. If set to `null`, it will not affect the query's pagination.
 
-By utilizing the `Filter` class, you can conveniently define conditions, sorting rules, and pagination settings for your dynamic queries, providing flexibility and control over your data retrieval and presentation.
+By utilizing the `Filter` class, you can conveniently define conditions, sorting rules, and pagination settings for your dynamic queries. This flexibility allows you to create dynamic queries tailored to your specific requirements, and it accommodates scenarios where you may not need to specify certain filtering, sorting, or pagination criteria.
 
-These classes provide a powerful foundation for constructing dynamic queries using the **DynamicWhere.ex** library.
+These classes provide a powerful foundation for constructing dynamic queries using the **DynamicWhere.ex** library, offering fine-grained control over your data retrieval and presentation.
 
-### Extension Methods
+---
+
+### **`Extension Methods`**
 
 The **DynamicWhere.ex** library includes a set of extension methods that enhance the functionality of LINQ queries for dynamic querying purposes. Below are the public extension methods provided by the library:
 
-#### `ToListAsync<T>(this IQueryable<T> query, Segment segment)`
+#### **`ToListAsync<T>(this IQueryable<T> query, Segment segment)`**
 
 This extension method allows you to execute an asynchronous query and return the results as a list based on the specified segment of conditions.
 
@@ -205,7 +209,7 @@ List<T> results = await query.ToListAsync(segment);
 
 ---
 
-#### `Where<T>(this IQueryable<T> query, ConditionGroup group)`
+#### **`Where<T>(this IQueryable<T> query, ConditionGroup group)`**
 
 This extension method allows you to filter an IQueryable based on a specified `ConditionGroup`.
 
@@ -227,7 +231,7 @@ var filteredQuery = query.Where(conditionGroup);
 
 ---
 
-#### `Where<T>(this IQueryable<T> query, Condition condition)`
+#### **`Where<T>(this IQueryable<T> query, Condition condition)`**
 
 This extension method allows you to filter an IQueryable based on a single `Condition`.
 
@@ -249,16 +253,18 @@ var filteredQuery = query.Where(condition);
 
 These extension methods empower you to build dynamic queries by composing conditions and filter your data based on flexible criteria.
 
-### Additional Extension Methods
+---
 
-#### `Page<T>(this IQueryable<T> query, Page page)`
+### **`Additional Extension Methods`**
+
+#### **`Page<T>(this IQueryable<T> query, PageBy page)`**
 
 This extension method allows you to apply pagination to an IQueryable, specifying the page number and page size.
 
 **Usage:**
 
 ```csharp
-// Assuming you have an IQueryable<T> query and a Page page defined
+// Assuming you have an IQueryable<T> query and a PageBy page defined
 var pagedQuery = query.Page(page);
 ```
 
@@ -266,14 +272,14 @@ var pagedQuery = query.Page(page);
 
 - **Parameters:**
   - `query` (IQueryable<T>): The queryable source to apply pagination to.
-  - `page` (Page): The page object specifying the page number and page size.
+  - `page` (PageBy): The page object specifying the page number and page size.
 
 - **Return Value:**
   - `IQueryable<T>`: A new queryable instance with pagination applied.
 
 ---
 
-#### `Order<T>(this IQueryable<T> query, OrderBy order)`
+#### **`Order<T>(this IQueryable<T> query, OrderBy order)`**
 
 This extension method allows you to order the results of an IQueryable based on a specified `OrderBy` configuration.
 
@@ -295,7 +301,7 @@ var orderedQuery = query.Order(order);
 
 ---
 
-#### `Order<T>(this IQueryable<T> query, List<OrderBy> orders)`
+#### **`Order<T>(this IQueryable<T> query, List<OrderBy> orders)`**
 
 This extension method allows you to order the results of an IQueryable based on a list of `OrderBy` configurations.
 
@@ -317,7 +323,7 @@ var orderedQuery = query.Order(orders);
 
 ---
 
-#### `Filter<T>(this IQueryable<T> query, Filter filter)`
+#### **`Filter<T>(this IQueryable<T> query, Filter filter)`**
 
 This extension method allows you to filter an IQueryable based on a `Filter` configuration, including conditions, sorting, and pagination.
 

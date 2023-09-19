@@ -16,8 +16,7 @@
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
     <Description>
-        Enhance data filtering in EF Core applications with object-based queries,
-        simplifying dynamic filtering and improving data retrieval flexibility
+        Enhance data filtering in EF Core applications with object-based queries, simplifying dynamic filtering and improving data retrieval flexibility
     </Description>
   </PropertyGroup>
     

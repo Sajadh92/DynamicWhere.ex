@@ -9,4 +9,9 @@ public class Segment
     /// The list of condition sets in the segment.
     /// </summary>
     public List<ConditionSet> ConditionSets { get; set; } = new();
+
+    /// <summary>
+    /// Represents the pagination settings for the segment.
+    /// </summary>
+    public PageBy? Page { get; set; }
 }

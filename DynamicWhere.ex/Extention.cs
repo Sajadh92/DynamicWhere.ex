@@ -33,9 +33,19 @@ public static class Extension
         // Validate and retrieve ConditionSets from the Segment.
         List<ConditionSet> sets = segment.ValidateAndGetSets();
 
+        // If there are no filter conditions, return all results.
         if (sets.Count == 0)
         {
-            // No filter conditions, return all results.
+            // Apply pagination if it is set.
+            if (segment.Page != null)
+            {
+                // Apply pagination to the query.
+                query = query
+                    .Skip(segment.Page.PageNumber * segment.Page.PageSize)
+                    .Take(segment.Page.PageSize);
+            }
+
+            // Return the result.
             return await query.ToListAsync();
         }
 
@@ -83,6 +93,16 @@ public static class Extension
             }
         }
 
+        // Apply pagination if it is set.
+        if (segment.Page != null)
+        {
+            // Apply pagination and return the result.
+            return result
+                .Skip(segment.Page.PageNumber * segment.Page.PageSize)
+                .Take(segment.Page.PageSize).ToList();
+        }
+
+        // Return the result.
         return result;
     }
 

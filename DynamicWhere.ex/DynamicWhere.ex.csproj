@@ -12,13 +12,12 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <Version>1.4.2</Version>
+    <Version>1.4.3</Version>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
     <Authors>Sajjad H. Al-Khafaji</Authors>
     <Description>
         Enhance data filtering in EF Core applications with object-based queries, simplifying dynamic filtering and improving data retrieval flexibility
-        #DynamicWhere #DynamicFilter #DynamicQuery #DynamicLinq #DynamicConditions #DynamicSorting #DynamicPaging
     </Description>
     <Copyright>Free For Ever</Copyright>
   </PropertyGroup>

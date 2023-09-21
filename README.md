@@ -142,11 +142,13 @@ You can use the `ConditionSet` class to create sets of conditions and specify ho
 
 #### **`Segment`**
 
-The `Segment` class serves as the top-level container for dynamic queries. It includes the following property:
+The `Segment` class serves as the top-level container for dynamic queries. It includes the following properties:
 
 - `ConditionSets`: A list of `ConditionSet` objects representing multiple sets of conditions within a query.
 
-You can use the `Segment` class to organize and manage multiple sets of conditions in your dynamic queries.
+- `Page`: An optional `PageBy` object containing properties `PageNumber` and `PageSize`, allowing you to specify pagination settings for the query.
+
+You can use the `Segment` class to organize and manage multiple sets of conditions and optionally define pagination settings in your dynamic queries.
 
 #### **`OrderBy`**
 
@@ -202,10 +204,10 @@ List<T> results = await query.ToListAsync(segment);
 
 - **Parameters:**
   - `query` (IQueryable<T>): The queryable source to execute the dynamic query on.
-  - `segment` (Segment): The segment object containing sets of conditions for dynamic querying.
+  - `segment` (Segment): The segment object containing sets of conditions for dynamic querying. It may also contain pagination settings.
 
 - **Return Value:**
-  - `List<T>`: A list of query results that meet the conditions specified in the segment.
+  - `List<T>`: A list of query results that meet the conditions specified in the segment, considering any pagination settings if provided.
 
 ---
 
@@ -442,10 +444,11 @@ These additional extension methods extend your capabilities to filter, order, an
 
 ### `Segment` 
 
-* Segment with 2 Sets
+* Segment with 2 Sets 
 * Each Set with a Condition Group
 * Each Condition Group with 3 Conditions and 2 Subgroups
 * Each Subgroup with 2 Conditions
+* Pagination Setting 
 
 ```json
 {
@@ -600,7 +603,11 @@ These additional extension methods extend your capabilities to filter, order, an
         ]
       }
     }
-  ]
+  ],
+  "Page": {
+    "PageNumber": 2,
+    "PageSize": 10
+  }
 }
 ```
 
@@ -690,6 +697,16 @@ This library is released under a free and open-source license, allowing you to u
 ## Change Log
 
 All notable changes to the **DynamicWhere.ex** library will be documented in this section.
+
+### [v1.4.3] - 2023-09-22
+
+#### Added
+
+- Optional pagination feature to the `Segment` class:
+
+  You can now include a `"Page"` object within the `Segment` to specify pagination settings, such as `"PageNumber"` and `"PageSize"`. This allows for more fine-grained control over the results returned by dynamic queries. 
+  
+  Pagination settings applied at the `Segment` level ensure that the pagination is performed on the final result set, providing you with precise control over how the entire query result is paginated.
 
 ### [v1.4.1] - 2023-09-18
 

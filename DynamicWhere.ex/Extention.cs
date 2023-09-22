@@ -13,11 +13,11 @@ public static class Extension
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
-    /// <param name="segment">The <see cref="Segment"/> containing filter conditions.</param>
-    /// <returns>A List of entities that match the filter conditions in the <see cref="Segment"/>.</returns>
+    /// <param name="segment">The <see cref="Segment"/> containing filter conditions and optional pagination settings.</param>
+    /// <returns>A <see cref="SegmentResult{T}"/> containing entities that match the filter conditions in the <see cref="Segment"/> with pagination information.</returns>
     /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="segment"/> is null.</exception>
     /// <exception cref="LogicException">Thrown when the <paramref name="segment"/> contains invalid data.</exception>
-    public static async Task<List<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment)
+    public static async Task<SegmentResult<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment)
     {
         // Validate input parameters.
         if (query == null)
@@ -33,20 +33,37 @@ public static class Extension
         // Validate and retrieve ConditionSets from the Segment.
         List<ConditionSet> sets = segment.ValidateAndGetSets();
 
+        SegmentResult<T> result = new();
+
         // If there are no filter conditions, return all results.
         if (sets.Count == 0)
         {
+            // Get the total count of entities in the query.
+            result.TotalCount = await query.CountAsync();
+
             // Apply pagination if it is set.
             if (segment.Page != null)
             {
+                // Set PageNumber, PageSize and PageCount.
+                result.PageNumber = segment.Page.PageNumber;
+                result.PageSize = segment.Page.PageSize;
+
+                if (result.PageSize != 0)
+                {
+                    result.PageCount = (int)Math.Ceiling((double)result.TotalCount / result.PageSize);
+                }
+
                 // Apply pagination to the query.
                 query = query
-                    .Skip(segment.Page.PageNumber * segment.Page.PageSize)
+                    .Skip((segment.Page.PageNumber - 1) * segment.Page.PageSize)
                     .Take(segment.Page.PageSize);
             }
 
+            // Get the data from database.
+            result.Data = await query.ToListAsync();
+
             // Return the result.
-            return await query.ToListAsync();
+            return result;
         }
 
         // Store filtered data sets.
@@ -64,7 +81,7 @@ public static class Extension
         }
 
         // Combine and apply Intersection operations to the data sets.
-        List<T> result = dataSets.OrderBy(x => x.sort).First().list;
+        List<T> data = dataSets.OrderBy(x => x.sort).First().list;
 
         foreach ((int sort, Intersection? intersection, List<T> list) in dataSets.OrderBy(x => x.sort).Skip(1))
         {
@@ -73,33 +90,50 @@ public static class Extension
                 case Intersection.Union:
                 {
                     // apply union operation to the result and the current list.
-                    result = result.Union(list).ToList();
+                    data = data.Union(list).ToList();
                 }
                 break;
 
                 case Intersection.Intersect:
                 {
                     // apply intersect operation to the result and the current list.
-                    result = result.Intersect(list).ToList();
+                    data = data.Intersect(list).ToList();
                 }
                 break;
 
                 case Intersection.Except:
                 {
                     // apply except operation to the result and the current list.
-                    result = result.Except(list).ToList();
+                    data = data.Except(list).ToList();
                 }
                 break;
             }
         }
 
+        // Get the total count of entities in the query.
+        result.TotalCount = data.Count;
+
         // Apply pagination if it is set.
         if (segment.Page != null)
         {
-            // Apply pagination and return the result.
-            return result
-                .Skip(segment.Page.PageNumber * segment.Page.PageSize)
-                .Take(segment.Page.PageSize).ToList();
+            // Set PageNumber, PageSize and PageCount.
+            result.PageNumber = segment.Page.PageNumber;
+            result.PageSize = segment.Page.PageSize;
+
+            if (result.PageSize != 0)
+            {
+                result.PageCount = (int)Math.Ceiling((double)result.TotalCount / result.PageSize);
+            }
+
+            // Apply pagination to the data.
+            result.Data = data
+                .Skip((segment.Page.PageNumber - 1) * segment.Page.PageSize)
+                .Take(segment.Page.PageSize)
+                .ToList();
+        }
+        else
+        {
+            result.Data = data;
         }
 
         // Return the result.

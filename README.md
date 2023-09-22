@@ -145,10 +145,21 @@ You can use the `ConditionSet` class to create sets of conditions and specify ho
 The `Segment` class serves as the top-level container for dynamic queries. It includes the following properties:
 
 - `ConditionSets`: A list of `ConditionSet` objects representing multiple sets of conditions within a query.
-
 - `Page`: An optional `PageBy` object containing properties `PageNumber` and `PageSize`, allowing you to specify pagination settings for the query.
 
 You can use the `Segment` class to organize and manage multiple sets of conditions and optionally define pagination settings in your dynamic queries.
+
+#### **`SegmentResult<T>`** 
+
+The `SegmentResult<T>` class is designed to manage the results of segmented queries. It provides information about pagination settings and contains a list of entities of type `<T>` that match the query conditions.
+
+- `PageNumber`: Represents the current page number of the query result.
+- `PageSize`: Represents the number of entities displayed on each result page.
+- `PageCount`: Indicates the total number of pages, based on the specified page size and the total entity count.
+- `TotalCount`: Represents the total count of entities that match the query conditions.
+- `Data`: Contains the list of entities retrieved as a result of the query.
+
+Together, these properties empower users to perform paginated queries with ease and precision, optimizing the management and utilization of segmented query results.
 
 #### **`OrderBy`**
 
@@ -191,23 +202,36 @@ The **DynamicWhere.ex** library includes a set of extension methods that enhance
 
 #### **`ToListAsync<T>(this IQueryable<T> query, Segment segment)`**
 
-This extension method allows you to execute an asynchronous query and return the results as a list based on the specified segment of conditions.
+This extension method allows you to execute an asynchronous query and retrieve the results as a list based on the specified segment of conditions.
 
 **Usage:**
 
 ```csharp
-// Assuming you have an IQueryable<T> query and a Segment segment defined
+// Previous usage v1.4.3 and less
 List<T> results = await query.ToListAsync(segment);
+
+// Updated usage v1.5.0 
+SegmentResult<T> result = await query.ToListAsync(segment);
+
+// Accessing the data result
+List<T> queryResults = result.Data;
+
+int pageNumber = result.PageNumber;
+int pageSize = result.PageSize;
+int pageCount = result.PageCount;
+int totalCount = result.TotalCount;
 ```
 
 **Documentation:**
 
 - **Parameters:**
   - `query` (IQueryable<T>): The queryable source to execute the dynamic query on.
-  - `segment` (Segment): The segment object containing sets of conditions for dynamic querying. It may also contain pagination settings.
+  - `segment` (Segment): The segment object containing sets of conditions for dynamic querying. It may also include optional pagination settings.
 
 - **Return Value:**
-  - `List<T>`: A list of query results that meet the conditions specified in the segment, considering any pagination settings if provided.
+  - `SegmentResult<T>`: An object representing the query results. It includes pagination information (if specified) and a list of entities that match the conditions specified in the segment.
+
+This extension method empowers you to perform asynchronous queries on data sources with flexibility. You can define intricate filter conditions within the segment and, if needed, include pagination settings for fine-tuned control over the query results.
 
 ---
 
@@ -230,6 +254,8 @@ var filteredQuery = query.Where(conditionGroup);
 
 - **Return Value:**
   - `IQueryable<T>`: A new queryable instance with the specified conditions applied.
+
+This extension method empowers you to apply complex filtering on your queries, providing flexibility and precision in your data retrieval.
 
 ---
 
@@ -698,15 +724,25 @@ This library is released under a free and open-source license, allowing you to u
 
 All notable changes to the **DynamicWhere.ex** library will be documented in this section.
 
+### [v1.5.0] - 2023-09-22
+
+#### Changes & Enhancement
+
+Modified the `ToListAsync<T>(this IQueryable<T> query, Segment segment)` method to return a `SegmentResult<T>` instead of a `List<T>`. 
+
+Now, when executing an asynchronous query using this method, you will receive a `SegmentResult<T>` object, which contains the list of query results that match the specified conditions within the `Segment`, along with pagination information if provided.
+
+This change enhances the flexibility of result management, allowing you to access both the query results and pagination details in a structured manner.
+
 ### [v1.4.3] - 2023-09-22
 
 #### Added
 
-- Optional pagination feature to the `Segment` class:
+Optional pagination feature to the `Segment` class:
 
-  You can now include a `"Page"` object within the `Segment` to specify pagination settings, such as `"PageNumber"` and `"PageSize"`. This allows for more fine-grained control over the results returned by dynamic queries. 
-  
-  Pagination settings applied at the `Segment` level ensure that the pagination is performed on the final result set, providing you with precise control over how the entire query result is paginated.
+You can now include a `"Page"` object within the `Segment` to specify pagination settings, such as `"PageNumber"` and `"PageSize"`. This allows for more fine-grained control over the results returned by dynamic queries. 
+
+Pagination settings applied at the `Segment` level ensure that the pagination is performed on the final result set, providing you with precise control over how the entire query result is paginated.
 
 ### [v1.4.1] - 2023-09-18
 
@@ -745,7 +781,7 @@ All notable changes to the **DynamicWhere.ex** library will be documented in thi
 
 #### Initial Release
 
-- The **DynamicWhere.ex** library is released, providing dynamic querying capabilities for LINQ queries.
+The **DynamicWhere.ex** library is released, providing dynamic querying capabilities for LINQ queries.
 
 ## Credits
 

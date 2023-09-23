@@ -12,13 +12,12 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <Version>1.5.0</Version>
+    <Version>1.5.1</Version>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
+    <WebPage>https://sajadh92.gitbook.io/dynamicwhere.ex/</WebPage>
     <Authors>Sajjad H. Al-Khafaji</Authors>
-    <Description>
-        Enhance data filtering in EF Core applications with object-based queries, simplifying dynamic filtering and improving data retrieval flexibility
-    </Description>
+    <Description>DynamicWhere.ex is a powerful and versatile library for dynamically creating complex filter expressions in Entity Framework Core applications. This library enhances your EF Core queries by providing support for creating dynamic filters using objects, making it easier to generate complex queries for your data. For detailed documentation and usage examples, please visit the official DynamicWhere.ex documentation website: [DynamicWhere.ex Documentation](https://sajadh92.gitbook.io/dynamicwhere.ex/)</Description>
     <Copyright>Free For Ever</Copyright>
   </PropertyGroup>
 </Project>

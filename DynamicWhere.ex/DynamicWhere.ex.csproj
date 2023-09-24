@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <Version>1.5.1</Version>
+    <Version>1.5.2</Version>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
     <WebPage>https://sajadh92.gitbook.io/dynamicwhere.ex/</WebPage>

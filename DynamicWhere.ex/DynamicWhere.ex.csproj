@@ -7,22 +7,22 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="puzzle.ico" />
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="6.0.22" />
     <PackageReference Include="System.Linq.Dynamic.Core" Version="1.3.4" />
   </ItemGroup>
 
   <PropertyGroup>
-    <Version>1.5.2</Version>
-    <RepositoryType>git</RepositoryType>
-    <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
-    <WebPage>https://sajadh92.gitbook.io/dynamicwhere.ex/</WebPage>
-    <Authors>Sajjad H. Al-Khafaji</Authors>
-    <Description>DynamicWhere.ex is a powerful and versatile library for dynamically creating complex filter expressions in Entity Framework Core applications. This library enhances your EF Core queries by providing support for creating dynamic filters using objects, making it easier to generate complex queries for your data. For detailed documentation and usage examples, please visit the official DynamicWhere.ex documentation website: [DynamicWhere.ex Documentation](https://sajadh92.gitbook.io/dynamicwhere.ex/)</Description>
-    <Copyright>Free For Ever</Copyright>
-    <ApplicationIcon>puzzle.ico</ApplicationIcon>
+      <PackageId>DynamicWhere.ex</PackageId>
+      <Title>DynamicWhere.ex</Title>
+      <Description>DynamicWhere.ex is a powerful and versatile library for dynamically creating complex filter expressions in Entity Framework Core applications. This library enhances your EF Core queries by providing support for creating dynamic filters using objects, making it easier to generate complex queries for your data. For detailed documentation and usage examples, please visit the official [DynamicWhere.ex Documentation](https://docs.dynamicwhere.com/) website</Description>
+      <PackageTags>DynamicWhere.ex, DynamicWhere, DynamicFilter, DynamicLinq, Linq, EF Core, Dynamic, Where, Filter, Paging, OrderBy, Segment, Expression</PackageTags>
+      <Authors>Sajjad H. Al-Khafaji</Authors>
+      <Copyright>Free For Ever</Copyright>
+      <Version>1.5.3</Version>
+      <PackageProjectUrl>https://docs.dynamicwhere.com</PackageProjectUrl>
+      <RepositoryType>git</RepositoryType>
+      <RepositoryBranch>master</RepositoryBranch>
+      <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
+      <PackageIconUrl>icon.png</PackageIconUrl>
   </PropertyGroup>
 </Project>

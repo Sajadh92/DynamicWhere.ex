@@ -225,6 +225,73 @@ public static class Extension
     }
 
     /// <summary>
+    /// Asynchronously retrieves a list of entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Filter"/>.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when the <paramref name="filter"/> contains invalid data.</exception>
+    public static async Task<FilterResult<T>> ToListAsync<T>(this IQueryable<T> query, Filter filter)
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (filter == null)
+        {
+            throw new ArgumentNullException(nameof(filter));
+        }
+
+        // Apply filtering conditions if a ConditionGroup is provided in the filter.
+        if (filter.ConditionGroup != null)
+        {
+            query = query.Where(filter.ConditionGroup);
+        }
+
+        // Create a new query to apply ordering.
+        var newQuery = query;
+
+        // Apply ordering if Orders are specified in the filter.
+        if (filter.Orders != null)
+        {
+            newQuery = newQuery.Order(filter.Orders);
+        }
+
+        // Initialize variables for pagination.
+        int pageNumber = 0, pageSize = 0;
+
+        // Apply pagination if a Page object is provided in the filter.
+        if (filter.Page != null)
+        {
+            newQuery = newQuery.Page(filter.Page);
+
+            pageNumber = filter.Page.PageNumber;
+            pageSize = filter.Page.PageSize;
+        }
+
+        // Calculate the total count of entities before pagination.
+        int totalCount = await query.CountAsync();
+
+        // Calculate the total page count based on the page size.
+        int pageCount = (int)Math.Ceiling((double)totalCount /
+                        (pageSize == 0 ? 1 : pageSize));
+
+        // Create and return a FilterResult containing the result data and pagination information.
+        return new SegmentResult<T>
+        {
+            PageNumber = pageNumber,
+            PageSize = pageSize,
+            PageCount = pageCount,
+            TotalCount = totalCount,
+            Data = await newQuery.ToListAsync()
+        };
+    }
+
+    /// <summary>
     /// Asynchronously retrieves a list of entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Segment"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>

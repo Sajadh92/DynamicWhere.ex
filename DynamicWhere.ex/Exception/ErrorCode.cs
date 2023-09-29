@@ -58,4 +58,14 @@ internal static class ErrorCode
     /// A formatted error message indicating the operator-specific validation requirement.
     /// </returns>
     public static string RequiredOneValue(string name) => $"ConditionWithOperator[{name}]MustHasOnlyOneValue";
+
+    /// <summary>
+    /// Indicates that a page number must be greater than zero.
+    /// </summary>
+    public static string InvalidPageNumber => "PageNumberMustBeGreaterThanZero";
+
+    /// <summary>
+    /// Indicates that a page size must be greater than zero.
+    /// </summary>
+    public static string InvalidPageSize => "PageSizeMustBeGreaterThanZero";
 }

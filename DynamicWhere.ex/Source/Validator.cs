@@ -170,6 +170,27 @@ internal static class Validator
     }
 
     /// <summary>
+    /// Validates the parameters of a paging request to ensure they are within acceptable limits.
+    /// </summary>
+    /// <typeparam name="T">The type of paging configuration (usually a DTO or model).</typeparam>
+    /// <param name="page">The paging configuration to validate.</param>
+    /// <exception cref="LogicException">Thrown when the page number or page size is invalid.</exception>
+    public static void Validate<T>(this PageBy page)
+    {
+        // Check page number if it a positive integer.
+        if (page.PageNumber < 0)
+        {
+            throw new LogicException(ErrorCode.InvalidPageNumber);
+        }
+
+        // Check page size if it is a positive integer.
+        if (page.PageSize < 0)
+        {
+            throw new LogicException(ErrorCode.InvalidPageSize);
+        }
+    }
+
+    /// <summary>
     /// Validates a string representing a property name within a nested object hierarchy for a given type.
     /// </summary>
     /// <typeparam name="T">The type in which the property name is validated.</typeparam>

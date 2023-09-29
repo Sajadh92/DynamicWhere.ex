@@ -231,6 +231,8 @@ public static class Extension
             throw new ArgumentNullException(nameof(page));
         }
 
+        page.Validate<T>();
+
         // Skip the required number of items to reach the desired page,
         // and then take the specified number of items for the page.
         return query.Skip((page.PageNumber - 1) * page.PageSize).Take(page.PageSize);

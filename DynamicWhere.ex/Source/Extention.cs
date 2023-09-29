@@ -252,7 +252,7 @@ public static class Extension
             query = query.Where(filter.ConditionGroup);
         }
 
-        // Create a new query to apply ordering.
+        // Create a new query to apply ordering and pagination.
         var newQuery = query;
 
         // Apply ordering if Orders are specified in the filter.
@@ -281,7 +281,7 @@ public static class Extension
                         (pageSize == 0 ? 1 : pageSize));
 
         // Create and return a FilterResult containing the result data and pagination information.
-        return new SegmentResult<T>
+        return new FilterResult<T>
         {
             PageNumber = pageNumber,
             PageSize = pageSize,

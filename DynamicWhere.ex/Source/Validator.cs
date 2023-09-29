@@ -8,74 +8,6 @@ namespace DynamicWhere.ex;
 internal static class Validator
 {
     /// <summary>
-    /// Validates the condition sets within a <see cref="Segment"/> and retrieves them if they meet the specified criteria.
-    /// </summary>
-    /// <param name="segment">The <see cref="Segment"/> instance containing the condition sets to validate.</param>
-    /// <returns>
-    /// A list of valid condition sets within the segment.
-    /// </returns>
-    /// <exception cref="LogicException">
-    /// Thrown when the segment or its condition sets do not meet the specified criteria.
-    /// </exception>
-    public static List<ConditionSet> ValidateAndGetSets(this Segment segment)
-    {
-        if (segment.ConditionSets.Count == 0)
-        {
-            return new List<ConditionSet>();
-        }
-
-        // Check for duplicate sorting values among condition sets.
-        bool hasDuplicateSort = segment.ConditionSets.GroupBy(x => x.Sort).Any(x => x.Count() > 1);
-
-        if (hasDuplicateSort)
-        {
-            throw new LogicException(ErrorCode.SetsUniqueSort);
-        }
-
-        // Check if any condition set except the first one has a null intersection.
-        bool hasNullIntersection = segment.ConditionSets.OrderBy(x => x.Sort).Skip(1).Any(x => x.Intersection == null);
-
-        if (hasNullIntersection)
-        {
-            throw new LogicException(ErrorCode.RequiredIntersection);
-        }
-
-        // sort the condition sets by their sorting values.
-        List<ConditionSet> sets = segment.ConditionSets.OrderBy(x => x.Sort).ToList();
-
-        // Set the intersection of the first condition set to null to represent the absence of intersection.
-        sets[0].Intersection = null;
-
-        return sets;
-    }
-
-    /// <summary>
-    /// Validates a <see cref="ConditionGroup"/> instance to ensure it meets the specified criteria.
-    /// </summary>
-    /// <param name="group">The <see cref="ConditionGroup"/> instance to validate.</param>
-    /// <exception cref="LogicException">
-    /// Thrown when the condition group or its components are found to have duplicate sorting values based on the specified criteria.
-    /// </exception>
-    public static void Validate(this ConditionGroup group)
-    {
-        // Check for duplicate sorting values among conditions within the group.
-        bool hasDuplicateSort = group.Conditions.GroupBy(x => x.Sort).Any(x => x.Count() > 1);
-
-        if (hasDuplicateSort)
-        {
-            throw new LogicException(ErrorCode.ConditionsUniqueSort);
-        }
-
-        // Check for duplicate sorting values among subcondition groups within the group.
-        hasDuplicateSort = group.SubConditionGroups.GroupBy(x => x.Sort).Any(x => x.Count() > 1);
-
-        if (hasDuplicateSort)
-        {
-            throw new LogicException(ErrorCode.SubConditionsGroupsUniqueSort);
-        }
-    }
-
-    /// <summary>
     /// Validates a <see cref="Condition"/> instance to ensure it meets the specified criteria.
     /// </summary>
     /// <typeparam name="T">The type in which the condition is applied.</typeparam>
@@ -152,6 +84,32 @@ internal static class Validator
     }
 
     /// <summary>
+    /// Validates a <see cref="ConditionGroup"/> instance to ensure it meets the specified criteria.
+    /// </summary>
+    /// <param name="group">The <see cref="ConditionGroup"/> instance to validate.</param>
+    /// <exception cref="LogicException">
+    /// Thrown when the condition group or its components are found to have duplicate sorting values based on the specified criteria.
+    /// </exception>
+    public static void Validate(this ConditionGroup group)
+    {
+        // Check for duplicate sorting values among conditions within the group.
+        bool hasDuplicateSort = group.Conditions.GroupBy(x => x.Sort).Any(x => x.Count() > 1);
+
+        if (hasDuplicateSort)
+        {
+            throw new LogicException(ErrorCode.ConditionsUniqueSort);
+        }
+
+        // Check for duplicate sorting values among subcondition groups within the group.
+        hasDuplicateSort = group.SubConditionGroups.GroupBy(x => x.Sort).Any(x => x.Count() > 1);
+
+        if (hasDuplicateSort)
+        {
+            throw new LogicException(ErrorCode.SubConditionsGroupsUniqueSort);
+        }
+    }
+
+    /// <summary>
     /// Validates an <see cref="OrderBy"/> instance to ensure it has a valid field name.
     /// </summary>
     /// <typeparam name="T">The type to validate the field name against.</typeparam>
@@ -188,6 +146,48 @@ internal static class Validator
         {
             throw new LogicException(ErrorCode.InvalidPageSize);
         }
+    }
+
+    /// <summary>
+    /// Validates the condition sets within a <see cref="Segment"/> and retrieves them if they meet the specified criteria.
+    /// </summary>
+    /// <param name="segment">The <see cref="Segment"/> instance containing the condition sets to validate.</param>
+    /// <returns>
+    /// A list of valid condition sets within the segment.
+    /// </returns>
+    /// <exception cref="LogicException">
+    /// Thrown when the segment or its condition sets do not meet the specified criteria.
+    /// </exception>
+    public static List<ConditionSet> ValidateAndGetSets(this Segment segment)
+    {
+        if (segment.ConditionSets.Count == 0)
+        {
+            return new List<ConditionSet>();
+        }
+
+        // Check for duplicate sorting values among condition sets.
+        bool hasDuplicateSort = segment.ConditionSets.GroupBy(x => x.Sort).Any(x => x.Count() > 1);
+
+        if (hasDuplicateSort)
+        {
+            throw new LogicException(ErrorCode.SetsUniqueSort);
+        }
+
+        // Check if any condition set except the first one has a null intersection.
+        bool hasNullIntersection = segment.ConditionSets.OrderBy(x => x.Sort).Skip(1).Any(x => x.Intersection == null);
+
+        if (hasNullIntersection)
+        {
+            throw new LogicException(ErrorCode.RequiredIntersection);
+        }
+
+        // sort the condition sets by their sorting values.
+        List<ConditionSet> sets = segment.ConditionSets.OrderBy(x => x.Sort).ToList();
+
+        // Set the intersection of the first condition set to null to represent the absence of intersection.
+        sets[0].Intersection = null;
+
+        return sets;
     }
 
     /// <summary>

@@ -6,60 +6,6 @@
 internal static class Converter
 {
     /// <summary>
-    /// Converts a ConditionGroup into its corresponding C# string representation.
-    /// </summary>
-    /// <typeparam name="T">The type to validate the conditions against.</typeparam>
-    /// <param name="group">The ConditionGroup to convert.</param>
-    /// <returns>The C# string representation of the ConditionGroup.</returns>
-    public static string AsString<T>(this ConditionGroup group)
-    {
-        // Validate the ConditionGroup.
-        group.Validate();
-
-        // Define the connector based on the Connector enum.
-        string connector = group.Connector switch
-        {
-            Connector.And => " && ",
-            Connector.Or => " || ",
-            _ => string.Empty
-        };
-
-        List<string> conditions = new();
-
-        // Iterate through and convert each Condition in the group.
-        foreach (Condition condition in group.Conditions.OrderBy(x => x.Sort))
-        {
-            string conditionAsString = condition.AsString<T>();
-
-            // Add non-empty condition strings to the list.
-            if (!string.IsNullOrWhiteSpace(conditionAsString))
-            {
-                conditions.Add(conditionAsString);
-            }
-        }
-
-        // Iterate through and convert each sub ConditionGroup in the group.
-        foreach (ConditionGroup subGroup in group.SubConditionGroups.OrderBy(x => x.Sort))
-        {
-            string subGroupConditionsAsString = subGroup.AsString<T>();
-
-            // Add non-empty sub-group condition strings to the list.
-            if (!string.IsNullOrWhiteSpace(subGroupConditionsAsString))
-            {
-                conditions.Add(subGroupConditionsAsString);
-            }
-        }
-
-        // Combine conditions using the specified connector.
-        if (conditions.Any())
-        {
-            return $"({string.Join(connector, conditions)})";
-        }
-
-        return string.Empty;
-    }
-
-    /// <summary>
     /// Converts a condition into its corresponding C# string representation.
     /// </summary>
     /// <typeparam name="T">The type to validate the field against.</typeparam>
@@ -392,6 +338,60 @@ internal static class Converter
                 }
             }
             break;
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Converts a ConditionGroup into its corresponding C# string representation.
+    /// </summary>
+    /// <typeparam name="T">The type to validate the conditions against.</typeparam>
+    /// <param name="group">The ConditionGroup to convert.</param>
+    /// <returns>The C# string representation of the ConditionGroup.</returns>
+    public static string AsString<T>(this ConditionGroup group)
+    {
+        // Validate the ConditionGroup.
+        group.Validate();
+
+        // Define the connector based on the Connector enum.
+        string connector = group.Connector switch
+        {
+            Connector.And => " && ",
+            Connector.Or => " || ",
+            _ => string.Empty
+        };
+
+        List<string> conditions = new();
+
+        // Iterate through and convert each Condition in the group.
+        foreach (Condition condition in group.Conditions.OrderBy(x => x.Sort))
+        {
+            string conditionAsString = condition.AsString<T>();
+
+            // Add non-empty condition strings to the list.
+            if (!string.IsNullOrWhiteSpace(conditionAsString))
+            {
+                conditions.Add(conditionAsString);
+            }
+        }
+
+        // Iterate through and convert each sub ConditionGroup in the group.
+        foreach (ConditionGroup subGroup in group.SubConditionGroups.OrderBy(x => x.Sort))
+        {
+            string subGroupConditionsAsString = subGroup.AsString<T>();
+
+            // Add non-empty sub-group condition strings to the list.
+            if (!string.IsNullOrWhiteSpace(subGroupConditionsAsString))
+            {
+                conditions.Add(subGroupConditionsAsString);
+            }
+        }
+
+        // Combine conditions using the specified connector.
+        if (conditions.Any())
+        {
+            return $"({string.Join(connector, conditions)})";
         }
 
         return string.Empty;

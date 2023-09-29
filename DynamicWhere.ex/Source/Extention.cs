@@ -41,22 +41,25 @@ public static class Extension
             // Get the total count of entities in the query.
             result.TotalCount = await query.CountAsync();
 
+            // Apply ordering if it is set.
+            if (segment.Orders != null)
+            {
+                // Apply ordering to the query.
+                query = query.Order(segment.Orders);
+            }
+
             // Apply pagination if it is set.
             if (segment.Page != null)
             {
+                // Apply pagination to the query.
+                query = query.Page(segment.Page);
+
                 // Set PageNumber, PageSize and PageCount.
                 result.PageNumber = segment.Page.PageNumber;
                 result.PageSize = segment.Page.PageSize;
 
-                if (result.PageSize != 0)
-                {
-                    result.PageCount = (int)Math.Ceiling((double)result.TotalCount / result.PageSize);
-                }
-
-                // Apply pagination to the query.
-                query = query
-                    .Skip((segment.Page.PageNumber - 1) * segment.Page.PageSize)
-                    .Take(segment.Page.PageSize);
+                result.PageCount = (int)Math.Ceiling((double)result.TotalCount /
+                                   (result.PageSize == 0 ? 1 : result.PageSize));
             }
 
             // Get the data from database.
@@ -113,23 +116,25 @@ public static class Extension
         // Get the total count of entities in the query.
         result.TotalCount = data.Count;
 
+        // Apply ordering if it is set.
+        if (segment.Orders != null)
+        {
+            // Apply ordering to the data.
+            data = data.AsQueryable().Order(segment.Orders).ToList();
+        }
+
         // Apply pagination if it is set.
         if (segment.Page != null)
         {
+            // Apply pagination to the data.
+            result.Data = data.AsQueryable().Page(segment.Page).ToList();
+
             // Set PageNumber, PageSize and PageCount.
             result.PageNumber = segment.Page.PageNumber;
             result.PageSize = segment.Page.PageSize;
 
-            if (result.PageSize != 0)
-            {
-                result.PageCount = (int)Math.Ceiling((double)result.TotalCount / result.PageSize);
-            }
-
-            // Apply pagination to the data.
-            result.Data = data
-                .Skip((segment.Page.PageNumber - 1) * segment.Page.PageSize)
-                .Take(segment.Page.PageSize)
-                .ToList();
+            result.PageCount = (int)Math.Ceiling((double)result.TotalCount /
+                               (result.PageSize == 0 ? 1 : result.PageSize));
         }
         else
         {

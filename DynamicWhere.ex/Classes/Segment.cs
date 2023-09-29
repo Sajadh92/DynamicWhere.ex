@@ -11,7 +11,12 @@ public class Segment
     public List<ConditionSet> ConditionSets { get; set; } = new();
 
     /// <summary>
-    /// Represents the pagination settings for the segment.
+    /// Represents the order by for the segment.
+    /// </summary>
+    public List<OrderBy>? Orders { get; set; } = new();
+
+    /// <summary>
+    /// Represents the pagination for the segment.
     /// </summary>
     public PageBy? Page { get; set; }
 }

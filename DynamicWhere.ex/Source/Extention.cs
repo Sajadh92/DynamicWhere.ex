@@ -287,6 +287,8 @@ public static class Extension
             PageSize = pageSize,
             PageCount = pageCount,
             TotalCount = totalCount,
+
+            // Execute the query to retrieve the data.
             Data = await newQuery.ToListAsync()
         };
     }
@@ -316,40 +318,29 @@ public static class Extension
         // Validate and retrieve ConditionSets from the Segment.
         List<ConditionSet> sets = segment.ValidateAndGetSets();
 
-        SegmentResult<T> result = new();
-
         // If there are no filter conditions, return all results.
         if (sets.Count == 0)
         {
-            // Get the total count of entities in the query.
-            result.TotalCount = await query.CountAsync();
-
-            // Apply ordering if it is set.
-            if (segment.Orders != null)
+            // Create a new filter with the same ordering and pagination as the segment.
+            Filter filter = new()
             {
-                // Apply ordering to the query.
-                query = query.Order(segment.Orders);
-            }
+                ConditionGroup = null,
+                Orders = segment.Orders,
+                Page = segment.Page
+            };
 
-            // Apply pagination if it is set.
-            if (segment.Page != null)
+            // Retrieve the results using the filter.
+            FilterResult<T> fresult = await query.ToListAsync(filter);
+
+            // Return the results as a SegmentResult.
+            return new()
             {
-                // Apply pagination to the query.
-                query = query.Page(segment.Page);
-
-                // Set PageNumber, PageSize and PageCount.
-                result.PageNumber = segment.Page.PageNumber;
-                result.PageSize = segment.Page.PageSize;
-
-                result.PageCount = (int)Math.Ceiling((double)result.TotalCount /
-                                   (result.PageSize == 0 ? 1 : result.PageSize));
-            }
-
-            // Get the data from database.
-            result.Data = await query.ToListAsync();
-
-            // Return the result.
-            return result;
+                PageNumber = fresult.PageNumber,
+                PageSize = fresult.PageSize,
+                PageCount = fresult.PageCount,
+                TotalCount = fresult.TotalCount,
+                Data = fresult.Data
+            };
         }
 
         // Store filtered data sets.
@@ -396,8 +387,12 @@ public static class Extension
             }
         }
 
-        // Get the total count of entities in the query.
-        result.TotalCount = data.Count;
+        // Create a new SegmentResult to store the result.
+        SegmentResult<T> sresult = new()
+        {
+            // Get the total count of entities in the query.
+            TotalCount = data.Count
+        };
 
         // Apply ordering if it is set.
         if (segment.Orders != null)
@@ -410,21 +405,21 @@ public static class Extension
         if (segment.Page != null)
         {
             // Apply pagination to the data.
-            result.Data = data.AsQueryable().Page(segment.Page).ToList();
+            sresult.Data = data.AsQueryable().Page(segment.Page).ToList();
 
             // Set PageNumber, PageSize and PageCount.
-            result.PageNumber = segment.Page.PageNumber;
-            result.PageSize = segment.Page.PageSize;
+            sresult.PageNumber = segment.Page.PageNumber;
+            sresult.PageSize = segment.Page.PageSize;
 
-            result.PageCount = (int)Math.Ceiling((double)result.TotalCount /
-                               (result.PageSize == 0 ? 1 : result.PageSize));
+            sresult.PageCount = (int)Math.Ceiling((double)sresult.TotalCount /
+                               (sresult.PageSize == 0 ? 1 : sresult.PageSize));
         }
         else
         {
-            result.Data = data;
+            sresult.Data = data;
         }
 
         // Return the result.
-        return result;
+        return sresult;
     }
 }

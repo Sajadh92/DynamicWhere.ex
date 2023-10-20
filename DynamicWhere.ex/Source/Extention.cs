@@ -19,7 +19,7 @@ public static class Extension
     /// </returns>
     /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="fields"/> is null.</exception>
     /// <exception cref="LogicException">Thrown if no valid fields are specified in the <paramref name="fields"/> list.</exception>
-    public static IQueryable Select<T>(this IQueryable<T> query, List<string> fields)
+    public static IQueryable<T> Select<T>(this IQueryable<T> query, List<string> fields)
     {
         // Validate input parameters.
         if (query == null)
@@ -50,7 +50,7 @@ public static class Extension
         }
 
         // Apply the select to the query and return new query.
-        return query.Select(select);
+        return query.Select<T>(select);
     }
 
     /// <summary>

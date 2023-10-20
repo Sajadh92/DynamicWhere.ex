@@ -68,4 +68,9 @@ internal static class ErrorCode
     /// Indicates that a page size must be greater than zero.
     /// </summary>
     public static string InvalidPageSize => "PageSizeMustBeGreaterThanZero";
+
+    /// <summary>
+    /// Indicates that the fields list must have at least one field.
+    /// </summary>
+    public static string MustHaveFields => "MustHasFields";
 }

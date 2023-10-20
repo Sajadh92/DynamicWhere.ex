@@ -9,6 +9,51 @@ namespace DynamicWhere.ex;
 public static class Extension
 {
     /// <summary>
+    /// Projects and filters the specified fields in an <see cref="IQueryable{T}"/> query.
+    /// </summary>
+    /// <typeparam name="T">The entity type of the <see cref="IQueryable{T}"/>.</typeparam>
+    /// <param name="query">The source <see cref="IQueryable{T}"/> query to be projected.</param>
+    /// <param name="fields">A list of field names to include in the projection.</param>
+    /// <returns>
+    /// An <see cref="IQueryable"/> query containing only the specified fields or the original <paramref name="query"/> if no valid fields are specified.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="fields"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown if no valid fields are specified in the <paramref name="fields"/> list.</exception>
+    public static IQueryable Select<T>(this IQueryable<T> query, List<string> fields)
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (fields == null)
+        {
+            throw new ArgumentNullException(nameof(fields));
+        }
+
+        if (fields.Count == 0)
+        {
+            throw new LogicException(ErrorCode.MustHaveFields);
+        }
+
+        // Validate each field if it is exists in the query.
+        fields.ForEach(x => x.Validate<T>());
+
+        // Concatenate the individual field strings into a single comma-separated string.
+        string select = string.Join(",", fields);
+
+        // If the resulting select string is empty or whitespace, return the original query.
+        if (string.IsNullOrWhiteSpace(select))
+        {
+            return query;
+        }
+
+        // Apply the select to the query and return new query.
+        return query.Select(select);
+    }
+
+    /// <summary>
     /// Applies filtering conditions to the <see cref="IQueryable{T}"/> based on a <see cref="Condition"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>

@@ -254,6 +254,12 @@ public static class Extension
             query = query.Where(filter.ConditionGroup);
         }
 
+        // Apply the select criteria to the query.
+        if (filter.Selects != null)
+        {
+            query = query.Select(filter.Selects);
+        }
+
         // Apply the order-by criteria to the query.
         if (filter.Orders != null)
         {
@@ -266,6 +272,7 @@ public static class Extension
             query = query.Page(filter.Page);
         }
 
+        // Return the filtered query.
         return query;
     }
 
@@ -291,16 +298,22 @@ public static class Extension
             throw new ArgumentNullException(nameof(filter));
         }
 
-        // Apply filtering conditions if a ConditionGroup is provided in the filter.
+        // Apply the filter criteria to the query.
         if (filter.ConditionGroup != null)
         {
             query = query.Where(filter.ConditionGroup);
         }
 
+        // Apply the select criteria to the query.
+        if (filter.Selects != null)
+        {
+            query = query.Select(filter.Selects);
+        }
+
         // Create a new query to apply ordering and pagination.
         var newQuery = query;
 
-        // Apply ordering if Orders are specified in the filter.
+        // Apply the order-by criteria to the new query.
         if (filter.Orders != null)
         {
             newQuery = newQuery.Order(filter.Orders);
@@ -309,7 +322,7 @@ public static class Extension
         // Initialize variables for pagination.
         int pageNumber = 0, pageSize = 0;
 
-        // Apply pagination if a Page object is provided in the filter.
+        // Apply the pagination criteria to the new query.
         if (filter.Page != null)
         {
             newQuery = newQuery.Page(filter.Page);
@@ -366,10 +379,11 @@ public static class Extension
         // If there are no filter conditions, return all results.
         if (sets.Count == 0)
         {
-            // Create a new filter with the same ordering and pagination as the segment.
+            // Create a new filter with the same select, order, and pagination criteria.
             Filter filter = new()
             {
                 ConditionGroup = null,
+                Selects = segment.Selects,
                 Orders = segment.Orders,
                 Page = segment.Page
             };
@@ -395,6 +409,12 @@ public static class Extension
         {
             // Apply filter conditions from ConditionGroup.
             IQueryable<T> queryable = query.Where(set.ConditionGroup);
+
+            if (segment.Selects != null)
+            {
+                // Apply select criteria to the query.
+                queryable = queryable.Select(segment.Selects);
+            }
 
             // Materialize the filtered data and store it.
             List<T> list = await queryable.ToListAsync();

@@ -6,9 +6,14 @@
 public class Segment
 {
     /// <summary>
-    /// The list of condition sets in the segment.
+    /// Represents a list of condition sets in the segment.
     /// </summary>
     public List<ConditionSet> ConditionSets { get; set; } = new();
+
+    /// <summary>
+    /// Represents a list of fields to be selected.
+    /// </summary>
+    public List<string>? Selects { get; set; }
 
     /// <summary>
     /// Represents the order by for the segment.

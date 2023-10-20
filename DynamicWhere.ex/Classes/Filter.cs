@@ -11,6 +11,11 @@ public class Filter
     public ConditionGroup? ConditionGroup { get; set; }
 
     /// <summary>
+    /// Represents a list of fields to be selected.
+    /// </summary>
+    public List<string>? Selects { get; set; }
+
+    /// <summary>
     /// Represents a list of order-by criteria.
     /// </summary>
     public List<OrderBy>? Orders { get; set; }

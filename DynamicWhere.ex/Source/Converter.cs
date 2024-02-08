@@ -8,52 +8,119 @@ internal static class Converter
     /// <summary>
     /// Converts a condition into its corresponding C# string representation.
     /// </summary>
-    /// <typeparam name="T">The type to validate the field against.</typeparam>
+    /// <typeparam name="T">The type of the entity being queried.</typeparam>
     /// <param name="condition">The condition to convert.</param>
     /// <returns>The C# string representation of the condition.</returns>
+    /// <exception cref="LogicException">Thrown if the condition contains invalid data.</exception>
+    /// <exception cref="ArgumentNullException">Thrown if the condition field is null.</exception>
     public static string AsString<T>(this Condition condition)
     {
         // Validate the condition.
         condition.Validate<T>();
 
-        switch (condition.DataType)
+        // Split the field into individual property names.
+        string[] props = condition.Field!.Trim().Replace(" ", "").Split('.');
+
+        Type type = typeof(T), parent = typeof(T);
+
+        // Initialize variables to build the condition string.
+        string conditionAsString = ""; int any = 0;
+
+        for (int i = 0; i < props.Length; i++)
+        {
+            string p = props[i];
+
+            // Check if the parent is a generic list and append 'Any' if true.
+            if (parent.IsGenericType && parent.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            {
+                conditionAsString += $"Any(i{i} => i{i}.{p}"; any++;
+            }
+            else
+            {
+                conditionAsString += p;
+            }
+
+            if (i < props.Length - 1)
+            {
+                // Append a dot for navigation to the next property.
+                conditionAsString += ".";
+
+                type = parent = type.GetProperty(p)!.PropertyType;
+
+                // If the property is a generic list, navigate to its element type.
+                if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                {
+                    type = type.GetGenericArguments()[0];
+                }
+            }
+            else
+            {
+                // For the last property, build the actual condition string.
+                string last = conditionAsString.Split(' ').Last().Trim();
+
+                conditionAsString = conditionAsString.Remove(conditionAsString.Length - last.Length);
+
+                conditionAsString += BuildCondition(condition.DataType, condition.Operator, last, condition.Values);
+            }
+        }
+
+        // Close any 'Any' lambda expressions.
+        for (int i = 0; i < any; i++)
+        {
+            conditionAsString += ")";
+        }
+
+        return $"({conditionAsString})";
+    }
+
+    /// <summary>
+    /// Builds a string representation of a condition for dynamic LINQ queries based on the specified data type, operator, field, and values.
+    /// </summary>
+    /// <param name="DataType">The data type of the field.</param>
+    /// <param name="Operator">The comparison operator.</param>
+    /// <param name="Field">The field to compare.</param>
+    /// <param name="Values">The values to compare against.</param>
+    /// <returns>A string representation of the condition for use in dynamic LINQ queries.</returns>
+    public static string BuildCondition(DataType DataType, Operator Operator, string Field, List<string> Values)
+    {
+        switch (DataType)
         {
             case DataType.Guid:
             {
-                switch (condition.Operator)
+                switch (Operator)
                 {
                     case Operator.Equal:
                     {
-                        return $"({condition.Field} != null && {condition.Field} == \"{condition.Values[0]}\")";
+                        return $"{Field} != null && {Field} == \"{Values[0]}\"";
                     }
 
                     case Operator.NotEqual:
                     {
-                        return $"({condition.Field} != null && {condition.Field} != \"{condition.Values[0]}\")";
+                        return $"{Field} != null && {Field} != \"{Values[0]}\"";
                     }
 
                     case Operator.In:
                     {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} == \"{value}\"");
+                        var conditions = Values.Select(value => $"{Field} == \"{value}\"");
 
-                        return $"({condition.Field} != null && ({string.Join(" || ", conditions)}))";
+                        return $"{Field} != null && ({string.Join(" || ", conditions)})";
                     }
 
                     case Operator.NotIn:
                     {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} != \"{value}\"");
+                        var conditions = Values.Select(value => $"{Field} != \"{value}\"");
 
-                        return $"({condition.Field} != null && ({string.Join(" && ", conditions)}))";
+                        return $"{Field} != null && ({string.Join(" && ", conditions)})";
                     }
 
                     case Operator.IsNull:
                     {
-                        return $"({condition.Field} == null)";
+                        return $"{Field} == null";
                     }
 
                     case Operator.IsNotNull:
                     {
-                        return $"({condition.Field} != null)";
+                        return $"{Field} != null";
                     }
                 }
             }
@@ -61,124 +128,124 @@ internal static class Converter
 
             case DataType.Text:
             {
-                switch (condition.Operator)
+                switch (Operator)
                 {
                     case Operator.Equal:
                     {
-                        return $"({condition.Field} != null && {condition.Field} == \"{condition.Values[0]}\")";
+                        return $"{Field} != null && {Field} == \"{Values[0]}\"";
                     }
 
                     case Operator.IEqual:
                     {
-                        return $"({condition.Field} != null && {condition.Field}.ToLower() == \"{condition.Values[0].ToLower()}\")";
+                        return $"{Field} != null && {Field}.ToLower() == \"{Values[0].ToLower()}\"";
                     }
 
                     case Operator.NotEqual:
                     {
-                        return $"({condition.Field} != null && {condition.Field} != \"{condition.Values[0]}\")";
+                        return $"{Field} != null && {Field} != \"{Values[0]}\"";
                     }
 
                     case Operator.INotEqual:
                     {
-                        return $"({condition.Field} != null && {condition.Field}.ToLower() != \"{condition.Values[0].ToLower()}\")";
+                        return $"{Field} != null && {Field}.ToLower() != \"{Values[0].ToLower()}\"";
                     }
 
                     case Operator.Contains:
                     {
-                        return $"({condition.Field} != null && {condition.Field}.Contains(\"{condition.Values[0]}\"))";
+                        return $"{Field} != null && {Field}.Contains(\"{Values[0]}\")";
                     }
 
                     case Operator.IContains:
                     {
-                        return $"({condition.Field} != null && {condition.Field}.ToLower().Contains(\"{condition.Values[0].ToLower()}\"))";
+                        return $"{Field} != null && {Field}.ToLower().Contains(\"{Values[0].ToLower()}\")";
                     }
 
                     case Operator.NotContains:
                     {
-                        return $"({condition.Field} != null && !{condition.Field}.Contains(\"{condition.Values[0]}\"))";
+                        return $"{Field} != null && !{Field}.Contains(\"{Values[0]}\")";
                     }
 
                     case Operator.INotContains:
                     {
-                        return $"({condition.Field} != null && !{condition.Field}.ToLower().Contains(\"{condition.Values[0].ToLower()}\"))";
+                        return $"{Field} != null && !{Field}.ToLower().Contains(\"{Values[0].ToLower()}\")";
                     }
 
                     case Operator.StartsWith:
                     {
-                        return $"({condition.Field} != null && {condition.Field}.StartsWith(\"{condition.Values[0]}\"))";
+                        return $"{Field} != null && {Field}.StartsWith(\"{Values[0]}\")";
                     }
 
                     case Operator.IStartsWith:
                     {
-                        return $"({condition.Field} != null && {condition.Field}.ToLower().StartsWith(\"{condition.Values[0].ToLower()}\"))";
+                        return $"{Field} != null && {Field}.ToLower().StartsWith(\"{Values[0].ToLower()}\")";
                     }
 
                     case Operator.NotStartsWith:
                     {
-                        return $"({condition.Field} != null && !{condition.Field}.StartsWith(\"{condition.Values[0]}\"))";
+                        return $"{Field} != null && !{Field}.StartsWith(\"{Values[0]}\")";
                     }
 
                     case Operator.INotStartsWith:
                     {
-                        return $"({condition.Field} != null && !{condition.Field}.ToLower().StartsWith(\"{condition.Values[0].ToLower()}\"))";
+                        return $"{Field} != null && !{Field}.ToLower().StartsWith(\"{Values[0].ToLower()}\")";
                     }
 
                     case Operator.EndsWith:
                     {
-                        return $"({condition.Field} != null && {condition.Field}.EndsWith(\"{condition.Values[0]}\"))";
+                        return $"{Field} != null && {Field}.EndsWith(\"{Values[0]}\")";
                     }
 
                     case Operator.IEndsWith:
                     {
-                        return $"({condition.Field} != null && {condition.Field}.ToLower().EndsWith(\"{condition.Values[0].ToLower()}\"))";
+                        return $"{Field} != null && {Field}.ToLower().EndsWith(\"{Values[0].ToLower()}\")";
                     }
 
                     case Operator.NotEndsWith:
                     {
-                        return $"({condition.Field} != null && !{condition.Field}.EndsWith(\"{condition.Values[0]}\"))";
+                        return $"{Field} != null && !{Field}.EndsWith(\"{Values[0]}\")";
                     }
 
                     case Operator.INotEndsWith:
                     {
-                        return $"({condition.Field} != null && !{condition.Field}.ToLower().EndsWith(\"{condition.Values[0].ToLower()}\"))";
+                        return $"{Field} != null && !{Field}.ToLower().EndsWith(\"{Values[0].ToLower()}\")";
                     }
 
                     case Operator.In:
                     {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} == \"{value}\"");
+                        var conditions = Values.Select(value => $"{Field} == \"{value}\"");
 
-                        return $"({condition.Field} != null && ({string.Join(" || ", conditions)}))";
+                        return $"{Field} != null && ({string.Join(" || ", conditions)})";
                     }
 
                     case Operator.IIn:
                     {
-                        var conditions = condition.Values.Select(value => $"{condition.Field}.ToLower() == \"{value.ToLower()}\"");
+                        var conditions = Values.Select(value => $"{Field}.ToLower() == \"{value.ToLower()}\"");
 
-                        return $"({condition.Field} != null && ({string.Join(" || ", conditions)}))";
+                        return $"{Field} != null && ({string.Join(" || ", conditions)})";
                     }
 
                     case Operator.NotIn:
                     {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} != \"{value}\"");
+                        var conditions = Values.Select(value => $"{Field} != \"{value}\"");
 
-                        return $"({condition.Field} != null && ({string.Join(" && ", conditions)}))";
+                        return $"{Field} != null && ({string.Join(" && ", conditions)})";
                     }
 
                     case Operator.INotIn:
                     {
-                        var conditions = condition.Values.Select(value => $"{condition.Field}.ToLower() != \"{value.ToLower()}\"");
+                        var conditions = Values.Select(value => $"{Field}.ToLower() != \"{value.ToLower()}\"");
 
-                        return $"({condition.Field} != null && ({string.Join(" && ", conditions)}))";
+                        return $"{Field} != null && ({string.Join(" && ", conditions)})";
                     }
 
                     case Operator.IsNull:
                     {
-                        return $"({condition.Field} == null)";
+                        return $"{Field} == null";
                     }
 
                     case Operator.IsNotNull:
                     {
-                        return $"({condition.Field} != null)";
+                        return $"{Field} != null";
                     }
                 }
             }
@@ -186,70 +253,70 @@ internal static class Converter
 
             case DataType.Number:
             {
-                switch (condition.Operator)
+                switch (Operator)
                 {
                     case Operator.Equal:
                     {
-                        return $"({condition.Field} != null && {condition.Field} == {condition.Values[0]})";
+                        return $"{Field} != null && {Field} == {Values[0]}";
                     }
 
                     case Operator.NotEqual:
                     {
-                        return $"({condition.Field} != null && {condition.Field} != {condition.Values[0]})";
+                        return $"{Field} != null && {Field} != {Values[0]}";
                     }
 
                     case Operator.GreaterThan:
                     {
-                        return $"({condition.Field} != null && {condition.Field} > {condition.Values[0]})";
+                        return $"{Field} != null && {Field} > {Values[0]}";
                     }
 
                     case Operator.GreaterThanOrEqual:
                     {
-                        return $"({condition.Field} != null && {condition.Field} >= {condition.Values[0]})";
+                        return $"{Field} != null && {Field} >= {Values[0]}";
                     }
 
                     case Operator.LessThan:
                     {
-                        return $"({condition.Field} != null && {condition.Field} < {condition.Values[0]})";
+                        return $"{Field} != null && {Field} < {Values[0]}";
                     }
 
                     case Operator.LessThanOrEqual:
                     {
-                        return $"({condition.Field} != null && {condition.Field} <= {condition.Values[0]})";
+                        return $"{Field} != null && {Field} <= {Values[0]}";
                     }
 
                     case Operator.In:
                     {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} == {value}");
+                        var conditions = Values.Select(value => $"{Field} == {value}");
 
-                        return $"({condition.Field} != null && ({string.Join(" || ", conditions)}))";
+                        return $"{Field} != null && ({string.Join(" || ", conditions)})";
                     }
 
                     case Operator.NotIn:
                     {
-                        var conditions = condition.Values.Select(value => $"{condition.Field} != {value}");
+                        var conditions = Values.Select(value => $"{Field} != {value}");
 
-                        return $"({condition.Field} != null && ({string.Join(" && ", conditions)}))";
+                        return $"{Field} != null && ({string.Join(" && ", conditions)})";
                     }
 
                     case Operator.Between:
                     {
-                        return $"({condition.Field} != null && {condition.Field} >= {condition.Values[0]} && {condition.Field} <= {condition.Values[1]})";
+                        return $"{Field} != null && {Field} >= {Values[0]} && {Field} <= {Values[1]}";
                     }
 
                     case Operator.NotBetween:
                     {
-                        return $"({condition.Field} != null && ({condition.Field} < {condition.Values[0]} || {condition.Field} > {condition.Values[1]}))";
+                        return $"{Field} != null && ({Field} < {Values[0]} || {Field} > {Values[1]})";
                     }
 
                     case Operator.IsNull:
                     {
-                        return $"({condition.Field} == null)";
+                        return $"{Field} == null";
                     }
 
                     case Operator.IsNotNull:
                     {
-                        return $"({condition.Field} != null)";
+                        return $"{Field} != null";
                     }
                 }
             }
@@ -257,26 +324,26 @@ internal static class Converter
 
             case DataType.Boolean:
             {
-                switch (condition.Operator)
+                switch (Operator)
                 {
                     case Operator.Equal:
                     {
-                        return $"({condition.Field} != null && {condition.Field} == {condition.Values[0]})";
+                        return $"{Field} != null && {Field} == {Values[0]}";
                     }
 
                     case Operator.NotEqual:
                     {
-                        return $"({condition.Field} != null && {condition.Field} != {condition.Values[0]})";
+                        return $"{Field} != null && {Field} != {Values[0]}";
                     }
 
                     case Operator.IsNull:
                     {
-                        return $"({condition.Field} == null)";
+                        return $"{Field} == null";
                     }
 
                     case Operator.IsNotNull:
                     {
-                        return $"({condition.Field} != null)";
+                        return $"{Field} != null";
                     }
                 }
             }
@@ -284,56 +351,56 @@ internal static class Converter
 
             case DataType.DateTime:
             {
-                switch (condition.Operator)
+                switch (Operator)
                 {
                     case Operator.Equal:
                     {
-                        return $"({condition.Field} != null && {condition.Field} == \"{condition.Values[0]}\")";
+                        return $"{Field} != null && {Field} == \"{Values[0]}\"";
                     }
 
                     case Operator.NotEqual:
                     {
-                        return $"({condition.Field} != null && {condition.Field} != \"{condition.Values[0]}\")";
+                        return $"{Field} != null && {Field} != \"{Values[0]}\"";
                     }
 
                     case Operator.GreaterThan:
                     {
-                        return $"({condition.Field} != null && {condition.Field} > \"{condition.Values[0]}\")";
+                        return $"{Field} != null && {Field} > \"{Values[0]}\"";
                     }
 
                     case Operator.GreaterThanOrEqual:
                     {
-                        return $"({condition.Field} != null && {condition.Field} >= \"{condition.Values[0]}\")";
+                        return $"{Field} != null && {Field} >= \"{Values[0]}\"";
                     }
 
                     case Operator.LessThan:
                     {
-                        return $"({condition.Field} != null && {condition.Field} < \"{condition.Values[0]}\")";
+                        return $"{Field} != null && {Field} < \"{Values[0]}\"";
                     }
 
                     case Operator.LessThanOrEqual:
                     {
-                        return $"({condition.Field} != null && {condition.Field} <= \"{condition.Values[0]}\")";
+                        return $"{Field} != null && {Field} <= \"{Values[0]}\"";
                     }
 
                     case Operator.Between:
                     {
-                        return $"({condition.Field} != null && {condition.Field} >= \"{condition.Values[0]}\" && {condition.Field} <= \"{condition.Values[1]}\")";
+                        return $"{Field} != null && {Field} >= \"{Values[0]}\" && {Field} <= \"{Values[1]}\"";
                     }
 
                     case Operator.NotBetween:
                     {
-                        return $"({condition.Field} != null && ({condition.Field} < \"{condition.Values[0]}\" || {condition.Field} > \"{condition.Values[1]}\"))";
+                        return $"{Field} != null && ({Field} < \"{Values[0]}\" || {Field} > \"{Values[1]}\")";
                     }
 
                     case Operator.IsNull:
                     {
-                        return $"({condition.Field} == null)";
+                        return $"{Field} == null";
                     }
 
                     case Operator.IsNotNull:
                     {
-                        return $"({condition.Field} != null)";
+                        return $"{Field} != null";
                     }
                 }
             }

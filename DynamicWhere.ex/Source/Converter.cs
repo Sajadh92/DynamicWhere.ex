@@ -31,7 +31,7 @@ internal static class Converter
             string p = props[i];
 
             // Check if the parent is a generic list and append 'Any' if true.
-            if (parent.IsGenericType && parent.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            if (parent.IsGenericType && parent.GetInterface(nameof(IEnumerable)) != null)
             {
                 conditionAsString += $"Any(i{i} => i{i}.{p}"; any++;
             }
@@ -48,7 +48,7 @@ internal static class Converter
                 type = parent = type.GetProperty(p)!.PropertyType;
 
                 // If the property is a generic list, navigate to its element type.
-                if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                if (type.IsGenericType && type.GetInterface(nameof(IEnumerable)) != null)
                 {
                     type = type.GetGenericArguments()[0];
                 }

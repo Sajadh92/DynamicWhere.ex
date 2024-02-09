@@ -1,4 +1,6 @@
-﻿namespace DynamicWhere.ex;
+﻿using System.Collections;
+
+namespace DynamicWhere.ex;
 
 /// <summary>
 /// Provides methods for converting Condition and ConditionGroup objects into their C# string representations.
@@ -31,7 +33,7 @@ internal static class Converter
             string p = props[i];
 
             // Check if the parent is a generic list and append 'Any' if true.
-            if (parent.IsGenericType && parent.GetInterface(nameof(IEnumerable<T>)) != null)
+            if (parent.IsGenericType && parent.GetInterface(nameof(IEnumerable)) != null)
             {
                 conditionAsString += $"Any(i{i} => i{i}.{p}"; any++;
             }
@@ -48,7 +50,7 @@ internal static class Converter
                 type = parent = type.GetProperty(p)!.PropertyType;
 
                 // If the property is a generic list, navigate to its element type.
-                if (type.IsGenericType && type.GetInterface(nameof(IEnumerable<T>)) != null)
+                if (type.IsGenericType && type.GetInterface(nameof(IEnumerable)) != null)
                 {
                     type = type.GetGenericArguments()[0];
                 }

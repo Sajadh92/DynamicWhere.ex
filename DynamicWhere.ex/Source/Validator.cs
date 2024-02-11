@@ -77,14 +77,6 @@ internal static class Validator
                 }
                 break;
 
-            case DataType.Text:
-                // For text fields, the value must not be null or whitespace.
-                if (condition.Values.Any(string.IsNullOrWhiteSpace))
-                {
-                    throw new LogicException(ErrorCode.InvalidFormat);
-                }
-                break;
-
             case DataType.Number:
                 // For number fields, the value must be a valid number format.
                 if (condition.Values.Any(value => 

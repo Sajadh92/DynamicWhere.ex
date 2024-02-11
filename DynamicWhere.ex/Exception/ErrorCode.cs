@@ -73,4 +73,9 @@ internal static class ErrorCode
     /// Indicates that the fields list must have at least one field.
     /// </summary>
     public static string MustHaveFields => "MustHasFields";
+
+    /// <summary>
+    /// Indicates that the field must be a valid date format.
+    /// </summary>
+    public static string InvalidFormat => "InvalidFormat";
 }

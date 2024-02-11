@@ -36,11 +36,6 @@ internal static class Validator
                 {
                     throw new LogicException(ErrorCode.RequiredTwoValue);
                 }
-                // For Between and NotBetween operators, all values must not be empty.
-                if (string.IsNullOrWhiteSpace(condition.Values[0]) || string.IsNullOrWhiteSpace(condition.Values[1]))
-                {
-                    throw new LogicException(ErrorCode.InvalidValue);
-                }
                 break;
 
             case Operator.In:
@@ -51,11 +46,6 @@ internal static class Validator
                 if (condition.Values.Count == 0)
                 {
                     throw new LogicException(ErrorCode.RequiredValues);
-                }
-                // For In, NotIn, IIn, and INotIn operators, all values must not be empty.
-                if (condition.Values.Any(x => string.IsNullOrWhiteSpace(x)))
-                {
-                    throw new LogicException(ErrorCode.InvalidValue);
                 }
                 break;
 
@@ -74,10 +64,56 @@ internal static class Validator
                 {
                     throw new LogicException(ErrorCode.RequiredOneValue(condition.Operator.ToString()));
                 }
-                // For other operators, the value must not be empty.
-                if (string.IsNullOrWhiteSpace(condition.Values[0]))
+                break;
+        }
+
+        switch (condition.DataType)
+        {
+            case DataType.Guid:
+                // For GUID fields, the value must be a valid GUID format.
+                if (condition.Values.Any(value => !Guid.TryParse(value, out _)))
                 {
-                    throw new LogicException(ErrorCode.InvalidValue);
+                    throw new LogicException(ErrorCode.InvalidFormat);
+                }
+                break;
+
+            case DataType.Text:
+                // For text fields, the value must not be null or whitespace.
+                if (condition.Values.Any(string.IsNullOrWhiteSpace))
+                {
+                    throw new LogicException(ErrorCode.InvalidFormat);
+                }
+                break;
+
+            case DataType.Number:
+                // For number fields, the value must be a valid number format.
+                if (condition.Values.Any(value => 
+                    !byte.TryParse(value, out _) &&
+                    !short.TryParse(value, out _) &&
+                    !int.TryParse(value, out _) &&
+                    !long.TryParse(value, out _) &&
+                    !float.TryParse(value, out _) &&
+                    !double.TryParse(value, out _) &&
+                    !decimal.TryParse(value, out _)))
+                {
+                    throw new LogicException(ErrorCode.InvalidFormat);
+                }
+                break;
+
+            case DataType.Boolean:
+                // For boolean fields, the value must be a valid boolean format.
+                if (condition.Values.Any(value => !bool.TryParse(value, out _)))
+                {
+                    throw new LogicException(ErrorCode.InvalidFormat);
+                }
+                break;
+
+            case DataType.Date:
+            case DataType.DateTime:
+                // For date fields, the value must be a valid date format.
+                if (condition.Values.Any(value => !DateTime.TryParse(value, out _)))
+                {
+                    throw new LogicException(ErrorCode.InvalidFormat);
                 }
                 break;
         }

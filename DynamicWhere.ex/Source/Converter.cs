@@ -407,6 +407,63 @@ internal static class Converter
                 }
             }
             break;
+
+            case DataType.Date:
+            {
+                switch (Operator)
+                {
+                    case Operator.Equal:
+                    {
+                        return $"{Field} != null && {Field}.Date == \"{DateTime.Parse(Values[0]).Date}\"";
+                    }
+
+                    case Operator.NotEqual:
+                    {
+                        return $"{Field} != null && {Field}.Date != \"{DateTime.Parse(Values[0]).Date}\"";
+                    }
+
+                    case Operator.GreaterThan:
+                    {
+                        return $"{Field} != null && {Field}.Date > \"{DateTime.Parse(Values[0]).Date}\"";
+                    }
+
+                    case Operator.GreaterThanOrEqual:
+                    {
+                        return $"{Field} != null && {Field}.Date >= \"{DateTime.Parse(Values[0]).Date}\"";
+                    }
+
+                    case Operator.LessThan:
+                    {
+                        return $"{Field} != null && {Field}.Date < \"{DateTime.Parse(Values[0]).Date}\"";
+                    }
+
+                    case Operator.LessThanOrEqual:
+                    {
+                        return $"{Field} != null && {Field}.Date <= \"{DateTime.Parse(Values[0]).Date}\"";
+                    }
+
+                    case Operator.Between:
+                    {
+                        return $"{Field} != null && {Field}.Date >= \"{DateTime.Parse(Values[0]).Date}\" && {Field}.Date <= \"{DateTime.Parse(Values[1]).Date}\"";
+                    }
+
+                    case Operator.NotBetween:
+                    {
+                        return $"{Field} != null && ({Field}.Date < \"{DateTime.Parse(Values[0]).Date}\" || {Field}.Date > \"{DateTime.Parse(Values[1]).Date}\")";
+                    }
+
+                    case Operator.IsNull:
+                    {
+                        return $"{Field} == null";
+                    }
+
+                    case Operator.IsNotNull:
+                    {
+                        return $"{Field} != null";
+                    }
+                }
+            }
+            break;
         }
 
         return string.Empty;

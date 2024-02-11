@@ -414,42 +414,42 @@ internal static class Converter
                 {
                     case Operator.Equal:
                     {
-                        return $"{Field} != null && {Field}.Date == \"{DateTime.Parse(Values[0]).Date}\"";
+                        return $"{Field} != null && {Field}.Date == DateTime.Parse(\"{Values[0]}\").Date";
                     }
 
                     case Operator.NotEqual:
                     {
-                        return $"{Field} != null && {Field}.Date != \"{DateTime.Parse(Values[0]).Date}\"";
+                        return $"{Field} != null && {Field}.Date != DateTime.Parse(\"{Values[0]}\").Date";
                     }
 
                     case Operator.GreaterThan:
                     {
-                        return $"{Field} != null && {Field}.Date > \"{DateTime.Parse(Values[0]).Date}\"";
+                        return $"{Field} != null && {Field}.Date > DateTime.Parse(\"{Values[0]}\").Date";
                     }
 
                     case Operator.GreaterThanOrEqual:
                     {
-                        return $"{Field} != null && {Field}.Date >= \"{DateTime.Parse(Values[0]).Date}\"";
+                        return $"{Field} != null && {Field}.Date >= DateTime.Parse(\"{Values[0]}\").Date";
                     }
 
                     case Operator.LessThan:
                     {
-                        return $"{Field} != null && {Field}.Date < \"{DateTime.Parse(Values[0]).Date}\"";
+                        return $"{Field} != null && {Field}.Date < DateTime.Parse(\"{Values[0]}\").Date";
                     }
 
                     case Operator.LessThanOrEqual:
                     {
-                        return $"{Field} != null && {Field}.Date <= \"{DateTime.Parse(Values[0]).Date}\"";
+                        return $"{Field} != null && {Field}.Date <= DateTime.Parse(\"{Values[0]}\").Date";
                     }
 
                     case Operator.Between:
                     {
-                        return $"{Field} != null && {Field}.Date >= \"{DateTime.Parse(Values[0]).Date}\" && {Field}.Date <= \"{DateTime.Parse(Values[1]).Date}\"";
+                        return $"{Field} != null && {Field}.Date >= DateTime.Parse(\"{Values[0]}\").Date && {Field}.Date <= DateTime.Parse(\"{Values[1]}\").Date";
                     }
 
                     case Operator.NotBetween:
                     {
-                        return $"{Field} != null && ({Field}.Date < \"{DateTime.Parse(Values[0]).Date}\" || {Field}.Date > \"{DateTime.Parse(Values[1]).Date}\")";
+                        return $"{Field} != null && ({Field}.Date < DateTime.Parse(\"{Values[0]}\").Date || {Field}.Date > DateTime.Parse(\"{Values[1]}\").Date)";
                     }
 
                     case Operator.IsNull:

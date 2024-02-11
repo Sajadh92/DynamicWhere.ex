@@ -23,7 +23,7 @@
       <PackageTags>DynamicWhere.ex, DynamicWhere, DynamicFilter, DynamicLinq, Linq, EF Core, Dynamic, Where, Filter, Paging, OrderBy, Segment, Expression</PackageTags>
       <Authors>Sajjad H. Al-Khafaji</Authors>
       <Copyright>Free For Ever</Copyright>
-      <Version>1.7.2</Version>
+      <Version>1.8.0</Version>
       <PackageProjectUrl>https://docs.dynamicwhere.com</PackageProjectUrl>
       <RepositoryType>git</RepositoryType>
       <RepositoryBranch>master</RepositoryBranch>

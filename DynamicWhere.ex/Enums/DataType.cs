@@ -28,5 +28,10 @@ public enum DataType
     /// <summary>
     /// Represents a date and time data type.
     /// </summary>
-    DateTime
+    DateTime,
+
+    /// <summary>
+    /// Represents a date data type.
+    /// </summary>
+    Date
 }

@@ -277,6 +277,95 @@ public static class Extension
     }
 
     /// <summary>
+    /// retrieves a list of entities from the <see cref="IQueryable{T}"/> which contains static data with optional filtering based on a <see cref="Filter"/>.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when the <paramref name="filter"/> contains invalid data.</exception>
+    public static FilterResult<T> ToList<T>(this IQueryable<T> query, Filter filter)
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (filter == null)
+        {
+            throw new ArgumentNullException(nameof(filter));
+        }
+
+        // Apply the filter criteria to the query.
+        if (filter.ConditionGroup != null)
+        {
+            query = query.Where(filter.ConditionGroup);
+        }
+
+        // Apply the select criteria to the query.
+        if (filter.Selects != null)
+        {
+            query = query.Select(filter.Selects);
+        }
+
+        // Create a new query to apply ordering and pagination.
+        var newQuery = query;
+
+        // Apply the order-by criteria to the new query.
+        if (filter.Orders != null)
+        {
+            newQuery = newQuery.Order(filter.Orders);
+        }
+
+        // Initialize variables for pagination.
+        int pageNumber = 0, pageSize = 0;
+
+        // Apply the pagination criteria to the new query.
+        if (filter.Page != null)
+        {
+            newQuery = newQuery.Page(filter.Page);
+
+            pageNumber = filter.Page.PageNumber;
+            pageSize = filter.Page.PageSize;
+        }
+
+        // Calculate the total count of entities before pagination.
+        int totalCount = query.Count();
+
+        // Calculate the total page count based on the page size.
+        int pageCount = (int)Math.Ceiling((double)totalCount /
+                        (pageSize == 0 ? 1 : pageSize));
+
+        // Create and return a FilterResult containing the result data and pagination information.
+        return new FilterResult<T>
+        {
+            PageNumber = pageNumber,
+            PageSize = pageSize,
+            PageCount = pageCount,
+            TotalCount = totalCount,
+
+            // Execute the query to retrieve the data.
+            Data = newQuery.ToList()
+        };
+    }
+
+    /// <summary>
+    /// retrieves a list of entities from the <see cref="IEnumerable{T}"/> which contains static data with optional filtering based on a <see cref="Filter"/>.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when the <paramref name="filter"/> contains invalid data.</exception>
+    public static FilterResult<T> ToList<T>(this IEnumerable<T> query, Filter filter)
+    {
+        return query.AsQueryable().ToList(filter);
+    }
+
+    /// <summary>
     /// Asynchronously retrieves a list of entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Filter"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>

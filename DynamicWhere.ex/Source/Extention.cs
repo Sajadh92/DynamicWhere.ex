@@ -38,7 +38,10 @@ public static class Extension
         }
 
         // Validate each field if it is exists in the query.
-        fields.ForEach(x => x.Validate<T>());
+        for (int i = 0; i < fields.Count; i++)
+        {
+            fields[i] = fields[i].Validate<T>();
+        }
 
         // Concatenate the individual field strings into a single comma-separated string.
         string select = string.Join(",", fields);

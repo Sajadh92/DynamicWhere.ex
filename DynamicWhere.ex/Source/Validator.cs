@@ -24,7 +24,7 @@ internal static class Validator
         }
 
         // Validate the field name against the specified type.
-        condition.Field.Validate<T>();
+        condition.Field = condition.Field.Validate<T>();
 
         // Handle validation based on the operator type.
         switch (condition.Operator)
@@ -152,7 +152,7 @@ internal static class Validator
         }
 
         // Validate the field name against the specified type.
-        order.Field.Validate<T>();
+        order.Field = order.Field.Validate<T>();
     }
 
     /// <summary>
@@ -224,7 +224,8 @@ internal static class Validator
     /// <typeparam name="T">The type in which the property name is validated.</typeparam>
     /// <param name="name">The property name to validate, possibly containing nested property names separated by dots.</param>
     /// <exception cref="LogicException">Thrown when the property name is invalid or not found within the type's hierarchy.</exception>
-    public static void Validate<T>(this string name)
+    /// <returns>The validated property name as a single string. </returns>
+    public static string Validate<T>(this string name)
     {
         // Split the property name by dots if it contains any, handling leading/trailing whitespaces and empty entries.
         List<string> names = name.Contains('.')
@@ -239,17 +240,23 @@ internal static class Validator
 
         Type type = typeof(T);
 
+        List<string> validatedNames = new();
+
         // Iterate through nested property names and validate each level.
         foreach (string propertyName in names)
         {
-            // Attempt to retrieve the PropertyInfo for the current property name.
-            PropertyInfo? prop = type.GetProperty(propertyName);
+            // Attempt to retrieve the PropertyInfo for the current property name
+            // from the current type with case-insensitive comparison.
+            PropertyInfo? prop = type.GetProperties()
+                .FirstOrDefault(x => x.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase));
 
             // If the property is not found, throw an exception indicating an invalid field.
             if (prop == null)
             {
                 throw new LogicException(ErrorCode.InvalidField);
             }
+
+            validatedNames.Add(prop.Name);
 
             // Update the current type to the property's type, considering generic List<> types.
             type = prop.PropertyType;
@@ -259,5 +266,8 @@ internal static class Validator
                 type = type.GetGenericArguments()[0];
             }
         }
+
+        // Return the validated property name as a single string.
+        return string.Join('.', validatedNames);
     }
 }

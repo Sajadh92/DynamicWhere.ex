@@ -85,6 +85,9 @@ internal static class Converter
     /// <returns>A string representation of the condition for use in dynamic LINQ queries.</returns>
     public static string BuildCondition(DataType DataType, Operator Operator, string Field, List<string> Values)
     {
+        // Trim all values to remove leading/trailing whitespace.
+        Values = Values.Select(x => x.Trim()).ToList();
+
         switch (DataType)
         {
             case DataType.Guid:

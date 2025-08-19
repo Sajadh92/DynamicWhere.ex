@@ -3,18 +3,24 @@
 namespace DynamicWhere.ex;
 
 /// <summary>
-/// Provides validation methods for various entities used in dynamic queries.
+/// Validation helpers for dynamic query components.
+/// Ensures shape, value counts, formats, and field paths are valid before building expressions.
 /// </summary>
 internal static class Validator
 {
     /// <summary>
-    /// Validates a <see cref="Condition"/> instance to ensure it meets the specified criteria.
+    /// Validates a <see cref="Condition"/> for correctness against the entity type <typeparamref name="T"/>.
     /// </summary>
-    /// <typeparam name="T">The type in which the condition is applied.</typeparam>
+    /// <typeparam name="T">The root type on which the condition's field path is validated.</typeparam>
     /// <param name="condition">The <see cref="Condition"/> instance to validate.</param>
     /// <exception cref="LogicException">
-    /// Thrown when the condition or its components are found to be invalid based on the specified criteria.
+    /// Thrown when the field is missing/invalid, value counts don't match the <see cref="Operator"/>,
+    /// or values are not in a valid format for the specified <see cref="DataType"/>.
     /// </exception>
+    /// <remarks>
+    /// This method also normalizes <see cref="Condition.Field"/> to the exact property casing/path
+    /// found on <typeparamref name="T"/> (e.g., <c>"email"</c> becomes <c>"Email"</c>).
+    /// </remarks>
     public static void Validate<T>(this Condition condition)
     {
         // Check if the field name is provided and not empty.
@@ -23,7 +29,7 @@ internal static class Validator
             throw new LogicException(ErrorCode.InvalidField);
         }
 
-        // Validate the field name against the specified type.
+        // Validate and normalize the field name against the specified type.
         condition.Field = condition.Field.Validate<T>();
 
         // Handle validation based on the operator type.
@@ -42,7 +48,7 @@ internal static class Validator
             case Operator.NotIn:
             case Operator.IIn:
             case Operator.INotIn:
-                // For In, NotIn, IIn, and INotIn operators, at least one value is required
+                // For In, NotIn, IIn, and INotIn operators, at least one value is required.
                 if (condition.Values.Count == 0)
                 {
                     throw new LogicException(ErrorCode.RequiredValues);
@@ -67,10 +73,11 @@ internal static class Validator
                 break;
         }
 
+        // Validate the values format based on the declared logical data type.
         switch (condition.DataType)
         {
             case DataType.Guid:
-                // For GUID fields, the value must be a valid GUID format.
+                // For GUID fields, each value must be a valid GUID format.
                 if (condition.Values.Any(value => !Guid.TryParse(value, out _)))
                 {
                     throw new LogicException(ErrorCode.InvalidFormat);
@@ -78,7 +85,7 @@ internal static class Validator
                 break;
 
             case DataType.Number:
-                // For number fields, the value must be a valid number format.
+                // For numeric fields, each value must parse into a supported numeric type.
                 if (condition.Values.Any(value => 
                     !byte.TryParse(value, out _) &&
                     !short.TryParse(value, out _) &&
@@ -93,7 +100,7 @@ internal static class Validator
                 break;
 
             case DataType.Boolean:
-                // For boolean fields, the value must be a valid boolean format.
+                // For boolean fields, each value must be a valid boolean format.
                 if (condition.Values.Any(value => !bool.TryParse(value, out _)))
                 {
                     throw new LogicException(ErrorCode.InvalidFormat);
@@ -102,7 +109,7 @@ internal static class Validator
 
             case DataType.Date:
             case DataType.DateTime:
-                // For date fields, the value must be a valid date format.
+                // For date/datetime fields, each value must be a valid date/time format.
                 if (condition.Values.Any(value => !DateTime.TryParse(value, out _)))
                 {
                     throw new LogicException(ErrorCode.InvalidFormat);
@@ -112,11 +119,13 @@ internal static class Validator
     }
 
     /// <summary>
-    /// Validates a <see cref="ConditionGroup"/> instance to ensure it meets the specified criteria.
+    /// Validates a <see cref="ConditionGroup"/> to ensure it has no duplicate sort orders
+    /// among its conditions or its sub-condition groups.
     /// </summary>
     /// <param name="group">The <see cref="ConditionGroup"/> instance to validate.</param>
     /// <exception cref="LogicException">
-    /// Thrown when the condition group or its components are found to have duplicate sorting values based on the specified criteria.
+    /// Thrown when duplicate <c>Sort</c> values are detected in <see cref="ConditionGroup.Conditions"/>
+    /// or <see cref="ConditionGroup.SubConditionGroups"/>.
     /// </exception>
     public static void Validate(this ConditionGroup group)
     {
@@ -128,7 +137,7 @@ internal static class Validator
             throw new LogicException(ErrorCode.ConditionsUniqueSort);
         }
 
-        // Check for duplicate sorting values among subcondition groups within the group.
+        // Check for duplicate sorting values among sub-condition groups within the group.
         hasDuplicateSort = group.SubConditionGroups.GroupBy(x => x.Sort).Any(x => x.Count() > 1);
 
         if (hasDuplicateSort)
@@ -138,11 +147,12 @@ internal static class Validator
     }
 
     /// <summary>
-    /// Validates an <see cref="OrderBy"/> instance to ensure it has a valid field name.
+    /// Validates an <see cref="OrderBy"/> to ensure it has a non-empty, valid field for <typeparamref name="T"/>.
     /// </summary>
-    /// <typeparam name="T">The type to validate the field name against.</typeparam>
+    /// <typeparam name="T">The root type used to validate the field path.</typeparam>
     /// <param name="order">The <see cref="OrderBy"/> instance to validate.</param>
-    /// <exception cref="LogicException">Thrown if the field name is invalid or empty.</exception>
+    /// <exception cref="LogicException">Thrown if the field is missing or invalid for <typeparamref name="T"/>.</exception>
+    /// <remarks>On success, <see cref="OrderBy.Field"/> is normalized to the entity's exact property casing/path.</remarks>
     public static void Validate<T>(this OrderBy order)
     {
         // Check if the field name is provided and not empty.
@@ -156,20 +166,21 @@ internal static class Validator
     }
 
     /// <summary>
-    /// Validates the parameters of a paging request to ensure they are within acceptable limits.
+    /// Validates pagination parameters.
     /// </summary>
-    /// <typeparam name="T">The type of paging configuration (usually a DTO or model).</typeparam>
+    /// <typeparam name="T">Unused type parameter; present for a consistent generic extension signature.</typeparam>
     /// <param name="page">The paging configuration to validate.</param>
-    /// <exception cref="LogicException">Thrown when the page number or page size is invalid.</exception>
+    /// <exception cref="LogicException">Thrown when page number or page size is negative.</exception>
+    /// <remarks>PageNumber and PageSize must be non-negative integers.</remarks>
     public static void Validate<T>(this PageBy page)
     {
-        // Check page number if it a positive integer.
+        // Check page number is a non-negative integer.
         if (page.PageNumber < 0)
         {
             throw new LogicException(ErrorCode.InvalidPageNumber);
         }
 
-        // Check page size if it is a positive integer.
+        // Check page size is a non-negative integer.
         if (page.PageSize < 0)
         {
             throw new LogicException(ErrorCode.InvalidPageSize);
@@ -177,14 +188,14 @@ internal static class Validator
     }
 
     /// <summary>
-    /// Validates the condition sets within a <see cref="Segment"/> and retrieves them if they meet the specified criteria.
+    /// Validates the condition sets within a <see cref="Segment"/> and returns them ordered by <c>Sort</c>.
+    /// Also ensures required intersections are present and clears the first set's intersection.
     /// </summary>
     /// <param name="segment">The <see cref="Segment"/> instance containing the condition sets to validate.</param>
-    /// <returns>
-    /// A list of valid condition sets within the segment.
-    /// </returns>
+    /// <returns>A list of valid condition sets ordered by <c>Sort</c>.</returns>
     /// <exception cref="LogicException">
-    /// Thrown when the segment or its condition sets do not meet the specified criteria.
+    /// Thrown when duplicate set <c>Sort</c> values exist or when any set after the first is missing
+    /// an <see cref="Intersection"/> value.
     /// </exception>
     public static List<ConditionSet> ValidateAndGetSets(this Segment segment)
     {
@@ -209,7 +220,7 @@ internal static class Validator
             throw new LogicException(ErrorCode.RequiredIntersection);
         }
 
-        // sort the condition sets by their sorting values.
+        // Sort the condition sets by their sorting values.
         List<ConditionSet> sets = segment.ConditionSets.OrderBy(x => x.Sort).ToList();
 
         // Set the intersection of the first condition set to null to represent the absence of intersection.
@@ -219,12 +230,14 @@ internal static class Validator
     }
 
     /// <summary>
-    /// Validates a string representing a property name within a nested object hierarchy for a given type.
+    /// Validates a property path for <typeparamref name="T"/> and returns the normalized path.
+    /// Supports nested navigation using dot notation and normalizes each segment to the exact property name.
+    /// For a List&lt;T&gt; property, the next segment is validated against the element type.
     /// </summary>
-    /// <typeparam name="T">The type in which the property name is validated.</typeparam>
-    /// <param name="name">The property name to validate, possibly containing nested property names separated by dots.</param>
-    /// <exception cref="LogicException">Thrown when the property name is invalid or not found within the type's hierarchy.</exception>
-    /// <returns>The validated property name as a single string. </returns>
+    /// <typeparam name="T">The root type in which the property path is validated.</typeparam>
+    /// <param name="name">The property path to validate (e.g., <c>"Order.Customer.Name"</c>).</param>
+    /// <returns>The validated, normalized property path.</returns>
+    /// <exception cref="LogicException">Thrown when the path is empty or any segment is not found.</exception>
     public static string Validate<T>(this string name)
     {
         // Split the property name by dots if it contains any, handling leading/trailing whitespaces and empty entries.

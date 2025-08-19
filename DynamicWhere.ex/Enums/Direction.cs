@@ -5,14 +5,9 @@
 /// </summary>
 public enum Direction
 {
-    /// <summary>
-    /// Represents ascending sorting direction.
-    /// </summary>
+    /// <summary>Represents ascending sorting direction.</summary>
     Ascending,
-
-    /// <summary>
-    /// Represents descending sorting direction.
-    /// </summary>
+    /// <summary>Represents descending sorting direction.</summary>
     Descending
 }
 

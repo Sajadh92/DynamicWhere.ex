@@ -1,37 +1,20 @@
 ﻿namespace DynamicWhere.ex;
 
 /// <summary>
-/// Specifies the data types for dynamic query conditions.
+/// Supported logical data types for dynamic condition building.
 /// </summary>
 public enum DataType
 {
-    /// <summary>
-    /// Represents a GUID data type.
-    /// </summary>
-    Guid,
-
-    /// <summary>
-    /// Represents a text data type.
-    /// </summary>
+    /// <summary>Textual data (string).</summary>
     Text,
-
-    /// <summary>
-    /// Represents a number data type.
-    /// </summary>
+    /// <summary>GUID represented as string.</summary>
+    Guid,
+    /// <summary>Numeric value types.</summary>
     Number,
-
-    /// <summary>
-    /// Represents a boolean data type.
-    /// </summary>
+    /// <summary>Boolean values.</summary>
     Boolean,
-
-    /// <summary>
-    /// Represents a date and time data type.
-    /// </summary>
+    /// <summary>Full timestamp (date and time).</summary>
     DateTime,
-
-    /// <summary>
-    /// Represents a date data type.
-    /// </summary>
+    /// <summary>Date-only value.</summary>
     Date
 }

@@ -1,147 +1,73 @@
 ﻿namespace DynamicWhere.ex;
 
 /// <summary>
-/// Specifies various logical comparison operators for constructing dynamic queries.
+/// Supported operators across data types.
 /// </summary>
 public enum Operator
 {
-    /// <summary>
-    /// Equality comparison.
-    /// </summary>
+    // Equality
+    /// <summary>Equality (case-sensitive for text).</summary>
     Equal,
-
-    /// <summary>
-    /// Case-insensitive equality comparison.
-    /// </summary>
+    /// <summary>Equality (case-insensitive for text).</summary>
     IEqual,
-
-    /// <summary>
-    /// Inequality comparison.
-    /// </summary>
+    /// <summary>Inequality (case-sensitive for text).</summary>
     NotEqual,
-
-    /// <summary>
-    /// Case-insensitive inequality comparison.
-    /// </summary>
+    /// <summary>Inequality (case-insensitive for text).</summary>
     INotEqual,
 
-    /// <summary>
-    /// Greater than comparison.
-    /// </summary>
-    GreaterThan,
-
-    /// <summary>
-    /// Greater than or equal to comparison.
-    /// </summary>
-    GreaterThanOrEqual,
-
-    /// <summary>
-    /// Less than comparison.
-    /// </summary>
-    LessThan,
-
-    /// <summary>
-    /// Less than or equal to comparison.
-    /// </summary>
-    LessThanOrEqual,
-
-    /// <summary>
-    /// Substring containment check.
-    /// </summary>
+    // Text search
+    /// <summary>Contains (case-sensitive for text).</summary>
     Contains,
-
-    /// <summary>
-    /// Case-insensitive substring containment check.
-    /// </summary>
+    /// <summary>Contains (case-insensitive for text).</summary>
     IContains,
-
-    /// <summary>
-    /// Negation of substring containment check.
-    /// </summary>
+    /// <summary>Not contains (case-sensitive for text).</summary>
     NotContains,
-
-    /// <summary>
-    /// Case-insensitive negation of substring containment check.
-    /// </summary>
+    /// <summary>Not contains (case-insensitive for text).</summary>
     INotContains,
-
-    /// <summary>
-    /// Prefix check.
-    /// </summary>
+    /// <summary>Starts with (case-sensitive for text).</summary>
     StartsWith,
-
-    /// <summary>
-    /// Case-insensitive prefix check.
-    /// </summary>
+    /// <summary>Starts with (case-insensitive for text).</summary>
     IStartsWith,
-
-    /// <summary>
-    /// Negation of prefix check.
-    /// </summary>
+    /// <summary>Not starts with (case-sensitive for text).</summary>
     NotStartsWith,
-
-    /// <summary>
-    /// Case-insensitive negation of prefix check.
-    /// </summary>
+    /// <summary>Not starts with (case-insensitive for text).</summary>
     INotStartsWith,
-
-    /// <summary>
-    /// Suffix check.
-    /// </summary>
+    /// <summary>Ends with (case-sensitive for text).</summary>
     EndsWith,
-
-    /// <summary>
-    /// Case-insensitive suffix check.
-    /// </summary>
+    /// <summary>Ends with (case-insensitive for text).</summary>
     IEndsWith,
-
-    /// <summary>
-    /// Negation of suffix check.
-    /// </summary>
+    /// <summary>Not ends with (case-sensitive for text).</summary>
     NotEndsWith,
-
-    /// <summary>
-    /// Case-insensitive negation of suffix check.
-    /// </summary>
+    /// <summary>Not ends with (case-insensitive for text).</summary>
     INotEndsWith,
 
-    /// <summary>
-    /// Membership check.
-    /// </summary>
+    // Set membership
+    /// <summary>In (case-sensitive for text).</summary>
     In,
-
-    /// <summary>
-    /// Case-insensitive membership check.
-    /// </summary>
+    /// <summary>In (case-insensitive for text).</summary>
     IIn,
-
-    /// <summary>
-    /// Negation of membership check.
-    /// </summary>
+    /// <summary>Not in (case-sensitive for text).</summary>
     NotIn,
-
-    /// <summary>
-    /// Case-insensitive negation of membership check.
-    /// </summary>
+    /// <summary>Not in (case-insensitive for text).</summary>
     INotIn,
 
-    /// <summary>
-    /// Range comparison.
-    /// </summary>
+    // Ranges / ordering
+    /// <summary>Greater than.</summary>
+    GreaterThan,
+    /// <summary>Greater than or equal.</summary>
+    GreaterThanOrEqual,
+    /// <summary>Less than.</summary>
+    LessThan,
+    /// <summary>Less than or equal.</summary>
+    LessThanOrEqual,
+    /// <summary>Between (inclusive).</summary>
     Between,
-
-    /// <summary>
-    /// Negation of range comparison.
-    /// </summary>
+    /// <summary>Not between.</summary>
     NotBetween,
 
-    /// <summary>
-    /// Null check.
-    /// </summary>
+    // Null checks
+    /// <summary>Is NULL.</summary>
     IsNull,
-
-    /// <summary>
-    /// Negation of null check.
-    /// </summary>
+    /// <summary>Is NOT NULL.</summary>
     IsNotNull
 }

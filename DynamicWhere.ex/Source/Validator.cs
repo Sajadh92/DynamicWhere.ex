@@ -13,6 +13,7 @@ internal static class Validator
     /// </summary>
     /// <typeparam name="T">The root type on which the condition's field path is validated.</typeparam>
     /// <param name="condition">The <see cref="Condition"/> instance to validate.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="condition"/> is null.</exception>
     /// <exception cref="LogicException">
     /// Thrown when the field is missing/invalid, value counts don't match the <see cref="Operator"/>,
     /// or values are not in a valid format for the specified <see cref="DataType"/>.
@@ -23,6 +24,16 @@ internal static class Validator
     /// </remarks>
     public static void Validate<T>(this Condition condition)
     {
+        if (condition == null)
+        {
+            throw new ArgumentNullException(nameof(condition));
+        }
+
+        if (condition.Values == null)
+        {
+            condition.Values = new List<string>();
+        }
+
         // Check if the field name is provided and not empty.
         if (string.IsNullOrWhiteSpace(condition.Field))
         {
@@ -123,12 +134,28 @@ internal static class Validator
     /// among its conditions or its sub-condition groups.
     /// </summary>
     /// <param name="group">The <see cref="ConditionGroup"/> instance to validate.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="group"/> is null.</exception>
     /// <exception cref="LogicException">
     /// Thrown when duplicate <c>Sort</c> values are detected in <see cref="ConditionGroup.Conditions"/>
     /// or <see cref="ConditionGroup.SubConditionGroups"/>.
     /// </exception>
     public static void Validate(this ConditionGroup group)
     {
+        if (group == null)
+        {
+            throw new ArgumentNullException(nameof(group));
+        }
+
+        if (group.Conditions == null)
+        {
+            group.Conditions = new List<Condition>();
+        }
+
+        if (group.SubConditionGroups == null)
+        {
+            group.SubConditionGroups = new List<ConditionGroup>();
+        }
+
         // Check for duplicate sorting values among conditions within the group.
         bool hasDuplicateSort = group.Conditions.GroupBy(x => x.Sort).Any(x => x.Count() > 1);
 
@@ -151,10 +178,16 @@ internal static class Validator
     /// </summary>
     /// <typeparam name="T">The root type used to validate the field path.</typeparam>
     /// <param name="order">The <see cref="OrderBy"/> instance to validate.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="order"/> is null.</exception>
     /// <exception cref="LogicException">Thrown if the field is missing or invalid for <typeparamref name="T"/>.</exception>
     /// <remarks>On success, <see cref="OrderBy.Field"/> is normalized to the entity's exact property casing/path.</remarks>
     public static void Validate<T>(this OrderBy order)
     {
+        if (order == null)
+        {
+            throw new ArgumentNullException(nameof(order));
+        }
+
         // Check if the field name is provided and not empty.
         if (string.IsNullOrWhiteSpace(order.Field))
         {
@@ -170,18 +203,24 @@ internal static class Validator
     /// </summary>
     /// <typeparam name="T">Unused type parameter; present for a consistent generic extension signature.</typeparam>
     /// <param name="page">The paging configuration to validate.</param>
-    /// <exception cref="LogicException">Thrown when page number or page size is negative.</exception>
-    /// <remarks>PageNumber and PageSize must be non-negative integers.</remarks>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="page"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when page number or page size is invalid.</exception>
+    /// <remarks>PageNumber must be greater than 0 and PageSize must be greater than 0.</remarks>
     public static void Validate<T>(this PageBy page)
     {
-        // Check page number is a non-negative integer.
-        if (page.PageNumber < 0)
+        if (page == null)
+        {
+            throw new ArgumentNullException(nameof(page));
+        }
+
+        // Check page number is a positive integer (starts from 1).
+        if (page.PageNumber <= 0)
         {
             throw new LogicException(ErrorCode.InvalidPageNumber);
         }
 
-        // Check page size is a non-negative integer.
-        if (page.PageSize < 0)
+        // Check page size is a positive integer.
+        if (page.PageSize <= 0)
         {
             throw new LogicException(ErrorCode.InvalidPageSize);
         }
@@ -193,12 +232,23 @@ internal static class Validator
     /// </summary>
     /// <param name="segment">The <see cref="Segment"/> instance containing the condition sets to validate.</param>
     /// <returns>A list of valid condition sets ordered by <c>Sort</c>.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="segment"/> is null.</exception>
     /// <exception cref="LogicException">
     /// Thrown when duplicate set <c>Sort</c> values exist or when any set after the first is missing
     /// an <see cref="Intersection"/> value.
     /// </exception>
     public static List<ConditionSet> ValidateAndGetSets(this Segment segment)
     {
+        if (segment == null)
+        {
+            throw new ArgumentNullException(nameof(segment));
+        }
+
+        if (segment.ConditionSets == null)
+        {
+            segment.ConditionSets = new List<ConditionSet>();
+        }
+
         if (segment.ConditionSets.Count == 0)
         {
             return new List<ConditionSet>();
@@ -232,14 +282,20 @@ internal static class Validator
     /// <summary>
     /// Validates a property path for <typeparamref name="T"/> and returns the normalized path.
     /// Supports nested navigation using dot notation and normalizes each segment to the exact property name.
-    /// For a List&lt;T&gt; property, the next segment is validated against the element type.
+    /// For collection properties, the next segment is validated against the element type.
     /// </summary>
     /// <typeparam name="T">The root type in which the property path is validated.</typeparam>
     /// <param name="name">The property path to validate (e.g., <c>"Order.Customer.Name"</c>).</param>
     /// <returns>The validated, normalized property path.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null.</exception>
     /// <exception cref="LogicException">Thrown when the path is empty or any segment is not found.</exception>
     public static string Validate<T>(this string name)
     {
+        if (name == null)
+        {
+            throw new ArgumentNullException(nameof(name));
+        }
+
         // Split the property name by dots if it contains any, handling leading/trailing whitespaces and empty entries.
         List<string> names = name.Contains('.')
             ? name.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
@@ -271,12 +327,24 @@ internal static class Validator
 
             validatedNames.Add(prop.Name);
 
-            // Update the current type to the property's type, considering generic List<> types.
+            // Update the current type to the property's type, considering generic collection types.
             type = prop.PropertyType;
 
-            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
+            // Handle various collection types
+            if (type.IsGenericType)
             {
-                type = type.GetGenericArguments()[0];
+                var genericTypeDefinition = type.GetGenericTypeDefinition();
+                if (genericTypeDefinition == typeof(List<>) ||
+                    genericTypeDefinition == typeof(ICollection<>) ||
+                    genericTypeDefinition == typeof(IEnumerable<>) ||
+                    genericTypeDefinition == typeof(IList<>))
+                {
+                    type = type.GetGenericArguments()[0];
+                }
+            }
+            else if (type.IsArray)
+            {
+                type = type.GetElementType()!;
             }
         }
 

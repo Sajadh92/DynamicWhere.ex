@@ -3,26 +3,32 @@
 namespace DynamicWhere.ex;
 
 /// <summary>
-/// Provides methods for converting Condition and ConditionGroup objects into their C# string representations.
+/// Provides conversion helpers that translate <see cref="Condition"/>, <see cref="ConditionGroup"/>,
+/// and <see cref="OrderBy"/> instances into dynamic LINQ expression strings.
+/// These strings are intended to be consumed by System.Linq.Dynamic.Core (e.g., IQueryable.Where(string)).
 /// </summary>
 internal static class Converter
 {
     /// <summary>
-    /// Converts a condition into its corresponding C# string representation.
+    /// Converts a <see cref="Condition"/> into a dynamic LINQ predicate string.
+    /// Supports navigation through nested properties and collections, automatically
+    /// inserting Any(...) for collection navigations.
     /// </summary>
-    /// <typeparam name="T">The type of the entity being queried.</typeparam>
+    /// <typeparam name="T">The root entity type being queried.</typeparam>
     /// <param name="condition">The condition to convert.</param>
-    /// <returns>The C# string representation of the condition.</returns>
+    /// <param name="provider">Database provider hint used to optimize case-insensitive comparison generation.</param>
+    /// <returns>
+    /// A dynamic LINQ predicate string enclosed in parentheses, suitable for <c>Where(string)</c>.
+    /// </returns>
     /// <exception cref="LogicException">Thrown if the condition contains invalid data.</exception>
-    /// <exception cref="ArgumentNullException">Thrown if the condition field is null.</exception>
-    public static string AsString<T>(this Condition condition)
+    public static string AsString<T>(this Condition condition, Provider? provider = Provider.Others)
     {
         // Validate the condition.
         condition.Validate<T>();
 
         // Split the field into individual property names.
-        string[] props = condition.Field!.Trim().Replace(" ", "").Split('.');
-
+        string[] props = condition.Field!.Trim().Replace(" ", "").Split('.')
+;
         Type type = typeof(T), parent = typeof(T);
 
         // Initialize variables to build the condition string.
@@ -60,9 +66,9 @@ internal static class Converter
                 // For the last property, build the actual condition string.
                 string last = conditionAsString.Split(' ').Last().Trim();
 
-                conditionAsString = conditionAsString.Remove(conditionAsString.Length - last.Length);
+                conditionAsString = conditionAsString[..^last.Length];
 
-                conditionAsString += BuildCondition(condition.DataType, condition.Operator, last, condition.Values);
+                conditionAsString += Builder.BuildCondition(condition.DataType, condition.Operator, last, condition.Values, provider);
             }
         }
 
@@ -76,409 +82,17 @@ internal static class Converter
     }
 
     /// <summary>
-    /// Builds a string representation of a condition for dynamic LINQ queries based on the specified data type, operator, field, and values.
+    /// Converts a <see cref="ConditionGroup"/> into its dynamic LINQ predicate string representation.
+    /// Child conditions and subgroups are combined using the group's <see cref="Connector"/>.
     /// </summary>
-    /// <param name="DataType">The data type of the field.</param>
-    /// <param name="Operator">The comparison operator.</param>
-    /// <param name="Field">The field to compare.</param>
-    /// <param name="Values">The values to compare against.</param>
-    /// <returns>A string representation of the condition for use in dynamic LINQ queries.</returns>
-    public static string BuildCondition(DataType DataType, Operator Operator, string Field, List<string> Values)
-    {
-        // Trim all values to remove leading/trailing whitespace.
-        Values = Values.Select(x => x.Trim()).ToList();
-
-        switch (DataType)
-        {
-            case DataType.Guid:
-            {
-                switch (Operator)
-                {
-                    case Operator.Equal:
-                    {
-                        return $"{Field} != null && {Field} == \"{Values[0]}\"";
-                    }
-
-                    case Operator.NotEqual:
-                    {
-                        return $"{Field} != null && {Field} != \"{Values[0]}\"";
-                    }
-
-                    case Operator.In:
-                    {
-                        var conditions = Values.Select(value => $"{Field} == \"{value}\"");
-
-                        return $"{Field} != null && ({string.Join(" || ", conditions)})";
-                    }
-
-                    case Operator.NotIn:
-                    {
-                        var conditions = Values.Select(value => $"{Field} != \"{value}\"");
-
-                        return $"{Field} != null && ({string.Join(" && ", conditions)})";
-                    }
-
-                    case Operator.IsNull:
-                    {
-                        return $"{Field} == null";
-                    }
-
-                    case Operator.IsNotNull:
-                    {
-                        return $"{Field} != null";
-                    }
-                }
-            }
-            break;
-
-            case DataType.Text:
-            {
-                switch (Operator)
-                {
-                    case Operator.Equal:
-                    {
-                        return $"{Field} != null && {Field} == \"{Values[0]}\"";
-                    }
-
-                    case Operator.IEqual:
-                    {
-                        return $"{Field} != null && {Field}.ToLower() == \"{Values[0].ToLower()}\"";
-                    }
-
-                    case Operator.NotEqual:
-                    {
-                        return $"{Field} != null && {Field} != \"{Values[0]}\"";
-                    }
-
-                    case Operator.INotEqual:
-                    {
-                        return $"{Field} != null && {Field}.ToLower() != \"{Values[0].ToLower()}\"";
-                    }
-
-                    case Operator.Contains:
-                    {
-                        return $"{Field} != null && {Field}.Contains(\"{Values[0]}\")";
-                    }
-
-                    case Operator.IContains:
-                    {
-                        return $"{Field} != null && {Field}.ToLower().Contains(\"{Values[0].ToLower()}\")";
-                    }
-
-                    case Operator.NotContains:
-                    {
-                        return $"{Field} != null && !{Field}.Contains(\"{Values[0]}\")";
-                    }
-
-                    case Operator.INotContains:
-                    {
-                        return $"{Field} != null && !{Field}.ToLower().Contains(\"{Values[0].ToLower()}\")";
-                    }
-
-                    case Operator.StartsWith:
-                    {
-                        return $"{Field} != null && {Field}.StartsWith(\"{Values[0]}\")";
-                    }
-
-                    case Operator.IStartsWith:
-                    {
-                        return $"{Field} != null && {Field}.ToLower().StartsWith(\"{Values[0].ToLower()}\")";
-                    }
-
-                    case Operator.NotStartsWith:
-                    {
-                        return $"{Field} != null && !{Field}.StartsWith(\"{Values[0]}\")";
-                    }
-
-                    case Operator.INotStartsWith:
-                    {
-                        return $"{Field} != null && !{Field}.ToLower().StartsWith(\"{Values[0].ToLower()}\")";
-                    }
-
-                    case Operator.EndsWith:
-                    {
-                        return $"{Field} != null && {Field}.EndsWith(\"{Values[0]}\")";
-                    }
-
-                    case Operator.IEndsWith:
-                    {
-                        return $"{Field} != null && {Field}.ToLower().EndsWith(\"{Values[0].ToLower()}\")";
-                    }
-
-                    case Operator.NotEndsWith:
-                    {
-                        return $"{Field} != null && !{Field}.EndsWith(\"{Values[0]}\")";
-                    }
-
-                    case Operator.INotEndsWith:
-                    {
-                        return $"{Field} != null && !{Field}.ToLower().EndsWith(\"{Values[0].ToLower()}\")";
-                    }
-
-                    case Operator.In:
-                    {
-                        var conditions = Values.Select(value => $"{Field} == \"{value}\"");
-
-                        return $"{Field} != null && ({string.Join(" || ", conditions)})";
-                    }
-
-                    case Operator.IIn:
-                    {
-                        var conditions = Values.Select(value => $"{Field}.ToLower() == \"{value.ToLower()}\"");
-
-                        return $"{Field} != null && ({string.Join(" || ", conditions)})";
-                    }
-
-                    case Operator.NotIn:
-                    {
-                        var conditions = Values.Select(value => $"{Field} != \"{value}\"");
-
-                        return $"{Field} != null && ({string.Join(" && ", conditions)})";
-                    }
-
-                    case Operator.INotIn:
-                    {
-                        var conditions = Values.Select(value => $"{Field}.ToLower() != \"{value.ToLower()}\"");
-
-                        return $"{Field} != null && ({string.Join(" && ", conditions)})";
-                    }
-
-                    case Operator.IsNull:
-                    {
-                        return $"{Field} == null";
-                    }
-
-                    case Operator.IsNotNull:
-                    {
-                        return $"{Field} != null";
-                    }
-                }
-            }
-            break;
-
-            case DataType.Number:
-            {
-                switch (Operator)
-                {
-                    case Operator.Equal:
-                    {
-                        return $"{Field} != null && {Field} == {Values[0]}";
-                    }
-
-                    case Operator.NotEqual:
-                    {
-                        return $"{Field} != null && {Field} != {Values[0]}";
-                    }
-
-                    case Operator.GreaterThan:
-                    {
-                        return $"{Field} != null && {Field} > {Values[0]}";
-                    }
-
-                    case Operator.GreaterThanOrEqual:
-                    {
-                        return $"{Field} != null && {Field} >= {Values[0]}";
-                    }
-
-                    case Operator.LessThan:
-                    {
-                        return $"{Field} != null && {Field} < {Values[0]}";
-                    }
-
-                    case Operator.LessThanOrEqual:
-                    {
-                        return $"{Field} != null && {Field} <= {Values[0]}";
-                    }
-
-                    case Operator.In:
-                    {
-                        var conditions = Values.Select(value => $"{Field} == {value}");
-
-                        return $"{Field} != null && ({string.Join(" || ", conditions)})";
-                    }
-
-                    case Operator.NotIn:
-                    {
-                        var conditions = Values.Select(value => $"{Field} != {value}");
-
-                        return $"{Field} != null && ({string.Join(" && ", conditions)})";
-                    }
-
-                    case Operator.Between:
-                    {
-                        return $"{Field} != null && {Field} >= {Values[0]} && {Field} <= {Values[1]}";
-                    }
-
-                    case Operator.NotBetween:
-                    {
-                        return $"{Field} != null && ({Field} < {Values[0]} || {Field} > {Values[1]})";
-                    }
-
-                    case Operator.IsNull:
-                    {
-                        return $"{Field} == null";
-                    }
-
-                    case Operator.IsNotNull:
-                    {
-                        return $"{Field} != null";
-                    }
-                }
-            }
-            break;
-
-            case DataType.Boolean:
-            {
-                switch (Operator)
-                {
-                    case Operator.Equal:
-                    {
-                        return $"{Field} != null && {Field} == {Values[0]}";
-                    }
-
-                    case Operator.NotEqual:
-                    {
-                        return $"{Field} != null && {Field} != {Values[0]}";
-                    }
-
-                    case Operator.IsNull:
-                    {
-                        return $"{Field} == null";
-                    }
-
-                    case Operator.IsNotNull:
-                    {
-                        return $"{Field} != null";
-                    }
-                }
-            }
-            break;
-
-            case DataType.DateTime:
-            {
-                switch (Operator)
-                {
-                    case Operator.Equal:
-                    {
-                        return $"{Field} != null && {Field} == \"{Values[0]}\"";
-                    }
-
-                    case Operator.NotEqual:
-                    {
-                        return $"{Field} != null && {Field} != \"{Values[0]}\"";
-                    }
-
-                    case Operator.GreaterThan:
-                    {
-                        return $"{Field} != null && {Field} > \"{Values[0]}\"";
-                    }
-
-                    case Operator.GreaterThanOrEqual:
-                    {
-                        return $"{Field} != null && {Field} >= \"{Values[0]}\"";
-                    }
-
-                    case Operator.LessThan:
-                    {
-                        return $"{Field} != null && {Field} < \"{Values[0]}\"";
-                    }
-
-                    case Operator.LessThanOrEqual:
-                    {
-                        return $"{Field} != null && {Field} <= \"{Values[0]}\"";
-                    }
-
-                    case Operator.Between:
-                    {
-                        return $"{Field} != null && {Field} >= \"{Values[0]}\" && {Field} <= \"{Values[1]}\"";
-                    }
-
-                    case Operator.NotBetween:
-                    {
-                        return $"{Field} != null && ({Field} < \"{Values[0]}\" || {Field} > \"{Values[1]}\")";
-                    }
-
-                    case Operator.IsNull:
-                    {
-                        return $"{Field} == null";
-                    }
-
-                    case Operator.IsNotNull:
-                    {
-                        return $"{Field} != null";
-                    }
-                }
-            }
-            break;
-
-            case DataType.Date:
-            {
-                switch (Operator)
-                {
-                    case Operator.Equal:
-                    {
-                        return $"{Field} != null && {Field}.Date == DateTime.Parse(\"{Values[0]}\").Date";
-                    }
-
-                    case Operator.NotEqual:
-                    {
-                        return $"{Field} != null && {Field}.Date != DateTime.Parse(\"{Values[0]}\").Date";
-                    }
-
-                    case Operator.GreaterThan:
-                    {
-                        return $"{Field} != null && {Field}.Date > DateTime.Parse(\"{Values[0]}\").Date";
-                    }
-
-                    case Operator.GreaterThanOrEqual:
-                    {
-                        return $"{Field} != null && {Field}.Date >= DateTime.Parse(\"{Values[0]}\").Date";
-                    }
-
-                    case Operator.LessThan:
-                    {
-                        return $"{Field} != null && {Field}.Date < DateTime.Parse(\"{Values[0]}\").Date";
-                    }
-
-                    case Operator.LessThanOrEqual:
-                    {
-                        return $"{Field} != null && {Field}.Date <= DateTime.Parse(\"{Values[0]}\").Date";
-                    }
-
-                    case Operator.Between:
-                    {
-                        return $"{Field} != null && {Field}.Date >= DateTime.Parse(\"{Values[0]}\").Date && {Field}.Date <= DateTime.Parse(\"{Values[1]}\").Date";
-                    }
-
-                    case Operator.NotBetween:
-                    {
-                        return $"{Field} != null && ({Field}.Date < DateTime.Parse(\"{Values[0]}\").Date || {Field}.Date > DateTime.Parse(\"{Values[1]}\").Date)";
-                    }
-
-                    case Operator.IsNull:
-                    {
-                        return $"{Field} == null";
-                    }
-
-                    case Operator.IsNotNull:
-                    {
-                        return $"{Field} != null";
-                    }
-                }
-            }
-            break;
-        }
-
-        return string.Empty;
-    }
-
-    /// <summary>
-    /// Converts a ConditionGroup into its corresponding C# string representation.
-    /// </summary>
-    /// <typeparam name="T">The type to validate the conditions against.</typeparam>
-    /// <param name="group">The ConditionGroup to convert.</param>
-    /// <returns>The C# string representation of the ConditionGroup.</returns>
-    public static string AsString<T>(this ConditionGroup group)
+    /// <typeparam name="T">The root entity type to validate the conditions against.</typeparam>
+    /// <param name="group">The <see cref="ConditionGroup"/> to convert.</param>
+    /// <param name="provider">Database provider hint used to optimize case-insensitive comparison generation.</param>
+    /// <returns>
+    /// A dynamic LINQ predicate string enclosed in parentheses, or an empty string when the group has no conditions.
+    /// </returns>
+    /// <exception cref="LogicException">Thrown when the group or its members are invalid (e.g., duplicate Sort values).</exception>
+    public static string AsString<T>(this ConditionGroup group, Provider? provider = Provider.Others)
     {
         // Validate the ConditionGroup.
         group.Validate();
@@ -496,7 +110,7 @@ internal static class Converter
         // Iterate through and convert each Condition in the group.
         foreach (Condition condition in group.Conditions.OrderBy(x => x.Sort))
         {
-            string conditionAsString = condition.AsString<T>();
+            string conditionAsString = condition.AsString<T>(provider);
 
             // Add non-empty condition strings to the list.
             if (!string.IsNullOrWhiteSpace(conditionAsString))
@@ -508,7 +122,7 @@ internal static class Converter
         // Iterate through and convert each sub ConditionGroup in the group.
         foreach (ConditionGroup subGroup in group.SubConditionGroups.OrderBy(x => x.Sort))
         {
-            string subGroupConditionsAsString = subGroup.AsString<T>();
+            string subGroupConditionsAsString = subGroup.AsString<T>(provider);
 
             // Add non-empty sub-group condition strings to the list.
             if (!string.IsNullOrWhiteSpace(subGroupConditionsAsString))
@@ -527,11 +141,13 @@ internal static class Converter
     }
 
     /// <summary>
-    /// Converts an <see cref="OrderBy"/> instance into a string representation for SQL sorting.
+    /// Converts an <see cref="OrderBy"/> instance into a dynamic LINQ order-by expression string.
     /// </summary>
-    /// <typeparam name="T">The type to validate the field name against.</typeparam>
+    /// <typeparam name="T">The type used to validate the field name.</typeparam>
     /// <param name="order">The <see cref="OrderBy"/> instance to convert.</param>
-    /// <returns>A string representation of the order-by clause for SQL sorting.</returns>
+    /// <returns>
+    /// A dynamic LINQ order-by expression such as <c>"Name asc"</c> or <c>"Age desc"</c>.
+    /// </returns>
     /// <exception cref="LogicException">Thrown if the field name is invalid or empty.</exception>
     public static string AsString<T>(this OrderBy order)
     {

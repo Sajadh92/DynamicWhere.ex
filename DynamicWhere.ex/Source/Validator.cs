@@ -86,7 +86,7 @@ internal static class Validator
 
             case DataType.Number:
                 // For numeric fields, each value must parse into a supported numeric type.
-                if (condition.Values.Any(value => 
+                if (condition.Values.Any(value =>
                     !byte.TryParse(value, out _) &&
                     !short.TryParse(value, out _) &&
                     !int.TryParse(value, out _) &&

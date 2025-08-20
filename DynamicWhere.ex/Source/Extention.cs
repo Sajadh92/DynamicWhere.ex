@@ -4,21 +4,22 @@ using System.Linq.Dynamic.Core;
 namespace DynamicWhere.ex;
 
 /// <summary>
-/// Provides extension methods for working with <see cref="IQueryable{T}"/> and applying custom query logic.
+/// Extension methods for building dynamic LINQ queries over <see cref="IQueryable{T}"/> and <see cref="IEnumerable{T}"/>.
+/// These helpers rely on <c>System.Linq.Dynamic.Core</c> to translate string-based expressions.
 /// </summary>
 public static class Extension
 {
     /// <summary>
-    /// Projects and filters the specified fields in an <see cref="IQueryable{T}"/> query.
+    /// Projects the specified fields in an <see cref="IQueryable{T}"/> query.
     /// </summary>
     /// <typeparam name="T">The entity type of the <see cref="IQueryable{T}"/>.</typeparam>
-    /// <param name="query">The source <see cref="IQueryable{T}"/> query to be projected.</param>
+    /// <param name="query">The source <see cref="IQueryable{T}"/> query to project.</param>
     /// <param name="fields">A list of field names to include in the projection.</param>
     /// <returns>
-    /// An <see cref="IQueryable"/> query containing only the specified fields or the original <paramref name="query"/> if no valid fields are specified.
+    /// An <see cref="IQueryable{T}"/> that selects only the specified fields, or the original <paramref name="query"/> if no valid fields are specified.
     /// </returns>
-    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="fields"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown if no valid fields are specified in the <paramref name="fields"/> list.</exception>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="fields"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown if no valid fields are specified in <paramref name="fields"/>.</exception>
     public static IQueryable<T> Select<T>(this IQueryable<T> query, List<string> fields)
     {
         // Validate input parameters.
@@ -37,7 +38,7 @@ public static class Extension
             throw new LogicException(ErrorCode.MustHaveFields);
         }
 
-        // Validate each field if it is exists in the query.
+        // Validate each field if it exists in the query.
         for (int i = 0; i < fields.Count; i++)
         {
             fields[i] = fields[i].Validate<T>();
@@ -52,7 +53,7 @@ public static class Extension
             return query;
         }
 
-        // Apply the select to the query and return new query.
+        // Apply the select to the query and return a new query.
         return query.Select<T>(select);
     }
 
@@ -62,10 +63,11 @@ public static class Extension
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> to filter.</param>
     /// <param name="condition">The <see cref="Condition"/> containing filtering conditions.</param>
+    /// <param name="provider">Database provider hint used to optimize case-insensitive comparison generation.</param>
     /// <returns>The filtered <see cref="IQueryable{T}"/> based on the <see cref="Condition"/>.</returns>
-    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="condition"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when the <paramref name="condition"/> contains invalid data</exception>
-    public static IQueryable<T> Where<T>(this IQueryable<T> query, Condition condition)
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="condition"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="condition"/> contains invalid data.</exception>
+    public static IQueryable<T> Where<T>(this IQueryable<T> query, Condition condition, Provider? provider = Provider.Others)
     {
         // Validate input parameters.
         if (query == null)
@@ -79,7 +81,7 @@ public static class Extension
         }
 
         // Convert Condition to a string representation and apply filtering.
-        string where = condition.AsString<T>();
+        string where = condition.AsString<T>(provider);
 
         // If the resulting where string is null or empty, return the original query.
         if (string.IsNullOrWhiteSpace(where))
@@ -97,10 +99,11 @@ public static class Extension
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> to filter.</param>
     /// <param name="group">The <see cref="ConditionGroup"/> containing filtering conditions.</param>
+    /// <param name="provider">Database provider hint used to optimize case-insensitive comparison generation.</param>
     /// <returns>The filtered <see cref="IQueryable{T}"/> based on the <see cref="ConditionGroup"/>.</returns>
-    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="group"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when the <paramref name="group"/> contains invalid data</exception>
-    public static IQueryable<T> Where<T>(this IQueryable<T> query, ConditionGroup group)
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="group"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="group"/> contains invalid data.</exception>
+    public static IQueryable<T> Where<T>(this IQueryable<T> query, ConditionGroup group, Provider? provider = Provider.Others)
     {
         // Validate input parameters.
         if (query == null)
@@ -114,7 +117,7 @@ public static class Extension
         }
 
         // Convert ConditionGroup to a string representation and apply filtering.
-        string where = group.AsString<T>();
+        string where = group.AsString<T>(provider);
 
         // If the resulting where string is null or empty, return the original query.
         if (string.IsNullOrWhiteSpace(where))
@@ -132,9 +135,9 @@ public static class Extension
     /// <typeparam name="T">The type of elements in the sequence.</typeparam>
     /// <param name="query">The source <see cref="IQueryable{T}"/> sequence to order.</param>
     /// <param name="order">The <see cref="OrderBy"/> instance that defines the sorting criteria.</param>
-    /// <returns>An <see cref="IQueryable{T}"/> that contains elements from the input sequence ordered as specified by the <see cref="OrderBy"/> instance.</returns>
-    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="order"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when the <paramref name="order"/> contains invalid data</exception>"
+    /// <returns>An <see cref="IQueryable{T}"/> that contains elements from the input sequence ordered as specified by <paramref name="order"/>.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="order"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="order"/> contains invalid data.</exception>
     public static IQueryable<T> Order<T>(this IQueryable<T> query, OrderBy order)
     {
         // Validate input parameters.
@@ -157,7 +160,7 @@ public static class Extension
             return query;
         }
 
-        // apply the ordering to the query and return the result.
+        // Apply the ordering to the query and return the result.
         return query.OrderBy(orderBy);
     }
 
@@ -166,12 +169,12 @@ public static class Extension
     /// </summary>
     /// <typeparam name="T">The type of elements in the sequence.</typeparam>
     /// <param name="query">The source <see cref="IQueryable{T}"/> sequence to order.</param>
-    /// <param name="orders">A list of <see cref="OrderBy"/> instances that define the sorting criteria.</param>
+    /// <param name="orders">A list of <see cref="OrderBy"/> instances that define the sorting criteria. Items are applied by their <see cref="OrderBy.Sort"/> value.</param>
     /// <returns>
     /// An <see cref="IQueryable{T}"/> that contains elements from the input sequence ordered as specified by the list of <see cref="OrderBy"/> instances.
     /// </returns>
-    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="orders"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when the <paramref name="orders"/> contains invalid data</exception>""
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="orders"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="orders"/> contains invalid data.</exception>
     public static IQueryable<T> Order<T>(this IQueryable<T> query, List<OrderBy> orders)
     {
         // Validate input parameters.
@@ -207,8 +210,8 @@ public static class Extension
     /// <typeparam name="T">The type of elements in the sequence.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> sequence to paginate.</param>
     /// <param name="page">The <see cref="PageBy"/> object containing pagination information.</param>
-    /// <returns>An <see cref="IQueryable{T}"/> sequence representing a single page of data.</returns>
-    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="page"/> is null.</exception>
+    /// <returns>An <see cref="IQueryable{T}"/> representing a single page of data.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="page"/> is null.</exception>
     public static IQueryable<T> Page<T>(this IQueryable<T> query, PageBy page)
     {
         // Validate input parameters.
@@ -235,10 +238,11 @@ public static class Extension
     /// <typeparam name="T">The type of elements in the data source.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> data source to filter.</param>
     /// <param name="filter">The <see cref="Filter"/> criteria containing a condition group, order-by criteria, and pagination settings.</param>
+    /// <param name="provider">Database provider hint used to optimize case-insensitive comparison generation.</param>
     /// <returns>An <see cref="IQueryable{T}"/> data source with the filter applied.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when the <paramref name="filter"/> contains invalid data</exception>
-    public static IQueryable<T> Filter<T>(this IQueryable<T> query, Filter filter)
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    public static IQueryable<T> Filter<T>(this IQueryable<T> query, Filter filter, Provider? provider = Provider.Others)
     {
         // Validate input parameters.
         if (query == null)
@@ -254,7 +258,7 @@ public static class Extension
         // Apply the filter criteria to the query.
         if (filter.ConditionGroup != null)
         {
-            query = query.Where(filter.ConditionGroup);
+            query = query.Where(filter.ConditionGroup, provider);
         }
 
         // Apply the select criteria to the query.
@@ -280,15 +284,16 @@ public static class Extension
     }
 
     /// <summary>
-    /// retrieves a list of entities from the <see cref="IQueryable{T}"/> which contains static data with optional filtering based on a <see cref="Filter"/>.
+    /// Retrieves a list of entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Filter"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
     /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="provider">Database provider hint used to optimize case-insensitive comparison generation.</param>
     /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
-    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when the <paramref name="filter"/> contains invalid data.</exception>
-    public static FilterResult<T> ToList<T>(this IQueryable<T> query, Filter filter)
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    public static FilterResult<T> ToList<T>(this IQueryable<T> query, Filter filter, Provider? provider = Provider.Others)
     {
         // Validate input parameters.
         if (query == null)
@@ -304,7 +309,7 @@ public static class Extension
         // Apply the filter criteria to the query.
         if (filter.ConditionGroup != null)
         {
-            query = query.Where(filter.ConditionGroup);
+            query = query.Where(filter.ConditionGroup, provider);
         }
 
         // Apply the select criteria to the query.
@@ -355,17 +360,18 @@ public static class Extension
     }
 
     /// <summary>
-    /// retrieves a list of entities from the <see cref="IEnumerable{T}"/> which contains static data with optional filtering based on a <see cref="Filter"/>.
+    /// Retrieves a list of entities from an in-memory <see cref="IEnumerable{T}"/> with optional filtering based on a <see cref="Filter"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
-    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="query">The <see cref="IEnumerable{T}"/> to retrieve entities from.</param>
     /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="provider">Database provider hint used to optimize case-insensitive comparison generation.</param>
     /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
-    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when the <paramref name="filter"/> contains invalid data.</exception>
-    public static FilterResult<T> ToList<T>(this IEnumerable<T> query, Filter filter)
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    public static FilterResult<T> ToList<T>(this IEnumerable<T> query, Filter filter, Provider? provider = Provider.Others)
     {
-        return query.AsQueryable().ToList(filter);
+        return query.AsQueryable().ToList(filter, provider);
     }
 
     /// <summary>
@@ -374,10 +380,11 @@ public static class Extension
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
     /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="provider">Database provider hint used to optimize case-insensitive comparison generation.</param>
     /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
-    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when the <paramref name="filter"/> contains invalid data.</exception>
-    public static async Task<FilterResult<T>> ToListAsync<T>(this IQueryable<T> query, Filter filter)
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    public static async Task<FilterResult<T>> ToListAsync<T>(this IQueryable<T> query, Filter filter, Provider? provider = Provider.Others)
     {
         // Validate input parameters.
         if (query == null)
@@ -393,7 +400,7 @@ public static class Extension
         // Apply the filter criteria to the query.
         if (filter.ConditionGroup != null)
         {
-            query = query.Where(filter.ConditionGroup);
+            query = query.Where(filter.ConditionGroup, provider);
         }
 
         // Apply the select criteria to the query.
@@ -449,10 +456,11 @@ public static class Extension
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
     /// <param name="segment">The <see cref="Segment"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="provider">Database provider hint used to optimize case-insensitive comparison generation.</param>
     /// <returns>A <see cref="SegmentResult{T}"/> containing entities that match the filter conditions in the <see cref="Segment"/> with pagination information.</returns>
-    /// <exception cref="ArgumentNullException">Thrown if either the input <paramref name="query"/> or <paramref name="segment"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when the <paramref name="segment"/> contains invalid data.</exception>
-    public static async Task<SegmentResult<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment)
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="segment"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="segment"/> contains invalid data.</exception>
+    public static async Task<SegmentResult<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment, Provider? provider = Provider.Others)
     {
         // Validate input parameters.
         if (query == null)
@@ -468,7 +476,7 @@ public static class Extension
         // Validate and retrieve ConditionSets from the Segment.
         List<ConditionSet> sets = segment.ValidateAndGetSets();
 
-        // If there are no filter conditions, return all results.
+        // If there are no filter conditions, return all results (respecting select/order/page).
         if (sets.Count == 0)
         {
             // Create a new filter with the same select, order, and pagination criteria.
@@ -481,7 +489,7 @@ public static class Extension
             };
 
             // Retrieve the results using the filter.
-            FilterResult<T> fresult = await query.ToListAsync(filter);
+            FilterResult<T> fresult = await query.ToListAsync(filter, provider);
 
             // Return the results as a SegmentResult.
             return new()
@@ -500,11 +508,11 @@ public static class Extension
         foreach (ConditionSet? set in sets.OrderBy(x => x.Sort))
         {
             // Apply filter conditions from ConditionGroup.
-            IQueryable<T> queryable = query.Where(set.ConditionGroup);
+            IQueryable<T> queryable = query.Where(set.ConditionGroup, provider);
 
+            // Apply select criteria to the query if provided.
             if (segment.Selects != null)
             {
-                // Apply select criteria to the query.
                 queryable = queryable.Select(segment.Selects);
             }
 
@@ -514,7 +522,7 @@ public static class Extension
             dataSets.Add(new(set.Sort, set.Intersection, list));
         }
 
-        // Combine and apply Intersection operations to the data sets.
+        // Combine and apply intersection operations to the data sets.
         List<T> data = dataSets.OrderBy(x => x.sort).First().list;
 
         foreach ((int sort, Intersection? intersection, List<T> list) in dataSets.OrderBy(x => x.sort).Skip(1))
@@ -523,21 +531,21 @@ public static class Extension
             {
                 case Intersection.Union:
                 {
-                    // apply union operation to the result and the current list.
+                    // Apply union operation to the result and the current list.
                     data = data.Union(list).ToList();
                 }
                 break;
 
                 case Intersection.Intersect:
                 {
-                    // apply intersect operation to the result and the current list.
+                    // Apply intersect operation to the result and the current list.
                     data = data.Intersect(list).ToList();
                 }
                 break;
 
                 case Intersection.Except:
                 {
-                    // apply except operation to the result and the current list.
+                    // Apply except operation to the result and the current list.
                     data = data.Except(list).ToList();
                 }
                 break;
@@ -547,7 +555,7 @@ public static class Extension
         // Create a new SegmentResult to store the result.
         SegmentResult<T> sresult = new()
         {
-            // Get the total count of entities in the query.
+            // Get the total count of entities in the result.
             TotalCount = data.Count
         };
 

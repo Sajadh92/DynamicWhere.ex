@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex;
+﻿namespace DynamicWhere.ex.Enums;
 
 /// <summary>
 /// Specifies the logical connector used to combine conditions in a condition group.

@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex;
+﻿namespace DynamicWhere.ex.Enums;
 
 /// <summary>
 /// Supported logical data types for dynamic condition building.
@@ -16,5 +16,7 @@ public enum DataType
     /// <summary>Full timestamp (date and time).</summary>
     DateTime,
     /// <summary>Date-only value.</summary>
-    Date
+    Date,
+    /// <summary>Enum value types.</summary>
+    Enum
 }

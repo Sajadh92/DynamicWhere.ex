@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex;
+﻿namespace DynamicWhere.ex.Enums;
 
 /// <summary>
 /// Specifies the sorting direction, either ascending or descending.

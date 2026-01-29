@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex;
+﻿namespace DynamicWhere.ex.Enums;
 
 /// <summary>
 /// Supported operators across data types.

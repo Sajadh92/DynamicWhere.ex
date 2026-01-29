@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex;
+﻿namespace DynamicWhere.ex.Enums;
 
 /// <summary>
 /// Specifies different types of intersections between condition sets.

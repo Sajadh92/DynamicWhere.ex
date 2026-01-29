@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex;
+﻿namespace DynamicWhere.ex.Exceptions;
 
 /// <summary>
 /// Represents an exception that is thrown when a logic or validation error occurs in the application.

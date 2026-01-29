@@ -1,10 +1,14 @@
-﻿using System.Reflection;
+﻿using DynamicWhere.ex.Classes;
+using DynamicWhere.ex.Enums;
+using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Optimization.Cache.Source;
 
-namespace DynamicWhere.ex;
+namespace DynamicWhere.ex.Source;
 
 /// <summary>
 /// Validation helpers for dynamic query components.
 /// Ensures shape, value counts, formats, and field paths are valid before building expressions.
+/// Uses caching for improved performance with frequently used types.
 /// </summary>
 internal static class Validator
 {
@@ -29,10 +33,7 @@ internal static class Validator
             throw new ArgumentNullException(nameof(condition));
         }
 
-        if (condition.Values == null)
-        {
-            condition.Values = new List<string>();
-        }
+        condition.Values ??= new List<string>();
 
         // Check if the field name is provided and not empty.
         if (string.IsNullOrWhiteSpace(condition.Field))
@@ -40,7 +41,7 @@ internal static class Validator
             throw new LogicException(ErrorCode.InvalidField);
         }
 
-        // Validate and normalize the field name against the specified type.
+        // Validate and normalize the field name against the specified type using cache.
         condition.Field = condition.Field.Validate<T>();
 
         // Handle validation based on the operator type.
@@ -146,15 +147,9 @@ internal static class Validator
             throw new ArgumentNullException(nameof(group));
         }
 
-        if (group.Conditions == null)
-        {
-            group.Conditions = new List<Condition>();
-        }
+        group.Conditions ??= new List<Condition>();
 
-        if (group.SubConditionGroups == null)
-        {
-            group.SubConditionGroups = new List<ConditionGroup>();
-        }
+        group.SubConditionGroups ??= new List<ConditionGroup>();
 
         // Check for duplicate sorting values among conditions within the group.
         bool hasDuplicateSort = group.Conditions.GroupBy(x => x.Sort).Any(x => x.Count() > 1);
@@ -194,7 +189,7 @@ internal static class Validator
             throw new LogicException(ErrorCode.InvalidField);
         }
 
-        // Validate the field name against the specified type.
+        // Validate the field name against the specified type using cache.
         order.Field = order.Field.Validate<T>();
     }
 
@@ -244,10 +239,7 @@ internal static class Validator
             throw new ArgumentNullException(nameof(segment));
         }
 
-        if (segment.ConditionSets == null)
-        {
-            segment.ConditionSets = new List<ConditionSet>();
-        }
+        segment.ConditionSets ??= new List<ConditionSet>();
 
         if (segment.ConditionSets.Count == 0)
         {
@@ -283,72 +275,21 @@ internal static class Validator
     /// Validates a property path for <typeparamref name="T"/> and returns the normalized path.
     /// Supports nested navigation using dot notation and normalizes each segment to the exact property name.
     /// For collection properties, the next segment is validated against the element type.
+    /// Uses caching for improved performance with frequently used types.
     /// </summary>
     /// <typeparam name="T">The root type in which the property path is validated.</typeparam>
     /// <param name="name">The property path to validate (e.g., <c>"Order.Customer.Name"</c>).</param>
     /// <returns>The validated, normalized property path.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null.</exception>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null or whiteSpace.</exception>
     /// <exception cref="LogicException">Thrown when the path is empty or any segment is not found.</exception>
     public static string Validate<T>(this string name)
     {
-        if (name == null)
+        if (string.IsNullOrWhiteSpace(name))
         {
             throw new ArgumentNullException(nameof(name));
         }
 
-        // Split the property name by dots if it contains any, handling leading/trailing whitespaces and empty entries.
-        List<string> names = name.Contains('.')
-            ? name.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
-            : new List<string> { name };
-
-        // Ensure that at least one valid property name is provided.
-        if (names.Count == 0)
-        {
-            throw new LogicException(ErrorCode.InvalidField);
-        }
-
-        Type type = typeof(T);
-
-        List<string> validatedNames = new();
-
-        // Iterate through nested property names and validate each level.
-        foreach (string propertyName in names)
-        {
-            // Attempt to retrieve the PropertyInfo for the current property name
-            // from the current type with case-insensitive comparison.
-            PropertyInfo? prop = type.GetProperties()
-                .FirstOrDefault(x => x.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase));
-
-            // If the property is not found, throw an exception indicating an invalid field.
-            if (prop == null)
-            {
-                throw new LogicException(ErrorCode.InvalidField);
-            }
-
-            validatedNames.Add(prop.Name);
-
-            // Update the current type to the property's type, considering generic collection types.
-            type = prop.PropertyType;
-
-            // Handle various collection types
-            if (type.IsGenericType)
-            {
-                var genericTypeDefinition = type.GetGenericTypeDefinition();
-                if (genericTypeDefinition == typeof(List<>) ||
-                    genericTypeDefinition == typeof(ICollection<>) ||
-                    genericTypeDefinition == typeof(IEnumerable<>) ||
-                    genericTypeDefinition == typeof(IList<>))
-                {
-                    type = type.GetGenericArguments()[0];
-                }
-            }
-            else if (type.IsArray)
-            {
-                type = type.GetElementType()!;
-            }
-        }
-
-        // Return the validated property name as a single string.
-        return string.Join('.', validatedNames);
+        // Use the cached validation method for improved performance
+        return CacheReflection.ValidatePropertyPath(typeof(T), name);
     }
 }

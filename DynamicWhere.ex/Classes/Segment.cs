@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex;
+﻿namespace DynamicWhere.ex.Classes;
 
 /// <summary>
 /// Represents a segment containing multiple sets of conditions for dynamic queries.

@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex;
+﻿namespace DynamicWhere.ex.Classes;
 
 /// <summary>
 /// Represents the result of a filtered query execution, including pagination information and a list of entities of type <typeparamref name="T"/>.
@@ -30,4 +30,9 @@ public class FilterResult<T>
     /// Represents the list of entities retrieved as a result of the query.
     /// </summary>
     public List<T> Data { get; set; } = new();
+
+    /// <summary>
+    /// Represents the query string that applied on database side.
+    /// </summary>
+    public string? QueryString { get; set; } 
 }

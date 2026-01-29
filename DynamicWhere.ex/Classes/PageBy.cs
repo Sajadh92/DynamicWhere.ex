@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex;
+﻿namespace DynamicWhere.ex.Classes;
 
 /// <summary>
 /// Represents a pagination configuration specifying the page number and page size.

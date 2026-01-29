@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex;
+﻿namespace DynamicWhere.ex.Classes;
 
 /// <summary>
 /// Represents a filter containing a condition group, order-by criteria, and pagination settings.

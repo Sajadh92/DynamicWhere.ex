@@ -1,4 +1,6 @@
-﻿namespace DynamicWhere.ex;
+﻿using DynamicWhere.ex.Enums;
+
+namespace DynamicWhere.ex.Classes;
 
 /// <summary>
 /// Represents a group of conditions used in dynamic queries.

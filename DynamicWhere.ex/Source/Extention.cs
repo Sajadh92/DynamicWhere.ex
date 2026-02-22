@@ -138,6 +138,43 @@ public static class Extension
     }
 
     /// <summary>
+    /// Groups the elements of an <see cref="IQueryable{T}"/> sequence based on the specified <see cref="GroupBy"/> instance.
+    /// Returns a dynamic query result containing the grouped fields and any specified aggregations.
+    /// </summary>
+    /// <typeparam name="T">The type of elements in the source sequence.</typeparam>
+    /// <param name="query">The source <see cref="IQueryable{T}"/> sequence to group.</param>
+    /// <param name="groupBy">The <see cref="GroupBy"/> instance that defines the grouping fields and aggregations.</param>
+    /// <returns>
+    /// An <see cref="IQueryable"/> containing dynamic objects with the grouped fields and aggregation results.
+    /// Each result object contains properties for each grouping field and each aggregation alias.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="groupBy"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="groupBy"/> contains invalid data.</exception>
+    /// <remarks>
+    /// This method uses System.Linq.Dynamic.Core to build the GroupBy and Select expressions.
+    /// The result is a dynamic IQueryable that can be further processed or materialized.
+    /// </remarks>
+    public static IQueryable Group<T>(this IQueryable<T> query, GroupBy groupBy) where T : class
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (groupBy == null)
+        {
+            throw new ArgumentNullException(nameof(groupBy));
+        }
+
+        // Convert GroupBy to dynamic LINQ strings.
+        var (groupByString, selectString) = groupBy.AsString<T>();
+
+        // Apply GroupBy and Select using dynamic LINQ.
+        return query.GroupBy(groupByString).Select(selectString);
+    }
+
+    /// <summary>
     /// Orders the elements of an <see cref="IQueryable{T}"/> sequence based on the specified <see cref="OrderBy"/> instance.
     /// </summary>
     /// <typeparam name="T">The type of elements in the sequence.</typeparam>

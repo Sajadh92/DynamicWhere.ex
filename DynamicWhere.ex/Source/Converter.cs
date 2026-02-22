@@ -388,6 +388,75 @@ internal static class Converter
     }
 
     /// <summary>
+    /// Converts a <see cref="GroupBy"/> instance into a dynamic LINQ GroupBy and Select expression string.
+    /// </summary>
+    /// <typeparam name="T">The type used to validate field names and aggregations.</typeparam>
+    /// <param name="groupBy">The <see cref="GroupBy"/> instance to convert.</param>
+    /// <returns>
+    /// A tuple containing:
+    /// - GroupByString: The dynamic LINQ GroupBy key selector (e.g., "new { Field1, Field2 }")
+    /// - SelectString: The dynamic LINQ Select projection including grouping fields and aggregations
+    /// </returns>
+    /// <exception cref="LogicException">Thrown if validation fails or fields/aggregations are invalid.</exception>
+    public static (string GroupByString, string SelectString) AsString<T>(this GroupBy groupBy)
+    {
+        // Validate the GroupBy
+        groupBy.Validate<T>();
+
+        // Build the GroupBy key selector
+        string groupByString = groupBy.Fields.Count == 1
+            ? groupBy.Fields[0]
+            : $"new ({string.Join(", ", groupBy.Fields)})";
+
+        // Build the Select projection
+        var selectParts = new List<string>();
+
+        // Add grouping fields to select
+        // For dotted paths (e.g., "CreatedAt.Year"), Dynamic LINQ names the key property after
+        // the last segment only ("Year"), and aliases must be valid identifiers (no dots).
+        if (groupBy.Fields.Count == 1)
+        {
+            // Single field: use Key directly; sanitize alias in case the field is a dotted path
+            selectParts.Add($"Key as {groupBy.Fields[0].Replace(".", "")}");
+        }
+        else
+        {
+            // Multiple fields: access Key by last segment; sanitize alias for dotted paths
+            foreach (var field in groupBy.Fields)
+            {
+                string keyProp = field.Contains('.') ? field.Split('.').Last() : field;
+                string alias = field.Replace(".", "");
+                selectParts.Add($"Key.{keyProp} as {alias}");
+            }
+        }
+
+        // Add aggregations to select
+        foreach (var aggregate in groupBy.AggregateBy)
+        {
+            string aggregationExpression = aggregate.Aggregator switch
+            {
+                Aggregator.Count => "Count()",
+                Aggregator.CountDistinct => $"Select({aggregate.Field}).Distinct().Count()",
+                Aggregator.Sumation => $"Sum({aggregate.Field})",
+                Aggregator.Average => $"Average({aggregate.Field})",
+                Aggregator.Minimum => $"Min({aggregate.Field})",
+                Aggregator.Maximum => $"Max({aggregate.Field})",
+                Aggregator.FirstOrDefault => $"Select({aggregate.Field}).OrderBy(it).FirstOrDefault()",
+                Aggregator.LastOrDefault => $"Select({aggregate.Field}).OrderByDescending(it).FirstOrDefault()",
+                _ => throw new LogicException(ErrorCode.UnsupportedAggregatorForType(
+                    aggregate.Aggregator.ToString(),
+                    "Unknown"))
+            };
+
+            selectParts.Add($"{aggregationExpression} as {aggregate.Alias}");
+        }
+
+        string selectString = $"new ({string.Join(", ", selectParts)})";
+
+        return (groupByString, selectString);
+    }
+
+    /// <summary>
     /// Converts an <see cref="OrderBy"/> instance into a dynamic LINQ order-by expression string.
     /// </summary>
     /// <typeparam name="T">The type used to validate the field name.</typeparam>

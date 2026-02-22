@@ -239,7 +239,9 @@ internal static class CacheReflection
         foreach (string propertyName in names)
         {
             // Use cached property lookup with reflection
-            PropertyInfo? prop = FindProperty(type, propertyName) ?? throw new LogicException(ErrorCode.InvalidField);
+            PropertyInfo? prop = FindProperty(type, propertyName) 
+                ?? throw new LogicException(ErrorCode.InvalidField);
+            
             validatedNames.Add(prop.Name);
 
             // Update the current type to the property's type, considering generic collection types.
@@ -258,4 +260,119 @@ internal static class CacheReflection
     }
 
     #endregion Property Path Validation
+
+    #region Field Type Analysis
+
+    /// <summary>
+    /// Gets the type of a field given a property path using cached reflection.
+    /// </summary>
+    /// <param name="rootType">The root type.</param>
+    /// <param name="propertyPath">The property path.</param>
+    /// <returns>The type of the field.</returns>
+    /// <exception cref="LogicException">Thrown when the property path is invalid.</exception>
+    public static Type GetFieldType(Type rootType, string propertyPath)
+    {
+        var cacheKey = (rootType, propertyPath);
+        var config = GetCacheConfigOptions();
+
+        // Update access tracking based on eviction strategy
+        var accessTrackingInput = AccessTrackingInput<(Type, string)>.Create(cacheKey, config,
+            CacheDatabase.PropertyPathAccessTime,
+            CacheDatabase.PropertyPathAccessCount);
+        CacheDatabase.UpdateAccessTracking(accessTrackingInput);
+
+        // Reuse property path cache for field type resolution since the path is already validated
+        // We just need to navigate to the final type
+        return GetFieldTypeInternal(rootType, propertyPath);
+    }
+
+    /// <summary>
+    /// Internal method that gets the field type for a property path using cached reflection.
+    /// </summary>
+    /// <param name="rootType">The root type.</param>
+    /// <param name="propertyPath">The property path.</param>
+    /// <returns>The type of the field.</returns>
+    private static Type GetFieldTypeInternal(Type rootType, string propertyPath)
+    {
+        // Split the property path by dots to handle nested properties
+        List<string> names = propertyPath.Contains('.')
+            ? propertyPath.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
+            : new List<string> { propertyPath.Trim() };
+
+        Type type = rootType;
+
+        // Navigate through nested properties
+        foreach (string propertyName in names)
+        {
+            var prop = FindProperty(type, propertyName) ??
+                throw new LogicException(ErrorCode.InvalidField);
+
+            type = prop.PropertyType;
+
+            // Check if it's a collection and get the element type
+            var elementType = GetCollectionElementType(type);
+            if (elementType != null)
+            {
+                type = elementType;
+            }
+        }
+
+        return type;
+    }
+
+    /// <summary>
+    /// Checks if a type is a simple type (primitive, string, DateTime, Guid, decimal, TimeSpan, DateTimeOffset, etc.).
+    /// Simple types are types that can be directly aggregated.
+    /// </summary>
+    /// <param name="type">The type to check.</param>
+    /// <returns>True if the type is a simple type, false otherwise.</returns>
+    public static bool IsSimpleType(Type type)
+    {
+        // Unwrap nullable types to get the underlying type
+        var underlyingType = Nullable.GetUnderlyingType(type) ?? type;
+
+        // Check if it's a primitive type (int, bool, double, etc.)
+        if (underlyingType.IsPrimitive)
+            return true;
+
+        // Check for common simple types
+        if (underlyingType == typeof(string) ||
+            underlyingType == typeof(decimal) ||
+            underlyingType == typeof(DateTime) ||
+            underlyingType == typeof(DateTimeOffset) ||
+            underlyingType == typeof(TimeSpan) ||
+            underlyingType == typeof(Guid))
+            return true;
+
+        // Check if it's an enum
+        if (underlyingType.IsEnum)
+            return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// Checks if a type is a numeric type.
+    /// </summary>
+    /// <param name="type">The type to check.</param>
+    /// <returns>True if the type is numeric, false otherwise.</returns>
+    public static bool IsNumericType(Type type)
+    {
+        // Unwrap nullable types to get the underlying type
+        var underlyingType = Nullable.GetUnderlyingType(type) ?? type;
+
+        return underlyingType == typeof(byte) ||
+               underlyingType == typeof(sbyte) ||
+               underlyingType == typeof(short) ||
+               underlyingType == typeof(ushort) ||
+               underlyingType == typeof(int) ||
+               underlyingType == typeof(uint) ||
+               underlyingType == typeof(long) ||
+               underlyingType == typeof(ulong) ||
+               underlyingType == typeof(float) ||
+               underlyingType == typeof(double) ||
+               underlyingType == typeof(decimal);
+    }
+
+    #endregion Field Type Analysis
 }

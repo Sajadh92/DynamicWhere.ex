@@ -2,6 +2,7 @@
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Optimization.Cache.Source;
+using Microsoft.VisualBasic.FileIO;
 
 namespace DynamicWhere.ex.Source;
 
@@ -12,6 +13,28 @@ namespace DynamicWhere.ex.Source;
 /// </summary>
 internal static class Validator
 {
+    /// <summary>
+    /// Validates a property path for <typeparamref name="T"/> and returns the normalized path.
+    /// Supports nested navigation using dot notation and normalizes each segment to the exact property name.
+    /// For collection properties, the next segment is validated against the element type.
+    /// Uses caching for improved performance with frequently used types.
+    /// </summary>
+    /// <typeparam name="T">The root type in which the property path is validated.</typeparam>
+    /// <param name="name">The property path to validate (e.g., <c>"Order.Customer.Name"</c>).</param>
+    /// <returns>The validated, normalized property path.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null or whiteSpace.</exception>
+    /// <exception cref="LogicException">Thrown when the path is empty or any segment is not found.</exception>
+    public static string Validate<T>(this string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentNullException(nameof(name));
+        }
+
+        // Use the cached validation method for improved performance
+        return CacheReflection.ValidatePropertyPath(typeof(T), name);
+    }
+
     /// <summary>
     /// Validates a <see cref="Condition"/> for correctness against the entity type <typeparamref name="T"/>.
     /// </summary>
@@ -169,6 +192,233 @@ internal static class Validator
     }
 
     /// <summary>
+    /// Validates an <see cref="AggregateBy"/> to ensure it has a non-empty, valid field for <typeparamref name="T"/>,
+    /// a valid alias, and an aggregator that is supported for the field type.
+    /// Also ensures the field is a simple type and not a collection.
+    /// </summary>
+    /// <typeparam name="T">The root type used to validate the field path.</typeparam>
+    /// <param name="aggregate">The <see cref="AggregateBy"/> instance to validate.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="aggregate"/> is null.</exception>
+    /// <exception cref="LogicException">
+    /// Thrown if the field is missing/invalid, alias is missing, field is a complex type,
+    /// field is a collection type, or the aggregator is not supported for the field type.
+    /// </exception>
+    /// <remarks>On success, <see cref="AggregateBy.Field"/> is normalized to the entity's exact property casing/path.</remarks>
+    public static void Validate<T>(this AggregateBy aggregate)
+    {
+        if (aggregate == null)
+        {
+            throw new ArgumentNullException(nameof(aggregate));
+        }
+
+        // Check if the alias is provided and not empty.
+        // Check if the alias contains invalid characters (e.g., dot notation is not allowed in aliases).
+        if (string.IsNullOrWhiteSpace(aggregate.Alias) || aggregate.Alias.Contains('.'))
+        {
+            throw new LogicException(ErrorCode.InvalidAlias);
+        }
+
+        // Count aggregator can work without a field (just count items in the group)
+        if (string.IsNullOrWhiteSpace(aggregate.Field) &&
+            // Only Count aggregator is allowed without a field
+            aggregate.Aggregator != Aggregator.Count)
+        {
+            throw new LogicException(ErrorCode.InvalidField);
+        }
+
+        // Validate and normalize the field name against the specified type using cache.
+        // If the field is not empty, validate it.
+        // If it is empty, it will be treated as a count of items in the group.
+        if (!string.IsNullOrWhiteSpace(aggregate.Field))
+        {
+            aggregate.Field = aggregate.Field.Validate<T>();
+
+            // Get the field type using cached reflection to validate the aggregator
+            var fieldType = CacheReflection.GetFieldType(typeof(T), aggregate.Field);
+
+            // Check if the field is a collection type
+            if (CacheReflection.IsCollectionType(fieldType))
+            {
+                throw new LogicException(ErrorCode.AggregationFieldCannotBeCollection);
+            }
+
+            // Check if the field is a simple type (primitive, string, DateTime, Guid, etc.)
+            if (!CacheReflection.IsSimpleType(fieldType))
+            {
+                throw new LogicException(ErrorCode.AggregationFieldMustBeSimpleType);
+            }
+
+            // Validate that the aggregator is supported for the field type
+            ValidateAggregatorForType(aggregate.Aggregator, fieldType);
+        }
+        else
+        {
+            // If no field is specified, only Count aggregator is valid,
+            // and it can be applied to any type.
+            ValidateAggregatorForType(aggregate.Aggregator, null);
+        }
+
+    }
+
+    /// <summary>
+    /// Validates that the aggregator is supported for the given field type.
+    /// </summary>
+    /// <param name="aggregator">The aggregator to validate.</param>
+    /// <param name="fieldType">The field type to validate against.</param>
+    /// <exception cref="LogicException">Thrown when the aggregator is not supported for the field type.</exception>
+    private static void ValidateAggregatorForType(Aggregator aggregator, Type? fieldType)
+    {
+        // Unwrap nullable types to get the underlying type
+        Type? underlyingType = fieldType == null ? null :
+            Nullable.GetUnderlyingType(fieldType) ?? fieldType;
+
+        switch (aggregator)
+        {
+            case Aggregator.Sumation:
+            case Aggregator.Average:
+                // Sum and Average are only supported for numeric types
+                if (underlyingType != null && 
+                    !CacheReflection.IsNumericType(underlyingType))
+                {
+                    throw new LogicException(ErrorCode.UnsupportedAggregatorForType
+                        (aggregator.ToString(), fieldType?.Name ?? string.Empty));
+                }
+                break;
+
+            case Aggregator.Minimum:
+            case Aggregator.Maximum:
+                // Min and Max are not supported for boolean types
+                if (underlyingType != null && 
+                    underlyingType == typeof(bool))
+                {
+                    throw new LogicException(ErrorCode.UnsupportedAggregatorForType
+                        (aggregator.ToString(), fieldType?.Name ?? string.Empty));
+                }
+                break;
+
+            case Aggregator.Count:
+            case Aggregator.CountDistinct:
+            case Aggregator.FirstOrDefault:
+            case Aggregator.LastOrDefault:
+                // These aggregators are supported for all types
+                break;
+
+            default:
+                throw new LogicException(ErrorCode.UnsupportedAggregatorForType
+                   (aggregator.ToString(), fieldType?.Name ?? string.Empty));
+        }
+    }
+
+    /// <summary>
+    /// Validates a <see cref="GroupBy"/> to ensure it has valid grouping fields and aggregations.
+    /// </summary>
+    /// <typeparam name="T">The root type used to validate field paths.</typeparam>
+    /// <param name="groupBy">The <see cref="GroupBy"/> instance to validate.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="groupBy"/> is null.</exception>
+    /// <exception cref="LogicException">
+    /// Thrown when:
+    /// - Fields list is empty
+    /// - Fields list contains duplicates
+    /// - Any field is invalid, complex type, or collection type
+    /// - Any aggregation field is also in the GroupBy fields list
+    /// - Aggregation aliases are not unique
+    /// - Any aggregation validation fails
+    /// </exception>
+    /// <remarks>
+    /// On success, all field names are normalized to the entity's exact property casing/path.
+    /// </remarks>
+    public static void Validate<T>(this GroupBy groupBy)
+    {
+        if (groupBy == null)
+        {
+            throw new ArgumentNullException(nameof(groupBy));
+        }
+
+        groupBy.Fields ??= new List<string>();
+        groupBy.AggregateBy ??= new List<AggregateBy>();
+
+        // Check if at least one field is provided
+        if (groupBy.Fields.Count == 0)
+        {
+            throw new LogicException(ErrorCode.GroupByMustHaveFields);
+        }
+
+        // Validate each field and normalize them
+        var normalizedFields = new List<string>();
+        var normalizedFieldsSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (int i = 0; i < groupBy.Fields.Count; i++)
+        {
+            var field = groupBy.Fields[i];
+
+            // Check if the field name is provided and not empty
+            if (string.IsNullOrWhiteSpace(field))
+            {
+                throw new LogicException(ErrorCode.InvalidField);
+            }
+
+            // Validate and normalize the field name against the specified type using cache
+            var normalizedField = field.Validate<T>();
+
+            // Check for duplicate fields (case-insensitive)
+            if (!normalizedFieldsSet.Add(normalizedField))
+            {
+                throw new LogicException(ErrorCode.GroupByFieldsMustBeUnique);
+            }
+
+            // Get the field type using cached reflection
+            var fieldType = CacheReflection.GetFieldType(typeof(T), normalizedField);
+
+            // Check if the field is a collection type
+            if (CacheReflection.IsCollectionType(fieldType))
+            {
+                throw new LogicException(ErrorCode.GroupByFieldCannotBeCollection);
+            }
+
+            // Check if the field is a simple type (primitive, string, DateTime, Guid, etc.)
+            if (!CacheReflection.IsSimpleType(fieldType))
+            {
+                throw new LogicException(ErrorCode.GroupByFieldCannotBeComplexType);
+            }
+
+            normalizedFields.Add(normalizedField);
+        }
+
+        // Update the fields with normalized names
+        groupBy.Fields = normalizedFields;
+
+        // Validate aggregations
+        if (groupBy.AggregateBy.Count > 0)
+        {
+            var aliasSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var aggregate in groupBy.AggregateBy)
+            {
+                // Validate the aggregation using the existing validation method
+                aggregate.Validate<T>();
+
+                // Check if the aggregation field is in the GroupBy fields list
+                if (normalizedFieldsSet.Contains(aggregate.Field!))
+                {
+                    throw new LogicException(ErrorCode.AggregationFieldCannotBeGroupByField(aggregate.Field!));
+                }
+
+                // Check if the aggregation alias is in the GroupBy fields list
+                if (normalizedFieldsSet.Contains(aggregate.Alias!))
+                {
+                    throw new LogicException(ErrorCode.AggregationAliasCannotBeGroupByField(aggregate.Alias!));
+                }
+
+                // Check for duplicate aliases (case-insensitive)
+                if (!aliasSet.Add(aggregate.Alias!))
+                {
+                    throw new LogicException(ErrorCode.AggregationAliasesMustBeUnique);
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Validates an <see cref="OrderBy"/> to ensure it has a non-empty, valid field for <typeparamref name="T"/>.
     /// </summary>
     /// <typeparam name="T">The root type used to validate the field path.</typeparam>
@@ -269,27 +519,5 @@ internal static class Validator
         sets[0].Intersection = null;
 
         return sets;
-    }
-
-    /// <summary>
-    /// Validates a property path for <typeparamref name="T"/> and returns the normalized path.
-    /// Supports nested navigation using dot notation and normalizes each segment to the exact property name.
-    /// For collection properties, the next segment is validated against the element type.
-    /// Uses caching for improved performance with frequently used types.
-    /// </summary>
-    /// <typeparam name="T">The root type in which the property path is validated.</typeparam>
-    /// <param name="name">The property path to validate (e.g., <c>"Order.Customer.Name"</c>).</param>
-    /// <returns>The validated, normalized property path.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null or whiteSpace.</exception>
-    /// <exception cref="LogicException">Thrown when the path is empty or any segment is not found.</exception>
-    public static string Validate<T>(this string name)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            throw new ArgumentNullException(nameof(name));
-        }
-
-        // Use the cached validation method for improved performance
-        return CacheReflection.ValidatePropertyPath(typeof(T), name);
     }
 }

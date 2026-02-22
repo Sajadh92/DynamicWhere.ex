@@ -78,4 +78,75 @@ internal static class ErrorCode
     /// Indicates that the field must be a valid date format.
     /// </summary>
     public static string InvalidFormat => "InvalidFormat";
+
+    /// <summary>
+    /// Indicates that an aggregation must have a non-empty alias.
+    /// </summary>
+    public static string InvalidAlias => "AggregationMustHasValidAlias";
+
+    /// <summary>
+    /// Indicates that the aggregator is not supported for the specified field type.
+    /// </summary>
+    /// <param name="aggregator">The aggregator name.</param>
+    /// <param name="fieldType">The field type name.</param>
+    /// <returns>
+    /// A formatted error message indicating the aggregator is not supported for the field type.
+    /// </returns>
+    public static string UnsupportedAggregatorForType(string aggregator, string fieldType) =>
+        $"Aggregator[{aggregator}]IsNotSupportedForFieldType[{fieldType}]";
+
+    /// <summary>
+    /// Indicates that aggregation fields must be simple types (primitive, string, DateTime, Guid, etc.).
+    /// </summary>
+    public static string AggregationFieldMustBeSimpleType => "AggregationFieldMustBeSimpleType";
+
+    /// <summary>
+    /// Indicates that aggregation fields cannot be collection types.
+    /// </summary>
+    public static string AggregationFieldCannotBeCollection => "AggregationFieldCannotBeCollectionType";
+
+    /// <summary>
+    /// Indicates that GroupBy fields list must contain at least one field.
+    /// </summary>
+    public static string GroupByMustHaveFields => "GroupByMustHasAtLeastOneField";
+
+    /// <summary>
+    /// Indicates that GroupBy fields list must have unique field names.
+    /// </summary>
+    public static string GroupByFieldsMustBeUnique => "GroupByFieldsMustBeUnique";
+
+    /// <summary>
+    /// Indicates that GroupBy fields cannot be complex types.
+    /// </summary>
+    public static string GroupByFieldCannotBeComplexType => "GroupByFieldCannotBeComplexType";
+
+    /// <summary>
+    /// Indicates that GroupBy fields cannot be collection types.
+    /// </summary>
+    public static string GroupByFieldCannotBeCollection => "GroupByFieldCannotBeCollectionType";
+
+    /// <summary>
+    /// Indicates that aggregation aliases must be unique within the GroupBy.
+    /// </summary>
+    public static string AggregationAliasesMustBeUnique => "AggregationAliasesMustBeUnique";
+
+    /// <summary>
+    /// Indicates that aggregation fields cannot be used in the GroupBy fields list.
+    /// </summary>
+    /// <param name="fieldName">The field name that conflicts.</param>
+    /// <returns>
+    /// A formatted error message indicating the field is used in both GroupBy fields and aggregation.
+    /// </returns>
+    public static string AggregationFieldCannotBeGroupByField(string fieldName) =>
+        $"AggregationField[{fieldName}]CannotBeUsedInGroupByFields";
+
+    /// <summary>
+    /// Indicating that the specified aggregation alias cannot be used as a group by field.
+    /// </summary>
+    /// <param name="alias">The aggregation alias to check for invalid usage in group by fields.</param>
+    /// <returns>
+    /// A formatted error message string that specifies the invalid aggregation alias.
+    /// </returns>
+    public static string AggregationAliasCannotBeGroupByField(string alias) =>
+        $"AggregationAlias[{alias}]CannotBeUsedInGroupByFields";
 }

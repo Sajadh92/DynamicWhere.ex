@@ -1,13 +1,11 @@
 using DynamicWhere.API.Data;
-using DynamicWhere.ex;
 using DynamicWhere.ex.Classes;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Source;
-using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using System.Diagnostics;
+using System.Linq.Dynamic.Core;
 
 namespace DynamicWhere.API.Controllers;
 
@@ -478,6 +476,839 @@ public class PerformanceTestController : ControllerBase
             return Ok(new PerformanceResult
             {
                 TestName = "Where ConditionGroup - Nested Groups",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    #endregion
+
+    #region Test Group Extension
+
+    /// <summary>
+    /// Test Group extension with simple grouping by single field
+    /// </summary>
+    [HttpGet("group/simple")]
+    public async Task<ActionResult<PerformanceResult>> TestGroupSimple()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var groupBy = new GroupBy
+            {
+                Fields = ["IsActive"],
+                AggregateBy =
+                [
+                    new AggregateBy
+                    {
+                        Field = "Id",
+                        Alias = "TotalCount",
+                        Aggregator = Aggregator.Count
+                    }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Group(groupBy);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Simple - Single Field with Count",
+                Metrics = metrics,
+                Input = groupBy,
+                Output = results,
+                Success = true,
+                Message = $"Grouped products by IsActive with count aggregation"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestGroupSimple");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Simple - Single Field with Count",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Group extension with multiple grouping fields
+    /// </summary>
+    [HttpGet("group/multiple-fields")]
+    public async Task<ActionResult<PerformanceResult>> TestGroupMultipleFields()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var groupBy = new GroupBy
+            {
+                Fields = ["IsActive", "CategoryId"],
+                AggregateBy =
+                [
+                    new AggregateBy
+                    {
+                        Field = "Id",
+                        Alias = "ProductCount",
+                        Aggregator = Aggregator.Count
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "AveragePrice",
+                        Aggregator = Aggregator.Average
+                    }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Group(groupBy);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Multiple Fields - IsActive and Category",
+                Metrics = metrics,
+                Input = groupBy,
+                Output = results,
+                Success = true,
+                Message = $"Grouped by IsActive and Category with count and average price"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestGroupMultipleFields");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Multiple Fields - IsActive and Category",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Group extension with all aggregation types
+    /// </summary>
+    [HttpGet("group/all-aggregations")]
+    public async Task<ActionResult<PerformanceResult>> TestGroupAllAggregations()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var groupBy = new GroupBy
+            {
+                Fields = ["CategoryId"],
+                AggregateBy =
+                [
+                    new AggregateBy
+                    {
+                        Field = "Id",
+                        Alias = "ProductCount",
+                        Aggregator = Aggregator.Count
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "TotalRevenue",
+                        Aggregator = Aggregator.Sumation
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "AveragePrice",
+                        Aggregator = Aggregator.Average
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "MinPrice",
+                        Aggregator = Aggregator.Minimum
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "MaxPrice",
+                        Aggregator = Aggregator.Maximum
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Rating",
+                        Alias = "AverageRating",
+                        Aggregator = Aggregator.Average
+                    }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Group(groupBy);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group All Aggregations - Count, Sum, Avg, Min, Max",
+                Metrics = metrics,
+                Input = groupBy,
+                Output = results,
+                Success = true,
+                Message = $"Grouped by Category with all aggregation types"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestGroupAllAggregations");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group All Aggregations - Count, Sum, Avg, Min, Max",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Group extension with CountDistinct aggregation
+    /// </summary>
+    [HttpGet("group/count-distinct")]
+    public async Task<ActionResult<PerformanceResult>> TestGroupCountDistinct()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var groupBy = new GroupBy
+            {
+                Fields = ["IsActive"],
+                AggregateBy =
+                [
+                    new AggregateBy
+                    {
+                        Field = "CategoryId",
+                        Alias = "UniqueCategoryCount",
+                        Aggregator = Aggregator.CountDistinct
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Id",
+                        Alias = "TotalProducts",
+                        Aggregator = Aggregator.Count
+                    }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Group(groupBy);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Count Distinct - Unique Categories per Active Status",
+                Metrics = metrics,
+                Input = groupBy,
+                Output = results,
+                Success = true,
+                Message = $"Counted distinct categories by IsActive status"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestGroupCountDistinct");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Count Distinct - Unique Categories per Active Status",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Group extension with FirstOrDefault and LastOrDefault aggregations
+    /// </summary>
+    [HttpGet("group/first-last")]
+    public async Task<ActionResult<PerformanceResult>> TestGroupFirstLast()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var groupBy = new GroupBy
+            {
+                Fields = ["CategoryId"],
+                AggregateBy =
+                [
+                    new AggregateBy
+                    {
+                        Field = "Name",
+                        Alias = "FirstProductName",
+                        Aggregator = Aggregator.FirstOrDefault
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Name",
+                        Alias = "LastProductName",
+                        Aggregator = Aggregator.LastOrDefault
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Id",
+                        Alias = "ProductCount",
+                        Aggregator = Aggregator.Count
+                    }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Group(groupBy);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group First/Last - First and Last Product Names",
+                Metrics = metrics,
+                Input = groupBy,
+                Output = results,
+                Success = true,
+                Message = $"Retrieved first and last product names per category"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestGroupFirstLast");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group First/Last - First and Last Product Names",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Group extension with date-based grouping
+    /// </summary>
+    [HttpGet("group/by-date")]
+    public async Task<ActionResult<PerformanceResult>> TestGroupByDate()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var groupBy = new GroupBy
+            {
+                Fields = ["CreatedAt.Year", "CreatedAt.Month"],
+                AggregateBy =
+                [
+                    new AggregateBy
+                    {
+                        Field = "Id",
+                        Alias = "ProductsCreated",
+                        Aggregator = Aggregator.Count
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "TotalValue",
+                        Aggregator = Aggregator.Sumation
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "AveragePrice",
+                        Aggregator = Aggregator.Average
+                    }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Group(groupBy);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group By Date - Year and Month Statistics",
+                Metrics = metrics,
+                Input = groupBy,
+                Output = results,
+                Success = true,
+                Message = $"Grouped products by creation year and month"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestGroupByDate");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group By Date - Year and Month Statistics",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Group extension with price ranges
+    /// </summary>
+    [HttpGet("group/price-ranges")]
+    public async Task<ActionResult<PerformanceResult>> TestGroupPriceRanges()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            // Group by a calculated field - price ranges
+            // We'll use CategoryId as grouping but demonstrate the aggregation capabilities
+            var groupBy = new GroupBy
+            {
+                Fields = ["CategoryId"],
+                AggregateBy =
+                [
+                    new AggregateBy
+                    {
+                        Field = "Id",
+                        Alias = "ProductCount",
+                        Aggregator = Aggregator.Count
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "MinPrice",
+                        Aggregator = Aggregator.Minimum
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "MaxPrice",
+                        Aggregator = Aggregator.Maximum
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "AvgPrice",
+                        Aggregator = Aggregator.Average
+                    },
+                    new AggregateBy
+                    {
+                        Field = "StockQuantity",
+                        Alias = "TotalStock",
+                        Aggregator = Aggregator.Sumation
+                    }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Group(groupBy);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Price Ranges - Category Price Statistics",
+                Metrics = metrics,
+                Input = groupBy,
+                Output = results,
+                Success = true,
+                Message = $"Calculated price ranges and stock totals per category"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestGroupPriceRanges");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Price Ranges - Category Price Statistics",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Group extension with complex multi-level grouping
+    /// </summary>
+    [HttpGet("group/multi-level")]
+    public async Task<ActionResult<PerformanceResult>> TestGroupMultiLevel()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var groupBy = new GroupBy
+            {
+                Fields = ["IsActive", "CategoryId", "CreatedAt.Year"],
+                AggregateBy =
+                [
+                    new AggregateBy
+                    {
+                        Field = "Id",
+                        Alias = "Count",
+                        Aggregator = Aggregator.Count
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "TotalValue",
+                        Aggregator = Aggregator.Sumation
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Rating",
+                        Alias = "AvgRating",
+                        Aggregator = Aggregator.Average
+                    },
+                    new AggregateBy
+                    {
+                        Field = "StockQuantity",
+                        Alias = "TotalStock",
+                        Aggregator = Aggregator.Sumation
+                    }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Group(groupBy);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Multi-Level - Active/Category/Year Statistics",
+                Metrics = metrics,
+                Input = groupBy,
+                Output = results,
+                Success = true,
+                Message = $"Multi-level grouping by IsActive, Category and Year"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestGroupMultiLevel");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Multi-Level - Active/Category/Year Statistics",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Group extension with only Count (no field specified)
+    /// </summary>
+    [HttpGet("group/count-only")]
+    public async Task<ActionResult<PerformanceResult>> TestGroupCountOnly()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var groupBy = new GroupBy
+            {
+                Fields = ["CategoryId"],
+                AggregateBy =
+                [
+                    new AggregateBy
+                    {
+                        Alias = "TotalCount",
+                        Aggregator = Aggregator.Count
+                    }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Group(groupBy);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Count Only - Simple Count per Category",
+                Metrics = metrics,
+                Input = groupBy,
+                Output = results,
+                Success = true,
+                Message = $"Count aggregation without specific field"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestGroupCountOnly");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Count Only - Simple Count per Category",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Group extension with nested property grouping
+    /// </summary>
+    [HttpGet("group/nested-property")]
+    public async Task<ActionResult<PerformanceResult>> TestGroupNestedProperty()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var groupBy = new GroupBy
+            {
+                Fields = ["Category.Name"],
+                AggregateBy =
+                [
+                    new AggregateBy
+                    {
+                        Field = "Id",
+                        Alias = "ProductCount",
+                        Aggregator = Aggregator.Count
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "AveragePrice",
+                        Aggregator = Aggregator.Average
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Rating",
+                        Alias = "AverageRating",
+                        Aggregator = Aggregator.Average
+                    }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products
+                .Include(p => p.Category)
+                .Group(groupBy);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Nested Property - By Category Name",
+                Metrics = metrics,
+                Input = groupBy,
+                Output = results,
+                Success = true,
+                Message = $"Grouped by nested Category.Name property"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestGroupNestedProperty");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Nested Property - By Category Name",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Group extension with rating ranges
+    /// </summary>
+    [HttpGet("group/rating-analysis")]
+    public async Task<ActionResult<PerformanceResult>> TestGroupRatingAnalysis()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var groupBy = new GroupBy
+            {
+                Fields = ["IsActive"],
+                AggregateBy =
+                [
+                    new AggregateBy
+                    {
+                        Field = "Id",
+                        Alias = "TotalProducts",
+                        Aggregator = Aggregator.Count
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Rating",
+                        Alias = "MinRating",
+                        Aggregator = Aggregator.Minimum
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Rating",
+                        Alias = "MaxRating",
+                        Aggregator = Aggregator.Maximum
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Rating",
+                        Alias = "AvgRating",
+                        Aggregator = Aggregator.Average
+                    },
+                    new AggregateBy
+                    {
+                        Field = "Price",
+                        Alias = "TotalValue",
+                        Aggregator = Aggregator.Sumation
+                    }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Group(groupBy);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Rating Analysis - Rating Statistics by Status",
+                Metrics = metrics,
+                Input = groupBy,
+                Output = results,
+                Success = true,
+                Message = $"Analyzed rating statistics for active/inactive products"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestGroupRatingAnalysis");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Group Rating Analysis - Rating Statistics by Status",
                 Success = false,
                 Message = ex.Message,
                 Metrics = metrics
@@ -1317,6 +2148,17 @@ public class PerformanceTestController : ControllerBase
             ("Where Text Search Case Insensitive", TestWhereTextSearchCaseInsensitive),
             ("Where Group AND", TestWhereGroupAnd),
             ("Where Group Nested", TestWhereGroupNested),
+            ("Group Simple", TestGroupSimple),
+            ("Group Multiple Fields", TestGroupMultipleFields),
+            ("Group All Aggregations", TestGroupAllAggregations),
+            ("Group Count Distinct", TestGroupCountDistinct),
+            ("Group First/Last", TestGroupFirstLast),
+            ("Group By Date", TestGroupByDate),
+            ("Group Price Ranges", TestGroupPriceRanges),
+            ("Group Multi-Level", TestGroupMultiLevel),
+            ("Group Count Only", TestGroupCountOnly),
+            ("Group Nested Property", TestGroupNestedProperty),
+            ("Group Rating Analysis", TestGroupRatingAnalysis),
             ("Order Single", TestOrderSingle),
             ("Order Multiple", TestOrderMultiple),
             ("Page Basic", TestPageBasic),

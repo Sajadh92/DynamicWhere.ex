@@ -472,6 +472,80 @@ internal static class Validator
     }
 
     /// <summary>
+    /// Validates a <see cref="SummaryRequest"/> to ensure it has a valid group-by configuration
+    /// and that any order fields reference valid group-by fields or aggregate-by aliases.
+    /// </summary>
+    /// <typeparam name="T">The root type used to validate field paths.</typeparam>
+    /// <param name="summaryRequest">The <see cref="SummaryRequest"/> instance to validate.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="summaryRequest"/> or its GroupBy is null.</exception>
+    /// <exception cref="LogicException">
+    /// Thrown when:
+    /// - GroupBy validation fails
+    /// - Any order field does not exist in the group-by fields or aggregate-by aliases
+    /// - Page validation fails
+    /// </exception>
+    public static void Validate<T>(this SummaryRequest summaryRequest)
+    {
+        if (summaryRequest == null)
+        {
+            throw new ArgumentNullException(nameof(summaryRequest));
+        }
+
+        // GroupBy is required for SummaryRequest.
+        if (summaryRequest.GroupBy == null)
+        {
+            throw new ArgumentNullException(nameof(summaryRequest.GroupBy));
+        }
+
+        // Validate GroupBy (validates fields and aggregations against T).
+        summaryRequest.GroupBy.Validate<T>();
+
+        // Validate Orders - each order field must exist in GroupBy fields or AggregateBy aliases.
+        if (summaryRequest.Orders != null && summaryRequest.Orders.Count > 0)
+        {
+            // Build the set of valid order fields from GroupBy fields and AggregateBy aliases.
+            var validFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Add GroupBy fields (with dots removed to match the aliases produced after grouping).
+            foreach (var field in summaryRequest.GroupBy.Fields)
+            {
+                validFields.Add(field.Replace(".", ""));
+            }
+
+            // Add AggregateBy aliases.
+            foreach (var aggregate in summaryRequest.GroupBy.AggregateBy)
+            {
+                if (!string.IsNullOrWhiteSpace(aggregate.Alias))
+                {
+                    validFields.Add(aggregate.Alias);
+                }
+            }
+
+            // Validate each order field.
+            foreach (var order in summaryRequest.Orders)
+            {
+                if (order == null)
+                {
+                    throw new ArgumentNullException(nameof(order));
+                }
+
+                if (string.IsNullOrWhiteSpace(order.Field))
+                {
+                    throw new LogicException(ErrorCode.InvalidField);
+                }
+
+                if (!validFields.Contains(order.Field))
+                {
+                    throw new LogicException(ErrorCode.SummaryOrderFieldMustExistInGroupByOrAggregate(order.Field));
+                }
+            }
+        }
+
+        // Validate Page if provided.
+        summaryRequest.Page?.Validate<T>();
+    }
+
+    /// <summary>
     /// Validates the condition sets within a <see cref="Segment"/> and returns them ordered by <c>Sort</c>.
     /// Also ensures required intersections are present and clears the first set's intersection.
     /// </summary>

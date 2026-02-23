@@ -149,4 +149,14 @@ internal static class ErrorCode
     /// </returns>
     public static string AggregationAliasCannotBeGroupByField(string alias) =>
         $"AggregationAlias[{alias}]CannotBeUsedInGroupByFields";
+
+    /// <summary>
+    /// Indicates that a summary order field must exist in the group-by fields or aggregate-by aliases.
+    /// </summary>
+    /// <param name="fieldName">The order field name that does not match any group-by field or aggregate alias.</param>
+    /// <returns>
+    /// A formatted error message indicating the invalid order field.
+    /// </returns>
+    public static string SummaryOrderFieldMustExistInGroupByOrAggregate(string fieldName) =>
+        $"SummaryOrderField[{fieldName}]MustExistInGroupByFieldsOrAggregateByAliases";
 }

@@ -131,16 +131,6 @@ internal static class ErrorCode
     public static string AggregationAliasesMustBeUnique => "AggregationAliasesMustBeUnique";
 
     /// <summary>
-    /// Indicates that aggregation fields cannot be used in the GroupBy fields list.
-    /// </summary>
-    /// <param name="fieldName">The field name that conflicts.</param>
-    /// <returns>
-    /// A formatted error message indicating the field is used in both GroupBy fields and aggregation.
-    /// </returns>
-    public static string AggregationFieldCannotBeGroupByField(string fieldName) =>
-        $"AggregationField[{fieldName}]CannotBeUsedInGroupByFields";
-
-    /// <summary>
     /// Indicating that the specified aggregation alias cannot be used as a group by field.
     /// </summary>
     /// <param name="alias">The aggregation alias to check for invalid usage in group by fields.</param>

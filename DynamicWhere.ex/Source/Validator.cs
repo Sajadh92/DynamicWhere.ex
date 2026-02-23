@@ -320,7 +320,7 @@ internal static class Validator
     /// - Fields list is empty
     /// - Fields list contains duplicates
     /// - Any field is invalid, complex type, or collection type
-    /// - Any aggregation field is also in the GroupBy fields list
+    /// - Any aggregation alias matches a GroupBy field
     /// - Aggregation aliases are not unique
     /// - Any aggregation validation fails
     /// </exception>
@@ -396,12 +396,6 @@ internal static class Validator
             {
                 // Validate the aggregation using the existing validation method
                 aggregate.Validate<T>();
-
-                // Check if the aggregation field is in the GroupBy fields list
-                if (normalizedFieldsSet.Contains(aggregate.Field!))
-                {
-                    throw new LogicException(ErrorCode.AggregationFieldCannotBeGroupByField(aggregate.Field!));
-                }
 
                 // Check if the aggregation alias is in the GroupBy fields list
                 if (normalizedFieldsSet.Contains(aggregate.Alias!))
@@ -506,9 +500,11 @@ internal static class Validator
             // Build the set of valid order fields from GroupBy fields and AggregateBy aliases.
             var validFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // Add GroupBy fields (with dots removed to match the aliases produced after grouping).
+            // Add GroupBy fields in both the original dotted form (e.g. "CreatedAt.Year")
+            // and the dot-stripped alias form (e.g. "CreatedAtYear") that the Select projection emits.
             foreach (var field in summaryRequest.GroupBy.Fields)
             {
+                validFields.Add(field);
                 validFields.Add(field.Replace(".", ""));
             }
 

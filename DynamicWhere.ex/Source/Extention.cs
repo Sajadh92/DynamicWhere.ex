@@ -528,11 +528,13 @@ public static class Extension
         IQueryable result = query.Group(summaryRequest.GroupBy!);
 
         // Apply ordering on grouped results.
+        // Dots are stripped from field names (e.g. "CreatedAt.Year" → "CreatedAtYear") to match
+        // the aliases emitted by the GroupBy Select projection.
         if (summaryRequest.Orders != null && summaryRequest.Orders.Count > 0)
         {
             string orderBy = string.Join(",", summaryRequest.Orders
                 .OrderBy(x => x.Sort)
-                .Select(x => $"{x.Field} {(x.Direction == Direction.Ascending ? "asc" : "desc")}"));
+                .Select(x => $"{x.Field?.Replace(".", "")} {(x.Direction == Direction.Ascending ? "asc" : "desc")}"));
 
             if (!string.IsNullOrWhiteSpace(orderBy))
             {
@@ -593,11 +595,13 @@ public static class Extension
         IQueryable newResult = result;
 
         // Apply ordering on grouped results.
+        // Dots are stripped from field names (e.g. "CreatedAt.Year" → "CreatedAtYear") to match
+        // the aliases emitted by the GroupBy Select projection.
         if (summaryRequest.Orders != null && summaryRequest.Orders.Count > 0)
         {
             string orderBy = string.Join(",", summaryRequest.Orders
                 .OrderBy(x => x.Sort)
-                .Select(x => $"{x.Field} {(x.Direction == Direction.Ascending ? "asc" : "desc")}"));
+                .Select(x => $"{x.Field?.Replace(".", "")} {(x.Direction == Direction.Ascending ? "asc" : "desc")}"));
 
             if (!string.IsNullOrWhiteSpace(orderBy))
             {
@@ -693,11 +697,13 @@ public static class Extension
         IQueryable newResult = result;
 
         // Apply ordering on grouped results.
+        // Dots are stripped from field names (e.g. "CreatedAt.Year" → "CreatedAtYear") to match
+        // the aliases emitted by the GroupBy Select projection.
         if (summaryRequest.Orders != null && summaryRequest.Orders.Count > 0)
         {
             string orderBy = string.Join(",", summaryRequest.Orders
                 .OrderBy(x => x.Sort)
-                .Select(x => $"{x.Field} {(x.Direction == Direction.Ascending ? "asc" : "desc")}"));
+                .Select(x => $"{x.Field?.Replace(".", "")} {(x.Direction == Direction.Ascending ? "asc" : "desc")}"));
 
             if (!string.IsNullOrWhiteSpace(orderBy))
             {

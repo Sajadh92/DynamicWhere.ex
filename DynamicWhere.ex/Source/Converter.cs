@@ -471,6 +471,69 @@ internal static class Converter
 
         return $"{order.Field} {(order.Direction == Direction.Ascending ? "asc" : "desc")}";
     }
+
+    /// <summary>
+    /// Converts a <see cref="Condition"/> inside a HAVING clause into a dynamic LINQ predicate string.
+    /// The condition's field is treated as an aggregate-by alias (already validated by <see cref="Validator"/>).
+    /// </summary>
+    /// <param name="condition">The <see cref="Condition"/> to convert.</param>
+    /// <returns>A dynamic LINQ predicate snippet enclosed in parentheses.</returns>
+    public static string AsHavingString(this Condition condition)
+    {
+        condition.Values ??= new List<string>();
+
+        return $"({Builder.BuildCondition(condition.DataType, condition.Operator, condition.Field!, condition.Values)})";
+    }
+
+    /// <summary>
+    /// Converts a <see cref="ConditionGroup"/> used as a HAVING clause into its dynamic LINQ predicate string.
+    /// Condition fields reference aggregate-by aliases rather than entity properties.
+    /// </summary>
+    /// <param name="group">The <see cref="ConditionGroup"/> to convert.</param>
+    /// <returns>
+    /// A dynamic LINQ predicate string enclosed in parentheses, or an empty string when the group has no conditions.
+    /// </returns>
+    public static string AsHavingString(this ConditionGroup group)
+    {
+        // Validate structure (duplicate sort values, etc.).
+        group.Validate();
+
+        string connector = group.Connector switch
+        {
+            Connector.And => " && ",
+            Connector.Or => " || ",
+            _ => string.Empty
+        };
+
+        var conditions = new List<string>();
+
+        foreach (Condition condition in group.Conditions.OrderBy(x => x.Sort))
+        {
+            string conditionAsString = condition.AsHavingString();
+
+            if (!string.IsNullOrWhiteSpace(conditionAsString))
+            {
+                conditions.Add(conditionAsString);
+            }
+        }
+
+        foreach (ConditionGroup subGroup in group.SubConditionGroups.OrderBy(x => x.Sort))
+        {
+            string subGroupAsString = subGroup.AsHavingString();
+
+            if (!string.IsNullOrWhiteSpace(subGroupAsString))
+            {
+                conditions.Add(subGroupAsString);
+            }
+        }
+
+        if (conditions.Any())
+        {
+            return $"({string.Join(connector, conditions)})";
+        }
+
+        return string.Empty;
+    }
 }
 
 /// <summary>

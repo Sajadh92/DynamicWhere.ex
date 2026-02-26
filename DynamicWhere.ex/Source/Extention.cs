@@ -529,6 +529,17 @@ public static class Extension
         // Apply GroupBy (required).
         IQueryable result = query.Group(summary.GroupBy!);
 
+        // Apply Having filter on grouped results.
+        if (summary.Having != null)
+        {
+            string havingFilter = summary.Having.AsHavingString();
+
+            if (!string.IsNullOrWhiteSpace(havingFilter))
+            {
+                result = result.Where(havingFilter);
+            }
+        }
+
         // Apply ordering on grouped results.
         // Dots are stripped from field names (e.g. "CreatedAt.Year" → "CreatedAtYear") to match
         // the aliases emitted by the GroupBy Select projection.
@@ -590,6 +601,17 @@ public static class Extension
         // Apply GroupBy (required).
         IQueryable result = query.Group(summary.GroupBy!);
 
+        // Apply Having filter on grouped results.
+        if (summary.Having != null)
+        {
+            string havingFilter = summary.Having.AsHavingString();
+
+            if (!string.IsNullOrWhiteSpace(havingFilter))
+            {
+                result = result.Where(havingFilter);
+            }
+        }
+
         // Calculate the total count of grouped entities before pagination.
         int totalCount = result.Count();
 
@@ -643,7 +665,7 @@ public static class Extension
     }
 
     /// <summary>
-    /// Retrieves a list of dynamic grouped entities from an in-memory <see cref="IEnumerable{T}"/> with optional filtering based on a <see cref="Classes.Complex.Summary"/>.
+    /// Retrieves a list of dynamic grouped entities from an in-memory <see cref="IEnumerable{T}"/>
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IEnumerable{T}"/> to retrieve grouped entities from.</param>
@@ -691,6 +713,17 @@ public static class Extension
 
         // Apply GroupBy (required).
         IQueryable result = query.Group(summary.GroupBy!);
+
+        // Apply Having filter on grouped results.
+        if (summary.Having != null)
+        {
+            string havingFilter = summary.Having.AsHavingString();
+
+            if (!string.IsNullOrWhiteSpace(havingFilter))
+            {
+                result = result.Where(havingFilter);
+            }
+        }
 
         // Calculate the total count of grouped entities before pagination.
         int totalCount = result.Count();

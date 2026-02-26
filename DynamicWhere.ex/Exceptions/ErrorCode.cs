@@ -149,4 +149,14 @@ internal static class ErrorCode
     /// </returns>
     public static string SummaryOrderFieldMustExistInGroupByOrAggregate(string fieldName) =>
         $"SummaryOrderField[{fieldName}]MustExistInGroupByFieldsOrAggregateByAliases";
+
+    /// <summary>
+    /// Indicates that a Having condition field must reference a valid aggregate-by alias.
+    /// </summary>
+    /// <param name="fieldName">The Having condition field name that does not match any aggregate-by alias.</param>
+    /// <returns>
+    /// A formatted error message indicating the invalid Having field.
+    /// </returns>
+    public static string HavingFieldMustExistInAggregateByAlias(string fieldName) =>
+        $"HavingField[{fieldName}]MustExistInAggregateByAliases";
 }

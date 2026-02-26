@@ -466,8 +466,9 @@ internal static class Validator
     }
 
     /// <summary>
-    /// Validates a <see cref="Summary"/> to ensure it has a valid group-by configuration
-    /// and that any order fields reference valid group-by fields or aggregate-by aliases.
+    /// Validates a <see cref="Summary"/> to ensure it has a valid group-by configuration,
+    /// that any order fields reference valid group-by fields or aggregate-by aliases,
+    /// and that any Having condition fields reference valid aggregate-by aliases.
     /// </summary>
     /// <typeparam name="T">The root type used to validate field paths.</typeparam>
     /// <param name="summary">The <see cref="Summary"/> instance to validate.</param>
@@ -476,6 +477,7 @@ internal static class Validator
     /// Thrown when:
     /// - GroupBy validation fails
     /// - Any order field does not exist in the group-by fields or aggregate-by aliases
+    /// - Any Having condition field does not exist in the aggregate-by aliases
     /// - Page validation fails
     /// </exception>
     public static void Validate<T>(this Summary summary)
@@ -533,6 +535,150 @@ internal static class Validator
 
         // Validate Page if provided.
         summary.Page?.Validate<T>();
+
+        // Validate Having if provided – each condition field must reference an AggregateBy alias.
+        if (summary.Having != null)
+        {
+            var validAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var agg in summary.GroupBy.AggregateBy)
+            {
+                if (!string.IsNullOrWhiteSpace(agg.Alias))
+                {
+                    validAliases.Add(agg.Alias);
+                }
+            }
+
+            ValidateHavingConditionGroup(summary.Having, validAliases);
+        }
+    }
+
+    /// <summary>
+    /// Recursively validates a <see cref="ConditionGroup"/> used as a HAVING clause,
+    /// ensuring all condition fields reference valid aggregate-by aliases.
+    /// </summary>
+    /// <param name="group">The <see cref="ConditionGroup"/> to validate.</param>
+    /// <param name="validAliases">The set of valid aggregate-by alias names.</param>
+    private static void ValidateHavingConditionGroup(ConditionGroup group, HashSet<string> validAliases)
+    {
+        // Validate structure (duplicate sort values, etc.).
+        group.Validate();
+
+        // Validate each condition's field against the valid aliases.
+        foreach (var condition in group.Conditions)
+        {
+            ValidateHavingCondition(condition, validAliases);
+        }
+
+        // Recursively validate sub-condition groups.
+        foreach (var subGroup in group.SubConditionGroups)
+        {
+            ValidateHavingConditionGroup(subGroup, validAliases);
+        }
+    }
+
+    /// <summary>
+    /// Validates a <see cref="Condition"/> used inside a HAVING clause.
+    /// The field must reference a valid aggregate-by alias rather than an entity property.
+    /// </summary>
+    /// <param name="condition">The <see cref="Condition"/> to validate.</param>
+    /// <param name="validAliases">The set of valid aggregate-by alias names.</param>
+    private static void ValidateHavingCondition(Condition condition, HashSet<string> validAliases)
+    {
+        if (condition == null)
+        {
+            throw new ArgumentNullException(nameof(condition));
+        }
+
+        condition.Values ??= new List<string>();
+
+        if (string.IsNullOrWhiteSpace(condition.Field))
+        {
+            throw new LogicException(ErrorCode.InvalidField);
+        }
+
+        // The field must reference a valid AggregateBy alias.
+        if (!validAliases.Contains(condition.Field))
+        {
+            throw new LogicException(ErrorCode.HavingFieldMustExistInAggregateByAlias(condition.Field));
+        }
+
+        // Validate value counts based on operator.
+        switch (condition.Operator)
+        {
+            case Operator.Between:
+            case Operator.NotBetween:
+                if (condition.Values.Count != 2)
+                {
+                    throw new LogicException(ErrorCode.RequiredTwoValue);
+                }
+                break;
+
+            case Operator.In:
+            case Operator.NotIn:
+            case Operator.IIn:
+            case Operator.INotIn:
+                if (condition.Values.Count == 0)
+                {
+                    throw new LogicException(ErrorCode.RequiredValues);
+                }
+                break;
+
+            case Operator.IsNull:
+            case Operator.IsNotNull:
+                if (condition.Values.Count != 0)
+                {
+                    throw new LogicException(ErrorCode.NotRequiredValues);
+                }
+                break;
+
+            default:
+                if (condition.Values.Count != 1)
+                {
+                    throw new LogicException(ErrorCode.RequiredOneValue(condition.Operator.ToString()));
+                }
+                break;
+        }
+
+        // Validate value format based on data type.
+        switch (condition.DataType)
+        {
+            case DataType.Guid:
+                if (condition.Values.Any(v => !Guid.TryParse(v, out _)))
+                {
+                    throw new LogicException(ErrorCode.InvalidFormat);
+                }
+                break;
+
+            case DataType.Number:
+                if (condition.Values.Any(v =>
+                    !byte.TryParse(v, out _) &&
+                    !short.TryParse(v, out _) &&
+                    !int.TryParse(v, out _) &&
+                    !long.TryParse(v, out _) &&
+                    !float.TryParse(v, out _) &&
+                    !double.TryParse(v, out _) &&
+                    !decimal.TryParse(v, out _)))
+                {
+                    throw new LogicException(ErrorCode.InvalidFormat);
+                }
+                break;
+
+            case DataType.Boolean:
+                if (condition.Values.Any(v => !bool.TryParse(v, out _)))
+                {
+                    throw new LogicException(ErrorCode.InvalidFormat);
+                }
+                break;
+
+            case DataType.Date:
+            case DataType.DateTime:
+                if (condition.Values.Any(v => !DateTime.TryParse(v, out _)))
+                {
+                    throw new LogicException(ErrorCode.InvalidFormat);
+                }
+                break;
+        }
     }
 
     /// <summary>

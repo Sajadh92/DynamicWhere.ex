@@ -1422,6 +1422,810 @@ public class SummaryTestController : ControllerBase
 
     #endregion
 
+    #region Test Having in Summary
+
+    /// <summary>
+    /// Test Having: categories that have more than 2 products (basic single-condition Having).
+    /// </summary>
+    [HttpGet("summary/having/simple")]
+    public async Task<ActionResult<PerformanceResult>> TestHavingSimple()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var summary = new Summary
+            {
+                GroupBy = new GroupBy
+                {
+                    Fields = ["CategoryId"],
+                    AggregateBy =
+                    [
+                        new AggregateBy { Field = "Id",    Alias = "ProductCount", Aggregator = Aggregator.Count },
+                        new AggregateBy { Field = "Price", Alias = "AveragePrice", Aggregator = Aggregator.Average }
+                    ]
+                },
+                Having = new ConditionGroup
+                {
+                    Connector = Connector.And,
+                    Conditions =
+                    [
+                        new Condition
+                        {
+                            Field = "ProductCount",
+                            DataType = DataType.Number,
+                            Operator = Operator.GreaterThan,
+                            Values = ["2"],
+                            Sort = 1
+                        }
+                    ]
+                }
+            };
+
+            sw.Restart();
+            var query = _context.Products.Summary(summary);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Having Simple - Categories with More Than 2 Products",
+                Metrics = metrics,
+                Input = summary,
+                Output = results,
+                Success = true,
+                Message = "Grouped by category, Having filters to groups where ProductCount > 2"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestHavingSimple");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Having Simple - Categories with More Than 2 Products",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Having combined with a pre-group WHERE filter: active products only, then keep
+    /// only categories whose TotalRevenue exceeds 100.
+    /// </summary>
+    [HttpGet("summary/having/with-where")]
+    public async Task<ActionResult<PerformanceResult>> TestHavingWithWhere()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var summary = new Summary
+            {
+                ConditionGroup = new ConditionGroup
+                {
+                    Connector = Connector.And,
+                    Conditions =
+                    [
+                        new Condition
+                        {
+                            Field = "IsActive",
+                            DataType = DataType.Boolean,
+                            Operator = Operator.Equal,
+                            Values = ["true"],
+                            Sort = 1
+                        }
+                    ]
+                },
+                GroupBy = new GroupBy
+                {
+                    Fields = ["CategoryId"],
+                    AggregateBy =
+                    [
+                        new AggregateBy { Field = "Id",    Alias = "ProductCount", Aggregator = Aggregator.Count },
+                        new AggregateBy { Field = "Price", Alias = "TotalRevenue", Aggregator = Aggregator.Sumation },
+                        new AggregateBy { Field = "Price", Alias = "AveragePrice", Aggregator = Aggregator.Average }
+                    ]
+                },
+                Having = new ConditionGroup
+                {
+                    Connector = Connector.And,
+                    Conditions =
+                    [
+                        new Condition
+                        {
+                            Field = "TotalRevenue",
+                            DataType = DataType.Number,
+                            Operator = Operator.GreaterThan,
+                            Values = ["100"],
+                            Sort = 1
+                        }
+                    ]
+                },
+                Orders =
+                [
+                    new OrderBy { Field = "TotalRevenue", Direction = Direction.Descending, Sort = 1 }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Summary(summary);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Having With Where - Active Products, Categories with TotalRevenue > 100",
+                Metrics = metrics,
+                Input = summary,
+                Output = results,
+                Success = true,
+                Message = "Pre-filtered to active products, Having keeps categories with TotalRevenue > 100"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestHavingWithWhere");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Having With Where - Active Products, Categories with TotalRevenue > 100",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Having with multiple AND conditions: ProductCount >= 2 AND AverageRating >= 4.0.
+    /// </summary>
+    [HttpGet("summary/having/and")]
+    public async Task<ActionResult<PerformanceResult>> TestHavingAndConditions()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var summary = new Summary
+            {
+                GroupBy = new GroupBy
+                {
+                    Fields = ["CategoryId"],
+                    AggregateBy =
+                    [
+                        new AggregateBy { Field = "Id",     Alias = "ProductCount",  Aggregator = Aggregator.Count },
+                        new AggregateBy { Field = "Price",  Alias = "AveragePrice",  Aggregator = Aggregator.Average },
+                        new AggregateBy { Field = "Rating", Alias = "AverageRating", Aggregator = Aggregator.Average }
+                    ]
+                },
+                Having = new ConditionGroup
+                {
+                    Connector = Connector.And,
+                    Conditions =
+                    [
+                        new Condition
+                        {
+                            Field = "ProductCount",
+                            DataType = DataType.Number,
+                            Operator = Operator.GreaterThanOrEqual,
+                            Values = ["2"],
+                            Sort = 1
+                        },
+                        new Condition
+                        {
+                            Field = "AverageRating",
+                            DataType = DataType.Number,
+                            Operator = Operator.GreaterThanOrEqual,
+                            Values = ["4.0"],
+                            Sort = 2
+                        }
+                    ]
+                },
+                Orders =
+                [
+                    new OrderBy { Field = "AverageRating", Direction = Direction.Descending, Sort = 1 }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Summary(summary);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Having AND - ProductCount >= 2 AND AverageRating >= 4.0",
+                Metrics = metrics,
+                Input = summary,
+                Output = results,
+                Success = true,
+                Message = "Having filters to categories with at least 2 products and high average rating"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestHavingAndConditions");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Having AND - ProductCount >= 2 AND AverageRating >= 4.0",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Having with nested SubConditionGroup:
+    /// ProductCount > 1 AND (TotalRevenue > 100 OR AveragePrice &lt; 30).
+    /// </summary>
+    [HttpGet("summary/having/nested-group")]
+    public async Task<ActionResult<PerformanceResult>> TestHavingNestedGroup()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var summary = new Summary
+            {
+                GroupBy = new GroupBy
+                {
+                    Fields = ["CategoryId"],
+                    AggregateBy =
+                    [
+                        new AggregateBy { Field = "Id",    Alias = "ProductCount",  Aggregator = Aggregator.Count },
+                        new AggregateBy { Field = "Price", Alias = "TotalRevenue",  Aggregator = Aggregator.Sumation },
+                        new AggregateBy { Field = "Price", Alias = "AveragePrice",  Aggregator = Aggregator.Average }
+                    ]
+                },
+                Having = new ConditionGroup
+                {
+                    Connector = Connector.And,
+                    Conditions =
+                    [
+                        new Condition
+                        {
+                            Field = "ProductCount",
+                            DataType = DataType.Number,
+                            Operator = Operator.GreaterThan,
+                            Values = ["1"],
+                            Sort = 1
+                        }
+                    ],
+                    SubConditionGroups =
+                    [
+                        new ConditionGroup
+                        {
+                            Sort = 1,
+                            Connector = Connector.Or,
+                            Conditions =
+                            [
+                                new Condition
+                                {
+                                    Field = "TotalRevenue",
+                                    DataType = DataType.Number,
+                                    Operator = Operator.GreaterThan,
+                                    Values = ["100"],
+                                    Sort = 1
+                                },
+                                new Condition
+                                {
+                                    Field = "AveragePrice",
+                                    DataType = DataType.Number,
+                                    Operator = Operator.LessThan,
+                                    Values = ["30"],
+                                    Sort = 2
+                                }
+                            ]
+                        }
+                    ]
+                },
+                Orders =
+                [
+                    new OrderBy { Field = "TotalRevenue", Direction = Direction.Descending, Sort = 1 }
+                ]
+            };
+
+            sw.Restart();
+            var query = _context.Products.Summary(summary);
+            var translationTime = sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
+            var results = await query.ToDynamicListAsync();
+            var executionTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TranslationTimeMs = translationTime;
+            metrics.ExecutionTimeMs = executionTime;
+            metrics.TotalTimeMs = translationTime + executionTime;
+            metrics.RecordsReturned = results.Count;
+            metrics.QueryGenerated = query.ToQueryString();
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Having Nested Group - ProductCount > 1 AND (TotalRevenue > 100 OR AveragePrice < 30)",
+                Metrics = metrics,
+                Input = summary,
+                Output = results,
+                Success = true,
+                Message = "Having with nested SubConditionGroup combining AND outer with OR inner clauses"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestHavingNestedGroup");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Having Nested Group - ProductCount > 1 AND (TotalRevenue > 100 OR AveragePrice < 30)",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test full Having pipeline: WHERE filter + group + Having + order + pagination.
+    /// </summary>
+    [HttpGet("summary/having/full-pipeline")]
+    public async Task<ActionResult<PerformanceResult>> TestHavingFullPipeline()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var summary = new Summary
+            {
+                ConditionGroup = new ConditionGroup
+                {
+                    Connector = Connector.And,
+                    Conditions =
+                    [
+                        new Condition
+                        {
+                            Field = "Price",
+                            DataType = DataType.Number,
+                            Operator = Operator.GreaterThan,
+                            Values = ["10"],
+                            Sort = 1
+                        }
+                    ]
+                },
+                GroupBy = new GroupBy
+                {
+                    Fields = ["CategoryId"],
+                    AggregateBy =
+                    [
+                        new AggregateBy { Field = "Id",     Alias = "ProductCount",  Aggregator = Aggregator.Count },
+                        new AggregateBy { Field = "Price",  Alias = "TotalRevenue",  Aggregator = Aggregator.Sumation },
+                        new AggregateBy { Field = "Price",  Alias = "AveragePrice",  Aggregator = Aggregator.Average },
+                        new AggregateBy { Field = "Rating", Alias = "AverageRating", Aggregator = Aggregator.Average }
+                    ]
+                },
+                Having = new ConditionGroup
+                {
+                    Connector = Connector.And,
+                    Conditions =
+                    [
+                        new Condition
+                        {
+                            Field = "ProductCount",
+                            DataType = DataType.Number,
+                            Operator = Operator.GreaterThanOrEqual,
+                            Values = ["2"],
+                            Sort = 1
+                        },
+                        new Condition
+                        {
+                            Field = "TotalRevenue",
+                            DataType = DataType.Number,
+                            Operator = Operator.GreaterThan,
+                            Values = ["50"],
+                            Sort = 2
+                        }
+                    ]
+                },
+                Orders =
+                [
+                    new OrderBy { Field = "TotalRevenue", Direction = Direction.Descending, Sort = 1 }
+                ],
+                Page = new PageBy { PageNumber = 1, PageSize = 5 }
+            };
+
+            sw.Restart();
+            var results = await _context.Products.ToListAsync(summary, getQueryString: true);
+            var totalTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TotalTimeMs = totalTime;
+            metrics.RecordsReturned = results.Data.Count;
+            metrics.QueryGenerated = results.QueryString;
+            metrics.AdditionalInfo = new Dictionary<string, object>
+            {
+                { "PageNumber", results.PageNumber },
+                { "PageSize",   results.PageSize },
+                { "PageCount",  results.PageCount },
+                { "TotalCount", results.TotalCount }
+            };
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Having Full Pipeline - WHERE + GROUP + HAVING + ORDER + PAGE",
+                Metrics = metrics,
+                Input = summary,
+                Output = results,
+                Success = true,
+                Message = $"Price > 10 → group by category → Having ProductCount >= 2 AND TotalRevenue > 50 → page {results.PageNumber}/{results.PageCount}"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestHavingFullPipeline");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Having Full Pipeline - WHERE + GROUP + HAVING + ORDER + PAGE",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Having on Orders: keep only statuses that have at least 2 orders.
+    /// </summary>
+    [HttpGet("orders/having")]
+    public async Task<ActionResult<PerformanceResult>> TestOrdersHaving()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var summary = new Summary
+            {
+                GroupBy = new GroupBy
+                {
+                    Fields = ["Status"],
+                    AggregateBy =
+                    [
+                        new AggregateBy { Field = "Id",          Alias = "OrderCount",   Aggregator = Aggregator.Count },
+                        new AggregateBy { Field = "TotalAmount", Alias = "TotalRevenue", Aggregator = Aggregator.Sumation },
+                        new AggregateBy { Field = "TotalAmount", Alias = "AverageOrder", Aggregator = Aggregator.Average }
+                    ]
+                },
+                Having = new ConditionGroup
+                {
+                    Connector = Connector.And,
+                    Conditions =
+                    [
+                        new Condition
+                        {
+                            Field = "OrderCount",
+                            DataType = DataType.Number,
+                            Operator = Operator.GreaterThanOrEqual,
+                            Values = ["2"],
+                            Sort = 1
+                        }
+                    ]
+                },
+                Orders =
+                [
+                    new OrderBy { Field = "TotalRevenue", Direction = Direction.Descending, Sort = 1 }
+                ]
+            };
+
+            sw.Restart();
+            var results = await _context.Orders.ToListAsync(summary, getQueryString: true);
+            var totalTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TotalTimeMs = totalTime;
+            metrics.RecordsReturned = results.Data.Count;
+            metrics.QueryGenerated = results.QueryString;
+            metrics.AdditionalInfo = new Dictionary<string, object>
+            {
+                { "TotalCount", results.TotalCount }
+            };
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Orders Having - Statuses with at Least 2 Orders",
+                Metrics = metrics,
+                Input = summary,
+                Output = results,
+                Success = true,
+                Message = "Orders grouped by status, Having keeps statuses with OrderCount >= 2"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestOrdersHaving");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Orders Having - Statuses with at Least 2 Orders",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test Having on Customers: tiers where average spending is at least 200.
+    /// </summary>
+    [HttpGet("customers/having")]
+    public async Task<ActionResult<PerformanceResult>> TestCustomersHaving()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var summary = new Summary
+            {
+                GroupBy = new GroupBy
+                {
+                    Fields = ["Tier"],
+                    AggregateBy =
+                    [
+                        new AggregateBy { Field = "Id",         Alias = "CustomerCount", Aggregator = Aggregator.Count },
+                        new AggregateBy { Field = "TotalSpent", Alias = "TotalSpent",    Aggregator = Aggregator.Sumation },
+                        new AggregateBy { Field = "TotalSpent", Alias = "AvgSpent",      Aggregator = Aggregator.Average },
+                        new AggregateBy { Field = "TotalSpent", Alias = "MaxSpent",      Aggregator = Aggregator.Maximum }
+                    ]
+                },
+                Having = new ConditionGroup
+                {
+                    Connector = Connector.And,
+                    Conditions =
+                    [
+                        new Condition
+                        {
+                            Field = "AvgSpent",
+                            DataType = DataType.Number,
+                            Operator = Operator.GreaterThanOrEqual,
+                            Values = ["200"],
+                            Sort = 1
+                        }
+                    ]
+                },
+                Orders =
+                [
+                    new OrderBy { Field = "AvgSpent", Direction = Direction.Descending, Sort = 1 }
+                ]
+            };
+
+            sw.Restart();
+            var results = await _context.Customers.ToListAsync(summary, getQueryString: true);
+            var totalTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TotalTimeMs = totalTime;
+            metrics.RecordsReturned = results.Data.Count;
+            metrics.QueryGenerated = results.QueryString;
+            metrics.AdditionalInfo = new Dictionary<string, object>
+            {
+                { "TotalCount", results.TotalCount }
+            };
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Customers Having - Tiers with AvgSpent >= 200",
+                Metrics = metrics,
+                Input = summary,
+                Output = results,
+                Success = true,
+                Message = "Customers grouped by tier, Having keeps tiers where average spending >= 200"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestCustomersHaving");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Customers Having - Tiers with AvgSpent >= 200",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test synchronous ToList with Having: SummaryResult with pagination, keeping only
+    /// active-status buckets with more than 5 products.
+    /// </summary>
+    [HttpGet("tolist/having/sync")]
+    public ActionResult<PerformanceResult> TestToListSyncHaving()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var summary = new Summary
+            {
+                GroupBy = new GroupBy
+                {
+                    Fields = ["IsActive"],
+                    AggregateBy =
+                    [
+                        new AggregateBy { Field = "Id",    Alias = "ProductCount", Aggregator = Aggregator.Count },
+                        new AggregateBy { Field = "Price", Alias = "TotalRevenue", Aggregator = Aggregator.Sumation },
+                        new AggregateBy { Field = "Price", Alias = "AveragePrice", Aggregator = Aggregator.Average }
+                    ]
+                },
+                Having = new ConditionGroup
+                {
+                    Connector = Connector.And,
+                    Conditions =
+                    [
+                        new Condition
+                        {
+                            Field = "ProductCount",
+                            DataType = DataType.Number,
+                            Operator = Operator.GreaterThan,
+                            Values = ["5"],
+                            Sort = 1
+                        }
+                    ]
+                },
+                Orders =
+                [
+                    new OrderBy { Field = "ProductCount", Direction = Direction.Descending, Sort = 1 }
+                ],
+                Page = new PageBy { PageNumber = 1, PageSize = 10 }
+            };
+
+            sw.Restart();
+            var results = _context.Products.ToList(summary, getQueryString: true);
+            var totalTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TotalTimeMs = totalTime;
+            metrics.RecordsReturned = results.Data.Count;
+            metrics.QueryGenerated = results.QueryString;
+            metrics.AdditionalInfo = new Dictionary<string, object>
+            {
+                { "PageNumber", results.PageNumber },
+                { "PageSize",   results.PageSize },
+                { "PageCount",  results.PageCount },
+                { "TotalCount", results.TotalCount }
+            };
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "ToList Sync Having - IsActive Buckets with ProductCount > 5",
+                Metrics = metrics,
+                Input = summary,
+                Output = results,
+                Success = true,
+                Message = $"Sync SummaryResult page {results.PageNumber} of {results.PageCount}, Having filtered to groups with ProductCount > 5"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestToListSyncHaving");
+            return Ok(new PerformanceResult
+            {
+                TestName = "ToList Sync Having - IsActive Buckets with ProductCount > 5",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    /// <summary>
+    /// Test async ToListAsync with Having: categories where AveragePrice is between 20 and 100.
+    /// </summary>
+    [HttpGet("tolist/having/async")]
+    public async Task<ActionResult<PerformanceResult>> TestToListAsyncHaving()
+    {
+        var metrics = new PerformanceMetrics();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            var summary = new Summary
+            {
+                GroupBy = new GroupBy
+                {
+                    Fields = ["CategoryId"],
+                    AggregateBy =
+                    [
+                        new AggregateBy { Field = "Id",    Alias = "ProductCount",  Aggregator = Aggregator.Count },
+                        new AggregateBy { Field = "Price", Alias = "AveragePrice",  Aggregator = Aggregator.Average },
+                        new AggregateBy { Field = "Price", Alias = "TotalRevenue",  Aggregator = Aggregator.Sumation }
+                    ]
+                },
+                Having = new ConditionGroup
+                {
+                    Connector = Connector.And,
+                    Conditions =
+                    [
+                        new Condition
+                        {
+                            Field = "AveragePrice",
+                            DataType = DataType.Number,
+                            Operator = Operator.Between,
+                            Values = ["20", "100"],
+                            Sort = 1
+                        }
+                    ]
+                },
+                Orders =
+                [
+                    new OrderBy { Field = "AveragePrice", Direction = Direction.Ascending, Sort = 1 }
+                ]
+            };
+
+            sw.Restart();
+            var results = await _context.Products.ToListAsync(summary, getQueryString: true);
+            var totalTime = sw.Elapsed.TotalMilliseconds;
+
+            metrics.TotalTimeMs = totalTime;
+            metrics.RecordsReturned = results.Data.Count;
+            metrics.QueryGenerated = results.QueryString;
+            metrics.AdditionalInfo = new Dictionary<string, object>
+            {
+                { "TotalCount", results.TotalCount }
+            };
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "ToListAsync Having - Categories with AveragePrice Between 20 and 100",
+                Metrics = metrics,
+                Input = summary,
+                Output = results,
+                Success = true,
+                Message = "Async SummaryResult, Having keeps categories where AveragePrice BETWEEN 20 AND 100"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestToListAsyncHaving");
+            return Ok(new PerformanceResult
+            {
+                TestName = "ToListAsync Having - Categories with AveragePrice Between 20 and 100",
+                Success = false,
+                Message = ex.Message,
+                Metrics = metrics
+            });
+        }
+    }
+
+    #endregion
+
     #region Run All Tests
 
     /// <summary>
@@ -1453,7 +2257,16 @@ public class SummaryTestController : ControllerBase
             ("Orders by Payment Method",    TestOrdersByPaymentMethod),
             ("Orders by Date",              TestOrdersByDate),
             ("Customers by Gender",         TestCustomersByGender),
-            ("Customers by Tier",           TestCustomersByTier)
+            ("Customers by Tier",           TestCustomersByTier),
+            ("Having Simple",               TestHavingSimple),
+            ("Having With Where",           TestHavingWithWhere),
+            ("Having AND Conditions",       TestHavingAndConditions),
+            ("Having Nested Group",         TestHavingNestedGroup),
+            ("Having Full Pipeline",        TestHavingFullPipeline),
+            ("Orders Having",               TestOrdersHaving),
+            ("Customers Having",            TestCustomersHaving),
+            ("ToList Sync Having",          () => Task.FromResult(TestToListSyncHaving())),
+            ("ToListAsync Having",          TestToListAsyncHaving)
         };
 
         foreach (var (name, method) in testMethods)

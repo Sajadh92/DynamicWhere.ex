@@ -1,5 +1,6 @@
 using DynamicWhere.API.Data;
-using DynamicWhere.ex.Classes;
+using DynamicWhere.ex.Classes.Complex;
+using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Source;
 using Microsoft.AspNetCore.Mvc;
@@ -10,7 +11,7 @@ using System.Linq.Dynamic.Core;
 namespace DynamicWhere.API.Controllers;
 
 /// <summary>
-/// Controller for testing all SummaryRequest extension methods with multiple scenarios.
+/// Controller for testing all Summary extension methods with multiple scenarios.
 /// Covers: Summary (IQueryable), ToList sync (IQueryable), ToList in-memory (IEnumerable), ToListAsync.
 /// </summary>
 [ApiController]
@@ -39,7 +40,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 GroupBy = new GroupBy
                 {
@@ -52,7 +53,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var query = _context.Products.Summary(summaryRequest);
+            var query = _context.Products.Summary(summary);
             var translationTime = sw.Elapsed.TotalMilliseconds;
 
             sw.Restart();
@@ -69,7 +70,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Summary Simple - Group by IsActive with Count",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Grouped products by IsActive status"
@@ -99,7 +100,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 ConditionGroup = new ConditionGroup
                 {
@@ -128,7 +129,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var query = _context.Products.Summary(summaryRequest);
+            var query = _context.Products.Summary(summary);
             var translationTime = sw.Elapsed.TotalMilliseconds;
 
             sw.Restart();
@@ -145,7 +146,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Summary With Filter - Active Products by Category",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Filtered to active products, grouped by category with count and revenue"
@@ -175,7 +176,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 GroupBy = new GroupBy
                 {
@@ -194,7 +195,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var query = _context.Products.Summary(summaryRequest);
+            var query = _context.Products.Summary(summary);
             var translationTime = sw.Elapsed.TotalMilliseconds;
 
             sw.Restart();
@@ -211,7 +212,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Summary With Order - Category Summary Sorted by Count then Avg Price",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Grouped by category, ordered by product count and average price descending"
@@ -241,7 +242,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 GroupBy = new GroupBy
                 {
@@ -255,7 +256,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var query = _context.Products.Summary(summaryRequest);
+            var query = _context.Products.Summary(summary);
             var translationTime = sw.Elapsed.TotalMilliseconds;
 
             sw.Restart();
@@ -272,7 +273,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Summary With Page - First Page of Grouped Results (Size 3)",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Grouped by category with page 1, size 3"
@@ -302,7 +303,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 GroupBy = new GroupBy
                 {
@@ -323,7 +324,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var query = _context.Products.Summary(summaryRequest);
+            var query = _context.Products.Summary(summary);
             var translationTime = sw.Elapsed.TotalMilliseconds;
 
             sw.Restart();
@@ -340,7 +341,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Summary All Aggregations - Count, Sum, Avg, Min, Max, Distinct, First, Last",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Tested all aggregation types in a single summary request"
@@ -370,7 +371,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 GroupBy = new GroupBy
                 {
@@ -390,7 +391,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var query = _context.Products.Summary(summaryRequest);
+            var query = _context.Products.Summary(summary);
             var translationTime = sw.Elapsed.TotalMilliseconds;
 
             sw.Restart();
@@ -407,7 +408,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Summary Date Grouping - Products by CreatedAt Year and Month",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Grouped products by creation year and month, ordered most recent first"
@@ -437,7 +438,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 GroupBy = new GroupBy
                 {
@@ -456,7 +457,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var query = _context.Products.Include(p => p.Category).Summary(summaryRequest);
+            var query = _context.Products.Include(p => p.Category).Summary(summary);
             var translationTime = sw.Elapsed.TotalMilliseconds;
 
             sw.Restart();
@@ -473,7 +474,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Summary Nested Property - Group by Category.Name",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Grouped by nested Category.Name with avg price and rating, ordered by product count"
@@ -503,7 +504,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 ConditionGroup = new ConditionGroup
                 {
@@ -539,7 +540,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var query = _context.Products.Summary(summaryRequest);
+            var query = _context.Products.Summary(summary);
             var translationTime = sw.Elapsed.TotalMilliseconds;
 
             sw.Restart();
@@ -556,7 +557,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Summary Full Pipeline - Filter + Multi-Field Group + Order + Page",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Multi-field grouping by IsActive and CategoryId with full pipeline"
@@ -586,7 +587,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 ConditionGroup = new ConditionGroup
                 {
@@ -647,7 +648,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var query = _context.Products.Summary(summaryRequest);
+            var query = _context.Products.Summary(summary);
             var translationTime = sw.Elapsed.TotalMilliseconds;
 
             sw.Restart();
@@ -664,7 +665,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Summary Nested Filter - IsActive AND (Rating >= 4 OR Price < 30)",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Filtered with nested AND/OR conditions, then grouped by category"
@@ -685,10 +686,10 @@ public class SummaryTestController : ControllerBase
 
     #endregion
 
-    #region Test ToList Sync (IQueryable) with SummaryRequest
+    #region Test ToList Sync (IQueryable) with Summary
 
     /// <summary>
-    /// Test synchronous ToList with SummaryRequest returning a SummaryResult with pagination metadata.
+    /// Test synchronous ToList with Summary returning a SummaryResult with pagination metadata.
     /// </summary>
     [HttpGet("tolist/sync")]
     public ActionResult<PerformanceResult> TestToListSync()
@@ -698,7 +699,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 ConditionGroup = new ConditionGroup
                 {
@@ -732,7 +733,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var results = _context.Products.ToList(summaryRequest);
+            var results = _context.Products.ToList(summary);
             var totalTime = sw.Elapsed.TotalMilliseconds;
 
             metrics.TotalTimeMs = totalTime;
@@ -749,7 +750,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "ToList Sync - SummaryResult with Pagination",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = $"Page {results.PageNumber} of {results.PageCount} ({results.TotalCount} total groups)"
@@ -769,7 +770,7 @@ public class SummaryTestController : ControllerBase
     }
 
     /// <summary>
-    /// Test synchronous ToList with SummaryRequest and getQueryString=true to capture the generated SQL.
+    /// Test synchronous ToList with Summary and getQueryString=true to capture the generated SQL.
     /// </summary>
     [HttpGet("tolist/sync-querystring")]
     public ActionResult<PerformanceResult> TestToListSyncWithQueryString()
@@ -779,7 +780,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 GroupBy = new GroupBy
                 {
@@ -793,7 +794,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var results = _context.Products.ToList(summaryRequest, getQueryString: true);
+            var results = _context.Products.ToList(summary, getQueryString: true);
             var totalTime = sw.Elapsed.TotalMilliseconds;
 
             metrics.TotalTimeMs = totalTime;
@@ -804,7 +805,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "ToList Sync - With QueryString Generation",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "SQL query string captured from EF Core translation"
@@ -825,10 +826,10 @@ public class SummaryTestController : ControllerBase
 
     #endregion
 
-    #region Test ToList In-Memory (IEnumerable) with SummaryRequest
+    #region Test ToList In-Memory (IEnumerable) with Summary
 
     /// <summary>
-    /// Test in-memory ToList (IEnumerable overload) with SummaryRequest — no EF Core translation.
+    /// Test in-memory ToList (IEnumerable overload) with Summary — no EF Core translation.
     /// </summary>
     [HttpGet("tolist/in-memory")]
     public async Task<ActionResult<PerformanceResult>> TestToListInMemory()
@@ -840,7 +841,7 @@ public class SummaryTestController : ControllerBase
         {
             var products = await _context.Products.ToListAsync();
 
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 ConditionGroup = new ConditionGroup
                 {
@@ -874,7 +875,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var results = products.ToList(summaryRequest);
+            var results = products.ToList(summary);
             var totalTime = sw.Elapsed.TotalMilliseconds;
 
             metrics.TotalTimeMs = totalTime;
@@ -887,9 +888,9 @@ public class SummaryTestController : ControllerBase
 
             return Ok(new PerformanceResult
             {
-                TestName = "ToList In-Memory - IEnumerable Overload with SummaryRequest",
+                TestName = "ToList In-Memory - IEnumerable Overload with Summary",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = $"In-memory summary over {products.Count} products → {results.TotalCount} groups"
@@ -900,7 +901,7 @@ public class SummaryTestController : ControllerBase
             _logger.LogError(ex, "Error in TestToListInMemory");
             return Ok(new PerformanceResult
             {
-                TestName = "ToList In-Memory - IEnumerable Overload with SummaryRequest",
+                TestName = "ToList In-Memory - IEnumerable Overload with Summary",
                 Success = false,
                 Message = ex.Message,
                 Metrics = metrics
@@ -910,10 +911,10 @@ public class SummaryTestController : ControllerBase
 
     #endregion
 
-    #region Test ToListAsync with SummaryRequest
+    #region Test ToListAsync with Summary
 
     /// <summary>
-    /// Test async ToListAsync with a basic SummaryRequest (no filter, no page).
+    /// Test async ToListAsync with a basic Summary (no filter, no page).
     /// </summary>
     [HttpGet("tolist/async")]
     public async Task<ActionResult<PerformanceResult>> TestToListAsync()
@@ -923,7 +924,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 GroupBy = new GroupBy
                 {
@@ -943,7 +944,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var results = await _context.Products.ToListAsync(summaryRequest);
+            var results = await _context.Products.ToListAsync(summary);
             var totalTime = sw.Elapsed.TotalMilliseconds;
 
             metrics.TotalTimeMs = totalTime;
@@ -957,7 +958,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "ToListAsync - Products Grouped by Category with Revenue",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = $"Async summary: {results.TotalCount} category groups returned"
@@ -977,7 +978,7 @@ public class SummaryTestController : ControllerBase
     }
 
     /// <summary>
-    /// Test async ToListAsync with SummaryRequest, getQueryString=true, filter, and pagination.
+    /// Test async ToListAsync with Summary, getQueryString=true, filter, and pagination.
     /// </summary>
     [HttpGet("tolist/async-querystring")]
     public async Task<ActionResult<PerformanceResult>> TestToListAsyncWithQueryString()
@@ -987,7 +988,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 ConditionGroup = new ConditionGroup
                 {
@@ -1021,7 +1022,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var results = await _context.Products.ToListAsync(summaryRequest, getQueryString: true);
+            var results = await _context.Products.ToListAsync(summary, getQueryString: true);
             var totalTime = sw.Elapsed.TotalMilliseconds;
 
             metrics.TotalTimeMs = totalTime;
@@ -1039,7 +1040,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "ToListAsync - With QueryString + Filter + Page",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = $"Page {results.PageNumber} of {results.PageCount} with SQL query string captured"
@@ -1063,7 +1064,7 @@ public class SummaryTestController : ControllerBase
     #region Multi-Entity Scenarios
 
     /// <summary>
-    /// Test SummaryRequest on Orders: group by Status with revenue statistics.
+    /// Test Summary on Orders: group by Status with revenue statistics.
     /// </summary>
     [HttpGet("orders/by-status")]
     public async Task<ActionResult<PerformanceResult>> TestOrdersByStatus()
@@ -1073,7 +1074,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 GroupBy = new GroupBy
                 {
@@ -1094,7 +1095,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var results = await _context.Orders.ToListAsync(summaryRequest, getQueryString: true);
+            var results = await _context.Orders.ToListAsync(summary, getQueryString: true);
             var totalTime = sw.Elapsed.TotalMilliseconds;
 
             metrics.TotalTimeMs = totalTime;
@@ -1109,7 +1110,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Orders by Status - Revenue Breakdown per Order Status",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Orders grouped by status with full revenue statistics"
@@ -1129,7 +1130,7 @@ public class SummaryTestController : ControllerBase
     }
 
     /// <summary>
-    /// Test SummaryRequest on Orders: group by PaymentMethod filtered to paid orders only.
+    /// Test Summary on Orders: group by PaymentMethod filtered to paid orders only.
     /// </summary>
     [HttpGet("orders/by-payment-method")]
     public async Task<ActionResult<PerformanceResult>> TestOrdersByPaymentMethod()
@@ -1139,7 +1140,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 ConditionGroup = new ConditionGroup
                 {
@@ -1173,7 +1174,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var results = await _context.Orders.ToListAsync(summaryRequest);
+            var results = await _context.Orders.ToListAsync(summary);
             var totalTime = sw.Elapsed.TotalMilliseconds;
 
             metrics.TotalTimeMs = totalTime;
@@ -1187,7 +1188,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Orders by PaymentMethod - Paid Orders Revenue per Payment Method",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Paid orders grouped by payment method with revenue statistics"
@@ -1207,7 +1208,7 @@ public class SummaryTestController : ControllerBase
     }
 
     /// <summary>
-    /// Test SummaryRequest on Orders: group by order date year and month with totals.
+    /// Test Summary on Orders: group by order date year and month with totals.
     /// </summary>
     [HttpGet("orders/by-date")]
     public async Task<ActionResult<PerformanceResult>> TestOrdersByDate()
@@ -1217,7 +1218,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 GroupBy = new GroupBy
                 {
@@ -1237,7 +1238,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var results = await _context.Orders.ToListAsync(summaryRequest);
+            var results = await _context.Orders.ToListAsync(summary);
             var totalTime = sw.Elapsed.TotalMilliseconds;
 
             metrics.TotalTimeMs = totalTime;
@@ -1251,7 +1252,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Orders by Date - Monthly Revenue Trend",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Orders grouped by year and month for revenue trend analysis"
@@ -1271,7 +1272,7 @@ public class SummaryTestController : ControllerBase
     }
 
     /// <summary>
-    /// Test SummaryRequest on Customers: group by Gender with spending statistics, active only.
+    /// Test Summary on Customers: group by Gender with spending statistics, active only.
     /// </summary>
     [HttpGet("customers/by-gender")]
     public async Task<ActionResult<PerformanceResult>> TestCustomersByGender()
@@ -1281,7 +1282,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 ConditionGroup = new ConditionGroup
                 {
@@ -1316,7 +1317,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var results = await _context.Customers.ToListAsync(summaryRequest);
+            var results = await _context.Customers.ToListAsync(summary);
             var totalTime = sw.Elapsed.TotalMilliseconds;
 
             metrics.TotalTimeMs = totalTime;
@@ -1330,7 +1331,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Customers by Gender - Active Customers Spending Statistics",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = "Active customers grouped by gender with spending statistics"
@@ -1350,7 +1351,7 @@ public class SummaryTestController : ControllerBase
     }
 
     /// <summary>
-    /// Test SummaryRequest on Customers: group by Tier with spending statistics and pagination.
+    /// Test Summary on Customers: group by Tier with spending statistics and pagination.
     /// </summary>
     [HttpGet("customers/by-tier")]
     public async Task<ActionResult<PerformanceResult>> TestCustomersByTier()
@@ -1360,7 +1361,7 @@ public class SummaryTestController : ControllerBase
 
         try
         {
-            var summaryRequest = new SummaryRequest
+            var summary = new Summary
             {
                 GroupBy = new GroupBy
                 {
@@ -1382,7 +1383,7 @@ public class SummaryTestController : ControllerBase
             };
 
             sw.Restart();
-            var results = await _context.Customers.ToListAsync(summaryRequest, getQueryString: true);
+            var results = await _context.Customers.ToListAsync(summary, getQueryString: true);
             var totalTime = sw.Elapsed.TotalMilliseconds;
 
             metrics.TotalTimeMs = totalTime;
@@ -1400,7 +1401,7 @@ public class SummaryTestController : ControllerBase
             {
                 TestName = "Customers by Tier - Spending Analytics per Customer Tier",
                 Metrics = metrics,
-                Input = summaryRequest,
+                Input = summary,
                 Output = results,
                 Success = true,
                 Message = $"Page {results.PageNumber} of {results.PageCount}: customers grouped by tier"
@@ -1424,7 +1425,7 @@ public class SummaryTestController : ControllerBase
     #region Run All Tests
 
     /// <summary>
-    /// Run all SummaryRequest tests and return aggregated results.
+    /// Run all Summary tests and return aggregated results.
     /// </summary>
     [HttpGet("all")]
     public async Task<ActionResult<AllTestsResult>> TestAll()
@@ -1470,7 +1471,7 @@ public class SummaryTestController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error executing SummaryRequest test: {name}", name);
+                _logger.LogError(ex, "Error executing Summary test: {name}", name);
                 allResults.Add(new PerformanceResult
                 {
                     TestName = name,

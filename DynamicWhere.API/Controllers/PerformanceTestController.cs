@@ -1,5 +1,6 @@
 using DynamicWhere.API.Data;
-using DynamicWhere.ex.Classes;
+using DynamicWhere.ex.Classes.Complex;
+using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Source;
 using Microsoft.AspNetCore.Mvc;

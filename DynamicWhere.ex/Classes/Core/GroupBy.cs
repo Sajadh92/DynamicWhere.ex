@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex.Classes;
+﻿namespace DynamicWhere.ex.Classes.Core;
 
 /// <summary>
 /// Represents a group-by configuration specifying grouping fields and optional aggregations.

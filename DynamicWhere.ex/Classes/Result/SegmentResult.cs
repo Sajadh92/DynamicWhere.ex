@@ -1,4 +1,4 @@
-﻿namespace DynamicWhere.ex.Classes;
+﻿namespace DynamicWhere.ex.Classes.Result;
 
 /// <summary>
 /// Represents the result of a segmented query.

@@ -1,6 +1,6 @@
 ﻿using DynamicWhere.ex.Enums;
 
-namespace DynamicWhere.ex.Classes;
+namespace DynamicWhere.ex.Classes.Core;
 
 /// <summary>
 /// Represents an aggregation configuration specifying the field, alias, and aggregation operation.

@@ -1,9 +1,11 @@
-﻿namespace DynamicWhere.ex.Classes;
+﻿using DynamicWhere.ex.Classes.Core;
+
+namespace DynamicWhere.ex.Classes.Complex;
 
 /// <summary>
-/// Represents a summary request containing a condition group, group-by criteria, order-by criteria, and pagination settings.
+/// Represents a filter containing a condition group, order-by criteria, and pagination settings.
 /// </summary>
-public class SummaryRequest
+public class Filter
 {
     /// <summary>
     /// Represents a condition group containing a list of conditions and a logical operator.
@@ -11,12 +13,12 @@ public class SummaryRequest
     public ConditionGroup? ConditionGroup { get; set; }
 
     /// <summary>
-    /// Represents the group-by configuration specifying grouping fields and optional aggregations.
+    /// Represents a list of fields to be selected.
     /// </summary>
-    public GroupBy? GroupBy { get; set; }
+    public List<string>? Selects { get; set; }
 
     /// <summary>
-    /// Represents a list of order-by criteria. Each order field must exist in the group-by fields or aggregate-by aliases.
+    /// Represents a list of order-by criteria.
     /// </summary>
     public List<OrderBy>? Orders { get; set; }
 

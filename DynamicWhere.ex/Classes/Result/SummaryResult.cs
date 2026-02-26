@@ -1,10 +1,9 @@
-﻿namespace DynamicWhere.ex.Classes;
+﻿namespace DynamicWhere.ex.Classes.Result;
 
 /// <summary>
-/// Represents the result of a filtered query execution, including pagination information and a list of entities of type <typeparamref name="T"/>.
+/// Represents the result of a summary query execution, including pagination information and a list of dynamic grouped entities.
 /// </summary>
-/// <typeparam name="T">The entity type of the query result.</typeparam>
-public class FilterResult<T>
+public class SummaryResult
 {
     /// <summary>
     /// Represents the page number of the current result page.
@@ -22,17 +21,17 @@ public class FilterResult<T>
     public int PageCount { get; set; } = 0;
 
     /// <summary>
-    /// Represents the total count of entities matching the query conditions.
+    /// Represents the total count of grouped entities matching the query conditions.
     /// </summary>
     public int TotalCount { get; set; } = 0;
 
     /// <summary>
-    /// Represents the list of entities retrieved as a result of the query.
+    /// Represents the list of dynamic grouped entities retrieved as a result of the query.
     /// </summary>
-    public List<T> Data { get; set; } = new();
+    public List<dynamic> Data { get; set; } = new();
 
     /// <summary>
     /// Represents the query string that applied on database side.
     /// </summary>
-    public string? QueryString { get; set; } 
+    public string? QueryString { get; set; }
 }

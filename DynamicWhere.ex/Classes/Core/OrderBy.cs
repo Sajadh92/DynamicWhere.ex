@@ -1,6 +1,6 @@
 ﻿using DynamicWhere.ex.Enums;
 
-namespace DynamicWhere.ex.Classes;
+namespace DynamicWhere.ex.Classes.Core;
 
 /// <summary>
 /// Represents a sorting configuration specifying the field name and sorting direction.

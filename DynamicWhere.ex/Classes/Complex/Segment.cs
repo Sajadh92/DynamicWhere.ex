@@ -1,4 +1,6 @@
-﻿namespace DynamicWhere.ex.Classes;
+﻿using DynamicWhere.ex.Classes.Core;
+
+namespace DynamicWhere.ex.Classes.Complex;
 
 /// <summary>
 /// Represents a segment containing multiple sets of conditions for dynamic queries.

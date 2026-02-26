@@ -1,4 +1,4 @@
-﻿using DynamicWhere.ex.Classes;
+﻿using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Optimization.Cache.Source;

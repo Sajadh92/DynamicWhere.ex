@@ -1,4 +1,6 @@
-using DynamicWhere.ex.Classes;
+using DynamicWhere.ex.Classes.Complex;
+using DynamicWhere.ex.Classes.Core;
+using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Source;
@@ -494,15 +496,15 @@ public static class Extension
     }
 
     /// <summary>
-    /// Applies a <see cref="SummaryRequest"/> to an <see cref="IQueryable{T}"/> data source based on the provided summary criteria.
+    /// Applies a <see cref="Classes.Complex.Summary"/> to an <see cref="IQueryable{T}"/> data source based on the provided summary criteria.
     /// </summary>
     /// <typeparam name="T">The type of elements in the data source.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> data source to summarize.</param>
-    /// <param name="summaryRequest">The <see cref="SummaryRequest"/> criteria containing a condition group, group-by criteria, order-by criteria, and pagination settings.</param>
+    /// <param name="summary">The <see cref="Classes.Complex.Summary"/> criteria containing a condition group, group-by criteria, order-by criteria, and pagination settings.</param>
     /// <returns>An <see cref="IQueryable"/> containing dynamic grouped objects with the summary applied.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="query"/> or <paramref name="summaryRequest"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when <paramref name="summaryRequest"/> contains invalid data.</exception>
-    public static IQueryable Summary<T>(this IQueryable<T> query, SummaryRequest summaryRequest) where T : class
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="query"/> or <paramref name="summary"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="summary"/> contains invalid data.</exception>
+    public static IQueryable Summary<T>(this IQueryable<T> query, Summary summary) where T : class
     {
         // Validate input parameters.
         if (query == null)
@@ -510,29 +512,29 @@ public static class Extension
             throw new ArgumentNullException(nameof(query));
         }
 
-        if (summaryRequest == null)
+        if (summary == null)
         {
-            throw new ArgumentNullException(nameof(summaryRequest));
+            throw new ArgumentNullException(nameof(summary));
         }
 
-        // Validate the SummaryRequest (including order fields against grouped fields).
-        summaryRequest.Validate<T>();
+        // Validate the Summary (including order fields against grouped fields).
+        summary.Validate<T>();
 
         // Apply the filter criteria to the query.
-        if (summaryRequest.ConditionGroup != null)
+        if (summary.ConditionGroup != null)
         {
-            query = query.Where(summaryRequest.ConditionGroup);
+            query = query.Where(summary.ConditionGroup);
         }
 
         // Apply GroupBy (required).
-        IQueryable result = query.Group(summaryRequest.GroupBy!);
+        IQueryable result = query.Group(summary.GroupBy!);
 
         // Apply ordering on grouped results.
         // Dots are stripped from field names (e.g. "CreatedAt.Year" → "CreatedAtYear") to match
         // the aliases emitted by the GroupBy Select projection.
-        if (summaryRequest.Orders != null && summaryRequest.Orders.Count > 0)
+        if (summary.Orders != null && summary.Orders.Count > 0)
         {
-            string orderBy = string.Join(",", summaryRequest.Orders
+            string orderBy = string.Join(",", summary.Orders
                 .OrderBy(x => x.Sort)
                 .Select(x => $"{x.Field?.Replace(".", "")} {(x.Direction == Direction.Ascending ? "asc" : "desc")}"));
 
@@ -543,10 +545,10 @@ public static class Extension
         }
 
         // Apply pagination.
-        if (summaryRequest.Page != null)
+        if (summary.Page != null)
         {
-            result = result.Skip((summaryRequest.Page.PageNumber - 1) * summaryRequest.Page.PageSize)
-                           .Take(summaryRequest.Page.PageSize);
+            result = result.Skip((summary.Page.PageNumber - 1) * summary.Page.PageSize)
+                           .Take(summary.Page.PageSize);
         }
 
         // Return the summarized query.
@@ -554,16 +556,16 @@ public static class Extension
     }
 
     /// <summary>
-    /// Retrieves a list of dynamic grouped entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="SummaryRequest"/>.
+    /// Retrieves a list of dynamic grouped entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Classes.Complex.Summary"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve grouped entities from.</param>
-    /// <param name="summaryRequest">The <see cref="SummaryRequest"/> containing filter conditions, group-by criteria, and optional pagination settings.</param>
+    /// <param name="summary">The <see cref="Classes.Complex.Summary"/> containing filter conditions, group-by criteria, and optional pagination settings.</param>
     /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
     /// <returns>A <see cref="SummaryResult"/> containing grouped entities that match the summary criteria with pagination information.</returns>
-    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="summaryRequest"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when <paramref name="summaryRequest"/> contains invalid data.</exception>
-    public static SummaryResult ToList<T>(this IQueryable<T> query, SummaryRequest summaryRequest, bool getQueryString = false) where T : class
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="summary"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="summary"/> contains invalid data.</exception>
+    public static SummaryResult ToList<T>(this IQueryable<T> query, Summary summary, bool getQueryString = false) where T : class
     {
         // Validate input parameters.
         if (query == null)
@@ -571,22 +573,22 @@ public static class Extension
             throw new ArgumentNullException(nameof(query));
         }
 
-        if (summaryRequest == null)
+        if (summary == null)
         {
-            throw new ArgumentNullException(nameof(summaryRequest));
+            throw new ArgumentNullException(nameof(summary));
         }
 
-        // Validate the SummaryRequest (including order fields against grouped fields).
-        summaryRequest.Validate<T>();
+        // Validate the Summary (including order fields against grouped fields).
+        summary.Validate<T>();
 
         // Apply the filter criteria to the query.
-        if (summaryRequest.ConditionGroup != null)
+        if (summary.ConditionGroup != null)
         {
-            query = query.Where(summaryRequest.ConditionGroup);
+            query = query.Where(summary.ConditionGroup);
         }
 
         // Apply GroupBy (required).
-        IQueryable result = query.Group(summaryRequest.GroupBy!);
+        IQueryable result = query.Group(summary.GroupBy!);
 
         // Calculate the total count of grouped entities before pagination.
         int totalCount = result.Count();
@@ -597,9 +599,9 @@ public static class Extension
         // Apply ordering on grouped results.
         // Dots are stripped from field names (e.g. "CreatedAt.Year" → "CreatedAtYear") to match
         // the aliases emitted by the GroupBy Select projection.
-        if (summaryRequest.Orders != null && summaryRequest.Orders.Count > 0)
+        if (summary.Orders != null && summary.Orders.Count > 0)
         {
-            string orderBy = string.Join(",", summaryRequest.Orders
+            string orderBy = string.Join(",", summary.Orders
                 .OrderBy(x => x.Sort)
                 .Select(x => $"{x.Field?.Replace(".", "")} {(x.Direction == Direction.Ascending ? "asc" : "desc")}"));
 
@@ -613,13 +615,13 @@ public static class Extension
         int pageNumber = 0, pageSize = 0;
 
         // Apply pagination.
-        if (summaryRequest.Page != null)
+        if (summary.Page != null)
         {
-            newResult = newResult.Skip((summaryRequest.Page.PageNumber - 1) * summaryRequest.Page.PageSize)
-                                 .Take(summaryRequest.Page.PageSize);
+            newResult = newResult.Skip((summary.Page.PageNumber - 1) * summary.Page.PageSize)
+                                 .Take(summary.Page.PageSize);
 
-            pageNumber = summaryRequest.Page.PageNumber;
-            pageSize = summaryRequest.Page.PageSize;
+            pageNumber = summary.Page.PageNumber;
+            pageSize = summary.Page.PageSize;
         }
 
         // Calculate the total page count based on the page size.
@@ -641,31 +643,31 @@ public static class Extension
     }
 
     /// <summary>
-    /// Retrieves a list of dynamic grouped entities from an in-memory <see cref="IEnumerable{T}"/> with optional filtering based on a <see cref="SummaryRequest"/>.
+    /// Retrieves a list of dynamic grouped entities from an in-memory <see cref="IEnumerable{T}"/> with optional filtering based on a <see cref="Classes.Complex.Summary"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IEnumerable{T}"/> to retrieve grouped entities from.</param>
-    /// <param name="summaryRequest">The <see cref="SummaryRequest"/> containing filter conditions, group-by criteria, and optional pagination settings.</param>
+    /// <param name="summary">The <see cref="Classes.Complex.Summary"/> containing filter conditions, group-by criteria, and optional pagination settings.</param>
     /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
     /// <returns>A <see cref="SummaryResult"/> containing grouped entities that match the summary criteria with pagination information.</returns>
-    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="summaryRequest"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when <paramref name="summaryRequest"/> contains invalid data.</exception>
-    public static SummaryResult ToList<T>(this IEnumerable<T> query, SummaryRequest summaryRequest, bool getQueryString = false) where T : class
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="summary"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="summary"/> contains invalid data.</exception>
+    public static SummaryResult ToList<T>(this IEnumerable<T> query, Summary summary, bool getQueryString = false) where T : class
     {
-        return query.AsQueryable().ToList(summaryRequest, getQueryString);
+        return query.AsQueryable().ToList(summary, getQueryString);
     }
 
     /// <summary>
-    /// Asynchronously retrieves a list of dynamic grouped entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="SummaryRequest"/>.
+    /// Asynchronously retrieves a list of dynamic grouped entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Classes.Complex.Summary"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve grouped entities from.</param>
-    /// <param name="summaryRequest">The <see cref="SummaryRequest"/> containing filter conditions, group-by criteria, and optional pagination settings.</param>
+    /// <param name="summary">The <see cref="Classes.Complex.Summary"/> containing filter conditions, group-by criteria, and optional pagination settings.</param>
     /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
     /// <returns>A <see cref="SummaryResult"/> containing grouped entities that match the summary criteria with pagination information.</returns>
-    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="summaryRequest"/> is null.</exception>
-    /// <exception cref="LogicException">Thrown when <paramref name="summaryRequest"/> contains invalid data.</exception>
-    public static async Task<SummaryResult> ToListAsync<T>(this IQueryable<T> query, SummaryRequest summaryRequest, bool getQueryString = false) where T : class
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="summary"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="summary"/> contains invalid data.</exception>
+    public static async Task<SummaryResult> ToListAsync<T>(this IQueryable<T> query, Summary summary, bool getQueryString = false) where T : class
     {
         // Validate input parameters.
         if (query == null)
@@ -673,22 +675,22 @@ public static class Extension
             throw new ArgumentNullException(nameof(query));
         }
 
-        if (summaryRequest == null)
+        if (summary == null)
         {
-            throw new ArgumentNullException(nameof(summaryRequest));
+            throw new ArgumentNullException(nameof(summary));
         }
 
-        // Validate the SummaryRequest (including order fields against grouped fields).
-        summaryRequest.Validate<T>();
+        // Validate the Summary (including order fields against grouped fields).
+        summary.Validate<T>();
 
         // Apply the filter criteria to the query.
-        if (summaryRequest.ConditionGroup != null)
+        if (summary.ConditionGroup != null)
         {
-            query = query.Where(summaryRequest.ConditionGroup);
+            query = query.Where(summary.ConditionGroup);
         }
 
         // Apply GroupBy (required).
-        IQueryable result = query.Group(summaryRequest.GroupBy!);
+        IQueryable result = query.Group(summary.GroupBy!);
 
         // Calculate the total count of grouped entities before pagination.
         int totalCount = result.Count();
@@ -699,9 +701,9 @@ public static class Extension
         // Apply ordering on grouped results.
         // Dots are stripped from field names (e.g. "CreatedAt.Year" → "CreatedAtYear") to match
         // the aliases emitted by the GroupBy Select projection.
-        if (summaryRequest.Orders != null && summaryRequest.Orders.Count > 0)
+        if (summary.Orders != null && summary.Orders.Count > 0)
         {
-            string orderBy = string.Join(",", summaryRequest.Orders
+            string orderBy = string.Join(",", summary.Orders
                 .OrderBy(x => x.Sort)
                 .Select(x => $"{x.Field?.Replace(".", "")} {(x.Direction == Direction.Ascending ? "asc" : "desc")}"));
 
@@ -715,13 +717,13 @@ public static class Extension
         int pageNumber = 0, pageSize = 0;
 
         // Apply pagination.
-        if (summaryRequest.Page != null)
+        if (summary.Page != null)
         {
-            newResult = newResult.Skip((summaryRequest.Page.PageNumber - 1) * summaryRequest.Page.PageSize)
-                                 .Take(summaryRequest.Page.PageSize);
+            newResult = newResult.Skip((summary.Page.PageNumber - 1) * summary.Page.PageSize)
+                                 .Take(summary.Page.PageSize);
 
-            pageNumber = summaryRequest.Page.PageNumber;
-            pageSize = summaryRequest.Page.PageSize;
+            pageNumber = summary.Page.PageNumber;
+            pageSize = summary.Page.PageSize;
         }
 
         // Calculate the total page count based on the page size.

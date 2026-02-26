@@ -1,8 +1,8 @@
-﻿using DynamicWhere.ex.Classes;
+﻿using DynamicWhere.ex.Classes.Complex;
+using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Optimization.Cache.Source;
-using Microsoft.VisualBasic.FileIO;
 
 namespace DynamicWhere.ex.Source;
 
@@ -466,50 +466,47 @@ internal static class Validator
     }
 
     /// <summary>
-    /// Validates a <see cref="SummaryRequest"/> to ensure it has a valid group-by configuration
+    /// Validates a <see cref="Summary"/> to ensure it has a valid group-by configuration
     /// and that any order fields reference valid group-by fields or aggregate-by aliases.
     /// </summary>
     /// <typeparam name="T">The root type used to validate field paths.</typeparam>
-    /// <param name="summaryRequest">The <see cref="SummaryRequest"/> instance to validate.</param>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="summaryRequest"/> or its GroupBy is null.</exception>
+    /// <param name="summary">The <see cref="Summary"/> instance to validate.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="summary"/> or its GroupBy is null.</exception>
     /// <exception cref="LogicException">
     /// Thrown when:
     /// - GroupBy validation fails
     /// - Any order field does not exist in the group-by fields or aggregate-by aliases
     /// - Page validation fails
     /// </exception>
-    public static void Validate<T>(this SummaryRequest summaryRequest)
+    public static void Validate<T>(this Summary summary)
     {
-        if (summaryRequest == null)
+        if (summary == null)
         {
-            throw new ArgumentNullException(nameof(summaryRequest));
+            throw new ArgumentNullException(nameof(summary));
         }
 
-        // GroupBy is required for SummaryRequest.
-        if (summaryRequest.GroupBy == null)
-        {
-            throw new ArgumentNullException(nameof(summaryRequest.GroupBy));
-        }
+        // GroupBy is required for Summary.
+        ArgumentNullException.ThrowIfNull(summary.GroupBy, nameof(summary.GroupBy));
 
         // Validate GroupBy (validates fields and aggregations against T).
-        summaryRequest.GroupBy.Validate<T>();
+        summary.GroupBy.Validate<T>();
 
         // Validate Orders - each order field must exist in GroupBy fields or AggregateBy aliases.
-        if (summaryRequest.Orders != null && summaryRequest.Orders.Count > 0)
+        if (summary.Orders != null && summary.Orders.Count > 0)
         {
             // Build the set of valid order fields from GroupBy fields and AggregateBy aliases.
             var validFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             // Add GroupBy fields in both the original dotted form (e.g. "CreatedAt.Year")
             // and the dot-stripped alias form (e.g. "CreatedAtYear") that the Select projection emits.
-            foreach (var field in summaryRequest.GroupBy.Fields)
+            foreach (var field in summary.GroupBy.Fields)
             {
                 validFields.Add(field);
                 validFields.Add(field.Replace(".", ""));
             }
 
             // Add AggregateBy aliases.
-            foreach (var aggregate in summaryRequest.GroupBy.AggregateBy)
+            foreach (var aggregate in summary.GroupBy.AggregateBy)
             {
                 if (!string.IsNullOrWhiteSpace(aggregate.Alias))
                 {
@@ -518,12 +515,9 @@ internal static class Validator
             }
 
             // Validate each order field.
-            foreach (var order in summaryRequest.Orders)
+            foreach (var order in summary.Orders)
             {
-                if (order == null)
-                {
-                    throw new ArgumentNullException(nameof(order));
-                }
+                ArgumentNullException.ThrowIfNull(order, nameof(order));
 
                 if (string.IsNullOrWhiteSpace(order.Field))
                 {
@@ -538,7 +532,7 @@ internal static class Validator
         }
 
         // Validate Page if provided.
-        summaryRequest.Page?.Validate<T>();
+        summary.Page?.Validate<T>();
     }
 
     /// <summary>

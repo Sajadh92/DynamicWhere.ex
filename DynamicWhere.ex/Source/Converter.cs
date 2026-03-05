@@ -18,7 +18,8 @@ namespace DynamicWhere.ex.Source;
 internal static class Converter
 {
     /// <summary>
-    /// Creates a projection expression that selects only the specified fields from an object of type T.
+    /// Builds a strongly-typed projection expression that selects only the specified fields from type T,
+    /// supporting direct properties, nested reference navigation properties, and collection navigations.
     /// </summary>
     /// <remarks>This method is typically used to construct dynamic projections for LINQ queries, such as when
     /// selecting a subset of properties from an entity. Nested properties can be specified using dot notation (e.g.,
@@ -28,7 +29,7 @@ internal static class Converter
     /// projection. Each entry must be a non-empty string.</param>
     /// <returns>An expression that, when compiled and invoked, returns a new instance of T with only the specified fields
     /// populated. All other fields are set to their default values.</returns>
-    public static Expression<Func<T, T>> CreateProjectionSelector<T>(List<string> normalizedFields) where T : class
+    public static Expression<Func<T, T>> BuildTypedSelectExpression<T>(List<string> normalizedFields) where T : class
     {
         // Define the parameter for the lambda expression.
         var param = Expression.Parameter(typeof(T), "e");
@@ -50,34 +51,40 @@ internal static class Converter
         }
 
         // Build the MemberInit expression recursively based on the projection tree.
-        var body = BuildMemberInit(typeof(T), param, tree);
+        var body = BuildTypedMemberInitExpression(typeof(T), param, tree);
 
         // Return the final lambda expression.
         return Expression.Lambda<Func<T, T>>(body, param);
     }
 
     /// <summary>
-    /// Builds a MemberInitExpression that projects the specified properties and navigation properties of an object
-    /// based on the provided projection node.
+    /// Recursively builds a <see cref="MemberInitExpression"/> that projects the specified scalar properties and
+    /// navigation properties of an object based on the provided <see cref="ProjectionNode"/>.
     /// </summary>
     /// <remarks>This method recursively constructs projections for nested navigation properties and
     /// collections, including only the fields specified in the projection node. For collection navigation properties,
-    /// only element types with a parameterless constructor are supported for projection. The method ensures that the
-    /// 'Id' property is included by default for nested entities. Properties that cannot be written to or do not meet
-    /// the required criteria are skipped.</remarks>
+    /// only element types with a parameterless constructor are supported for projection. The method includes the
+    /// 'Id' property by default for nested entities only when that property exists on the type. Properties that
+    /// cannot be written to or do not meet the required criteria are skipped.</remarks>
     /// <param name="type">The type of the object to be projected. Must have a parameterless constructor for nested entity or complex type
     /// projections.</param>
     /// <param name="instance">The expression representing the instance from which property values are read.</param>
     /// <param name="node">The projection node that specifies which scalar and navigation properties to include in the projection.</param>
     /// <returns>A MemberInitExpression that initializes a new instance of the specified type with the selected properties and
     /// navigation properties populated according to the projection node.</returns>
-    private static MemberInitExpression BuildMemberInit(Type type, Expression instance, ProjectionNode node)
+    private static MemberInitExpression BuildTypedMemberInitExpression(Type type, Expression instance, ProjectionNode node)
     {
         var bindings = new List<MemberBinding>();
 
-        // Scalars on this node
+        // Scalars on this node — skip any that also appear as navigation children
+        // to prevent duplicate MemberBinding when both "Category" and "Category.Name" are requested.
         foreach (var scalar in node.Scalars)
         {
+            if (node.Children.ContainsKey(scalar))
+            {
+                continue;
+            }
+
             var prop = CacheReflection.FindProperty(type, scalar);
             if (prop == null || !prop.CanWrite)
             {
@@ -124,8 +131,11 @@ internal static class Converter
                     continue;
                 }
 
-                // Ensure Id is included by default for nested entities
-                childNode.Scalars.Add("Id");
+                // Include Id by default for nested entities only when the type actually has one.
+                if (CacheReflection.FindProperty(elementType, "Id") != null)
+                {
+                    childNode.Scalars.Add("Id");
+                }
 
                 var collectionAccess = Expression.Property(instance, navProp);
                 var asQueryable = Expression.Call(
@@ -135,7 +145,7 @@ internal static class Converter
                     collectionAccess);
 
                 var p = Expression.Parameter(elementType, "c");
-                var childInit = BuildMemberInit(elementType, p, childNode);
+                var childInit = BuildTypedMemberInitExpression(elementType, p, childNode);
                 var selector = Expression.Lambda(childInit, p);
 
                 var selectCall = Expression.Call(
@@ -166,8 +176,11 @@ internal static class Converter
                 continue;
             }
 
-            // Include Id by default for nested entities
-            childNode.Scalars.Add("Id");
+            // Include Id by default for nested entities only when the type actually has one.
+            if (CacheReflection.FindProperty(navType, "Id") != null)
+            {
+                childNode.Scalars.Add("Id");
+            }
 
             var navAccess = Expression.Call(
                 typeof(EF),
@@ -176,7 +189,7 @@ internal static class Converter
                 instance,
                 Expression.Constant(navProp.Name));
 
-            var nested = BuildMemberInit(navType, navAccess, childNode);
+            var nested = BuildTypedMemberInitExpression(navType, navAccess, childNode);
 
             // Safe null handling based on FK if available
             Expression navValue;
@@ -205,53 +218,134 @@ internal static class Converter
     }
 
     /// <summary>
-    /// Creates a nested MemberInit expression for the specified navigation type, initializing only the requested
-    /// subfields.
+    /// Builds a complete Dynamic LINQ <c>new(...)</c> selector string for the specified fields,
+    /// supporting direct scalar properties, whole navigation objects/collections, dotted reference
+    /// navigation paths, and dotted paths through collection navigations via <c>Select</c> lambdas.
     /// </summary>
-    /// <remarks>This method only supports initializing direct properties of the navigation type. Nested
-    /// property paths (e.g., 'Category.Name') are ignored. The 'Id' property is always included if not already
-    /// specified, which can be useful for client-side identity tracking.</remarks>
-    /// <param name="navType">The type of the navigation property for which to create the MemberInit expression.</param>
-    /// <param name="navAccess">An expression representing access to the navigation property instance.</param>
-    /// <param name="subFields">A set of property names to include in the initialization. Only direct properties (no nested segments) are
-    /// supported. If 'Id' is not present, it will be added automatically.</param>
-    /// <returns>An Expression representing a MemberInit for the specified type and subfields, or null if no valid bindings can
-    /// be created.</returns>
-    private static Expression? CreateNestedMemberInit(Type navType, Expression navAccess, HashSet<string> subFields)
+    /// <remarks>
+    /// Examples of generated output:
+    /// <list type="bullet">
+    ///   <item><description><c>"Id"</c> → <c>new(Id)</c></description></item>
+    ///   <item><description><c>"Category"</c> → <c>new(Category)</c></description></item>
+    ///   <item><description><c>"Category.Name"</c> → <c>new(new(Category.Name as Name) as Category)</c></description></item>
+    ///   <item><description><c>"Category.Vendors.Id"</c> → <c>new(new(Category.Vendors.Select(v0 =&gt; new(v0.Id as Id)) as Vendors) as Category)</c></description></item>
+    /// </list>
+    /// </remarks>
+    /// <param name="normalizedFields">Validated, normalized field paths to include in the projection.</param>
+    /// <param name="rootType">The CLR type of the root entity.</param>
+    /// <returns>A complete <c>new(...)</c> Dynamic LINQ selector string ready for <c>IQueryable.Select(string)</c>.</returns>
+    public static string BuildDynamicSelectString(List<string> normalizedFields, Type rootType)
     {
-        var nestedBindings = new List<MemberBinding>();
+        var pairs = normalizedFields.Select(f => (fullPath: f, remaining: f)).ToList();
+        string body = BuildDynamicSelectStringCore(pairs, rootType, isRoot: true, lambdaPrefix: null, lambdaDepth: 0);
+        return $"new({body})";
+    }
 
-        // If any nested fields are requested, also try to include Id by default (useful for client identity).
-        // Safe because it's just another scalar column in the SELECT.
-        subFields = new HashSet<string>(subFields, StringComparer.Ordinal);
-        if (!subFields.Contains("Id"))
+    /// <summary>
+    /// Recursively builds the inner body of a Dynamic LINQ <c>new(...)</c> expression, handling
+    /// reference navigation (nested objects), collection navigation (via <c>Select</c> lambdas),
+    /// and scalar/terminal properties.
+    /// </summary>
+    /// <param name="fields">Pairs of (fullPath, remaining) where fullPath is the absolute root-relative path
+    /// and remaining is the path suffix relative to the current nesting level.</param>
+    /// <param name="currentType">The CLR type being projected at the current recursion level.</param>
+    /// <param name="isRoot"><see langword="true"/> for the top-level call; terminal fields are emitted without an alias.
+    /// <see langword="false"/> for nested calls; terminal fields are aliased with their segment name.</param>
+    /// <param name="lambdaPrefix">The lambda parameter expression prefix (e.g., <c>"v0"</c>, <c>"v0.Product"</c>)
+    /// when inside a collection <c>Select</c> lambda; <see langword="null"/> when at the root level or navigating
+    /// through reference properties from the root.</param>
+    /// <param name="lambdaDepth">Depth counter used to generate unique lambda parameter names (<c>v0</c>, <c>v1</c>, …)
+    /// for nested collection traversals.</param>
+    private static string BuildDynamicSelectStringCore(
+        List<(string fullPath, string remaining)> fields,
+        Type currentType,
+        bool isRoot,
+        string? lambdaPrefix,
+        int lambdaDepth)
+    {
+        var terminals = new List<(string fullPath, string remaining)>();
+        var groups = new Dictionary<string, List<(string fullPath, string remaining)>>(StringComparer.Ordinal);
+
+        foreach (var (fullPath, remaining) in fields)
         {
-            subFields.Add("Id");
+            int dotIndex = remaining.IndexOf('.');
+
+            if (dotIndex == -1)
+            {
+                terminals.Add((fullPath, remaining));
+            }
+            else
+            {
+                string segment = remaining[..dotIndex];
+                string newRemaining = remaining[(dotIndex + 1)..];
+
+                if (!groups.TryGetValue(segment, out var list))
+                {
+                    list = new List<(string, string)>();
+                    groups[segment] = list;
+                }
+
+                list.Add((fullPath, newRemaining));
+            }
         }
 
-        foreach (var f in subFields)
+        var parts = new List<string>();
+
+        // Emit terminal (leaf) fields, skipping any whose name is also a navigation group key
+        // to avoid duplicate property names when both "Category" and "Category.Name" are requested.
+        foreach (var (fullPath, remaining) in terminals)
         {
-            // Only support one nested segment (e.g., Category.Name). Deeper nesting skipped.
-            if (string.IsNullOrWhiteSpace(f) || f.Contains('.'))
+            if (groups.ContainsKey(remaining))
             {
                 continue;
             }
 
-            var prop = CacheReflection.FindProperty(navType, f);
-            if (prop == null || !prop.CanWrite)
-            {
-                continue;
-            }
-
-            nestedBindings.Add(Expression.Bind(prop, Expression.Property(navAccess, prop)));
+            string expr = lambdaPrefix != null ? $"{lambdaPrefix}.{remaining}" : fullPath;
+            parts.Add(isRoot ? expr : $"{expr} as {remaining}");
         }
 
-        if (nestedBindings.Count == 0)
+        // Emit navigation groups as nested new(...) or collection Select(...) projections.
+        foreach (var (segment, subFields) in groups)
         {
-            return null;
+            var segmentProp = CacheReflection.FindProperty(currentType, segment);
+            var segmentType = segmentProp?.PropertyType ?? currentType;
+            var elementType = CacheReflection.GetCollectionElementType(segmentType);
+
+            if (elementType != null)
+            {
+                // Collection navigation: generate CollectionPath.Select(vN => new(inner)) as Segment.
+                // When inside a lambda, the collection is accessed via the lambda prefix.
+                // When not inside a lambda, the absolute collection path is extracted from fullPath.
+                string collectionExpr = lambdaPrefix != null
+                    ? $"{lambdaPrefix}.{segment}"
+                    : subFields[0].fullPath[..(subFields[0].fullPath.Length - subFields[0].remaining.Length - 1)];
+
+                string lambdaParam = $"v{lambdaDepth}";
+
+                // Inside the collection lambda, paths are relative to the element (lambda parameter).
+                var elementSubFields = subFields
+                    .Select(f => (fullPath: f.remaining, f.remaining))
+                    .ToList();
+
+                string innerBody = BuildDynamicSelectStringCore(
+                    elementSubFields, elementType, isRoot: false, lambdaPrefix: lambdaParam, lambdaDepth: lambdaDepth + 1);
+
+                parts.Add($"{collectionExpr}.Select({lambdaParam} => new({innerBody})) as {segment}");
+            }
+            else
+            {
+                // Reference navigation: generate new(nested fields) as Segment.
+                // Extend lambdaPrefix into this segment when inside a lambda.
+                string? nestedPrefix = lambdaPrefix != null ? $"{lambdaPrefix}.{segment}" : null;
+
+                string nested = BuildDynamicSelectStringCore(
+                    subFields, segmentType, isRoot: false, lambdaPrefix: nestedPrefix, lambdaDepth: lambdaDepth);
+
+                parts.Add($"new({nested}) as {segment}");
+            }
         }
 
-        return Expression.MemberInit(Expression.New(navType), nestedBindings);
+        return string.Join(", ", parts);
     }
 
     /// <summary>
@@ -616,7 +710,13 @@ internal sealed class ProjectionNode
                 return;
             }
 
-            child = new ProjectionNode(prop.PropertyType);
+            var nodeType = prop.PropertyType;
+            var elementType = CacheReflection.GetCollectionElementType(nodeType);
+            if (elementType != null)
+            {
+                nodeType = elementType;
+            }
+            child = new ProjectionNode(nodeType);
             Children[head] = child;
         }
 

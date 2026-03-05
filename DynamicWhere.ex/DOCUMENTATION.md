@@ -372,11 +372,24 @@ All extension methods live in `DynamicWhere.ex.Source.Extension` and operate on 
 
 ### `.Select<T>(List<string> fields)`
 
-Projects only the specified fields. Supports nested navigation with dot notation.
+Projects only the specified fields into a new instance of `T`. Supports direct properties, whole navigation objects/collections, and nested navigation paths — including paths that traverse collection properties.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `fields` | `List<string>` | Property paths to include |
+
+**Projection rules:**
+
+| Path style | Behaviour | Example input | Effect on result |
+|------------|-----------|---------------|------------------|
+| Direct scalar | Bound directly | `"Name"` | `Name: "Laptop"` |
+| Whole navigation object (non-dotted) | Bound as-is | `"Category"` | `Category: { Id: 5, Name: "Electronics", … }` |
+| Whole navigation collection (non-dotted) | Bound as-is | `"Brands"` | `Brands: [{ Id: 1, … }, …]` |
+| Dotted through reference navigation | Recursively projected | `"Category.Name"` | `Category: { Id: …, Name: "Electronics" }` |
+| Dotted through collection navigation | Per-element `Select().ToList()` | `"Category.Vendors.Id"` | `Category: { Vendors: [{ Id: 1 }, …] }` |
+| Multi-level (reference + collection) | Nested recursively | `"Category.Vendors.Product.Name"` | `Category: { Vendors: [{ Product: { Name: "…" } }] }` |
+
+> **Note:** For nested entities (reference or collection), the `Id` property is always automatically included alongside any requested sub-fields.
 
 **Validations:**
 - `query` and `fields` cannot be null.
@@ -385,6 +398,43 @@ Projects only the specified fields. Supports nested navigation with dot notation
 - `T` must have a parameterless constructor.
 
 **Returns:** `IQueryable<T>` — a projected query.
+
+---
+
+### `.SelectDynamic<T>(List<string> fields)`
+
+Projects only the specified fields using `System.Linq.Dynamic.Core`'s string-based `Select`, returning a non-generic dynamic `IQueryable`.
+Dotted navigation paths are projected as **nested dynamic objects** that mirror the navigation hierarchy, including through collection properties.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `fields` | `List<string>` | Property paths to include |
+
+**Projection rules:**
+
+| Path style | Behaviour | Example input | Dynamic result |
+|------------|-----------|---------------|----------------|
+| Non-dotted scalar | Projected as-is | `"Name"` | `Name: "Laptop"` |
+| Non-dotted object | Projected as-is (whole object) | `"Category"` | `Category: { Id: 5, Name: "Electronics" }` |
+| Non-dotted collection | Projected as-is (whole collection) | `"Brands"` | `Brands: [{ Id: 1, … }]` |
+| Dotted through reference navigation | Nested object per segment | `"Category.Name"` | `Category: { Name: "Electronics" }` |
+| Dotted through collection navigation | `Select` lambda per collection segment | `"Category.Vendors.Id"` | `Category: { Vendors: [{ Id: 1 }] }` |
+| Multi-level dotted (reference + collection) | Mixed nesting and Select lambdas | `"Category.Vendors.Product.Name"` | `Category: { Vendors: [{ Product: { Name: "…" } }] }` |
+| Nested collections (any depth) | Select lambda at each collection level | `"A.ListB.ListC.Name"` | `A: { ListB: [{ ListC: [{ Name: "…" }] }] }` |
+| Multi-level dotted (deep reference) | Deeply nested objects | `"Category.SubCategory.Name"` | `Category: { SubCategory: { Name: "Laptops" } }` |
+
+Multiple dotted fields sharing the same root segment are merged into the same nested object:
+- `["Category.Name", "Category.Id"]` → `Category: { Name: "...", Id: 5 }`
+
+**Validations:**
+- `query` and `fields` cannot be null.
+- `fields` must have at least one entry.
+- Every field must exist on `T` (case-insensitive, auto-normalized).
+
+**Returns:** `IQueryable` — a dynamic projected query where each element is an anonymous object.
+
+> **Note:** Unlike `Select<T>`, this method does **not** require a parameterless constructor on `T`.
+> **Note:** When both a whole-navigation field (e.g., `"Category"`) and sub-field paths sharing the same root segment (e.g., `"Category.Name"`) are requested, the **sub-field projection takes precedence** and the whole-navigation entry is silently dropped.
 
 ---
 
@@ -466,9 +516,19 @@ Paginates the query.
 
 ### `.Filter<T>(Filter filter)`
 
-Applies a complete `Filter` (where → select → order → page) to a query.
+Applies a complete `Filter` (where → order → page → select) to a query.
+Ordering and pagination are applied on the strongly-typed `IQueryable<T>` **before** the select projection so that original field names remain valid.
 
 **Returns:** `IQueryable<T>` — composed query.
+
+---
+
+### `.FilterDynamic<T>(Filter filter)`
+
+Applies a complete `Filter` (where → order → page → dynamic select) to a query and returns a dynamic `IQueryable`.
+Ordering and pagination are applied on the strongly-typed `IQueryable<T>` **before** the dynamic projection so that original field names remain valid.
+
+**Returns:** `IQueryable` — dynamic composed query.
 
 ---
 
@@ -493,6 +553,31 @@ In-memory variant — wraps the collection with `AsQueryable()` then delegates.
 Async version of `ToList<T>(Filter)`. Uses `CountAsync()` and `ToListAsync()` for EF Core.
 
 **Returns:** `Task<FilterResult<T>>`
+
+---
+
+### `.ToListDynamic<T>(Filter filter, bool getQueryString = false)`
+
+Materializes a `Filter` using `SelectDynamic<T>` and returns a `FilterResult<dynamic>` with pagination metadata.
+Where and count run on the typed query; ordering, pagination, and projection all happen before materialisation.
+
+**Returns:** `FilterResult<dynamic>`
+
+---
+
+### `.ToListDynamic<T>(IEnumerable<T>, Filter filter, bool getQueryString = false)`
+
+In-memory variant — wraps the collection with `AsQueryable()` then delegates to the `IQueryable<T>` overload.
+
+**Returns:** `FilterResult<dynamic>`
+
+---
+
+### `.ToListAsyncDynamic<T>(Filter filter, bool getQueryString = false)`
+
+Async version of `ToListDynamic<T>(Filter)`. Uses `CountAsync()` and `ToDynamicListAsync()` for EF Core.
+
+**Returns:** `Task<FilterResult<dynamic>>`
 
 ---
 
@@ -604,11 +689,34 @@ Async-only segment operation. Executes each `ConditionSet` independently, then a
 
 ### 1. `Select<T>` — Field Projection
 
+**Direct scalars:**
 ```json
-{
-  "fields": ["Id", "Name", "Category.Name"]
-}
+{ "fields": ["Id", "Name", "Price"] }
 ```
+
+**Dotted path through reference navigation:**
+```json
+{ "fields": ["Id", "Name", "Category.Name"] }
+```
+`Category` is projected with only the requested `Name` sub-field (`Id` auto-included).
+
+**Dotted path through collection navigation:**
+```json
+{ "fields": ["Id", "Name", "Category.Vendors.Id"] }
+```
+`Category.Vendors` is a collection — each `Vendor` element is projected with only its `Id` (`Id` auto-included).
+
+**Whole navigation object (non-dotted):**
+```json
+{ "fields": ["Id", "Name", "Category"] }
+```
+The entire `Category` object is bound as-is.
+
+**Whole collection (non-dotted):**
+```json
+{ "fields": ["Id", "Name", "Brands"] }
+```
+The entire `Brands` collection is bound as-is.
 
 > **Backend:** `query.Select(fields)`
 
@@ -833,7 +941,7 @@ Async-only segment operation. Executes each `ConditionSet` independently, then a
 
 ---
 
-### 7. `Filter<T>` / `ToList<T>(Filter)` / `ToListAsync<T>(Filter)` — Full Filter
+### 7. `Filter<T>` / `ToList<T>(Filter)` / `ToListAsync<T>(Filter)` — Full Filter (Typed)
 
 ```json
 {
@@ -1039,6 +1147,181 @@ Async-only segment operation. Executes each `ConditionSet` independently, then a
 
 ### 10. Nested Collection Navigation
 
+---
+
+### 11. `SelectDynamic<T>` — Dynamic Field Projection
+
+**Direct scalars:**
+```json
+{ "fields": ["Id", "Name", "Price"] }
+```
+
+**Response shape:**
+```json
+{ "Id": 7, "Name": "Laptop Pro", "Price": 1299.99 }
+```
+
+---
+
+**Dotted path through reference navigation (nested object):**
+```json
+{
+  "fields": ["Id", "Name", "Price", "Category.Name"]
+}
+```
+`Category.Name` produces a nested `Category` object in the result.
+
+**Response shape:**
+```json
+{ "Id": 7, "Name": "Laptop Pro", "Price": 1299.99, "Category": { "Name": "Electronics" } }
+```
+
+---
+
+**Dotted path through collection navigation (Select lambda):**
+```json
+{
+  "fields": ["Id", "Name", "Category.Vendors.Id"]
+}
+```
+`Category.Vendors` is a collection — each element is projected via a `Select` lambda so only `Id` is extracted.
+
+**Response shape:**
+```json
+{ "Id": 7, "Name": "Laptop Pro", "Category": { "Vendors": [{ "Id": 3 }, { "Id": 7 }] } }
+```
+
+---
+
+**Multi-level dotted path (reference → collection → reference):**
+```json
+{
+  "fields": ["Id", "Category.Vendors.Product.Name"]
+}
+```
+
+**Response shape:**
+```json
+{ "Id": 7, "Category": { "Vendors": [{ "Product": { "Name": "Laptop Pro" } }] } }
+```
+
+---
+
+**Multiple dotted fields merged under the same root segment:**
+```json
+{
+  "fields": ["Id", "Category.Name", "Category.Id"]
+}
+```
+`Category.Name` and `Category.Id` are merged into a single nested `Category` object.
+
+**Response shape:**
+```json
+{ "Id": 7, "Category": { "Name": "Electronics", "Id": 5 } }
+```
+
+---
+
+**Whole navigation object (non-dotted):**
+```json
+{
+  "fields": ["Id", "Name", "Category"]
+}
+```
+`Category` has no dot → projected as the whole object.
+
+**Response shape:**
+```json
+{ "Id": 7, "Name": "Laptop Pro", "Category": { "Id": 5, "Name": "Electronics" } }
+```
+
+---
+
+**Whole collection (non-dotted):**
+```json
+{
+  "fields": ["Id", "Name", "OrderItems"]
+}
+```
+
+**Response shape:**
+```json
+{ "Id": 7, "Name": "Laptop Pro", "OrderItems": [ { "Id": 1, "Quantity": 2 } ] }
+```
+
+---
+
+**Deep nesting through reference navigations:**
+```json
+{
+  "fields": ["Id", "Category.SubCategory.Name"]
+}
+```
+
+**Response shape:**
+```json
+{ "Id": 7, "Category": { "SubCategory": { "Name": "Laptops" } } }
+```
+
+---
+
+### 12. `FilterDynamic<T>` / `ToListDynamic<T>(Filter)` / `ToListAsyncDynamic<T>(Filter)` — Full Dynamic Filter
+
+Uses the same `Filter` JSON shape as example 7. The difference is the return type: `IQueryable` / `FilterResult<dynamic>` instead of `IQueryable<T>` / `FilterResult<T>`.
+
+```json
+{
+  "conditionGroup": {
+    "connector": "And",
+    "conditions": [
+      {
+        "sort": 1,
+        "field": "Price",
+        "dataType": "Number",
+        "operator": "GreaterThan",
+        "values": ["50"]
+      },
+      {
+        "sort": 2,
+        "field": "Category.Name",
+        "dataType": "Text",
+        "operator": "IEqual",
+        "values": ["electronics"]
+      }
+    ],
+    "subConditionGroups": []
+  },
+  "selects": ["Id", "Name", "Price", "Category.Name"],
+  "orders": [
+    { "sort": 1, "field": "Price", "direction": "Descending" }
+  ],
+  "page": {
+    "pageNumber": 1,
+    "pageSize": 10
+  }
+}
+```
+
+**Response shape (`FilterResult<dynamic>`):**
+```json
+{
+  "pageNumber": 1,
+  "pageSize": 10,
+  "pageCount": 5,
+  "totalCount": 42,
+  "data": [
+    { "Id": 7, "Name": "Laptop Pro", "Price": 1299.99, "Category": { "Name": "Electronics" } }
+  ],
+  "queryString": null
+}
+```
+
+> **Note:** For `selects`, the same projection rules as `SelectDynamic` apply: non-dotted paths are projected as-is (whole object or collection); dotted paths through reference navigations produce nested dynamic objects (`Category: { Name: "..." }`); dotted paths through collection navigations use `Select` lambdas to project individual element fields (`Category: { Vendors: [{ Id: … }] }`).
+
+---
+
+### 13. Nested Collection Navigation
+
 When a field path traverses a collection property (e.g., `Orders.OrderItems.ProductName`), the library automatically wraps the inner segment in a `.Any()` lambda.
 
 ```json
@@ -1237,6 +1520,17 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 
 9. **`getQueryString` Parameter Requires EF Core Provider**
    Passing `getQueryString: true` to `ToList` / `ToListAsync` calls `.ToQueryString()` which requires an active EF Core database provider. It will fail on pure in-memory `IEnumerable<T>` calls (use the `IEnumerable` overloads which internally call `AsQueryable()` first, but `ToQueryString()` may not be supported).
+
+10. **`SelectDynamic` / `FilterDynamic` / `ToListDynamic` / `ToListAsyncDynamic` Return Non-Generic Types**
+    These methods return `IQueryable` or `FilterResult<dynamic>` instead of the strongly-typed equivalents. Downstream code must work with `dynamic` objects. Property names in the dynamic result follow these rules:
+    - **Non-dotted paths** (`Name`, `Category`, `OrderItems`, …) are projected as-is — access them by their exact field name at runtime.
+    - **Dotted paths through reference navigations** (e.g., `Category.Name`) produce **nested dynamic objects** reflecting the navigation hierarchy — access them as `result.Category.Name`, not as a flat `CategoryName`.
+    - **Dotted paths through collection navigations** (e.g., `Category.Vendors.Id`) generate a `Select` lambda per collection segment — the result is a nested collection of dynamic objects accessible as `result.Category.Vendors[0].Id`.
+    - **Multiple dotted fields** sharing the same root segment (e.g., `Category.Name` + `Category.Id`) are merged into a single nested object: `result.Category.Name` and `result.Category.Id`.
+    - **Mixed whole-navigation + sub-field paths**: when both `"Category"` and `"Category.Name"` are requested, the sub-field projection takes precedence and `"Category"` is silently dropped.
+
+11. **All Filter Extensions Apply Order and Page Before the Select Projection**
+    All Filter extensions — both typed (`Filter<T>`, `ToList<T>(Filter)`, `ToListAsync<T>(Filter)`) and dynamic (`FilterDynamic<T>`, `ToListDynamic<T>`, `ToListAsyncDynamic<T>`) — apply ordering and pagination on the typed `IQueryable<T>` **before** the select projection. This ensures that field names referenced in `orders` always resolve against the original entity type `T`, regardless of which fields are projected.
 
 ---
 

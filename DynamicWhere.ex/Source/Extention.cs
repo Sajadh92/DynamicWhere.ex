@@ -62,10 +62,77 @@ public static class Extension
             throw new LogicException("Select projection requires a parameterless constructor on type '" + typeof(T).Name + "'.");
         }
 
-        // Build the projection expression.
-        var selector = Converter.CreateProjectionSelector<T>(fields);
+        // Build the strongly-typed projection expression.
+        var selector = Converter.BuildTypedSelectExpression<T>(fields);
 
         // Apply the projection to the query.
+        return query.Select(selector);
+    }
+
+    /// <summary>
+    /// Projects each element of the source query into a dynamic anonymous type containing only the specified fields,
+    /// using <c>System.Linq.Dynamic.Core</c>'s string-based <c>Select</c>.
+    /// </summary>
+    /// <remarks>
+    /// Fields are projected as follows:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <b>Direct scalar or whole-object paths</b> (non-dotted) — projected as-is
+    ///     (e.g., <c>"Id"</c>, <c>"Category"</c> (whole object), <c>"Brands"</c> (whole collection)).
+    ///   </description></item>
+    ///   <item><description>
+    ///     <b>Dotted paths through reference navigations</b> — projected as nested dynamic objects:
+    ///     <c>"Category.Name"</c> → <c>Category: { Name: "…" }</c>,
+    ///     <c>"Category.SubCategory.Name"</c> → <c>Category: { SubCategory: { Name: "…" } }</c>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <b>Dotted paths through collection navigations</b> — each collection segment is projected
+    ///     using a typed <c>Select</c> lambda so individual element fields can be extracted:
+    ///     <c>"Category.Vendors.Id"</c> → <c>Category: { Vendors: [{ Id: … }] }</c>.
+    ///     Nested collections are supported at any depth.
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// When both a whole-navigation field (e.g., <c>"Category"</c>) and sub-field paths sharing the same
+    /// root segment (e.g., <c>"Category.Name"</c>) are requested, the sub-field projection takes precedence
+    /// and the whole-navigation entry is silently dropped to avoid duplicate property names.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="T">The type of the elements in the source query. Must be a reference type.</typeparam>
+    /// <param name="query">The source query to project fields from. Cannot be null.</param>
+    /// <param name="fields">A list of field names to include in the projection. Each field must correspond to a property on type T. Cannot be null or empty.</param>
+    /// <returns>An <see cref="IQueryable"/> where each element is a dynamic object containing only the specified fields.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if <paramref name="query"/> or <paramref name="fields"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown if <paramref name="fields"/> is empty or contains an invalid field name.</exception>
+    public static IQueryable SelectDynamic<T>(this IQueryable<T> query, List<string> fields) where T : class
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (fields == null)
+        {
+            throw new ArgumentNullException(nameof(fields));
+        }
+
+        if (fields.Count == 0)
+        {
+            throw new LogicException(ErrorCode.MustHaveFields);
+        }
+
+        // Validate each field against type T.
+        for (int i = 0; i < fields.Count; i++)
+        {
+            fields[i] = fields[i].Validate<T>();
+        }
+
+        // Build a type-aware "new(...)" selector string that reflects the navigation hierarchy.
+        // Non-dotted fields are projected as-is; dotted paths through collections use Select lambdas.
+        string selector = Converter.BuildDynamicSelectString(fields, typeof(T));
+
+        // Apply the string-based Dynamic LINQ select and return the non-generic IQueryable.
         return query.Select(selector);
     }
 
@@ -307,12 +374,6 @@ public static class Extension
             query = query.Where(filter.ConditionGroup);
         }
 
-        // Apply the select criteria to the query.
-        if (filter.Selects != null)
-        {
-            query = query.Select(filter.Selects);
-        }
-
         // Apply the order-by criteria to the query.
         if (filter.Orders != null)
         {
@@ -325,7 +386,65 @@ public static class Extension
             query = query.Page(filter.Page);
         }
 
+        // Apply the select criteria last so ordering and pagination use the original field names.
+        if (filter.Selects != null)
+        {
+            query = query.Select(filter.Selects);
+        }
+
         // Return the filtered query.
+        return query;
+    }
+
+    /// <summary>
+    /// Applies a <see cref="Filter"/> to an <see cref="IQueryable{T}"/> data source and returns a dynamic <see cref="IQueryable"/>
+    /// using <see cref="SelectDynamic{T}"/> for the field projection.
+    /// Ordering and pagination are applied on the typed query before the dynamic projection.
+    /// </summary>
+    /// <typeparam name="T">The type of elements in the data source.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> data source to filter.</param>
+    /// <param name="filter">The <see cref="Filter"/> criteria containing a condition group, order-by criteria, and pagination settings.</param>
+    /// <returns>An <see cref="IQueryable"/> containing dynamic objects with the filter applied.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    public static IQueryable FilterDynamic<T>(this IQueryable<T> query, Filter filter) where T : class
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (filter == null)
+        {
+            throw new ArgumentNullException(nameof(filter));
+        }
+
+        // Apply the filter criteria to the query.
+        if (filter.ConditionGroup != null)
+        {
+            query = query.Where(filter.ConditionGroup);
+        }
+
+        // Apply ordering on the typed query before projection.
+        if (filter.Orders != null)
+        {
+            query = query.Order(filter.Orders);
+        }
+
+        // Apply pagination on the typed query before projection.
+        if (filter.Page != null)
+        {
+            query = query.Page(filter.Page);
+        }
+
+        // Apply dynamic select and return IQueryable.
+        if (filter.Selects != null)
+        {
+            return query.SelectDynamic(filter.Selects);
+        }
+
+        // Return the filtered query (IQueryable<T> is assignable to IQueryable).
         return query;
     }
 
@@ -357,12 +476,6 @@ public static class Extension
             query = query.Where(filter.ConditionGroup);
         }
 
-        // Apply the select criteria to the query.
-        if (filter.Selects != null)
-        {
-            query = query.Select(filter.Selects);
-        }
-
         // Create a new query to apply ordering and pagination.
         var newQuery = query;
 
@@ -382,6 +495,12 @@ public static class Extension
 
             pageNumber = filter.Page.PageNumber;
             pageSize = filter.Page.PageSize;
+        }
+
+        // Apply the select criteria last so ordering and pagination use the original field names.
+        if (filter.Selects != null)
+        {
+            newQuery = newQuery.Select(filter.Selects);
         }
 
         // Calculate the total count of entities before pagination.
@@ -406,6 +525,83 @@ public static class Extension
     }
 
     /// <summary>
+    /// Retrieves a list of dynamic objects from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Filter"/>,
+    /// using <see cref="SelectDynamic{T}"/> for the field projection.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
+    /// <returns>A <see cref="FilterResult{T}"/> of <c>dynamic</c> containing dynamic objects that match the filter conditions with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    public static FilterResult<dynamic> ToListDynamic<T>(this IQueryable<T> query, Filter filter, bool getQueryString = false) where T : class
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (filter == null)
+        {
+            throw new ArgumentNullException(nameof(filter));
+        }
+
+        // Apply the filter criteria to the query.
+        if (filter.ConditionGroup != null)
+        {
+            query = query.Where(filter.ConditionGroup);
+        }
+
+        // Calculate the total count of entities before pagination.
+        int totalCount = query.Count();
+
+        // Create a new query to apply ordering and pagination.
+        IQueryable<T> newQuery = query;
+
+        // Apply the order-by criteria to the new query.
+        if (filter.Orders != null)
+        {
+            newQuery = newQuery.Order(filter.Orders);
+        }
+
+        // Initialize variables for pagination.
+        int pageNumber = 0, pageSize = 0;
+
+        // Apply the pagination criteria to the new query.
+        if (filter.Page != null)
+        {
+            newQuery = newQuery.Page(filter.Page);
+
+            pageNumber = filter.Page.PageNumber;
+            pageSize = filter.Page.PageSize;
+        }
+
+        // Apply dynamic select projection.
+        IQueryable result = filter.Selects != null
+            ? newQuery.SelectDynamic(filter.Selects)
+            : newQuery;
+
+        // Calculate the total page count based on the page size.
+        int pageCount = (int)Math.Ceiling((double)totalCount /
+                        (pageSize == 0 ? 1 : pageSize));
+
+        // Create and return a FilterResult containing the dynamic result data and pagination information.
+        return new FilterResult<dynamic>
+        {
+            PageNumber = pageNumber,
+            PageSize = pageSize,
+            PageCount = pageCount,
+            TotalCount = totalCount,
+
+            // Execute the query to retrieve the dynamic data.
+            Data = result.ToDynamicList(),
+            QueryString = getQueryString ? result.ToQueryString() : null
+        };
+    }
+
+    /// <summary>
     /// Retrieves a list of entities from an in-memory <see cref="IEnumerable{T}"/> with optional filtering based on a <see cref="Filter"/>.
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
@@ -417,6 +613,22 @@ public static class Extension
     public static FilterResult<T> ToList<T>(this IEnumerable<T> query, Filter filter, bool getQueryString = false) where T : class
     {
         return query.AsQueryable().ToList(filter, getQueryString);
+    }
+
+    /// <summary>
+    /// Retrieves a list of dynamic objects from an in-memory <see cref="IEnumerable{T}"/> with optional filtering based on a <see cref="Filter"/>,
+    /// using <see cref="SelectDynamic{T}"/> for the field projection.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IEnumerable{T}"/> to retrieve entities from.</param>
+    /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
+    /// <returns>A <see cref="FilterResult{T}"/> of <c>dynamic</c> containing dynamic objects that match the filter conditions with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    public static FilterResult<dynamic> ToListDynamic<T>(this IEnumerable<T> query, Filter filter, bool getQueryString = false) where T : class
+    {
+        return query.AsQueryable().ToListDynamic(filter, getQueryString);
     }
 
     /// <summary>
@@ -447,12 +659,6 @@ public static class Extension
             query = query.Where(filter.ConditionGroup);
         }
 
-        // Apply the select criteria to the query.
-        if (filter.Selects != null)
-        {
-            query = query.Select<T>(filter.Selects);
-        }
-
         // Create a new query to apply ordering and pagination.
         var newQuery = query;
 
@@ -472,6 +678,12 @@ public static class Extension
 
             pageNumber = filter.Page.PageNumber;
             pageSize = filter.Page.PageSize;
+        }
+
+        // Apply the select criteria last so ordering and pagination use the original field names.
+        if (filter.Selects != null)
+        {
+            newQuery = newQuery.Select(filter.Selects);
         }
 
         // Calculate the total count of entities before pagination.
@@ -496,7 +708,84 @@ public static class Extension
     }
 
     /// <summary>
-    /// Applies a <see cref="Classes.Complex.Summary"/> to an <see cref="IQueryable{T}"/> data source based on the provided summary criteria.
+    /// Asynchronously retrieves a list of dynamic objects from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Filter"/>,
+    /// using <see cref="SelectDynamic{T}"/> for the field projection.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
+    /// <returns>A <see cref="FilterResult{T}"/> of <c>dynamic</c> containing dynamic objects that match the filter conditions with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    public static async Task<FilterResult<dynamic>> ToListAsyncDynamic<T>(this IQueryable<T> query, Filter filter, bool getQueryString = false) where T : class
+    {
+        // Validate input parameters.
+        if (query == null)
+        {
+            throw new ArgumentNullException(nameof(query));
+        }
+
+        if (filter == null)
+        {
+            throw new ArgumentNullException(nameof(filter));
+        }
+
+        // Apply the filter criteria to the query.
+        if (filter.ConditionGroup != null)
+        {
+            query = query.Where(filter.ConditionGroup);
+        }
+
+        // Calculate the total count of entities before pagination.
+        int totalCount = await query.CountAsync();
+
+        // Create a new query to apply ordering and pagination.
+        IQueryable<T> newQuery = query;
+
+        // Apply the order-by criteria to the new query.
+        if (filter.Orders != null)
+        {
+            newQuery = newQuery.Order(filter.Orders);
+        }
+
+        // Initialize variables for pagination.
+        int pageNumber = 0, pageSize = 0;
+
+        // Apply the pagination criteria to the new query.
+        if (filter.Page != null)
+        {
+            newQuery = newQuery.Page(filter.Page);
+
+            pageNumber = filter.Page.PageNumber;
+            pageSize = filter.Page.PageSize;
+        }
+
+        // Apply dynamic select projection.
+        IQueryable result = filter.Selects != null
+            ? newQuery.SelectDynamic(filter.Selects)
+            : newQuery;
+
+        // Calculate the total page count based on the page size.
+        int pageCount = (int)Math.Ceiling((double)totalCount /
+                        (pageSize == 0 ? 1 : pageSize));
+
+        // Create and return a FilterResult containing the dynamic result data and pagination information.
+        return new FilterResult<dynamic>
+        {
+            PageNumber = pageNumber,
+            PageSize = pageSize,
+            PageCount = pageCount,
+            TotalCount = totalCount,
+
+            // Execute the query to retrieve the dynamic data asynchronously.
+            Data = await result.ToDynamicListAsync(),
+            QueryString = getQueryString ? result.ToQueryString() : null
+        };
+    }
+
+    /// <summary>
+    /// Applies a <see cref="Classes.Complex.Summary"/> to an <see cref="IQueryable{T}"/> data source
     /// </summary>
     /// <typeparam name="T">The type of elements in the data source.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> data source to summarize.</param>

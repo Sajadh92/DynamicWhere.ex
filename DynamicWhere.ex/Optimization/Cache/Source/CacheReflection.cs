@@ -321,7 +321,7 @@ internal static class CacheReflection
     }
 
     /// <summary>
-    /// Checks if a type is a simple type (primitive, string, DateTime, Guid, decimal, TimeSpan, DateTimeOffset, etc.).
+    /// Checks if a type is a simple type (primitive, string, DateTime, DateOnly, TimeOnly, Guid, decimal, TimeSpan, DateTimeOffset, or enum).
     /// Simple types are types that can be directly aggregated.
     /// </summary>
     /// <param name="type">The type to check.</param>
@@ -339,6 +339,8 @@ internal static class CacheReflection
         if (underlyingType == typeof(string) ||
             underlyingType == typeof(decimal) ||
             underlyingType == typeof(DateTime) ||
+            underlyingType == typeof(DateOnly) ||
+            underlyingType == typeof(TimeOnly) ||
             underlyingType == typeof(DateTimeOffset) ||
             underlyingType == typeof(TimeSpan) ||
             underlyingType == typeof(Guid))

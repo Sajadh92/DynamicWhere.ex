@@ -301,6 +301,24 @@ internal static class Converter
             }
 
             string expr = lambdaPrefix != null ? $"{lambdaPrefix}.{remaining}" : fullPath;
+
+            // Non-nullable value types (Guid, int, decimal, bool …) accessed through a reference
+            // navigation that may be null via a LEFT JOIN must be wrapped with np() so Dynamic LINQ
+            // produces the nullable variant (Guid?, int?, …) instead of the non-nullable struct.
+            // Without this, EF Core throws "Nullable object must have a value" when materialising
+            // a NULL SQL column.  Reference types (string, objects) are left as-is and naturally
+            // materialise as null when the parent navigation is absent.
+            if (!isRoot && lambdaPrefix == null)
+            {
+                var prop = CacheReflection.FindProperty(currentType, remaining);
+                if (prop != null
+                    && prop.PropertyType.IsValueType
+                    && Nullable.GetUnderlyingType(prop.PropertyType) == null)
+                {
+                    expr = $"np({expr})";
+                }
+            }
+
             parts.Add(isRoot ? expr : $"{expr} as {remaining}");
         }
 

@@ -37,9 +37,10 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.ReferenceHandler =
             System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
 
-        // Ignore null values during serialization
+        // Include null values during serialization so explicitly selected
+        // nullable fields (e.g. DateTime?, TimeOnly?) appear as null in the output.
         options.JsonSerializerOptions.DefaultIgnoreCondition =
-            System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+            System.Text.Json.Serialization.JsonIgnoreCondition.Never;
 
         // Allow serialization of Infinity and NaN values
         options.JsonSerializerOptions.NumberHandling =

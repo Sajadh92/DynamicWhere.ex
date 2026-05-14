@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "GroupBy",
   description:
     "Grouping configuration — the fields to group by and the aggregations to compute per group.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/group-by/" },
 };
 
 export default function Page() {

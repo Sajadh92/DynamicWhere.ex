@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "ConditionGroup",
   description:
     "A logical And/Or grouping of conditions and nested sub-groups — unlimited depth.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/condition-group/" },
 };
 
 export default function Page() {

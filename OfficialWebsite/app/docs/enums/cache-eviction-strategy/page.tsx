@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "CacheEvictionStrategy",
   description:
     "CacheEvictionStrategy enum — the eviction algorithm (FIFO / LRU / LFU) used by the internal reflection cache.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/enums/cache-eviction-strategy/" },
 };
 
 export default function Page() {

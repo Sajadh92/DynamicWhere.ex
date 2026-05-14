@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "Example: Where (single Condition)",
   description:
     "Nine single-Condition examples covering every DataType and the most common operators — Text, Number, Date, DateTime, Guid, Boolean, Enum, IsNull, In.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/where-single/" },
 };
 
 export default function Page() {

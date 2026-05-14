@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Segment",
   description:
     "Combines multiple condition sets with Union / Intersect / Except, plus ordering and pagination.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/segment/" },
 };
 
 export default function Page() {

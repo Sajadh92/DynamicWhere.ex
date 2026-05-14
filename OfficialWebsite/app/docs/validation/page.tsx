@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "Validation",
   description:
     "Every validation rule DynamicWhere.ex enforces before executing a query — fail fast with a LogicException carrying a stable error code.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/validation/" },
 };
 
 export default function Page() {

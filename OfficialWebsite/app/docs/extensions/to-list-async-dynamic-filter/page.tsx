@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".ToListAsyncDynamic<T>(Filter)",
   description:
     "Async EF Core entry — materialize a Filter using SelectDynamic and ToDynamicListAsync, returning Task<FilterResult<dynamic>>.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/to-list-async-dynamic-filter/" },
 };
 
 export default function Page() {

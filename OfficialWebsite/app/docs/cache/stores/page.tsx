@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Cache Stores",
   description:
     "The three internal cache stores — TypeProperties, PropertyPath, and CollectionElementType — with keys, values, and purposes.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/cache/stores/" },
 };
 
 export default function Page() {

@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".Summary<T>(summary)",
   description:
     "Apply where → group → having → order → page to an IQueryable<T> for aggregate reporting.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/summary/" },
 };
 
 export default function Page() {

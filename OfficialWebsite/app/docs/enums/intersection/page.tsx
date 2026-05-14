@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Intersection",
   description:
     "Intersection enum — the set operation (Union / Intersect / Except) applied between condition sets in a Segment.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/enums/intersection/" },
 };
 
 export default function Page() {

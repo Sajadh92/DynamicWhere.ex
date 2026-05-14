@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Example: Nested Collection Navigation",
   description:
     "Field paths that traverse a collection are automatically wrapped in .Any() lambdas — including the generated expression.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/nested-collection/" },
 };
 
 export default function Page() {

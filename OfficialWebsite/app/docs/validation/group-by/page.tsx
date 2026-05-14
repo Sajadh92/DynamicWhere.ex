@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "GroupBy Validation",
   description:
     "Every rule enforced on a GroupBy / AggregateBy shape — field shape, aliases, aggregator/type compatibility.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/validation/group-by/" },
 };
 
 export default function Page() {

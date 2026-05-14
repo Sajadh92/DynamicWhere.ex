@@ -5,9 +5,17 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Installation",
+  title: "Install DynamicWhere.ex — NuGet, dotnet CLI, PackageReference",
   description:
-    "Install DynamicWhere.ex into your .NET 6+ project via dotnet CLI, Package Manager, or PackageReference.",
+    "How to install DynamicWhere.ex from NuGet into a .NET 6, 7, 8, or 9 project — dotnet CLI, Visual Studio Package Manager, or csproj PackageReference. Works with EF Core on SQL Server, PostgreSQL, MySQL, and SQLite.",
+  keywords: [
+    "DynamicWhere.ex install",
+    "DynamicWhere.ex NuGet",
+    "dotnet add package DynamicWhere",
+    "EF Core dynamic filter install",
+    ".NET 8 LINQ filter library",
+  ],
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/installation/" },
 };
 
 export default function Page() {

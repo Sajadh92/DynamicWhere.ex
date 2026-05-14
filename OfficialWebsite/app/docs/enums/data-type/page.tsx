@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "DataType",
   description:
     "DataType enum — the logical type of a condition value. Drives parsing, coercion, and the set of legal operators per type.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/enums/data-type/" },
 };
 
 export default function Page() {

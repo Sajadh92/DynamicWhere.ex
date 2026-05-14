@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "AggregateBy",
   description:
     "A single aggregation within a GroupBy — Count / Sum / Min / Max / Avg with an output alias.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/aggregate-by/" },
 };
 
 export default function Page() {

@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "CacheOptions",
   description:
     "Every property on CacheOptions — defaults, types, and what each one controls in the DynamicWhere.ex reflection cache.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/cache/options/" },
 };
 
 export default function Page() {

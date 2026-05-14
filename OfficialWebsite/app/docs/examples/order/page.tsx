@@ -6,6 +6,7 @@ import { Code } from "@/components/Code";
 export const metadata: Metadata = {
   title: "Example: Order — Sorting",
   description: "Single OrderBy and multi-key OrderBy lists.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/order/" },
 };
 
 export default function Page() {

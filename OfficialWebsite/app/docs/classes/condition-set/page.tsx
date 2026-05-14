@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "ConditionSet",
   description:
     "One member of a Segment — a filter plus the set operation that joins it with the previous set's result.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/condition-set/" },
 };
 
 export default function Page() {

@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".Select<T>(fields)",
   description:
     "Project an IQueryable<T> into a new instance of T using a list of property paths — direct, whole-navigation, or dotted through reference and collection navigations.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/select/" },
 };
 
 export default function Page() {

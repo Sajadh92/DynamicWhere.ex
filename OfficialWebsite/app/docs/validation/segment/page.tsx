@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "Segment Validation",
   description:
     "Rules enforced on a Segment — unique Sort values across sets and required Intersection on every set after the first.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/validation/segment/" },
 };
 
 export default function Page() {

@@ -3,9 +3,17 @@ import Link from "next/link";
 import DocPage from "@/components/DocPage";
 
 export const metadata: Metadata = {
-  title: "JSON Cookbook",
+  title: "JSON Cookbook — 13 copy-paste EF Core dynamic filter examples",
   description:
-    "Thirteen copy-pasteable end-to-end JSON examples — one for every extension method and every special projection shape DynamicWhere.ex supports.",
+    "Thirteen copy-pasteable JSON examples for DynamicWhere.ex — select projection, single condition, condition groups, ordering, paging, group-by + aggregate, set operations, nested collections, dynamic shapes. Every extension method covered.",
+  keywords: [
+    "EF Core dynamic filter examples",
+    "dynamic LINQ JSON examples",
+    "ASP.NET Core search API examples",
+    "EF Core GroupBy aggregate example",
+    "EF Core Union Intersect Except example",
+  ],
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/" },
 };
 
 const EXAMPLES: { href: string; n: number; title: string; blurb: string }[] = [

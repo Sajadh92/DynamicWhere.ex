@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".Group<T>(groupBy)",
   description:
     "Group an IQueryable<T> by one or more fields with optional aggregations — returns a dynamic IQueryable.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/group/" },
 };
 
 export default function Page() {

@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "Page Validation",
   description:
     "Rules enforced on PageBy — PageNumber > 0 and PageSize > 0.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/validation/page/" },
 };
 
 export default function Page() {

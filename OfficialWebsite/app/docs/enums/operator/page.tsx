@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Operator",
   description:
     "Operator enum — the 28 comparison operators DynamicWhere.ex supports, with the value count each one requires.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/enums/operator/" },
 };
 
 export default function Page() {

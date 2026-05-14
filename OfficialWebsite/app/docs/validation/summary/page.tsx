@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "Summary Validation",
   description:
     "Rules enforced on a Summary — required GroupBy, valid Order / Having field references against the GroupBy fields and aggregate aliases.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/validation/summary/" },
 };
 
 export default function Page() {

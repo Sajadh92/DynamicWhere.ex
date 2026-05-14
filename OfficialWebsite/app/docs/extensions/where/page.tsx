@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".Where<T>(...)",
   description:
     "Apply a single Condition or a ConditionGroup (with nested sub-groups) to an IQueryable<T>.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/where/" },
 };
 
 export default function Page() {

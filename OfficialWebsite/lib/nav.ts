@@ -3,12 +3,46 @@ export type NavGroup = { title: string; links: NavLink[] };
 
 export const SITE = {
   name: "DynamicWhere.ex",
+  tagline: "JSON-driven dynamic LINQ for Entity Framework Core",
   description:
-    "Dynamic filters, sort, paginate, group, aggregate, set operations for EF Core — driven by JSON.",
+    "DynamicWhere.ex is a free .NET library for building dynamic, JSON-driven LINQ queries on Entity Framework Core — filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT set operations from your front-end. Works with ASP.NET Core on .NET 6, 7, 8, and 9.",
+  shortDescription:
+    "Dynamic JSON filter, sort, paginate, group, aggregate, and set operations for EF Core. .NET 6/7/8/9.",
   version: "2.1.0",
   domain: "doc.dynamicwhere.com",
   repo: "https://github.com/Sajadh92/DynamicWhere.ex",
   nuget: "https://www.nuget.org/packages/DynamicWhere.ex",
+  author: "Sajjad H. Al-Khafaji",
+  twitterHandle: "",
+  keywords: [
+    "DynamicWhere",
+    "DynamicWhere.ex",
+    "dynamic LINQ",
+    "dynamic LINQ JSON",
+    "Entity Framework Core",
+    "EF Core",
+    "EF Core dynamic filter",
+    "EF Core query builder",
+    "EF Core JSON filter",
+    "dynamic IQueryable",
+    "IQueryable filter",
+    "ASP.NET Core query builder",
+    "ASP.NET Core dynamic filter",
+    "C# dynamic query",
+    ".NET dynamic LINQ",
+    ".NET 6 EF Core filter",
+    ".NET 7 EF Core filter",
+    ".NET 8 EF Core filter",
+    ".NET 9 EF Core filter",
+    "runtime LINQ",
+    "predicate builder",
+    "search API .NET",
+    "filter builder library",
+    "groupby aggregate EF Core",
+    "union intersect except EF Core",
+    "pagination EF Core",
+    "projection select EF Core",
+  ],
 };
 
 export const NAV: NavGroup[] = [

@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "Example: Group — GroupBy + Aggregations",
   description:
     "GroupBy with Count, Average, and Maximum aggregations over a category key.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/group/" },
 };
 
 export default function Page() {

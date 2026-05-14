@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Cache Monitoring & Diagnostics",
   description:
     "Every monitoring, reporting, and management API exposed by CacheExpose — statistics, memory usage, reports, health alerts, and cache control.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/cache/monitoring/" },
 };
 
 export default function Page() {

@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".ToListAsync<T>(Segment)",
   description:
     "Async-only segment entry — materialize each ConditionSet independently then apply Union / Intersect / Except in-memory before ordering and pagination.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/to-list-async-segment/" },
 };
 
 export default function Page() {

@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Condition",
   description:
     "The smallest filter unit in DynamicWhere.ex — one field, one operator, and a list of values that is normalized per DataType.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/condition/" },
 };
 
 export default function Page() {

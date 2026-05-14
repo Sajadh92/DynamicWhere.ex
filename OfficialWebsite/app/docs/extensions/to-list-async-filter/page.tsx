@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".ToListAsync<T>(Filter)",
   description:
     "Async EF Core entry point — materialize a Filter against an IQueryable<T> using CountAsync and ToListAsync.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/to-list-async-filter/" },
 };
 
 export default function Page() {

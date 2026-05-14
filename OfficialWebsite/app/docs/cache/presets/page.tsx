@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Cache Presets",
   description:
     "The six built-in CacheOptions presets — Default, ForHighMemoryEnvironment, ForLowMemoryEnvironment, ForDevelopment, ForHighFrequencyAccess, ForTemporalAccess.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/cache/presets/" },
 };
 
 export default function Page() {

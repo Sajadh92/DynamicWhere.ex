@@ -7,6 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "PageBy",
   description: "Pagination — 1-based page number and a positive page size.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/page-by/" },
 };
 
 export default function Page() {

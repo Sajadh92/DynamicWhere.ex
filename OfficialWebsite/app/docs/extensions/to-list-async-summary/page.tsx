@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".ToListAsync<T>(Summary)",
   description:
     "Async EF Core entry — materialize a Summary against an IQueryable<T> and return Task<SummaryResult>.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/to-list-async-summary/" },
 };
 
 export default function Page() {

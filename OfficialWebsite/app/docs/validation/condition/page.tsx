@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "Condition Validation",
   description:
     "Every rule enforced on a Condition before it can become a WHERE predicate — field existence, operator arity, value parsing.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/validation/condition/" },
 };
 
 export default function Page() {

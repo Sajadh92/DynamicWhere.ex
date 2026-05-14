@@ -5,9 +5,17 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Quick Start",
+  title: "Quick Start — Build your first JSON dynamic filter for EF Core",
   description:
-    "Go from install to a working dynamic filter in under two minutes — JSON body in, paginated FilterResult<T> out.",
+    "Quick-start tutorial: build a working dynamic LINQ filter in EF Core from a JSON body in under two minutes. Includes Condition, ConditionGroup, OrderBy, PageBy, and a paginated FilterResult<T> — the full request → response loop for ASP.NET Core APIs.",
+  keywords: [
+    "DynamicWhere.ex quick start",
+    "EF Core dynamic filter tutorial",
+    "ASP.NET Core JSON filter example",
+    "dynamic LINQ getting started",
+    "IQueryable filter from JSON",
+  ],
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/quick-start/" },
 };
 
 export default function Page() {

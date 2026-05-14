@@ -7,6 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "OrderBy",
   description: "A single sort criterion — field + direction, with a priority order.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/order-by/" },
 };
 
 export default function Page() {

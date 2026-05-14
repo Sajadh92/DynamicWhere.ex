@@ -5,9 +5,17 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Introduction",
+  title: "Documentation — Dynamic LINQ from JSON for EF Core",
   description:
-    "DynamicWhere.ex — a library for building dynamic filter, sort, paginate, group, aggregate, and set-operation expressions in Entity Framework Core from JSON.",
+    "Official docs for DynamicWhere.ex — a free .NET library that turns JSON filter objects into safe, validated Entity Framework Core LINQ queries. Filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT across .NET 6, 7, 8, and 9.",
+  keywords: [
+    "DynamicWhere.ex documentation",
+    "EF Core dynamic filter docs",
+    "dynamic LINQ JSON guide",
+    "ASP.NET Core query builder tutorial",
+    "Entity Framework Core JSON filter",
+  ],
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/" },
 };
 
 export default function Page() {

@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".ToList<T>(Summary)",
   description:
     "Materialize a Summary against an IQueryable<T> or IEnumerable<T> and return a paginated SummaryResult.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/to-list-summary/" },
 };
 
 export default function Page() {

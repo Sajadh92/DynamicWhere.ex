@@ -4,9 +4,17 @@ import DocPage from "@/components/DocPage";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Extension Methods",
+  title: "Extension Methods — IQueryable & IEnumerable LINQ extensions",
   description:
-    "All 16 IQueryable<T> and IEnumerable<T> extension methods exposed by DynamicWhere.ex — projection, filtering, composition, and materialization.",
+    "Every IQueryable<T> and IEnumerable<T> extension method DynamicWhere.ex adds — Select, SelectDynamic, Where, Group, Order, Page, Filter, Summary, ToList, ToListAsync, and the dynamic variants. Build LINQ pipelines on EF Core from JSON.",
+  keywords: [
+    "DynamicWhere.ex extension methods",
+    "IQueryable extension EF Core",
+    "dynamic LINQ extensions",
+    "ToListAsync dynamic filter",
+    ".Where IQueryable JSON",
+  ],
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/" },
 };
 
 export default function Page() {

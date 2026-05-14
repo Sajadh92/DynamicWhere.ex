@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Example: Segment — Set Operations",
   description:
     "Three ConditionSets joined by Union + Except, with select / order / page applied to the combined result, plus the SegmentResult shape.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/segment/" },
 };
 
 export default function Page() {

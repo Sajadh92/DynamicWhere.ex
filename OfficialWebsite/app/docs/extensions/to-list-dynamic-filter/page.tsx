@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".ToListDynamic<T>(Filter)",
   description:
     "Materialize a Filter using SelectDynamic and return a FilterResult<dynamic>. Includes an IEnumerable<T> overload.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/to-list-dynamic-filter/" },
 };
 
 export default function Page() {

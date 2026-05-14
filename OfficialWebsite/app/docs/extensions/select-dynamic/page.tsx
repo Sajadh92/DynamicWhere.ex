@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".SelectDynamic<T>(fields)",
   description:
     "Project an IQueryable<T> into a dynamic IQueryable using string-based Select — nested dynamic objects mirror the navigation hierarchy through reference and collection paths.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/select-dynamic/" },
 };
 
 export default function Page() {

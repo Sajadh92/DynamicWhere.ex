@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Example: Select — Field Projection",
   description:
     "Every Select shape — direct scalars, dotted reference paths, dotted collection paths, whole navigation objects, and whole collections.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/select/" },
 };
 
 export default function Page() {

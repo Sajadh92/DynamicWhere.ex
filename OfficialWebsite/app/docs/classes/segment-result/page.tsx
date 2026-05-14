@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "SegmentResult<T>",
   description:
     "The result wrapper returned by ToListAsyncSegment — inherits every property from FilterResult<T>.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/segment-result/" },
 };
 
 export default function Page() {

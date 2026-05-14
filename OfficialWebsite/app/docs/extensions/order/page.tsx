@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: ".Order<T>(...)",
   description:
     "Sort an IQueryable<T> by one or multiple OrderBy criteria — both single and list overloads.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/order/" },
 };
 
 export default function Page() {

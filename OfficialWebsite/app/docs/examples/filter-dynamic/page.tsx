@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Example: FilterDynamic",
   description:
     "Same Filter shape as the typed version — but returns FilterResult<dynamic> whose shape mirrors the selects.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/filter-dynamic/" },
 };
 
 export default function Page() {

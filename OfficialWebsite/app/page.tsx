@@ -1,8 +1,33 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { SITE } from "@/lib/nav";
 import Footer from "@/components/Footer";
 import Header from "@/components/Header";
 import { Code } from "@/components/Code";
+import JsonLd from "@/components/JsonLd";
+import { HOME_FAQ, breadcrumbJsonLd, faqJsonLd } from "@/lib/seo";
+
+const HOME_TITLE = `${SITE.name} — JSON Dynamic LINQ Filter for Entity Framework Core (.NET 6/7/8/9)`;
+const HOME_DESC =
+  "Free open-source .NET library for dynamic, JSON-driven LINQ queries on EF Core. Filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT — all from a JSON body. Works with ASP.NET Core on .NET 6, 7, 8, 9.";
+
+export const metadata: Metadata = {
+  title: HOME_TITLE,
+  description: HOME_DESC,
+  alternates: { canonical: `https://${SITE.domain}/` },
+  openGraph: {
+    title: HOME_TITLE,
+    description: HOME_DESC,
+    url: `https://${SITE.domain}/`,
+    siteName: SITE.name,
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: HOME_TITLE,
+    description: HOME_DESC,
+  },
+};
 
 const FEATURES = [
   {
@@ -116,14 +141,19 @@ export default function HomePage() {
           </a>
 
           <h1 className="mt-6 text-balance bg-gradient-to-b from-white via-white to-[#9ca3af] bg-clip-text text-5xl font-bold tracking-tight text-transparent sm:text-6xl lg:text-7xl">
-            JSON-driven queries.<br />
+            Dynamic LINQ from JSON.{" "}
             <span className="bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent">
-              For EF Core. Done right.
+              For Entity Framework Core.
             </span>
           </h1>
 
-          <p className="mx-auto mt-6 max-w-[640px] text-pretty text-[16px] leading-relaxed text-[var(--color-fg-2)] sm:text-[17px]">
-            {SITE.description}
+          <p className="mx-auto mt-6 max-w-[680px] text-pretty text-[16px] leading-relaxed text-[var(--color-fg-2)] sm:text-[17px]">
+            <strong className="text-white">DynamicWhere.ex</strong> is a free,
+            open-source .NET library that turns JSON filter objects into safe,
+            validated, EF Core-native LINQ queries — filter, sort, paginate,
+            project, group, aggregate, and run UNION / INTERSECT / EXCEPT
+            without writing a single expression tree. Works with ASP.NET Core
+            on .NET 6, 7, 8, and 9.
           </p>
 
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -267,7 +297,59 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* FAQ */}
+      <section
+        id="faq"
+        className="border-t border-[var(--color-border)]"
+        aria-labelledby="faq-heading"
+      >
+        <div className="mx-auto max-w-[900px] px-6 py-20">
+          <div className="text-center">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-accent)]">
+              Frequently asked
+            </span>
+            <h2
+              id="faq-heading"
+              className="mt-2 text-3xl font-bold tracking-tight text-white sm:text-4xl"
+            >
+              DynamicWhere.ex FAQ
+            </h2>
+            <p className="mx-auto mt-3 max-w-[640px] text-[15px] text-[var(--color-fg-2)]">
+              Quick answers about dynamic LINQ filters, EF Core support, and
+              JSON query building in .NET.
+            </p>
+          </div>
+
+          <div className="mt-10 divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
+            {HOME_FAQ.map((f, i) => (
+              <details
+                key={i}
+                className="group px-5 py-4 open:bg-[var(--color-bg-3)]"
+              >
+                <summary className="flex cursor-pointer list-none items-start justify-between gap-4 text-left text-[15px] font-semibold text-white">
+                  <span>{f.q}</span>
+                  <span className="mt-1 text-[var(--color-fg-3)] transition group-open:rotate-45">
+                    +
+                  </span>
+                </summary>
+                <p className="mt-3 text-[14px] leading-relaxed text-[var(--color-fg-2)]">
+                  {f.a}
+                </p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <Footer />
+
+      <JsonLd data={faqJsonLd(HOME_FAQ)} />
+      <JsonLd
+        data={breadcrumbJsonLd([
+          { name: "Home", href: "/" },
+          { name: "Documentation", href: "/docs" },
+        ])}
+      />
     </>
   );
 }

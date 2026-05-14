@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Filter",
   description:
     "The most common top-level shape — combines a where-clause, projection, sort, and pagination in a single object.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/filter/" },
 };
 
 export default function Page() {

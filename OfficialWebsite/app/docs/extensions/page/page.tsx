@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: ".Page<T>(page)",
   description:
     "Paginate an IQueryable<T> by PageNumber and PageSize — both must be greater than zero.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/page/" },
 };
 
 export default function Page() {

@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "ConditionGroup Validation",
   description:
     "Rules enforced on a ConditionGroup — unique Sort values across sibling conditions and sub-groups.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/validation/condition-group/" },
 };
 
 export default function Page() {

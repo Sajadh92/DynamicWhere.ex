@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Cache Configuration",
   description:
     "Three ways to configure the DynamicWhere.ex reflection cache — preset, builder pattern, or direct CacheOptions object.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/cache/configuration/" },
 };
 
 export default function Page() {

@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".ToList<T>(Filter)",
   description:
     "Materialize a Filter against an IQueryable<T> or IEnumerable<T> and return a paginated FilterResult<T>.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/to-list-filter/" },
 };
 
 export default function Page() {

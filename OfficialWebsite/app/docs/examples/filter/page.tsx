@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Example: Filter (Typed)",
   description:
     "A full Filter request — where + select + order + page — and the typed FilterResult<T> response shape.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/filter/" },
 };
 
 export default function Page() {

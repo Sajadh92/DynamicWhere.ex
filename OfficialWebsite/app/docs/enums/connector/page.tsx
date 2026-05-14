@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Connector",
   description:
     "Connector enum — the logical glue (And / Or) that joins sibling conditions inside a ConditionGroup.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/enums/connector/" },
 };
 
 export default function Page() {

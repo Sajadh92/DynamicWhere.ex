@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Example: Where (ConditionGroup)",
   description:
     "A flat AND group plus an AND group with a nested OR sub-group, including the equivalent SQL.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/where-group/" },
 };
 
 export default function Page() {

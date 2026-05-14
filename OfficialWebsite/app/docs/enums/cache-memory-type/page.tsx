@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "CacheMemoryType",
   description:
     "CacheMemoryType enum — identifies one of the three internal reflection cache stores for monitoring and clearing operations.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/enums/cache-memory-type/" },
 };
 
 export default function Page() {

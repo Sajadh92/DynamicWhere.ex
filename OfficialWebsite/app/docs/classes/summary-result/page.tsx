@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "SummaryResult",
   description:
     "The result wrapper returned by ToListSummary / ToListAsyncSummary — same pagination shape as FilterResult, but Data is List<dynamic>.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/summary-result/" },
 };
 
 export default function Page() {

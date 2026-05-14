@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Error Codes Reference",
   description:
     "Every validation error DynamicWhere.ex can throw — error code, exact message, and the condition that triggers it.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/errors/" },
 };
 
 export default function Page() {

@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Aggregator",
   description:
     "Aggregator enum — the 8 aggregation functions (Count, CountDistinct, Sumation, Average, Minimum, Maximum, FirstOrDefault, LastOrDefault) used inside a GroupBy.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/enums/aggregator/" },
 };
 
 export default function Page() {

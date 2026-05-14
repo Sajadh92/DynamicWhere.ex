@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Summary",
   description:
     "Combines filtering, grouping, having, ordering, and pagination for aggregate reporting.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/summary/" },
 };
 
 export default function Page() {

@@ -5,9 +5,16 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Cache & Optimization",
+  title: "Cache & Optimization — Reflection cache, FIFO / LRU / LFU eviction",
   description:
-    "Overview of the DynamicWhere.ex reflection cache — thread-safe stores, configurable eviction strategies, and the CacheExpose public API.",
+    "Tune the DynamicWhere.ex reflection cache for high-throughput EF Core workloads. Thread-safe stores, FIFO / LRU / LFU eviction strategies, six tuned presets, monitoring hooks, and warmup APIs.",
+  keywords: [
+    "EF Core reflection cache",
+    "DynamicWhere cache tuning",
+    "LRU cache .NET",
+    "EF Core query performance",
+  ],
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/cache/" },
 };
 
 export default function Page() {

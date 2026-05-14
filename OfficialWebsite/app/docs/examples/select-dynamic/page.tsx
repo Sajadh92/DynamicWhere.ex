@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "Example: SelectDynamic — Dynamic Projection",
   description:
     "All eight projection variants for SelectDynamic — direct, dotted reference, dotted collection, multi-level, merged, whole object, whole collection, deep reference.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/select-dynamic/" },
 };
 
 export default function Page() {

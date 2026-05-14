@@ -4,9 +4,16 @@ import DocPage from "@/components/DocPage";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Classes",
+  title: "Classes Reference — Condition, Filter, Segment, Summary",
   description:
-    "Overview of every class shape DynamicWhere.ex exposes — Core building blocks, Complex top-level shapes, and Result wrappers.",
+    "Reference for every DynamicWhere.ex JSON class — Condition, ConditionGroup, ConditionSet, OrderBy, GroupBy, AggregateBy, PageBy, Filter, Segment, Summary, and their result wrappers. The complete schema for dynamic EF Core queries.",
+  keywords: [
+    "DynamicWhere.ex classes",
+    "Condition ConditionGroup Filter",
+    "EF Core filter JSON schema",
+    "dynamic LINQ class reference",
+  ],
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/" },
 };
 
 export default function Page() {

@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Direction",
   description:
     "Direction enum — the sort direction (Ascending / Descending) used by an OrderBy.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/enums/direction/" },
 };
 
 export default function Page() {

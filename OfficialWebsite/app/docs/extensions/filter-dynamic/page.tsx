@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: ".FilterDynamic<T>(filter)",
   description:
     "Apply a complete Filter (where → order → page → dynamic select) and return a non-generic dynamic IQueryable.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/filter-dynamic/" },
 };
 
 export default function Page() {

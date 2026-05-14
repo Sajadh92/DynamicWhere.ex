@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Example: Summary",
   description:
     "Full Summary request — where → group → having → order → page — plus the SummaryResult response and flattened-alias note.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/summary/" },
 };
 
 export default function Page() {

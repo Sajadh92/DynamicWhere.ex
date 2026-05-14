@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Cache Architecture",
   description:
     "The six internal components of the DynamicWhere.ex reflection cache and which one is the public API.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/cache/architecture/" },
 };
 
 export default function Page() {

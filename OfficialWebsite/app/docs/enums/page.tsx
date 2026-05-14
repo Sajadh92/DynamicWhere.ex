@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "Enums",
   description:
     "The eight enum types that drive DynamicWhere.ex — data types, operators, connectors, directions, intersections, aggregators, and cache tuning.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/enums/" },
 };
 
 export default function Page() {

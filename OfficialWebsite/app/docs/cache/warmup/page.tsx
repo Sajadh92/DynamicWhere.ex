@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Cache Warmup",
   description:
     "Pre-populate the DynamicWhere.ex reflection cache at startup with both the generic and non-generic WarmupCache APIs.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/cache/warmup/" },
 };
 
 export default function Page() {

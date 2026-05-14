@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "FilterResult<T>",
   description:
     "The strongly-typed result wrapper returned by ToListFilter / ToListAsyncFilter and their dynamic siblings — data plus pagination metadata.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/filter-result/" },
 };
 
 export default function Page() {

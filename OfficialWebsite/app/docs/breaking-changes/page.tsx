@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Breaking Changes & Known Limitations",
   description:
     "Behaviour, constraints, and edge cases in DynamicWhere.ex that you should know about before shipping to production.",
+  alternates: { canonical: "https://doc.dynamicwhere.com/docs/breaking-changes/" },
 };
 
 export default function Page() {

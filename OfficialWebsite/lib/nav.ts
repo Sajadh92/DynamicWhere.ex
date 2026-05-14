@@ -137,19 +137,29 @@ export const NAV: NavGroup[] = [
   },
 ];
 
-export function flatNav(): NavLink[] {
-  return NAV.flatMap((g) => g.links);
+export type NavLinkWithGroup = NavLink & { group: string };
+
+export function flatNav(): NavLinkWithGroup[] {
+  return NAV.flatMap((g) => g.links.map((l) => ({ ...l, group: g.title })));
 }
 
+export type AdjacentLink = {
+  link: NavLinkWithGroup;
+  isNewGroup: boolean;
+};
+
 export function findAdjacent(href: string): {
-  prev: NavLink | null;
-  next: NavLink | null;
+  prev: AdjacentLink | null;
+  next: AdjacentLink | null;
 } {
   const flat = flatNav();
   const i = flat.findIndex((l) => l.href === href);
   if (i < 0) return { prev: null, next: null };
+  const current = flat[i];
+  const prev = i > 0 ? flat[i - 1] : null;
+  const next = i < flat.length - 1 ? flat[i + 1] : null;
   return {
-    prev: i > 0 ? flat[i - 1] : null,
-    next: i < flat.length - 1 ? flat[i + 1] : null,
+    prev: prev ? { link: prev, isNewGroup: prev.group !== current.group } : null,
+    next: next ? { link: next, isNewGroup: next.group !== current.group } : null,
   };
 }

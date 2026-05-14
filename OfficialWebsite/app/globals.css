@@ -34,9 +34,19 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  overflow-x: hidden;
 }
 
 * { border-color: var(--color-border); }
+
+/* Universal safety net: any <pre> scrolls horizontally instead of overflowing the viewport. */
+pre {
+  overflow-x: auto;
+  max-width: 100%;
+  white-space: pre;
+  -webkit-overflow-scrolling: touch;
+}
+pre code { white-space: pre; }
 
 ::selection { background: var(--color-accent-soft); color: var(--color-fg); }
 

@@ -16,8 +16,10 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = normalizePath(rawPathname || "/");
   const [query, setQuery] = useState("");
   const activeRef = useRef<HTMLAnchorElement | null>(null);
+  const initialPathRef = useRef(pathname);
 
   useEffect(() => {
+    if (pathname === initialPathRef.current) return;
     onNavigate?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);

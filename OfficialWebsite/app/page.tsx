@@ -144,8 +144,8 @@ export default function HomePage() {
             </Link>
           </div>
 
-          <div className="mx-auto mt-10 max-w-[560px]">
-            <div className="relative rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)]">
+          <div className="mx-auto mt-10 w-full min-w-0 max-w-[560px]">
+            <div className="relative min-w-0 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)]">
               <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
                 <div className="flex items-center gap-1.5">
                   <span className="h-2.5 w-2.5 rounded-full bg-[#3b3f47]" />
@@ -154,7 +154,7 @@ export default function HomePage() {
                 </div>
                 <span className="text-[11px] text-[var(--color-fg-3)]">terminal</span>
               </div>
-              <pre className="px-4 py-3 text-left text-[13px] text-[var(--color-fg-2)] font-mono">
+              <pre className="overflow-x-auto whitespace-pre px-4 py-3 text-left text-[13px] text-[var(--color-fg-2)] font-mono">
                 <span className="text-[var(--color-fg-3)]">$</span> {INSTALL_SNIPPET}
               </pre>
             </div>

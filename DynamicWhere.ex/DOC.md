@@ -58,7 +58,7 @@ var filter = new Filter
                 Field = "Name",
                 DataType = DataType.Text,
                 Operator = Operator.IContains,
-                Values = new List<string> { "john" }
+                Values = new List<object> { "john" }
             }
         }
     },
@@ -219,7 +219,42 @@ A single filter predicate.
 | `Field` | `string?` | Property path on the entity (supports dot notation e.g. `"Order.Customer.Name"`) |
 | `DataType` | `DataType` | Logical data type for value parsing |
 | `Operator` | `Operator` | Comparison operator |
-| `Values` | `List<string>` | Operand values (count depends on operator) |
+| `Values` | `List<object>` | Operand values (count depends on operator). Accepts raw JSON types (strings, numbers, booleans) and is normalized per `DataType`. See [Value Coercion](#value-coercion) below. |
+
+##### Value Coercion
+
+`Values` is `List<object>` so the front-end can send heterogeneous JSON shapes without quoting every primitive:
+
+```json
+{
+  "Field": "Price",
+  "DataType": "Number",
+  "Operator": "Between",
+  "Values": [0, 1.569]            // raw numbers — no quotes needed
+}
+```
+
+```json
+{
+  "Field": "IsActive",
+  "DataType": "Boolean",
+  "Operator": "Equal",
+  "Values": [false]               // raw boolean — no quotes needed
+}
+```
+
+The library normalizes every element before validation/build:
+
+| Incoming runtime type | Normalized form |
+|-----------------------|-----------------|
+| `string` | as-is |
+| `bool` | `"true"` / `"false"` (lowercase) |
+| `JsonElement` (System.Text.Json) | unwrapped by `ValueKind` (`String` → text, `Number` → raw JSON token, `True`/`False` → lowercase) |
+| numeric / `IFormattable` | `InvariantCulture` formatting |
+| anything else (`JValue`, etc.) | `value.ToString()` |
+| `null` | `string.Empty` |
+
+**Backward compatibility:** callers previously sending `["abc"]` (quoted strings) keep working unchanged — strings deserialize into the `List<object>` as string elements. C# callers that previously used `Values = new List<string> {...}` must switch to `new List<object> {...}` (or `.Cast<object>().ToList()`).
 
 ---
 

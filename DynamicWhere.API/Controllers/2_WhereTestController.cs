@@ -990,7 +990,7 @@ public class WhereTestController : ControllerBase
         var overallSw = Stopwatch.StartNew();
         var allResults = new List<PerformanceResult>();
 
-        var ops = new List<(Operator op, List<string> values)>
+        var ops = new List<(Operator op, List<object> values)>
         {
             (Operator.Equal, ["Pro"]),
             (Operator.IEqual, ["pro"]),
@@ -1026,7 +1026,9 @@ public class WhereTestController : ControllerBase
                 var condition = new Condition
                 {
                     Field = op is Operator.IsNull or Operator.IsNotNull ? "Description" : "Name",
-                    DataType = DataType.Text, Operator = op, Values = values
+                    DataType = DataType.Text,
+                    Operator = op,
+                    Values = values
                 };
 
                 sw.Restart();
@@ -1045,8 +1047,11 @@ public class WhereTestController : ControllerBase
 
                 allResults.Add(new PerformanceResult
                 {
-                    TestName = $"Text Operator - {op}", Metrics = metrics,
-                    Input = condition, Output = results, Success = true
+                    TestName = $"Text Operator - {op}",
+                    Metrics = metrics,
+                    Input = condition,
+                    Output = results,
+                    Success = true
                 });
             }
             catch (Exception ex)
@@ -1055,7 +1060,10 @@ public class WhereTestController : ControllerBase
                 metrics.TotalTimeMs = sw.Elapsed.TotalMilliseconds;
                 allResults.Add(new PerformanceResult
                 {
-                    TestName = $"Text Operator - {op}", Success = false, Message = ex.Message, Metrics = metrics
+                    TestName = $"Text Operator - {op}",
+                    Success = false,
+                    Message = ex.Message,
+                    Metrics = metrics
                 });
             }
         }
@@ -1187,6 +1195,249 @@ public class WhereTestController : ControllerBase
             AverageTotalTimeMs = allResults.Count == 0 ? 0 : allResults.Average(r => r.Metrics.TotalTimeMs),
             TotalRecordsReturned = allResults.Sum(r => r.Metrics.RecordsReturned),
             Results = allResults
+        });
+    }
+
+    #endregion
+
+    #region Where(Condition) — Heterogeneous Values (List<object>)
+
+    /// <summary>
+    /// Number with raw int (no quotes). Verifies <c>Values = [100]</c> normalizes correctly.
+    /// </summary>
+    [HttpGet("condition/values-raw-int")]
+    public async Task<ActionResult<PerformanceResult>> TestValuesRawInt()
+    {
+        return await RunConditionTest("Values Raw Int (100)", new Condition
+        {
+            Field = "StockQuantity",
+            DataType = DataType.Number,
+            Operator = Operator.GreaterThan,
+            Values = [100]
+        }, q => _context.Products.Where(q));
+    }
+
+    /// <summary>
+    /// Number with raw double (no quotes). Verifies <c>Values = [99.99]</c> uses InvariantCulture.
+    /// </summary>
+    [HttpGet("condition/values-raw-double")]
+    public async Task<ActionResult<PerformanceResult>> TestValuesRawDouble()
+    {
+        return await RunConditionTest("Values Raw Double (99.99)", new Condition
+        {
+            Field = "Price",
+            DataType = DataType.Number,
+            Operator = Operator.LessThanOrEqual,
+            Values = [99.99]
+        }, q => _context.Products.Where(q));
+    }
+
+    /// <summary>
+    /// Number Between with raw mixed numeric primitives. Verifies <c>Values = [10, 500.5]</c>.
+    /// </summary>
+    [HttpGet("condition/values-raw-between")]
+    public async Task<ActionResult<PerformanceResult>> TestValuesRawBetween()
+    {
+        return await RunConditionTest("Values Raw Between (10, 500.5)", new Condition
+        {
+            Field = "Price",
+            DataType = DataType.Number,
+            Operator = Operator.Between,
+            Values = [10, 500.5]
+        }, q => _context.Products.Where(q));
+    }
+
+    /// <summary>
+    /// Number In with raw int collection. Verifies <c>Values = [1, 5, 10, 50]</c>.
+    /// </summary>
+    [HttpGet("condition/values-raw-in")]
+    public async Task<ActionResult<PerformanceResult>> TestValuesRawIn()
+    {
+        return await RunConditionTest("Values Raw In (1,5,10,50)", new Condition
+        {
+            Field = "StockQuantity",
+            DataType = DataType.Number,
+            Operator = Operator.In,
+            Values = [1, 5, 10, 50]
+        }, q => _context.Products.Where(q));
+    }
+
+    /// <summary>
+    /// Boolean raw <c>true</c> (no quotes). Verifies bool primitive emits lowercase <c>"true"</c>.
+    /// </summary>
+    [HttpGet("condition/values-raw-bool-true")]
+    public async Task<ActionResult<PerformanceResult>> TestValuesRawBoolTrue()
+    {
+        return await RunConditionTest("Values Raw Bool True", new Condition
+        {
+            Field = "IsActive",
+            DataType = DataType.Boolean,
+            Operator = Operator.Equal,
+            Values = [true]
+        }, q => _context.Products.Where(q));
+    }
+
+    /// <summary>
+    /// Boolean raw <c>false</c> (no quotes). Verifies bool primitive emits lowercase <c>"false"</c>.
+    /// </summary>
+    [HttpGet("condition/values-raw-bool-false")]
+    public async Task<ActionResult<PerformanceResult>> TestValuesRawBoolFalse()
+    {
+        return await RunConditionTest("Values Raw Bool False", new Condition
+        {
+            Field = "IsActive",
+            DataType = DataType.Boolean,
+            Operator = Operator.Equal,
+            Values = [false]
+        }, q => _context.Products.Where(q));
+    }
+
+    /// <summary>
+    /// Mixed list: raw primitive + quoted string in the same list. Validator must accept both.
+    /// </summary>
+    [HttpGet("condition/values-mixed")]
+    public async Task<ActionResult<PerformanceResult>> TestValuesMixed()
+    {
+        return await RunConditionTest("Values Mixed (10, \"500\")", new Condition
+        {
+            Field = "StockQuantity",
+            DataType = DataType.Number,
+            Operator = Operator.Between,
+            Values = [10, "500"]
+        }, q => _context.Products.Where(q));
+    }
+
+    /// <summary>
+    /// Backward compatibility: quoted-string number (legacy shape). Must still produce a valid query.
+    /// </summary>
+    [HttpGet("condition/values-legacy-string-number")]
+    public async Task<ActionResult<PerformanceResult>> TestValuesLegacyStringNumber()
+    {
+        return await RunConditionTest("Values Legacy String Number (\"100\")", new Condition
+        {
+            Field = "StockQuantity",
+            DataType = DataType.Number,
+            Operator = Operator.GreaterThan,
+            Values = ["100"]
+        }, q => _context.Products.Where(q));
+    }
+
+    /// <summary>
+    /// Backward compatibility: quoted-string boolean (legacy shape). Must still produce a valid query.
+    /// </summary>
+    [HttpGet("condition/values-legacy-string-bool")]
+    public async Task<ActionResult<PerformanceResult>> TestValuesLegacyStringBool()
+    {
+        return await RunConditionTest("Values Legacy String Bool (\"true\")", new Condition
+        {
+            Field = "IsActive",
+            DataType = DataType.Boolean,
+            Operator = Operator.Equal,
+            Values = ["true"]
+        }, q => _context.Products.Where(q));
+    }
+
+    /// <summary>
+    /// End-to-end JSON deserialization: client posts raw JSON with un-quoted primitives.
+    /// Exercises the <c>JsonElement</c> branch of <c>Normalizer</c>.
+    /// <para>
+    /// Example body:
+    /// <code>
+    /// { "Field": "Price", "DataType": 2, "Operator": 9, "Values": [10, 500.5] }
+    /// </code>
+    /// </para>
+    /// </summary>
+    [HttpPost("condition/values-from-json")]
+    public async Task<ActionResult<PerformanceResult>> TestValuesFromJson([FromBody] Condition condition)
+    {
+        return await RunConditionTest("Values From JSON Body", condition,
+            q => _context.Products.Where(q));
+    }
+
+    /// <summary>
+    /// Bulk: runs every heterogeneous-values scenario and reports per-case pass/fail timings.
+    /// </summary>
+    [HttpGet("condition/values-all")]
+    public async Task<ActionResult<AllTestsResult>> TestAllValuesShapes()
+    {
+        var overallSw = Stopwatch.StartNew();
+        var results = new List<PerformanceResult>();
+
+        var cases = new List<(string name, Condition cond)>
+        {
+            ("Raw Int",                  new Condition { Field = "StockQuantity", DataType = DataType.Number,  Operator = Operator.GreaterThan,      Values = [100] }),
+            ("Raw Double",               new Condition { Field = "Price",         DataType = DataType.Number,  Operator = Operator.LessThanOrEqual,  Values = [99.99] }),
+            ("Raw Decimal",              new Condition { Field = "Price",         DataType = DataType.Number,  Operator = Operator.GreaterThan,      Values = [49.5m] }),
+            ("Raw Long",                 new Condition { Field = "StockQuantity", DataType = DataType.Number,  Operator = Operator.LessThan,         Values = [10000L] }),
+            ("Raw Between Numeric",      new Condition { Field = "Price",         DataType = DataType.Number,  Operator = Operator.Between,          Values = [10, 500.5] }),
+            ("Raw In Numeric",           new Condition { Field = "StockQuantity", DataType = DataType.Number,  Operator = Operator.In,               Values = [1, 5, 10, 50] }),
+            ("Raw Bool True",            new Condition { Field = "IsActive",      DataType = DataType.Boolean, Operator = Operator.Equal,            Values = [true] }),
+            ("Raw Bool False",           new Condition { Field = "IsActive",      DataType = DataType.Boolean, Operator = Operator.Equal,            Values = [false] }),
+            ("Mixed Raw + String",       new Condition { Field = "StockQuantity", DataType = DataType.Number,  Operator = Operator.Between,          Values = [10, "500"] }),
+            ("Legacy String Number",     new Condition { Field = "StockQuantity", DataType = DataType.Number,  Operator = Operator.GreaterThan,      Values = ["100"] }),
+            ("Legacy String Bool True",  new Condition { Field = "IsActive",      DataType = DataType.Boolean, Operator = Operator.Equal,            Values = ["true"] }),
+            ("Legacy String Bool False", new Condition { Field = "IsActive",      DataType = DataType.Boolean, Operator = Operator.Equal,            Values = ["false"] }),
+            ("Raw Text",                 new Condition { Field = "Name",          DataType = DataType.Text,    Operator = Operator.IContains,        Values = ["Pro"] }),
+            ("Text In Strings",          new Condition { Field = "Name",          DataType = DataType.Text,    Operator = Operator.In,               Values = ["Pro", "Ultra", "Basic"] }),
+        };
+
+        foreach (var (name, cond) in cases)
+        {
+            var sw = Stopwatch.StartNew();
+            var metrics = new PerformanceMetrics();
+
+            try
+            {
+                sw.Restart();
+                var query = _context.Products.Where(cond);
+                var translationTime = sw.Elapsed.TotalMilliseconds;
+
+                sw.Restart();
+                var rows = await query.Take(100).ToListAsync();
+                var executionTime = sw.Elapsed.TotalMilliseconds;
+
+                metrics.TranslationTimeMs = translationTime;
+                metrics.ExecutionTimeMs = executionTime;
+                metrics.TotalTimeMs = translationTime + executionTime;
+                metrics.RecordsReturned = rows.Count;
+                metrics.QueryGenerated = query.ToQueryString();
+
+                results.Add(new PerformanceResult
+                {
+                    TestName = $"Values Shape - {name}",
+                    Metrics = metrics,
+                    Input = cond,
+                    Success = true,
+                    Message = $"{cond.Operator} on {cond.Field} returned {rows.Count} rows"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Values shape test failed: {name}", name);
+                results.Add(new PerformanceResult
+                {
+                    TestName = $"Values Shape - {name}",
+                    Metrics = metrics,
+                    Input = cond,
+                    Success = false,
+                    Message = ex.Message
+                });
+            }
+        }
+
+        overallSw.Stop();
+
+        return Ok(new AllTestsResult
+        {
+            TotalTests = results.Count,
+            SuccessfulTests = results.Count(r => r.Success),
+            FailedTests = results.Count(r => !r.Success),
+            TotalExecutionTimeMs = overallSw.Elapsed.TotalMilliseconds,
+            AverageTranslationTimeMs = results.Count == 0 ? 0 : results.Average(r => r.Metrics.TranslationTimeMs),
+            AverageExecutionTimeMs = results.Count == 0 ? 0 : results.Average(r => r.Metrics.ExecutionTimeMs),
+            AverageTotalTimeMs = results.Count == 0 ? 0 : results.Average(r => r.Metrics.TotalTimeMs),
+            TotalRecordsReturned = results.Sum(r => r.Metrics.RecordsReturned),
+            Results = results
         });
     }
 

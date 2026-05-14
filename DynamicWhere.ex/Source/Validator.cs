@@ -56,7 +56,7 @@ internal static class Validator
             throw new ArgumentNullException(nameof(condition));
         }
 
-        condition.Values ??= new List<string>();
+        condition.Values ??= new List<object>();
 
         // Check if the field name is provided and not empty.
         if (string.IsNullOrWhiteSpace(condition.Field))
@@ -108,12 +108,16 @@ internal static class Validator
                 break;
         }
 
+        // Normalize raw object values into canonical strings for format validation.
+        // Supports heterogeneous JSON input (raw numbers/booleans alongside quoted strings).
+        var normalized = Normalizer.Normalize(condition.Values);
+
         // Validate the values format based on the declared logical data type.
         switch (condition.DataType)
         {
             case DataType.Guid:
                 // For GUID fields, each value must be a valid GUID format.
-                if (condition.Values.Any(value => !Guid.TryParse(value, out _)))
+                if (normalized.Any(value => !Guid.TryParse(value, out _)))
                 {
                     throw new LogicException(ErrorCode.InvalidFormat);
                 }
@@ -121,7 +125,7 @@ internal static class Validator
 
             case DataType.Number:
                 // For numeric fields, each value must parse into a supported numeric type.
-                if (condition.Values.Any(value =>
+                if (normalized.Any(value =>
                     !byte.TryParse(value, out _) &&
                     !short.TryParse(value, out _) &&
                     !int.TryParse(value, out _) &&
@@ -136,7 +140,7 @@ internal static class Validator
 
             case DataType.Boolean:
                 // For boolean fields, each value must be a valid boolean format.
-                if (condition.Values.Any(value => !bool.TryParse(value, out _)))
+                if (normalized.Any(value => !bool.TryParse(value, out _)))
                 {
                     throw new LogicException(ErrorCode.InvalidFormat);
                 }
@@ -145,7 +149,7 @@ internal static class Validator
             case DataType.Date:
             case DataType.DateTime:
                 // For date/datetime fields, each value must be a valid date/time format.
-                if (condition.Values.Any(value => !DateTime.TryParse(value, out _)))
+                if (normalized.Any(value => !DateTime.TryParse(value, out _)))
                 {
                     throw new LogicException(ErrorCode.InvalidFormat);
                 }
@@ -590,7 +594,7 @@ internal static class Validator
             throw new ArgumentNullException(nameof(condition));
         }
 
-        condition.Values ??= new List<string>();
+        condition.Values ??= new List<object>();
 
         if (string.IsNullOrWhiteSpace(condition.Field))
         {
@@ -640,18 +644,21 @@ internal static class Validator
                 break;
         }
 
+        // Normalize raw object values into canonical strings for format validation.
+        var normalized = Normalizer.Normalize(condition.Values);
+
         // Validate value format based on data type.
         switch (condition.DataType)
         {
             case DataType.Guid:
-                if (condition.Values.Any(v => !Guid.TryParse(v, out _)))
+                if (normalized.Any(v => !Guid.TryParse(v, out _)))
                 {
                     throw new LogicException(ErrorCode.InvalidFormat);
                 }
                 break;
 
             case DataType.Number:
-                if (condition.Values.Any(v =>
+                if (normalized.Any(v =>
                     !byte.TryParse(v, out _) &&
                     !short.TryParse(v, out _) &&
                     !int.TryParse(v, out _) &&
@@ -665,7 +672,7 @@ internal static class Validator
                 break;
 
             case DataType.Boolean:
-                if (condition.Values.Any(v => !bool.TryParse(v, out _)))
+                if (normalized.Any(v => !bool.TryParse(v, out _)))
                 {
                     throw new LogicException(ErrorCode.InvalidFormat);
                 }
@@ -673,7 +680,7 @@ internal static class Validator
 
             case DataType.Date:
             case DataType.DateTime:
-                if (condition.Values.Any(v => !DateTime.TryParse(v, out _)))
+                if (normalized.Any(v => !DateTime.TryParse(v, out _)))
                 {
                     throw new LogicException(ErrorCode.InvalidFormat);
                 }

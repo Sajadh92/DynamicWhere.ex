@@ -428,7 +428,7 @@ internal static class Converter
 
                 conditionAsString = conditionAsString[..^last.Length];
 
-                conditionAsString += Builder.BuildCondition(condition.DataType, condition.Operator, last, condition.Values);
+                conditionAsString += Builder.BuildCondition(condition.DataType, condition.Operator, last, Normalizer.Normalize(condition.Values));
             }
         }
 
@@ -592,9 +592,9 @@ internal static class Converter
     /// <returns>A dynamic LINQ predicate snippet enclosed in parentheses.</returns>
     public static string AsHavingString(this Condition condition)
     {
-        condition.Values ??= new List<string>();
+        condition.Values ??= new List<object>();
 
-        return $"({Builder.BuildCondition(condition.DataType, condition.Operator, condition.Field!, condition.Values)})";
+        return $"({Builder.BuildCondition(condition.DataType, condition.Operator, condition.Field!, Normalizer.Normalize(condition.Values))})";
     }
 
     /// <summary>

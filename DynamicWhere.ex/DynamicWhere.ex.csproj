@@ -13,15 +13,31 @@
 
   <PropertyGroup>
       <PackageId>DynamicWhere.ex</PackageId>
-      <Title>DynamicWhere.ex</Title>
-      <Description>DynamicWhere.ex is a powerful and versatile library for dynamically creating complex filter expressions in Entity Framework Core applications. This library enhances your EF Core queries by providing support for creating dynamic filters using objects, making it easier to generate complex queries for your data. For detailed documentation and usage examples, please visit the official [DynamicWhere.ex Documentation](https://docs.dynamicwhere.com/) website</Description>
-      <PackageTags>DynamicWhere.ex, DynamicWhere, DynamicFilter, DynamicLinq, Linq, EF Core, Dynamic, Where, Filter, Paging, OrderBy, Segment, Expression</PackageTags>
+      <Title>DynamicWhere.ex — JSON-driven queries for EF Core</Title>
+      <Description>JSON-driven queries for Entity Framework Core. A powerful, versatile library for dynamically composing complex filter, sort, paginate, group, aggregate, and set-operation (Union / Intersect / Except) expressions — all driven by simple JSON objects from any front-end or API consumer. Three composable shapes (Filter / Segment / Summary), seventeen IQueryable extension methods, nested navigation through references and collections with auto-wrapped .Any() lambdas, heterogeneous Condition.Values with type-safe coercion, and a thread-safe reflection cache with six tuned presets (FIFO / LRU / LFU). Targets .NET 6+. Free Forever. Full reference, JSON cookbook, and tuning guide at https://doc.dynamicwhere.com.</Description>
+      <Summary>Dynamic filters, sort, paginate, group, aggregate, and set operations for EF Core — driven by JSON.</Summary>
+      <PackageTags>DynamicWhere DynamicWhere.ex EFCore EntityFrameworkCore EF-Core LINQ DynamicLinq Filter DynamicFilter JsonFilter Where OrderBy Paging Pagination GroupBy Aggregation Summary Segment Union Intersect Except SetOperations QueryBuilder Query Expression ExpressionTree Reflection Cache JSON Dynamic DotNet NET6 NET7 NET8 CSharp</PackageTags>
       <Authors>Sajjad H. Al-Khafaji</Authors>
-      <Copyright>Free For Ever</Copyright>
+      <Company>Sajjad H. Al-Khafaji</Company>
+      <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
       <Version>2.1.0</Version>
-      <PackageProjectUrl>https://docs.dynamicwhere.com</PackageProjectUrl>
+      <PackageProjectUrl>https://doc.dynamicwhere.com</PackageProjectUrl>
       <RepositoryType>git</RepositoryType>
       <RepositoryBranch>master</RepositoryBranch>
       <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
+      <PackageIcon>icon.png</PackageIcon>
+      <PackageReadmeFile>README.md</PackageReadmeFile>
+      <PackageReleaseNotes>v2.1.0 — Heterogeneous Condition.Values (List&lt;object&gt; with type coercion), six tuned cache presets, full docs site at https://doc.dynamicwhere.com.</PackageReleaseNotes>
+      <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+      <PublishRepositoryUrl>true</PublishRepositoryUrl>
+      <IncludeSymbols>true</IncludeSymbols>
+      <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+      <GenerateDocumentationFile>true</GenerateDocumentationFile>
+      <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup>
+      <None Include="icon.png" Pack="true" PackagePath="\" />
+      <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 </Project>

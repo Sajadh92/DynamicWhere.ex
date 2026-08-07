@@ -1,16 +1,12 @@
-<div align="center">
-
 # DynamicWhere.ex
 
 **JSON-driven queries for Entity Framework Core.**
 
 [![NuGet Version](https://img.shields.io/nuget/v/DynamicWhere.ex?style=flat-square&color=8b5cf6&label=NuGet)](https://www.nuget.org/packages/DynamicWhere.ex)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/DynamicWhere.ex?style=flat-square&color=22c55e)](https://www.nuget.org/packages/DynamicWhere.ex)
-[![License](https://img.shields.io/badge/license-MIT-8b5cf6?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-8b5cf6?style=flat-square)](https://github.com/Sajadh92/DynamicWhere.ex/blob/master/LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-6%2B-512BD4?style=flat-square)](https://dotnet.microsoft.com/)
 [![Docs](https://img.shields.io/badge/docs-doc.dynamicwhere.com-8b5cf6?style=flat-square)](https://doc.dynamicwhere.com)
-
-</div>
 
 A powerful, versatile library for dynamically composing complex **filter, sort, paginate, group, aggregate, and set-operation** (Union / Intersect / Except) expressions in Entity Framework Core applications — all driven by simple JSON objects from any front-end or API consumer.
 
@@ -274,6 +270,6 @@ See **[Breaking Changes & Known Limitations](https://doc.dynamicwhere.com/docs/b
 
 ## License
 
-[MIT](LICENSE) — **Free Forever.** Copyright © 2023-2026 Sajjad H. Al-Khafaji.
+[MIT](https://github.com/Sajadh92/DynamicWhere.ex/blob/master/LICENSE) — **Free Forever.** Copyright © 2023-2026 Sajjad H. Al-Khafaji.
 
 Free for commercial and personal use, forever. No license acceptance required, no attribution beyond keeping the copyright notice, no restrictions on redistribution.

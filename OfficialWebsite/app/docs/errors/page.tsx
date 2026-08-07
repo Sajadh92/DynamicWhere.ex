@@ -200,6 +200,11 @@ export default function Page() {
             <td><code>{`HavingField[{f}]MustExistInAggregateByAliases`}</code></td>
             <td><code>Having</code> references an unknown alias</td>
           </tr>
+          <tr>
+            <td><code>OrderFieldCannotEndOnComplexCollection(f)</code></td>
+            <td><code>{`OrderField[{f}]CannotEndOnCollectionOfComplexElements`}</code></td>
+            <td>Order path ends on a collection of entities — sort by a scalar inside it</td>
+          </tr>
         </tbody>
       </table>
 

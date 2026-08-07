@@ -1,6 +1,6 @@
 # DynamicWhere.ex
 
-**Version:** 2.1.0 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** Free Forever
+**Version:** 2.1.2 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** Free Forever
 
 > A powerful and versatile library for dynamically creating complex filter, sort, paginate, group, aggregate, and set-operation expressions in Entity Framework Core applications — all driven by simple JSON objects from any front-end or API consumer.
 
@@ -25,7 +25,7 @@
 ## Installation
 
 ```bash
-dotnet add package DynamicWhere.ex --version 2.1.0
+dotnet add package DynamicWhere.ex --version 2.1.2
 ```
 
 **Dependencies:**
@@ -528,6 +528,9 @@ Sorts the query by one or multiple criteria.
 
 **Validations:**
 - `Field` must be non-empty and valid on `T`.
+- `Field` may not end on a collection of entities/complex types (there is no single value to compare).
+
+**Collection paths:** when `Field` crosses a collection navigation, the collection is reduced to one comparable value — the **smallest** element ascending, the **largest** descending. See [Ordering Across Collections](#14-ordering-across-collections).
 
 **Returns:** `IQueryable<T>` — ordered query.
 
@@ -1373,6 +1376,43 @@ When a field path traverses a collection property (e.g., `Orders.OrderItems.Prod
 
 ---
 
+### 14. Ordering Across Collections
+
+A sort needs a single comparable value per row, so `.Any()` is not applicable to `OrderBy`. When an order field path crosses a collection property, each collection segment is reduced with an aggregate instead: **`Min` when sorting ascending, `Max` when sorting descending** — that is, rows are ordered by their *best matching* element in the requested direction.
+
+```json
+{ "sort": 1, "field": "Tags.Value", "direction": "Ascending" }
+```
+
+> **Generated expression:** `Tags.Min(Value) asc` — rows sorted by their alphabetically first tag.
+
+```json
+{ "sort": 1, "field": "Tags.Value", "direction": "Descending" }
+```
+
+> **Generated expression:** `Tags.Max(Value) desc` — rows sorted by their alphabetically last tag.
+
+This works at any depth, and paths may continue through reference navigations after a collection:
+
+| Field | Direction | Generated expression |
+|-------|-----------|----------------------|
+| `Category.Name` | Ascending | `Category.Name asc` (no collection — emitted as-is) |
+| `OrderItems.UnitPrice` | Ascending | `OrderItems.Select(UnitPrice).DefaultIfEmpty().Min() asc` |
+| `OrderItems.Product.Name` | Ascending | `OrderItems.Min(Product.Name) asc` |
+| `Orders.OrderItems.Quantity` | Descending | `Orders.Select(OrderItems.Select(Quantity).DefaultIfEmpty().Max()).DefaultIfEmpty().Max() desc` |
+| `Tags` (`List<string>`) | Ascending | `Tags.Min() asc` |
+
+**Empty collections.** A row whose collection is empty has no value to sort by:
+
+- **Reference and nullable types** (`string`, `int?`, …) yield `null`, which sorts first ascending and last descending on most providers.
+- **Non-nullable value types** (`int`, `decimal`, `DateTime`, …) use `DefaultIfEmpty()` and yield the type default (`0`, `0m`, `DateTime.MinValue`). Without it, `Min`/`Max` over an empty sequence throws `Sequence contains no elements` under LINQ to Objects — the mode used by the `IEnumerable<T>` overloads and by `Segment`, which sorts after materialising its condition sets.
+
+**Not supported.** A path may not *end* on a collection of entities or other complex types — there is nothing comparable to sort by, and a `LogicException` with `OrderField[{field}]CannotEndOnCollectionOfComplexElements` is thrown. Sort by a scalar inside it instead (`Tags` ✗ → `Tags.Value` ✓). Collections of simple values (`List<string>`, `List<int>`, …) are supported.
+
+> **Note:** `Summary.Orders` is unaffected — it sorts grouped results by GroupBy fields and aggregate aliases, and GroupBy fields cannot be collections.
+
+---
+
 ## Reflection Cache & Optimization
 
 DynamicWhere.ex caches all reflection lookups (property metadata, property paths, collection type analysis) to avoid repeated reflection overhead. The cache system is **thread-safe** and provides three configurable eviction strategies.
@@ -1522,6 +1562,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `UnsupportedAggregatorForType(agg, type)` | `Aggregator[{agg}]IsNotSupportedForFieldType[{type}]` | Invalid aggregator for type |
 | `SummaryOrderFieldMustExistInGroupByOrAggregate(f)` | `SummaryOrderField[{f}]MustExistInGroupByFieldsOrAggregateByAliases` | Order on non-grouped field |
 | `HavingFieldMustExistInAggregateByAlias(f)` | `HavingField[{f}]MustExistInAggregateByAliases` | Having references unknown alias |
+| `OrderFieldCannotEndOnComplexCollection(f)` | `OrderField[{f}]CannotEndOnCollectionOfComplexElements` | Order path ends on a collection of entities |
 
 ---
 

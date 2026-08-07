@@ -28,14 +28,14 @@ export default function Page() {
       </p>
 
       <h2 id="cli">dotnet CLI</h2>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 2.1.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 2.1.2`}</Code>
 
       <h2 id="package-manager">Package Manager (Visual Studio)</h2>
-      <Code lang="powershell">{`Install-Package DynamicWhere.ex -Version 2.1.0`}</Code>
+      <Code lang="powershell">{`Install-Package DynamicWhere.ex -Version 2.1.2`}</Code>
 
       <h2 id="package-reference">PackageReference (csproj)</h2>
       <Code lang="xml">{`<ItemGroup>
-  <PackageReference Include="DynamicWhere.ex" Version="2.1.0" />
+  <PackageReference Include="DynamicWhere.ex" Version="2.1.2" />
 </ItemGroup>`}</Code>
 
       <h2 id="dependencies">Dependencies</h2>

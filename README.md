@@ -35,13 +35,13 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 ## Install
 
 ```bash
-dotnet add package DynamicWhere.ex --version 2.1.0
+dotnet add package DynamicWhere.ex --version 2.1.2
 ```
 
 Or via Package Manager:
 
 ```powershell
-Install-Package DynamicWhere.ex -Version 2.1.0
+Install-Package DynamicWhere.ex -Version 2.1.2
 ```
 
 Dependencies (restored automatically):
@@ -160,6 +160,20 @@ Orders.Any(i1 => i1.OrderItems.Any(i2 =>
     i2.ProductName != null && i2.ProductName.ToLower().Contains("laptop")))
 ```
 
+Sorting takes the same paths. `.Any()` yields a boolean, so ordering reduces each collection segment to one comparable value instead — the **smallest** element ascending, the **largest** descending:
+
+```json
+{ "sort": 1, "field": "OrderItems.Product.Name", "direction": "Ascending" }
+```
+
+Becomes:
+
+```
+OrderItems.Min(Product.Name) asc
+```
+
+Rows with an empty collection sort as `null` (or the type default for non-nullable value types). A path may not *end* on a collection of entities — sort by a scalar inside it (`Tags` ✗ → `Tags.Value` ✓).
+
 ---
 
 ## Reflection cache
@@ -225,6 +239,10 @@ The complete reference — every enum, class, extension method, validation rule,
 | [Breaking Changes](https://doc.dynamicwhere.com/docs/breaking-changes) | Known limits and migration notes |
 
 ---
+
+## Version 2.1.2 highlights
+
+- **Fixed: ordering across collection navigations.** `OrderBy.Field = "Tags.Value"` on a `List<Tag>` threw `No property or field 'Value' exists in type 'List\`1'`. Collection segments are now reduced to a single comparable value — `Min` ascending, `Max` descending — at any nesting depth. See [Nested navigation](#nested-navigation).
 
 ## Version 2.1.0 highlights
 

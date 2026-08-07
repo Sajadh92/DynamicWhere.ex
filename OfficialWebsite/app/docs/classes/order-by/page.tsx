@@ -48,7 +48,15 @@ export default function Page() {
               <code>string?</code>
             </td>
             <td>–</td>
-            <td>Property path to sort by.</td>
+            <td>
+              Property path to sort by. Dot notation navigates references and
+              collections alike (<code>Category.Name</code>,{" "}
+              <code>Tags.Value</code>) — see{" "}
+              <Link href="/docs/extensions/order#collection-paths">
+                collection paths
+              </Link>
+              .
+            </td>
           </tr>
           <tr>
             <td>

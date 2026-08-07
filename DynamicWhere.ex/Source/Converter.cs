@@ -570,18 +570,135 @@ internal static class Converter
 
     /// <summary>
     /// Converts an <see cref="OrderBy"/> instance into a dynamic LINQ order-by expression string.
+    /// Supports navigation through nested properties and collections, automatically aggregating
+    /// collection segments so the path resolves to a single comparable value.
     /// </summary>
     /// <typeparam name="T">The type used to validate the field name.</typeparam>
     /// <param name="order">The <see cref="OrderBy"/> instance to convert.</param>
     /// <returns>
-    /// A dynamic LINQ order-by expression such as <c>"Name asc"</c> or <c>"Age desc"</c>.
+    /// A dynamic LINQ order-by expression such as <c>"Name asc"</c>, <c>"Age desc"</c>,
+    /// or <c>"Tags.Min(Value) asc"</c> for paths that traverse a collection.
     /// </returns>
     /// <exception cref="LogicException">Thrown if the field name is invalid or empty.</exception>
     public static string AsString<T>(this OrderBy order)
     {
         order.Validate<T>();
 
-        return $"{order.Field} {(order.Direction == Direction.Ascending ? "asc" : "desc")}";
+        return $"{BuildOrderPath(typeof(T), order.Field!, order.Direction)} " +
+               $"{(order.Direction == Direction.Ascending ? "asc" : "desc")}";
+    }
+
+    /// <summary>
+    /// Builds the dynamic LINQ expression used to sort by a (possibly nested) property path.
+    /// </summary>
+    /// <remarks>
+    /// A path that never crosses a collection is emitted unchanged (e.g. <c>"Category.Name"</c>).
+    /// A path that crosses a collection cannot be emitted verbatim — <c>List&lt;Tag&gt;</c> has no
+    /// <c>Value</c> member — so each collection segment is aggregated down to a single value:
+    /// the smallest element when sorting ascending, the largest when sorting descending
+    /// (e.g. <c>"Tags.Value"</c> → <c>"Tags.Min(Value)"</c> ascending, <c>"Tags.Max(Value)"</c> descending).
+    /// </remarks>
+    /// <param name="rootType">The CLR type of the root entity.</param>
+    /// <param name="field">The validated, normalized property path.</param>
+    /// <param name="direction">The sort direction, which selects the aggregate applied to collections.</param>
+    /// <returns>A dynamic LINQ expression that resolves to a single comparable value.</returns>
+    /// <exception cref="LogicException">
+    /// Thrown when the path ends on a collection whose elements are not simple values, leaving nothing to sort by.
+    /// </exception>
+    private static string BuildOrderPath(Type rootType, string field, Direction direction)
+    {
+        string[] props = field.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        // Walk the path once to resolve the terminal type and learn whether a collection is crossed.
+        // The path was already validated, so every segment is known to exist.
+        Type type = rootType;
+        bool crossesCollection = false, endsOnCollection = false;
+
+        foreach (string prop in props)
+        {
+            Type propType = CacheReflection.FindProperty(type, prop)!.PropertyType;
+            Type? elementType = CacheReflection.GetCollectionElementType(propType);
+
+            endsOnCollection = elementType != null;
+
+            if (elementType != null)
+            {
+                crossesCollection = true;
+            }
+
+            type = elementType ?? propType;
+        }
+
+        // No collection in the path: the property path is already a valid ordering expression.
+        if (!crossesCollection)
+        {
+            return field;
+        }
+
+        // Ordering by a collection of entities is meaningless — there is no single value to compare.
+        if (endsOnCollection && !CacheReflection.IsSimpleType(type))
+        {
+            throw new LogicException(ErrorCode.OrderFieldCannotEndOnComplexCollection(field));
+        }
+
+        // Min/Max over an empty collection throws "Sequence contains no elements" in LINQ to Objects
+        // when the value is a non-nullable value type (int, decimal, DateTime …). DefaultIfEmpty()
+        // substitutes the type default so in-memory queries keep working. Reference and nullable
+        // types already yield null for an empty collection, so they use the leaner aggregate form
+        // that translates to a plain correlated MIN/MAX subquery.
+        bool defaultIfEmpty = type.IsValueType && Nullable.GetUnderlyingType(type) == null;
+
+        string aggregate = direction == Direction.Ascending ? "Min" : "Max";
+
+        return BuildOrderPathCore(rootType, props, 0, aggregate, defaultIfEmpty);
+    }
+
+    /// <summary>
+    /// Recursively builds the ordering expression for the path segments starting at <paramref name="index"/>,
+    /// relative to <paramref name="type"/>.
+    /// </summary>
+    /// <param name="type">The CLR type the remaining segments are resolved against.</param>
+    /// <param name="props">All segments of the property path.</param>
+    /// <param name="index">The index of the first segment to emit.</param>
+    /// <param name="aggregate">The aggregate applied at each collection segment (<c>Min</c> or <c>Max</c>).</param>
+    /// <param name="defaultIfEmpty">Whether empty collections need a default value substituted.</param>
+    /// <returns>A dynamic LINQ expression relative to <paramref name="type"/>.</returns>
+    private static string BuildOrderPathCore(Type type, string[] props, int index, string aggregate, bool defaultIfEmpty)
+    {
+        string path = string.Empty;
+
+        for (int i = index; i < props.Length; i++)
+        {
+            path = path.Length == 0 ? props[i] : $"{path}.{props[i]}";
+
+            Type propType = CacheReflection.FindProperty(type, props[i])!.PropertyType;
+            Type? elementType = CacheReflection.GetCollectionElementType(propType);
+
+            // Reference navigation or scalar: keep extending the dotted path.
+            if (elementType == null)
+            {
+                type = propType;
+                continue;
+            }
+
+            // Collection of simple values at the end of the path (e.g. List<string>):
+            // aggregate the elements themselves.
+            if (i == props.Length - 1)
+            {
+                return defaultIfEmpty
+                    ? $"{path}.DefaultIfEmpty().{aggregate}()"
+                    : $"{path}.{aggregate}()";
+            }
+
+            // Collection segment: aggregate the remaining path over its elements.
+            string inner = BuildOrderPathCore(elementType, props, i + 1, aggregate, defaultIfEmpty);
+
+            return defaultIfEmpty
+                ? $"{path}.Select({inner}).DefaultIfEmpty().{aggregate}()"
+                : $"{path}.{aggregate}({inner})";
+        }
+
+        return path;
     }
 
     /// <summary>

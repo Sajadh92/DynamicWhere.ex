@@ -117,6 +117,36 @@ public class OrderTestController : ControllerBase
             new OrderBy { Sort = 1, Field = "TotalSpent", Direction = Direction.Descending });
     }
 
+    /// <summary>
+    /// Order: nested collection path ascending (OrderItems.UnitPrice — cheapest line item first).
+    /// </summary>
+    [HttpGet("single/nested-collection-asc")]
+    public async Task<ActionResult<PerformanceResult>> TestSingleNestedCollectionAsc()
+    {
+        return await RunOrderTest("Single OrderItems.UnitPrice ASC", _context.Orders,
+            new OrderBy { Sort = 1, Field = "OrderItems.UnitPrice", Direction = Direction.Ascending });
+    }
+
+    /// <summary>
+    /// Order: nested collection path descending (OrderItems.UnitPrice — priciest line item first).
+    /// </summary>
+    [HttpGet("single/nested-collection-desc")]
+    public async Task<ActionResult<PerformanceResult>> TestSingleNestedCollectionDesc()
+    {
+        return await RunOrderTest("Single OrderItems.UnitPrice DESC", _context.Orders,
+            new OrderBy { Sort = 1, Field = "OrderItems.UnitPrice", Direction = Direction.Descending });
+    }
+
+    /// <summary>
+    /// Order: nested collection path continuing into a reference navigation (OrderItems.Product.Name).
+    /// </summary>
+    [HttpGet("single/nested-collection-deep")]
+    public async Task<ActionResult<PerformanceResult>> TestSingleNestedCollectionDeep()
+    {
+        return await RunOrderTest("Single OrderItems.Product.Name ASC", _context.Orders,
+            new OrderBy { Sort = 1, Field = "OrderItems.Product.Name", Direction = Direction.Ascending });
+    }
+
     #endregion
 
     #region Order<T>(List<OrderBy>) — Multiple Orders
@@ -214,6 +244,10 @@ public class OrderTestController : ControllerBase
             ("Single Boolean",             TestSingleBoolean),
             ("Single Orders Date",         TestSingleOrdersDate),
             ("Single Customers Spending",  TestSingleCustomersSpending),
+            // Nested collection paths
+            ("Single Nested Collection ASC",  TestSingleNestedCollectionAsc),
+            ("Single Nested Collection DESC", TestSingleNestedCollectionDesc),
+            ("Single Nested Collection Deep", TestSingleNestedCollectionDeep),
             // Multiple orders
             ("Multiple Two Fields",        TestMultipleTwoFields),
             ("Multiple Three Fields",      TestMultipleThreeFields),

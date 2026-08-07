@@ -43,6 +43,37 @@ export default function Page() {
         cleanly into a single boolean expression EF Core can translate.
       </p>
 
+      <h2 id="ordering">Ordering across the same paths</h2>
+      <p>
+        Sorting accepts the same collection paths, but <code>.Any()</code>{" "}
+        yields a boolean — useless for ordering. Each collection segment is
+        reduced to one comparable value instead:{" "}
+        <strong>
+          <code>Min</code> ascending, <code>Max</code> descending
+        </strong>
+        .
+      </p>
+
+      <Code lang="json">{`{
+  "sort": 1,
+  "field": "Orders.OrderItems.ProductName",
+  "direction": "Ascending"
+}`}</Code>
+
+      <Callout tone="info">
+        <strong>Generated expression:</strong>
+      </Callout>
+      <Code lang="csharp">{`Orders.Min(OrderItems.Min(ProductName)) asc`}</Code>
+
+      <p>
+        Rows whose collection is empty sort as <code>null</code> — or as the
+        type default for non-nullable value types, where{" "}
+        <code>DefaultIfEmpty()</code> is inserted to keep in-memory sorting from
+        throwing. A path may not <em>end</em> on a collection of entities; sort
+        by a scalar inside it instead (<code>Tags</code> ✗ →{" "}
+        <code>Tags.Value</code> ✓).
+      </p>
+
       <h2 id="related">Related</h2>
       <ul>
         <li>
@@ -50,6 +81,9 @@ export default function Page() {
         </li>
         <li>
           <Link href="/docs/extensions/where">Where extension</Link>
+        </li>
+        <li>
+          <Link href="/docs/extensions/order">Order extension</Link>
         </li>
         <li>
           <Link href="/docs/examples/where-single">

@@ -151,6 +151,17 @@ internal static class ErrorCode
         $"SummaryOrderField[{fieldName}]MustExistInGroupByFieldsOrAggregateByAliases";
 
     /// <summary>
+    /// Indicates that an order field path ends on a collection whose elements are not simple values,
+    /// leaving nothing comparable to sort by.
+    /// </summary>
+    /// <param name="fieldName">The order field path that ends on a collection of complex elements.</param>
+    /// <returns>
+    /// A formatted error message indicating the invalid order field.
+    /// </returns>
+    public static string OrderFieldCannotEndOnComplexCollection(string fieldName) =>
+        $"OrderField[{fieldName}]CannotEndOnCollectionOfComplexElements";
+
+    /// <summary>
     /// Indicates that a Having condition field must reference a valid aggregate-by alias.
     /// </summary>
     /// <param name="fieldName">The Having condition field name that does not match any aggregate-by alias.</param>

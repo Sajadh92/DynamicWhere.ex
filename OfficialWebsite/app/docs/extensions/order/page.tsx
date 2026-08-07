@@ -57,12 +57,88 @@ export default function Page() {
           <code>Field</code> must be non-empty and valid on <code>T</code>{" "}
           (case-insensitive, auto-normalized).
         </li>
+        <li>
+          <code>Field</code> may not end on a collection of entities or other
+          complex types — there is no single value to compare.
+        </li>
       </ul>
 
       <h2 id="returns">Returns</h2>
       <p>
         <code>IQueryable&lt;T&gt;</code> — ordered query.
       </p>
+
+      <h2 id="collection-paths">Collection paths</h2>
+      <p>
+        A sort needs one comparable value per row, so a path that crosses a
+        collection navigation cannot be emitted verbatim —{" "}
+        <code>List&lt;Tag&gt;</code> has no <code>Value</code> member. Each
+        collection segment is reduced with an aggregate instead:{" "}
+        <strong>
+          <code>Min</code> when sorting ascending, <code>Max</code> when sorting
+          descending
+        </strong>{" "}
+        — rows are ordered by their best matching element in the requested
+        direction.
+      </p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Direction</th>
+            <th>Generated expression</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>Category.Name</code></td>
+            <td>Ascending</td>
+            <td><code>Category.Name asc</code></td>
+          </tr>
+          <tr>
+            <td><code>Tags.Value</code></td>
+            <td>Ascending</td>
+            <td><code>Tags.Min(Value) asc</code></td>
+          </tr>
+          <tr>
+            <td><code>Tags.Value</code></td>
+            <td>Descending</td>
+            <td><code>Tags.Max(Value) desc</code></td>
+          </tr>
+          <tr>
+            <td><code>OrderItems.Product.Name</code></td>
+            <td>Ascending</td>
+            <td><code>OrderItems.Min(Product.Name) asc</code></td>
+          </tr>
+          <tr>
+            <td><code>OrderItems.UnitPrice</code></td>
+            <td>Ascending</td>
+            <td>
+              <code>
+                OrderItems.Select(UnitPrice).DefaultIfEmpty().Min() asc
+              </code>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>
+        Rows whose collection is empty have nothing to sort by. Reference and
+        nullable types yield <code>null</code>; non-nullable value types
+        (<code>int</code>, <code>decimal</code>, <code>DateTime</code>, …) use{" "}
+        <code>DefaultIfEmpty()</code> and yield the type default, which keeps
+        in-memory sorting from throwing{" "}
+        <code>Sequence contains no elements</code>.
+      </p>
+
+      <Code lang="csharp">{`// Products sorted by their cheapest line item, cheapest product first
+var ordered = dbContext.Orders.Order(new OrderBy
+{
+    Sort = 1,
+    Field = "OrderItems.UnitPrice",
+    Direction = Direction.Ascending
+});`}</Code>
 
       <h2 id="example-single">Example — single order</h2>
       <Code lang="csharp">{`var ordered = dbContext.Products.Order(new OrderBy

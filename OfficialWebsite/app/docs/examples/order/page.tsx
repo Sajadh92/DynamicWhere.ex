@@ -33,6 +33,25 @@ export default function Page() {
   { "sort": 2, "field": "FirstName", "direction": "Ascending" }
 ]`}</Code>
 
+      <h2 id="collection-path">Order by a value inside a collection</h2>
+      <p>
+        Dotted paths may cross collection navigations. Because a sort needs a
+        single comparable value per row, the collection is reduced with an
+        aggregate — <code>Min</code> ascending, <code>Max</code> descending.
+      </p>
+      <Code lang="json">{`[
+  { "sort": 1, "field": "Tags.Value", "direction": "Ascending" },
+  { "sort": 2, "field": "OrderItems.Product.Name", "direction": "Descending" }
+]`}</Code>
+      <p>
+        Generated as <code>Tags.Min(Value) asc</code> and{" "}
+        <code>OrderItems.Max(Product.Name) desc</code>. See{" "}
+        <Link href="/docs/extensions/order#collection-paths">
+          collection paths
+        </Link>{" "}
+        for empty-collection behaviour and limits.
+      </p>
+
       <h2 id="related">Related</h2>
       <ul>
         <li>
@@ -40,6 +59,11 @@ export default function Page() {
         </li>
         <li>
           <Link href="/docs/classes/order-by">OrderBy class</Link>
+        </li>
+        <li>
+          <Link href="/docs/examples/nested-collection">
+            Nested collection navigation
+          </Link>
         </li>
       </ul>
     </DocPage>

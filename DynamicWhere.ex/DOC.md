@@ -1,6 +1,6 @@
 # DynamicWhere.ex
 
-**Version:** 2.1.2 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** Free Forever
+**Version:** 2.1.3 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** MIT (Free Forever)
 
 > A powerful and versatile library for dynamically creating complex filter, sort, paginate, group, aggregate, and set-operation expressions in Entity Framework Core applications — all driven by simple JSON objects from any front-end or API consumer.
 
@@ -25,7 +25,7 @@
 ## Installation
 
 ```bash
-dotnet add package DynamicWhere.ex --version 2.1.2
+dotnet add package DynamicWhere.ex --version 2.1.3
 ```
 
 **Dependencies:**
@@ -1612,6 +1612,8 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 
 ## License
 
-Free Forever — **Copyright © Sajjad H. Al-Khafaji**
+**MIT** — Free Forever. **Copyright © 2023-2026 Sajjad H. Al-Khafaji**
+
+Free for commercial and personal use, forever. No license acceptance required.
 
 Repository: [https://github.com/Sajadh92/DynamicWhere.ex](https://github.com/Sajadh92/DynamicWhere.ex)

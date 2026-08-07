@@ -6,7 +6,7 @@
 
 [![NuGet Version](https://img.shields.io/nuget/v/DynamicWhere.ex?style=flat-square&color=8b5cf6&label=NuGet)](https://www.nuget.org/packages/DynamicWhere.ex)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/DynamicWhere.ex?style=flat-square&color=22c55e)](https://www.nuget.org/packages/DynamicWhere.ex)
-[![License](https://img.shields.io/badge/license-Free%20Forever-8b5cf6?style=flat-square)](#license)
+[![License](https://img.shields.io/badge/license-MIT-8b5cf6?style=flat-square)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-6%2B-512BD4?style=flat-square)](https://dotnet.microsoft.com/)
 [![Docs](https://img.shields.io/badge/docs-doc.dynamicwhere.com-8b5cf6?style=flat-square)](https://doc.dynamicwhere.com)
 
@@ -35,13 +35,13 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 ## Install
 
 ```bash
-dotnet add package DynamicWhere.ex --version 2.1.2
+dotnet add package DynamicWhere.ex --version 2.1.3
 ```
 
 Or via Package Manager:
 
 ```powershell
-Install-Package DynamicWhere.ex -Version 2.1.2
+Install-Package DynamicWhere.ex -Version 2.1.3
 ```
 
 Dependencies (restored automatically):
@@ -274,4 +274,6 @@ See **[Breaking Changes & Known Limitations](https://doc.dynamicwhere.com/docs/b
 
 ## License
 
-**Free Forever** — Copyright © Sajjad H. Al-Khafaji.
+[MIT](LICENSE) — **Free Forever.** Copyright © 2023-2026 Sajjad H. Al-Khafaji.
+
+Free for commercial and personal use, forever. No license acceptance required, no attribution beyond keeping the copyright notice, no restrictions on redistribution.

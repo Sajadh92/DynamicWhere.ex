@@ -23,15 +23,15 @@ export default function Page() {
     <DocPage pathname="/docs">
       <h1>Introduction</h1>
       <p>
-        <strong>DynamicWhere.ex</strong> is a free, MIT-style-licensed library for
+        <strong>DynamicWhere.ex</strong> is a free, MIT-licensed library for
         building <em>dynamic</em> filter, sort, paginate, group, aggregate, and
         set-operation queries in Entity Framework Core applications — driven by
         plain JSON objects from any front-end or API consumer.
       </p>
 
       <p>
-        Version <strong>2.1.2</strong>. Target framework <strong>.NET 6+</strong>.
-        License <strong>Free Forever</strong>.
+        Version <strong>2.1.3</strong>. Target framework <strong>.NET 6+</strong>.
+        License <strong>MIT</strong> — free forever, for commercial and personal use.
       </p>
 
       <h2 id="what-it-does">What it does</h2>
@@ -82,7 +82,7 @@ export default function Page() {
 
       <h2 id="thirty-second-tour">30-second tour</h2>
       <p>Install the package:</p>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 2.1.2`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 2.1.3`}</Code>
 
       <p>Build a filter from a JSON body and apply it to a DbSet:</p>
       <Code lang="csharp">{`using DynamicWhere.ex.Source;

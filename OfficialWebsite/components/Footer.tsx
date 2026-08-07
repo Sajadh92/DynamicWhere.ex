@@ -55,7 +55,7 @@ export default function Footer() {
           <ul className="mt-3 space-y-2 text-[13px]">
             <li><a className="text-[var(--color-fg-2)] hover:text-white" href={SITE.repo} target="_blank" rel="noreferrer">GitHub Repository</a></li>
             <li><a className="text-[var(--color-fg-2)] hover:text-white" href={SITE.nuget} target="_blank" rel="noreferrer">NuGet Package</a></li>
-            <li><span className="text-[var(--color-fg-3)]">License: Free Forever</span></li>
+            <li><a className="text-[var(--color-fg-2)] hover:text-white" href={`${SITE.repo}/blob/master/LICENSE`} target="_blank" rel="noreferrer">License: MIT (Free Forever)</a></li>
           </ul>
         </div>
       </div>

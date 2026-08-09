@@ -17,10 +17,19 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The eleven points below cover constraints, surprises, and corner cases —
+        The thirteen points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
+      <Callout tone="danger" title="Upgrade to 2.1.4">
+        Releases before <strong>2.1.4</strong> did not escape condition values before
+        embedding them in the generated expression. A value carrying a{" "}
+        <code>\</code> or a <code>&quot;</code> ended its string literal early — a search
+        term ending in <code>\</code> threw{" "}
+        <code>ParseException: &apos;)&apos; or &apos;,&apos; expected</code>, and a crafted value
+        could close the literal and append predicate logic of its own, returning rows
+        the filter should never have matched. See point&nbsp;12.
+      </Callout>
 
       <h2 id="parameterless-constructor">1. Parameterless Constructor Required for Select Projection</h2>
       <p>
@@ -224,6 +233,47 @@ export default function Page() {
         the projection.
       </Callout>
 
+      <h2 id="values-are-literals">12. Condition Values Become Escaped Literals, Not Query Parameters</h2>
+      <p>
+        A condition&apos;s <code>Values</code> are written into the generated dynamic
+        LINQ expression as string literals. Since <strong>2.1.4</strong> they are
+        escaped first — a backslash is doubled and a double quote is backslash‑escaped
+        — so any value matches literally, <code>\</code> and <code>&quot;</code>{" "}
+        included, and a value can no longer break out of its literal to alter the
+        predicate.
+      </p>
+      <p>
+        The literal then reaches the provider as a constant, so EF Core inlines it
+        into the SQL rather than binding a parameter — a{" "}
+        <code>Contains</code> on <code>{`"الثانية\\"`}</code> renders as{" "}
+        <code>{`instr(lower("p"."Name"), 'الثانية\\') > 0`}</code>. EF Core escapes
+        that literal for SQL itself, so this is not a SQL injection path.
+      </p>
+      <Callout tone="warn" title="No plan-cache reuse across distinct values">
+        Because values are inlined rather than parameterized, each distinct search
+        term produces a distinct SQL statement. On SQL Server that means a separate
+        plan‑cache entry per term. If a high‑cardinality free‑text filter is on a hot
+        path, consider enabling forced parameterization at the database level.
+      </Callout>
+
+      <h2 id="alias-identifier">13. <code>AggregateBy.Alias</code> Must Be a Plain Identifier</h2>
+      <p>
+        The alias is emitted verbatim into the generated <code>Select</code>{" "}
+        projection, so since <strong>2.1.4</strong> it must be a leading letter or
+        underscore followed by letters, digits, or underscores. Letters are matched by
+        Unicode category, so a non‑Latin alias such as <code>&quot;المجموع&quot;</code>{" "}
+        stays valid.
+      </p>
+      <Callout tone="warn" title="Tightened in 2.1.4">
+        Earlier releases only rejected aliases containing a dot, which let an alias
+        holding a comma — <code>&quot;Total, 1 as Leaked&quot;</code> — append terms of
+        its own to the projection. Aliases carrying any other separator (a space, a
+        dash) never parsed in the first place, so nothing that previously worked is
+        rejected; a malformed alias now throws{" "}
+        <code>AggregationMustHasValidAlias</code> at validation time instead of failing
+        later. See <Link href="/docs/classes/aggregate-by"><code>AggregateBy</code></Link>.
+      </Callout>
+
       <h2 id="next">See also</h2>
       <ul>
         <li>
@@ -237,6 +287,10 @@ export default function Page() {
         <li>
           <Link href="/docs/extensions/select-dynamic"><code>SelectDynamic</code> →</Link>{" "}
           context for points 1 and 10.
+        </li>
+        <li>
+          <Link href="/docs/classes/aggregate-by"><code>AggregateBy</code> →</Link>{" "}
+          context for point 13.
         </li>
       </ul>
     </DocPage>

@@ -1,6 +1,6 @@
 # DynamicWhere.ex
 
-**Version:** 2.1.3 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** MIT (Free Forever)
+**Version:** 2.1.4 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** MIT (Free Forever)
 
 > A powerful and versatile library for dynamically creating complex filter, sort, paginate, group, aggregate, and set-operation expressions in Entity Framework Core applications — all driven by simple JSON objects from any front-end or API consumer.
 
@@ -25,7 +25,7 @@
 ## Installation
 
 ```bash
-dotnet add package DynamicWhere.ex --version 2.1.3
+dotnet add package DynamicWhere.ex --version 2.1.4
 ```
 
 **Dependencies:**
@@ -313,7 +313,7 @@ A single aggregation within a `GroupBy`.
 | Property | Type | Description |
 |----------|------|-------------|
 | `Field` | `string?` | Property to aggregate (optional for `Count`) |
-| `Alias` | `string?` | Name of the result column (must not conflict with `GroupBy.Fields`, no dots) |
+| `Alias` | `string?` | Name of the result column. Must be a plain identifier — a leading letter or underscore, then letters, digits, or underscores (non-Latin letters allowed) — and must not conflict with `GroupBy.Fields` |
 | `Aggregator` | `Aggregator` | Aggregation function |
 
 ---
@@ -691,7 +691,7 @@ Async-only segment operation. Executes each `ConditionSet` independently, then a
 | Fields must be unique (case-insensitive) | `GroupByFieldsMustBeUnique` |
 | Fields cannot be complex/navigation types | `GroupByFieldCannotBeComplexType` |
 | Fields cannot be collection types | `GroupByFieldCannotBeCollectionType` |
-| Aggregation alias must not be empty and must not contain dots | `InvalidAlias` |
+| Aggregation alias must be a plain identifier (letters, digits, underscores; not starting with a digit) | `InvalidAlias` |
 | Aggregation aliases must be unique | `AggregationAliasesMustBeUnique` |
 | Aggregation alias cannot match a GroupBy field | `AggregationAliasCannotBeGroupByField({alias})` |
 | Aggregation field must be a simple type | `AggregationFieldMustBeSimpleType` |
@@ -1550,7 +1550,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `InvalidPageSize` | `PageSizeMustBeGreaterThanZero` | PageSize ≤ 0 |
 | `MustHaveFields` | `MustHasFields` | Empty fields list in Select |
 | `InvalidFormat` | `InvalidFormat` | Value doesn't parse for declared DataType |
-| `InvalidAlias` | `AggregationMustHasValidAlias` | Empty or dotted alias |
+| `InvalidAlias` | `AggregationMustHasValidAlias` | Alias is not a plain identifier — empty, or carrying a dot, comma, space, or dash |
 | `GroupByMustHaveFields` | `GroupByMustHasAtLeastOneField` | GroupBy with no fields |
 | `GroupByFieldsMustBeUnique` | `GroupByFieldsMustBeUnique` | Duplicate GroupBy fields |
 | `GroupByFieldCannotBeComplexType` | `GroupByFieldCannotBeComplexType` | Non-simple GroupBy field |
@@ -1607,6 +1607,13 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 
 11. **All Filter Extensions Apply Order and Page Before the Select Projection**
     All Filter extensions — both typed (`Filter<T>`, `ToList<T>(Filter)`, `ToListAsync<T>(Filter)`) and dynamic (`FilterDynamic<T>`, `ToListDynamic<T>`, `ToListAsyncDynamic<T>`) — apply ordering and pagination on the typed `IQueryable<T>` **before** the select projection. This ensures that field names referenced in `orders` always resolve against the original entity type `T`, regardless of which fields are projected.
+
+12. **Condition Values Become Escaped Literals, Not Query Parameters**
+    A condition's `Values` are written into the generated dynamic LINQ expression as string literals. Since **2.1.4** they are escaped first — a backslash is doubled and a double quote is backslash-escaped — so any value matches literally, `\` and `"` included, and a value can no longer break out of its literal to alter the predicate. Before 2.1.4 a value ending in `\` threw `ParseException: ')' or ',' expected`, and a crafted value could append predicate logic of its own.
+    The literal then reaches the provider as a constant, so EF Core inlines it into the SQL rather than binding a parameter — a `Contains` on `"الثانية\"` renders as `instr(lower("p"."Name"), 'الثانية\') > 0`. EF Core escapes that literal for SQL itself, so this is not a SQL injection path; it does mean each distinct search term produces a distinct statement and its own plan-cache entry.
+
+13. **`AggregateBy.Alias` Must Be a Plain Identifier**
+    The alias is emitted verbatim into the generated `Select` projection, so since **2.1.4** it must be a leading letter or underscore followed by letters, digits, or underscores. Letters are matched by Unicode category, so a non-Latin alias such as `"المجموع"` stays valid. Earlier releases only rejected aliases containing a dot, which let an alias holding a comma — `"Total, 1 as Leaked"` — append terms of its own to the projection. Aliases carrying any other separator never parsed, so nothing that worked is rejected.
 
 ---
 

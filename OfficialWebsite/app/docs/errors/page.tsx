@@ -143,7 +143,7 @@ export default function Page() {
           <tr>
             <td><code>InvalidAlias</code></td>
             <td><code>AggregationMustHasValidAlias</code></td>
-            <td>Empty or dotted alias</td>
+            <td>Alias is not a plain identifier — empty, or carrying a dot, comma, space, or dash</td>
           </tr>
           <tr>
             <td><code>GroupByMustHaveFields</code></td>

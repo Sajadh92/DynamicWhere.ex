@@ -33,7 +33,8 @@ internal static class Builder
     public static string BuildCondition(DataType dataType, Operator _operator, string field, List<string> values)
     {
         // Normalize value tokens by trimming whitespace; validation already happened upstream.
-        values = values.Select(v => v.Trim()).ToList();
+        // Escape them for embedding in a dynamic LINQ string literal — see Escape.
+        values = values.Select(v => Escape(v.Trim())).ToList();
 
         switch (dataType)
         {
@@ -331,5 +332,28 @@ internal static class Builder
         }
 
         throw new LogicException($"Unsupported combination of DataType '{dataType}' and Operator '{_operator}'.");
+    }
+
+    /// <summary>
+    /// Escapes a value for embedding between the double quotes of a dynamic LINQ string literal.
+    /// </summary>
+    /// <remarks>
+    /// The generated predicate is parsed as source text, so a value carrying a backslash or a double
+    /// quote would otherwise end its literal early. A trailing backslash escapes the closing quote and
+    /// the parser runs on into the rest of the expression — the reported symptom was
+    /// <c>')' or ',' expected</c> on a search term ending in <c>\</c> — and a crafted value could close
+    /// the literal and append predicate logic of its own, so this also closes an injection path.
+    /// <para>
+    /// Backslashes are doubled first: escaping quotes first would introduce backslashes that the
+    /// backslash pass would then double a second time, turning <c>"</c> into <c>\\"</c> and ending the
+    /// literal anyway. Values for the numeric and boolean data types are format-validated upstream and
+    /// contain neither character, so escaping leaves them untouched.
+    /// </para>
+    /// </remarks>
+    /// <param name="value">The raw value token.</param>
+    /// <returns>The value with backslashes and double quotes escaped.</returns>
+    private static string Escape(string value)
+    {
+        return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
     }
 }

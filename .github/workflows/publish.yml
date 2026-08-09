@@ -1,0 +1,70 @@
+# Publishes DynamicWhere.ex to NuGet.org on every push to master.
+#
+# The <Version> in DynamicWhere.ex/DynamicWhere.ex.csproj is the source of truth: bump it,
+# commit, push, and this workflow ships that version. A push that does not change the version
+# still runs, but --skip-duplicate turns the push into a no-op, so docs-only commits are free.
+#
+# Credentials come from NuGet.org Trusted Publishing — the job requests an OIDC token from
+# GitHub, NuGet exchanges it for an API key valid for one hour, and no long-lived secret is
+# stored anywhere. The trusted publisher policy is bound to this file name; renaming it breaks
+# publishing until the policy is updated to match.
+name: publish
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write # required for the OIDC token NuGet exchanges for an API key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # Fails the build before anything is published when the README, DOC.md, or the docs site
+      # still reference a different version than the package about to ship.
+      - name: Check documented versions
+        shell: pwsh
+        run: ./build/check-version.ps1
+
+      - name: Restore
+        run: dotnet restore DynamicWhere.ex.sln
+
+      - name: Build
+        run: dotnet build DynamicWhere.ex.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test DynamicWhere.Tests/DynamicWhere.Tests.csproj -c Release --no-build
+
+      - name: Pack
+        run: dotnet pack DynamicWhere.ex/DynamicWhere.ex.csproj -c Release --no-build -o artifacts
+
+      # Short-lived key, requested immediately before the push because it expires in one hour.
+      - name: NuGet login
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: sajadh92 # nuget.org profile name, not an email address
+
+      # The .snupkg sitting beside the .nupkg is picked up and pushed as symbols automatically.
+      - name: Push
+        run: >
+          dotnet nuget push artifacts/*.nupkg
+          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: artifacts/*

@@ -66,8 +66,14 @@ export default function Page() {
       <Callout tone="warn" title="Alias rules">
         <ul>
           <li>
-            <code>Alias</code> must not contain dots — it becomes a top-level property on the
-            resulting <code>dynamic</code> objects in <code>SummaryResult.Data</code>.
+            <code>Alias</code> must be a plain identifier — a leading letter or underscore,
+            then letters, digits, or underscores. Letters are matched by Unicode category, so
+            a non-Latin alias such as <code>"المجموع"</code> is valid. It becomes a top-level
+            property on the resulting <code>dynamic</code> objects in{" "}
+            <code>SummaryResult.Data</code>. Anything else — a dot, comma, space, or dash —
+            throws <code>AggregationMustHasValidAlias</code>{" "}
+            <em>(tightened in 2.1.4; see{" "}
+            <Link href="/docs/breaking-changes#alias-identifier">breaking changes</Link>)</em>.
           </li>
           <li>
             <code>Alias</code> must not collide with any field name in <code>GroupBy.Fields</code>.

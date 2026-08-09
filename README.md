@@ -31,13 +31,13 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 ## Install
 
 ```bash
-dotnet add package DynamicWhere.ex --version 2.1.3
+dotnet add package DynamicWhere.ex --version 2.1.4
 ```
 
 Or via Package Manager:
 
 ```powershell
-Install-Package DynamicWhere.ex -Version 2.1.3
+Install-Package DynamicWhere.ex -Version 2.1.4
 ```
 
 Dependencies (restored automatically):
@@ -235,6 +235,18 @@ The complete reference — every enum, class, extension method, validation rule,
 | [Breaking Changes](https://doc.dynamicwhere.com/docs/breaking-changes) | Known limits and migration notes |
 
 ---
+
+## Version 2.1.4 highlights
+
+**Security and correctness fix — upgrade recommended for everyone.**
+
+- **Fixed: values carrying a backslash or a double quote broke the query.** Condition values are embedded in the generated dynamic LINQ expression as string literals, and were not escaped. A search term ending in `\` — the reported case was an Arabic term typed into a search box — escaped its own closing quote, so the parser ran on into the rest of the expression and threw `System.Linq.Dynamic.Core.Exceptions.ParseException: ')' or ',' expected`. Values are now escaped and matched literally, `\` and `"` included, across every `Text` and `Enum` operator.
+- **Fixed: a crafted value could rewrite the predicate.** The same missing escape let a value close its literal and append clauses of its own — `x") || (1==1) || Name.Contains("y` turned a `Contains` filter into an always-true predicate and returned every row. Values can no longer break out of their literal.
+- **Fixed: `AggregateBy.Alias` could inject extra projection columns.** The alias was only checked for dots, so `"Total, 1 as Leaked"` appended a term to the generated `Select`. Aliases must now be plain identifiers — a leading letter or underscore, then letters, digits, or underscores, with non-Latin letters allowed. Anything else already failed to parse, so nothing that worked is rejected; malformed aliases now throw `AggregationMustHasValidAlias` at validation time.
+
+## Version 2.1.3 highlights
+
+- **MIT licensed.** Free forever for commercial and personal use, no license acceptance required.
 
 ## Version 2.1.2 highlights
 

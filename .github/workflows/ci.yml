@@ -1,0 +1,42 @@
+# Build and test everything that is not a release.
+#
+# Pushes to master are covered by publish.yml, which runs the same build and tests before it
+# ships, so master is excluded here to avoid running the suite twice per push.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [master]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Check documented versions
+        shell: pwsh
+        run: ./build/check-version.ps1
+
+      - name: Restore
+        run: dotnet restore DynamicWhere.ex.sln
+
+      - name: Build
+        run: dotnet build DynamicWhere.ex.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test DynamicWhere.Tests/DynamicWhere.Tests.csproj -c Release --no-build
+
+      # Catches a docs-site build break before it reaches the branch Cloudflare Pages deploys.
+      - name: Build docs site
+        working-directory: OfficialWebsite
+        run: |
+          npm ci
+          npm run build

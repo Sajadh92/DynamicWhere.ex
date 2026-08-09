@@ -215,9 +215,11 @@ internal static class Validator
             throw new ArgumentNullException(nameof(aggregate));
         }
 
-        // Check if the alias is provided and not empty.
-        // Check if the alias contains invalid characters (e.g., dot notation is not allowed in aliases).
-        if (string.IsNullOrWhiteSpace(aggregate.Alias) || aggregate.Alias.Contains('.'))
+        // The alias is emitted verbatim into the generated Select projection, so it must be a plain
+        // identifier and nothing else. Anything carrying a separator — a dot, a comma, whitespace —
+        // either failed to parse already or, in the case of a comma, appended projection terms of its
+        // own to the query.
+        if (!IsIdentifier(aggregate.Alias))
         {
             throw new LogicException(ErrorCode.InvalidAlias);
         }
@@ -262,6 +264,27 @@ internal static class Validator
             ValidateAggregatorForType(aggregate.Aggregator, null);
         }
 
+    }
+
+    /// <summary>
+    /// Determines whether a name is a plain identifier, and so safe to emit into a generated
+    /// dynamic LINQ expression.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors what the dynamic LINQ tokenizer accepts as an identifier: a leading letter or
+    /// underscore followed by letters, digits, or underscores. Letters are matched by Unicode
+    /// category, so a non-Latin alias remains valid.
+    /// </remarks>
+    /// <param name="name">The name to check.</param>
+    /// <returns><see langword="true"/> when every character is legal in an identifier.</returns>
+    private static bool IsIdentifier(string? name)
+    {
+        if (string.IsNullOrEmpty(name) || !(char.IsLetter(name[0]) || name[0] == '_'))
+        {
+            return false;
+        }
+
+        return name.All(c => char.IsLetterOrDigit(c) || c == '_');
     }
 
     /// <summary>

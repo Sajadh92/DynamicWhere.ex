@@ -20,13 +20,13 @@ public static class Extension
     /// Projects each element of the source query to a new instance of type T containing only the specified fields.
     /// </summary>
     /// <remarks>This method creates a projection that includes only the specified fields for each element in
-    /// the query. The resulting IQueryable<T> can be further composed in LINQ queries. All field names must match
-    /// properties on type T. If the select string is empty or whitespace, the original query is returned.</remarks>
+    /// the query. The resulting <see cref="IQueryable{T}"/> can be further composed in LINQ queries. All field names
+    /// must match properties on type T. If the select string is empty or whitespace, the original query is returned.</remarks>
     /// <typeparam name="T">The type of the elements in the source query. Must be a reference type with a parameterless constructor.</typeparam>
     /// <param name="query">The source query to project fields from. Cannot be null.</param>
     /// <param name="fields">A list of field names to include in the projection. Each field must correspond to a property on type T. Cannot
     /// be null or empty.</param>
-    /// <returns>An IQueryable<T> where each element contains only the specified fields from the original query.</returns>
+    /// <returns>An <see cref="IQueryable{T}"/> where each element contains only the specified fields from the original query.</returns>
     /// <exception cref="ArgumentNullException">Thrown if query or fields is null.</exception>
     /// <exception cref="LogicException">Thrown if fields is empty, or if type T does not have a parameterless constructor.</exception>
     public static IQueryable<T> Select<T>(this IQueryable<T> query, List<string> fields) where T : class
@@ -454,6 +454,7 @@ public static class Extension
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
     /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
     /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
     /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
@@ -607,6 +608,7 @@ public static class Extension
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IEnumerable{T}"/> to retrieve entities from.</param>
     /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
     /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
     /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
@@ -637,6 +639,7 @@ public static class Extension
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
     /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
     /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
     /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>

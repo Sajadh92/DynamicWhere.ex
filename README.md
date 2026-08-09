@@ -31,13 +31,13 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 ## Install
 
 ```bash
-dotnet add package DynamicWhere.ex --version 2.1.4
+dotnet add package DynamicWhere.ex --version 2.1.5
 ```
 
 Or via Package Manager:
 
 ```powershell
-Install-Package DynamicWhere.ex -Version 2.1.4
+Install-Package DynamicWhere.ex -Version 2.1.5
 ```
 
 Dependencies (restored automatically):
@@ -235,6 +235,10 @@ The complete reference — every enum, class, extension method, validation rule,
 | [Breaking Changes](https://doc.dynamicwhere.com/docs/breaking-changes) | Known limits and migration notes |
 
 ---
+
+## Version 2.1.5 highlights
+
+- **Fixed: the XML documentation shipped with the package.** It drives IntelliSense in your IDE, and three defects degraded it — an unescaped generic argument in the `Select<T>` comment truncated its remarks and returns text, three `ToList` / `ToListAsync` overloads were missing the `getQueryString` description, and `CacheReporting.GetQuickHealthSummary` documented a parameter it does not take. The library now builds with zero warnings. No API or behaviour changes.
 
 ## Version 2.1.4 highlights
 

@@ -102,28 +102,28 @@ CACHE PERFORMANCE REPORT
 ===========================================
 
 Cache Configuration:
-  • Strategy: {config.EvictionStrategy} ({CacheEviction.GetEvictionStrategyDescription(config.EvictionStrategy)})
-  • Max Cache Size: {config.MaxCacheSize:N0} entries per cache type
-  • Eviction Threshold: Remove {config.LeastUsedThreshold}%, Keep {config.MostUsedThreshold}%
-  • LRU Tracking: {(config.EnableLruTracking ? "Enabled" : "Disabled")}
-  • LFU Tracking: {(config.EnableLfuTracking ? "Enabled" : "Disabled")}
+  ï¿½ Strategy: {config.EvictionStrategy} ({CacheEviction.GetEvictionStrategyDescription(config.EvictionStrategy)})
+  ï¿½ Max Cache Size: {config.MaxCacheSize:N0} entries per cache type
+  ï¿½ Eviction Threshold: Remove {config.LeastUsedThreshold}%, Keep {config.MostUsedThreshold}%
+  ï¿½ LRU Tracking: {(config.EnableLruTracking ? "Enabled" : "Disabled")}
+  ï¿½ LFU Tracking: {(config.EnableLfuTracking ? "Enabled" : "Disabled")}
 
 Current Cache Status:
-  • Total Cached Entries: {statistics.TotalCachedEntries:N0}
-  • Cache Utilization: {utilizationPercentage:F1}% of maximum capacity
-  • Total Memory Usage: {statistics.TotalMemoryMB:F3} MB ({statistics.TotalMemoryBytes:N0} bytes)
-  • Memory Efficiency: {memoryEfficiency:F2} entries per MB
+  ï¿½ Total Cached Entries: {statistics.TotalCachedEntries:N0}
+  ï¿½ Cache Utilization: {utilizationPercentage:F1}% of maximum capacity
+  ï¿½ Total Memory Usage: {statistics.TotalMemoryMB:F3} MB ({statistics.TotalMemoryBytes:N0} bytes)
+  ï¿½ Memory Efficiency: {memoryEfficiency:F2} entries per MB
 
 Memory Analysis:
 {memoryUsage.GetDetailedSummary()}
 
 Performance Metrics:
-  • Tracking Overhead: {trackingOverhead:F1}% of total memory
-  • Cache Efficiency Ratio: {memoryUsage.CalculateCacheEfficiencyRatio():F2}:1 (cache:tracking)
-  • Average Entry Size: {statistics.CalculateAverageEntrySize():F2} bytes
+  ï¿½ Tracking Overhead: {trackingOverhead:F1}% of total memory
+  ï¿½ Cache Efficiency Ratio: {memoryUsage.CalculateCacheEfficiencyRatio():F2}:1 (cache:tracking)
+  ï¿½ Average Entry Size: {statistics.CalculateAverageEntrySize():F2} bytes
 
 Recommendations:
-{string.Join(Environment.NewLine, memoryUsage.GetOptimizationRecommendations().Select(r => $"  • {r}"))}
+{string.Join(Environment.NewLine, memoryUsage.GetOptimizationRecommendations().Select(r => $"  ï¿½ {r}"))}
 
 ===========================================";
     }
@@ -177,21 +177,21 @@ Cache Utilization by Type:
 
 Tracking Data Status:
   LRU Tracking Records:
-    • Type Properties: {trackingCounts.TypeAccessRecords:N0}
-    • Property Paths: {trackingCounts.PathAccessRecords:N0}
-    • Collection Types: {trackingCounts.CollectionAccessRecords:N0}
+    ï¿½ Type Properties: {trackingCounts.TypeAccessRecords:N0}
+    ï¿½ Property Paths: {trackingCounts.PathAccessRecords:N0}
+    ï¿½ Collection Types: {trackingCounts.CollectionAccessRecords:N0}
   
   LFU Tracking Records:
-    • Type Properties: {trackingCounts.TypeFrequencyRecords:N0}
-    • Property Paths: {trackingCounts.PathFrequencyRecords:N0}
-    • Collection Types: {trackingCounts.CollectionFrequencyRecords:N0}
+    ï¿½ Type Properties: {trackingCounts.TypeFrequencyRecords:N0}
+    ï¿½ Property Paths: {trackingCounts.PathFrequencyRecords:N0}
+    ï¿½ Collection Types: {trackingCounts.CollectionFrequencyRecords:N0}
 
 Eviction Analysis:
-  • Strategy: {config.EvictionStrategy}
-  • Entries to evict when full: {CacheEviction.CalculateEvictionCount(config.MaxCacheSize, config)}
-  • Type Properties needs eviction: {(CacheEviction.IsEvictionNeeded(CacheMemoryType.TypeProperties, config) ? "Yes" : "No")}
-  • Property Paths needs eviction: {(CacheEviction.IsEvictionNeeded(CacheMemoryType.PropertyPath, config) ? "Yes" : "No")}
-  • Collection Types needs eviction: {(CacheEviction.IsEvictionNeeded(CacheMemoryType.CollectionElementType, config) ? "Yes" : "No")}
+  ï¿½ Strategy: {config.EvictionStrategy}
+  ï¿½ Entries to evict when full: {CacheEviction.CalculateEvictionCount(config.MaxCacheSize, config)}
+  ï¿½ Type Properties needs eviction: {(CacheEviction.IsEvictionNeeded(CacheMemoryType.TypeProperties, config) ? "Yes" : "No")}
+  ï¿½ Property Paths needs eviction: {(CacheEviction.IsEvictionNeeded(CacheMemoryType.PropertyPath, config) ? "Yes" : "No")}
+  ï¿½ Collection Types needs eviction: {(CacheEviction.IsEvictionNeeded(CacheMemoryType.CollectionElementType, config) ? "Yes" : "No")}
 
 Memory Distribution:
 {GenerateMemoryDistributionChart(memoryUsage.GetMemoryDistribution())}
@@ -347,7 +347,6 @@ Memory Distribution:
     /// <summary>
     /// Gets a quick health summary suitable for status displays.
     /// </summary>
-    /// <param name="config">The current cache configuration.</param>
     /// <returns>A short health status string.</returns>
     public static string GetQuickHealthSummary()
     {

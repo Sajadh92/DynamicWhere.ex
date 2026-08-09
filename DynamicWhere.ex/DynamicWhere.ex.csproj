@@ -21,14 +21,16 @@
       <Company>Sajjad H. Al-Khafaji</Company>
       <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
       <PackageLicenseExpression>MIT</PackageLicenseExpression>
-      <Version>2.1.4</Version>
+      <Version>2.1.5</Version>
       <PackageProjectUrl>https://doc.dynamicwhere.com</PackageProjectUrl>
       <RepositoryType>git</RepositoryType>
       <RepositoryBranch>master</RepositoryBranch>
       <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
       <PackageIcon>icon.png</PackageIcon>
       <PackageReadmeFile>README.md</PackageReadmeFile>
-      <PackageReleaseNotes>v2.1.4 — Security and correctness fix. Recommended for all users.
+      <PackageReleaseNotes>v2.1.5 — Documentation only. Fixes the XML documentation shipped with the package, which drives IntelliSense in consuming projects: an unescaped generic argument in the Select&lt;T&gt; comment truncated its remarks and returns text, three ToList/ToListAsync overloads were missing the getQueryString parameter description, and CacheReporting.GetQuickHealthSummary documented a parameter it does not take. The library now builds with zero warnings. No API or behaviour changes from 2.1.4.
+
+v2.1.4 — Security and correctness fix. Recommended for all users.
 
 Fix: condition values are now escaped before they are embedded in the generated dynamic LINQ expression. A value containing a backslash or a double quote previously ended its string literal early — a search term ending in "\" threw System.Linq.Dynamic.Core.Exceptions.ParseException ("')' or ',' expected"), and a crafted value could close the literal and append predicate logic of its own, returning rows the filter should never have matched. Values now match literally, including "\" and '"'. Affects every Text and Enum operator.
 

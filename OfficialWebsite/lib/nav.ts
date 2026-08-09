@@ -8,7 +8,7 @@ export const SITE = {
     "DynamicWhere.ex is a free .NET library for building dynamic, JSON-driven LINQ queries on Entity Framework Core — filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT set operations from your front-end. Works with ASP.NET Core on .NET 6, 7, 8, and 9.",
   shortDescription:
     "Dynamic JSON filter, sort, paginate, group, aggregate, and set operations for EF Core. .NET 6/7/8/9.",
-  version: "2.1.4",
+  version: "2.1.5",
   domain: "doc.dynamicwhere.com",
   repo: "https://github.com/Sajadh92/DynamicWhere.ex",
   nuget: "https://www.nuget.org/packages/DynamicWhere.ex",

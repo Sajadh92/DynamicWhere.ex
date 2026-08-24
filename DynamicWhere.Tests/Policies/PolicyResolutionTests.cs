@@ -34,4 +34,21 @@ public class PolicyResolutionTests
         Assert.Equal(singles.Length, singles.Distinct().Count());
         Assert.All(singles, v => Assert.Equal(0, v & (v - 1)));
     }
+
+    [Fact]
+    public void PolicyEffect_orders_by_authority_so_the_highest_value_wins_a_tie()
+    {
+        Assert.True(PolicyEffect.Deny > PolicyEffect.Mask);
+        Assert.True(PolicyEffect.Mask > PolicyEffect.Allow);
+    }
+
+    [Fact]
+    public void PolicyLevel_orders_most_authoritative_first()
+    {
+        Assert.True(PolicyLevel.SealedAttribute < PolicyLevel.DynamicUser);
+        Assert.True(PolicyLevel.DynamicUser < PolicyLevel.DynamicRole);
+        Assert.True(PolicyLevel.DynamicRole < PolicyLevel.DynamicTenant);
+        Assert.True(PolicyLevel.DynamicTenant < PolicyLevel.DynamicGlobal);
+        Assert.True(PolicyLevel.DynamicGlobal < PolicyLevel.OverridableAttribute);
+    }
 }

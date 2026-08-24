@@ -187,4 +187,40 @@ public class PolicyResolutionTests
         Assert.False(policy.Allows(PolicyFeature.Where));
         Assert.True(policy.Allows(PolicyFeature.Select));
     }
+
+    [Fact]
+    public void An_exact_field_rule_beats_a_wildcard_rule_at_the_same_level()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("*", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole)
+            .Add("Name", PolicyFeature.Select, PolicyEffect.Allow, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Name", new DwPolicyContext());
+
+        Assert.True(policy.Allows(PolicyFeature.Select));
+    }
+
+    [Fact]
+    public void A_wildcard_still_applies_to_fields_with_no_exact_rule()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("*", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole)
+            .Add("Name", PolicyFeature.Select, PolicyEffect.Allow, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+    }
+
+    [Fact]
+    public void A_wildcard_at_a_higher_level_still_beats_an_exact_rule_at_a_lower_one()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("*", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicUser)
+            .Add("Name", PolicyFeature.Select, PolicyEffect.Allow, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Name", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+    }
 }

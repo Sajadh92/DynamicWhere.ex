@@ -27,12 +27,36 @@ public sealed class PolicySource
     public bool IsSealed { get; }
 
     /// <summary>Creates a source describing a compile-time attribute.</summary>
-    public static PolicySource FromAttribute(string attributeName, bool isSealed) =>
-        new(attributeName, ruleId: null, subject: null, isSealed);
+    /// <exception cref="ArgumentException">Thrown when <paramref name="attributeName"/> is blank.</exception>
+    public static PolicySource FromAttribute(string attributeName, bool isSealed)
+    {
+        if (string.IsNullOrWhiteSpace(attributeName))
+        {
+            throw new ArgumentException(
+                "An attribute source requires an attribute name.", nameof(attributeName));
+        }
+
+        return new PolicySource(attributeName, ruleId: null, subject: null, isSealed);
+    }
 
     /// <summary>Creates a source describing a runtime rule.</summary>
-    public static PolicySource FromRule(string ruleId, string subject) =>
-        new($"Rule {ruleId}", ruleId, subject, isSealed: false);
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="ruleId"/> or <paramref name="subject"/> is blank.
+    /// </exception>
+    public static PolicySource FromRule(string ruleId, string subject)
+    {
+        if (string.IsNullOrWhiteSpace(ruleId))
+        {
+            throw new ArgumentException("A rule source requires a rule identifier.", nameof(ruleId));
+        }
+
+        if (string.IsNullOrWhiteSpace(subject))
+        {
+            throw new ArgumentException("A rule source requires a subject.", nameof(subject));
+        }
+
+        return new PolicySource($"Rule {ruleId}", ruleId, subject, isSealed: false);
+    }
 
     /// <inheritdoc />
     public override string ToString() =>

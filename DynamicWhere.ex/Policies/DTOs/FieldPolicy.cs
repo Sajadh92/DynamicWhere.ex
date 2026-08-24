@@ -3,30 +3,45 @@ using DynamicWhere.ex.Policies.Enums;
 namespace DynamicWhere.ex.Policies.DTOs;
 
 /// <summary>
-/// The resolved policy for one field of one type, for one caller. Immutable, and the only policy
-/// type the enforcement code sees — attributes and runtime rules have already been merged away by
-/// the time one of these exists.
+/// The resolved policy for one field of one type, for one caller. It is the only policy type the
+/// enforcement code sees — attributes and runtime rules have already been merged away by the time
+/// one of these exists. Its own state never changes after construction, but the collections it is
+/// handed are stored by reference rather than copied, so it is only as immutable as the caller
+/// leaves them. See the constructor for the ownership contract.
 /// </summary>
 public sealed class FieldPolicy
 {
     private readonly IReadOnlyDictionary<PolicyFeature, PolicyEffect> _effects;
 
     /// <summary>
-    /// Initializes a resolved policy.
+    /// Initializes a resolved policy. The instance takes ownership of <paramref name="effects"/>
+    /// and <paramref name="sources"/>: both are stored by reference, not copied, because the
+    /// resolver allocates them fresh for every field of every query and a defensive copy would
+    /// double that cost on the hot path. Callers must not retain or mutate either collection
+    /// after handing it over.
     /// </summary>
     /// <param name="fieldPath">The field this policy governs.</param>
     /// <param name="effects">The effect decided for each feature. A feature absent here is allowed.</param>
     /// <param name="sources">Every fragment source that contributed, for tracing.</param>
     /// <param name="isSealed">True when a compile-time attribute decided at least one feature absolutely.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="fieldPath"/> is blank.</exception>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="effects"/> or <paramref name="sources"/> is null.
+    /// </exception>
     public FieldPolicy(
         string fieldPath,
         IReadOnlyDictionary<PolicyFeature, PolicyEffect> effects,
         IReadOnlyList<PolicySource> sources,
         bool isSealed)
     {
+        if (string.IsNullOrWhiteSpace(fieldPath))
+        {
+            throw new ArgumentException("A policy requires a field path.", nameof(fieldPath));
+        }
+
         FieldPath = fieldPath;
-        _effects = effects;
-        Sources = sources;
+        _effects = effects ?? throw new ArgumentNullException(nameof(effects));
+        Sources = sources ?? throw new ArgumentNullException(nameof(sources));
         IsSealed = isSealed;
     }
 

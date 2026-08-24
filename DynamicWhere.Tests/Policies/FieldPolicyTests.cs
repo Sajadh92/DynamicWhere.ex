@@ -70,4 +70,37 @@ public class FieldPolicyTests
         Assert.Single(policy.Sources);
         Assert.Equal("DwDeniedAttribute", policy.Sources[0].Origin);
     }
+
+    [Fact]
+    public void A_policy_requires_a_field_path()
+    {
+        Dictionary<PolicyFeature, PolicyEffect> effects = new();
+
+        Assert.Throws<ArgumentException>(() =>
+            new FieldPolicy(null!, effects, Array.Empty<PolicySource>(), isSealed: false));
+
+        Assert.Throws<ArgumentException>(() =>
+            new FieldPolicy(string.Empty, effects, Array.Empty<PolicySource>(), isSealed: false));
+
+        Assert.Throws<ArgumentException>(() =>
+            new FieldPolicy(" ", effects, Array.Empty<PolicySource>(), isSealed: false));
+    }
+
+    [Fact]
+    public void A_policy_requires_effects()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new FieldPolicy("Salary", null!, Array.Empty<PolicySource>(), isSealed: false));
+    }
+
+    [Fact]
+    public void A_policy_requires_sources()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new FieldPolicy(
+                "Salary",
+                new Dictionary<PolicyFeature, PolicyEffect>(),
+                null!,
+                isSealed: false));
+    }
 }

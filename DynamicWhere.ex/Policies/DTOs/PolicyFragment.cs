@@ -23,6 +23,7 @@ public sealed class PolicyFragment
     /// <param name="priority">Tiebreak within a level. Higher wins.</param>
     /// <param name="payload">Strategy detail, unused until masking arrives.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="fieldPath"/> is blank.</exception>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="source"/> is null.</exception>
     public PolicyFragment(
         string fieldPath,
         PolicyFeature features,

@@ -61,6 +61,14 @@ public class PolicyFragmentTests
     }
 
     [Fact]
+    public void Fragment_requires_a_source()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new PolicyFragment("Salary", PolicyFeature.All, PolicyEffect.Deny,
+                PolicyLevel.DynamicGlobal, null!));
+    }
+
+    [Fact]
     public void Attribute_source_records_the_attribute_name_and_whether_it_was_sealed()
     {
         PolicySource source = PolicySource.FromAttribute("DwDeniedAttribute", isSealed: true);
@@ -68,5 +76,29 @@ public class PolicyFragmentTests
         Assert.Equal("DwDeniedAttribute", source.Origin);
         Assert.True(source.IsSealed);
         Assert.Null(source.RuleId);
+    }
+
+    [Fact]
+    public void Attribute_source_requires_an_attribute_name()
+    {
+        Assert.Throws<ArgumentException>(() => PolicySource.FromAttribute(null!, isSealed: true));
+        Assert.Throws<ArgumentException>(() => PolicySource.FromAttribute(string.Empty, isSealed: true));
+        Assert.Throws<ArgumentException>(() => PolicySource.FromAttribute(" ", isSealed: true));
+    }
+
+    [Fact]
+    public void Rule_source_requires_a_rule_id()
+    {
+        Assert.Throws<ArgumentException>(() => PolicySource.FromRule(null!, "Role:Manager"));
+        Assert.Throws<ArgumentException>(() => PolicySource.FromRule(string.Empty, "Role:Manager"));
+        Assert.Throws<ArgumentException>(() => PolicySource.FromRule(" ", "Role:Manager"));
+    }
+
+    [Fact]
+    public void Rule_source_requires_a_subject()
+    {
+        Assert.Throws<ArgumentException>(() => PolicySource.FromRule("r1", null!));
+        Assert.Throws<ArgumentException>(() => PolicySource.FromRule("r1", string.Empty));
+        Assert.Throws<ArgumentException>(() => PolicySource.FromRule("r1", " "));
     }
 }

@@ -146,4 +146,50 @@ public class PolicyPrecedenceMatrixTests
         Assert.Equal(PolicyEffect.Deny, policy.EffectFor(PolicyFeature.Select));
         Assert.True(policy.IsSealed);
     }
+
+    /// <summary>
+    /// Within one level, the fragment naming the field beats the one addressing every field — at
+    /// every level, under every pairing of effects, and whichever order the two arrive in.
+    /// </summary>
+    /// <remarks>
+    /// The pairings that carry the weight are the ones where the wildcard is the stricter of the
+    /// two. Specificity is settled before the effect tiebreak, so a broad denial is relaxed field
+    /// by field rather than winning on strictness alone; were the two keys swapped, only these
+    /// pairings would notice.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(LevelsAndEffects))]
+    public void An_exact_path_beats_a_wildcard_within_a_level(PolicyLevel level, PolicyEffect exact)
+    {
+        foreach (PolicyEffect wildcard in Effects)
+        {
+            FakePolicyProvider wildcardFirst = new FakePolicyProvider()
+                .Add(PolicyFragment.Wildcard, PolicyFeature.Select, wildcard, level)
+                .Add("Field", PolicyFeature.Select, exact, level);
+
+            Assert.Equal(exact, Resolve(wildcardFirst).EffectFor(PolicyFeature.Select));
+
+            FakePolicyProvider exactFirst = new FakePolicyProvider()
+                .Add("Field", PolicyFeature.Select, exact, level)
+                .Add(PolicyFragment.Wildcard, PolicyFeature.Select, wildcard, level);
+
+            Assert.Equal(exact, Resolve(exactFirst).EffectFor(PolicyFeature.Select));
+        }
+    }
+
+    /// <summary>
+    /// Specificity only breaks a tie inside a level. For every ordered pair of levels, a wildcard
+    /// at the more authoritative one beats a rule naming the field at the weaker one — even when
+    /// the weaker rule carries both the stricter effect and a higher priority.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(LevelPairs))]
+    public void The_more_authoritative_level_beats_the_more_specific_path(PolicyLevel higher, PolicyLevel lower)
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Field", PolicyFeature.Select, PolicyEffect.Deny, lower, priority: 999)
+            .Add(PolicyFragment.Wildcard, PolicyFeature.Select, PolicyEffect.Allow, higher);
+
+        Assert.Equal(PolicyEffect.Allow, Resolve(provider).EffectFor(PolicyFeature.Select));
+    }
 }

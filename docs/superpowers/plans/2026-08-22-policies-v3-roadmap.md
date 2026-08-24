@@ -120,6 +120,13 @@ invalidation and DB version polling both verified.
 **Exit:** explain returns the decision chain with sources and overrides; sealed fields absent from
 `/schema` and rejected by `POST /rules`; simulate returns a sanitized filter without executing.
 
+**Carried in from Phase 1 Task 11.** When two fragments tie on all four passes — level, specificity,
+priority, *and* effect — the resolver's `contenders.First(...)` picks by provider order. The decided
+**effect is fully deterministic**; only which of several equivalent `PolicySource` values gets
+attributed is arbitrary. That has no security consequence, but the explain endpoint would name one
+rule when another, identical in force, contributed equally. Either report every tied source rather
+than the winner alone, or state in the explain output that the attribution is one of several.
+
 ### Phase 8 — Security hardening
 
 Cross-cutting mitigations that need Segment and Summary policy support to already exist:

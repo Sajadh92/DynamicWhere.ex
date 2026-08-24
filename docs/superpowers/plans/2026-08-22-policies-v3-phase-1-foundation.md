@@ -2019,6 +2019,109 @@ git commit -m "test(policies): pin the sealed-attribute guarantee"
 
 ---
 
+## Task 12A: Resolver hardening
+
+Added during execution, from the Task 8 quality review. Four findings, ordered so the coverage gap
+closes before anything is rewritten.
+
+**Files:**
+- Modify: `DynamicWhere.ex/Policies/Resolution/PolicyResolver.cs`
+- Modify: `DynamicWhere.ex/Policies/DTOs/PolicyFragment.cs`
+- Modify: `DynamicWhere.Tests/Policies/PolicyResolutionTests.cs`
+
+- [ ] **Item 1 — nested field paths normalize differently on each side. The important one.**
+
+  Both `PolicyFragment`'s constructor and `PolicyResolver.Resolve` apply `String.Trim()`, which
+  strips only the ends of the whole string. The canonical normalizer everywhere else in this
+  library — `CacheReflection.ValidatePropertyPathInternal`, reached via `Validate<T>()` — splits on
+  `.` with `RemoveEmptyEntries | TrimEntries` and rebuilds from CLR property names. Top-level paths
+  coincide, dotted paths do not: a fragment stored as `"Customer. Name"` never matches a lookup of
+  `"Customer.Name"`, and a lookup of `"Customer..Name"` matches no fragment at all.
+
+  Both directions fail open, and the second is attacker-reachable if enforcement ever resolves
+  before validating: the fragment is missed, then the existing pipeline rewrites the path to its
+  canonical form and queries the denied field.
+
+  Add one shared normalizer and call it from both sides, using the split-join idiom the repo already
+  uses in `CacheReflection.cs`, `Converter.cs:610`, and `Converter.cs:812`:
+
+  ```csharp
+  fieldPath == Wildcard
+      ? Wildcard
+      : string.Join('.', fieldPath.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+  ```
+
+  Segment recasing needs no handling here — `Matches` is already `OrdinalIgnoreCase`.
+
+  Tests: each row of the divergence table above, in both directions, plus `" * "` still matching
+  every path.
+
+- [ ] **Item 2 — `Resolve` validates one argument of three, and the other two fail open.**
+
+  `fieldPath` is checked; `entityType` and `context` pass straight through to
+  `provider.GetFragments`. `IDwPolicyProvider` is public, and "return empty on a null argument" is a
+  natural defensive style for a third-party implementation — against such a provider, a null
+  `entityType` or `context` turns a sealed `Deny` into `Allow` with no exception. Throw
+  `ArgumentNullException` for both, with `<exception>` tags.
+
+- [ ] **Item 3 — three mutations survive the suite.**
+
+  The reviewer proved the gap rather than asserting it. Replacing `_providers` with
+  `_providers.Take(1)`, deleting the `isSealed` derivation, and deleting the `Sources` recording
+  block each leave the whole suite green. Multi-provider merge is the resolver's reason to exist and
+  no test passes more than one provider; `IsSealed` is what later phases consult to decide whether a
+  runtime rule may override a compile-time one; `Sources` is asserted once, as `Assert.Empty`, which
+  passes with recording removed entirely.
+
+  Add three tests: two providers each contributing a different feature and both surviving the merge;
+  a `SealedAttribute` fragment yielding `IsSealed == true` where a `DynamicRole` one yields `false`;
+  and one fragment covering `Select | Order` yielding exactly one entry in `Sources`.
+
+  **Re-run the same three mutations afterwards and confirm each now fails.** A coverage fix that
+  does not kill the mutation it was written for has not fixed anything.
+
+- [ ] **Item 4 — a misbehaving provider produces a bare `NullReferenceException`.**
+
+  A null return from `GetFragments`, a null element in that list, or a null entry in the `providers`
+  sequence all surface as an unattributed NRE from inside the resolver. Failing closed is correct;
+  do not swallow them. Name the offending provider type in the message.
+
+**Commit:** `fix(policies): normalize nested paths and close resolver coverage gaps`
+
+---
+
+## Task 12B: Resolver allocation
+
+Follows 12A so the rewrite lands on top of the coverage 12A adds. Do not attempt before it.
+
+**Files:**
+- Modify: `DynamicWhere.ex/Policies/Resolution/PolicyResolver.cs`
+
+The Task 8 review measured `Decide` allocating 1784 B per `Resolve` against a necessary 543 B —
+44.6 KB versus 13.6 KB for a 25-field query, 42.5 versus 13.0 MB/s of Gen0 at 1000 queries/sec. Those
+figures were taken against Task 8's single-`ToList` version. Tasks 9 through 11 have since grown
+`Decide` to four comparison passes with four `ToList()` calls and several `Min`/`Max` enumerations,
+so the real cost is now higher than measured.
+
+`Decide` runs once per feature, six times per `Resolve`, once per field per query. Rewrite it as a
+single pass that tracks the best fragment found so far under the four comparison rules, allocating
+nothing. The rules and their order do not change: level, then specificity, then priority, then
+strongest effect.
+
+This is not a reflexive objection to LINQ — the repo uses `.Where(...).ToList()` freely in
+`CacheEviction`, which runs on eviction rather than per field per query. The specific argument here
+is that `FieldPolicy`'s own constructor documentation refuses a defensive copy of `effects` and
+`sources` on the grounds that this path is allocation-sensitive, and that copy would have cost
+around 64 B. `Decide` spends twenty times that on the same path for no benefit. The stated standard
+and the code disagree; make them agree.
+
+The 22 precedence tests from Tasks 8–12 plus 12A's additions are the safety net. Every one must stay
+green, unchanged. If a test needs editing to accommodate the rewrite, the rewrite is wrong.
+
+**Commit:** `perf(policies): resolve each feature in a single allocation-free pass`
+
+---
+
 ## Task 13: AttributePolicyProvider — direct properties
 
 **Files:**

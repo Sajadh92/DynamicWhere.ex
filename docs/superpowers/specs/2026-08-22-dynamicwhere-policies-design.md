@@ -33,7 +33,7 @@ Tier is set once at startup through `DwPolicyOptions` and read from a single imm
 ### 2.2 Entry point — scoped fluent handle
 
 ```csharp
-query.AsGuarded(ctx).ToList(filter);   // policy-enforced
+query.ApplyPolicy(ctx).ToList(filter);   // policy-enforced
 query.ToList(filter);                  // legacy, byte-identical to v2.1.5
 ```
 
@@ -44,9 +44,11 @@ Rejected alternatives:
 
 The handle wins because it is explicit and greppable at every call site, adds no overloads, and carries the resolved policy snapshot so one query resolves policy once.
 
+The method was called `AsGuarded` while this document was being written; the name was settled as `ApplyPolicy` before implementation and has been updated throughout. The decision recorded here is the *shape* — a scoped handle rather than ambient context or a per-method parameter — which the rename does not affect.
+
 ### 2.3 Masking mechanism — detach, then transform in memory
 
-`AsGuarded` applies `AsNoTracking()`. Masking runs after materialization, mutating detached objects.
+`ApplyPolicy` applies `AsNoTracking()`. Masking runs after materialization, mutating detached objects.
 
 The alternative rejected outright was masking tracked entities in place. EF Core records the mask as a pending modification; the next `SaveChanges()` anywhere in the same unit of work persists the mask as the real value. Silent, irreversible, production-only.
 
@@ -105,7 +107,7 @@ All features ship in v3.0. Validation comes from the project's own test suite (`
 ### 3.1 Sandwich, do not modify
 
 ```
-query.AsGuarded(ctx).ToList(filter)
+query.ApplyPolicy(ctx).ToList(filter)
   |
   +-- 1. RESOLVE     capture snapshot reference, capture context
   +-- 2. SANITIZE    clone Filter; rewrite, reject, inject          [NEW]
@@ -133,7 +135,7 @@ The caller's `Filter` object is cloned, never mutated — callers reuse filter i
 | `DynamicWhere.ex.Policies.EntityFrameworkCore` | DB store — SQL Server and Postgres both | EF Core only |
 | `DynamicWhere.ex.Policies.AspNetCore` | Admin API, explain endpoint, `ClaimsPrincipal` adapter | ASP.NET Core |
 
-The core package stays dependency-clean. Consumers who never call `AsGuarded` pull nothing new. One EF Core package covers SQL Server and Postgres because the store uses no raw SQL.
+The core package stays dependency-clean. Consumers who never call `ApplyPolicy` pull nothing new. One EF Core package covers SQL Server and Postgres because the store uses no raw SQL.
 
 ### 3.3 Folder layout
 
@@ -144,12 +146,12 @@ Policies/
   Attributes/     DwDeniedAttribute, DwMaskAttribute, ... (24)
   Config/         DwPolicyOptions, DwCaps
   Context/        DwPolicyContext, DwSubject
-  DTOs/           FieldPolicy, PolicySnapshot, PolicyTrace, PolicyDecision
-  Enums/          DwSubjectKind, DwTier, MaskStrategy, PolicyEffect, PolicyFeature, PolicySource
+  DTOs/           FieldPolicy, PolicyFragment, PolicySource, PolicySnapshot, PolicyTrace, PolicyDecision
+  Enums/          DwSubjectKind, DwTier, MaskStrategy, PolicyEffect, PolicyFeature, PolicyLevel
   Masking/        IValueTransformer, MaskEngine, MutatorCache
   Resolution/     IDwPolicyProvider, AttributeProvider, StoreProvider, PolicyResolver
   Storage/        IDwPolicyStore, InMemoryPolicyStore, PolicyRule, StoreSnapshot
-  Source/         GuardedQueryable, FilterSanitizer, ResultTransformer, PolicyGate
+  Source/         PolicyQueryable, FilterSanitizer, ResultTransformer, PolicyGate
 ```
 
 ### 3.4 Core types
@@ -194,7 +196,7 @@ Multi-role conflict at the same level resolves to DENY.
 
 ### 3.5 Snapshot capture and lazy resolution
 
-`AsGuarded` captures the snapshot **reference** and the context. It resolves nothing. Field policies resolve lazily against that fixed snapshot, memoized for the life of the query.
+`ApplyPolicy` captures the snapshot **reference** and the context. It resolves nothing. Field policies resolve lazily against that fixed snapshot, memoized for the life of the query.
 
 This preserves atomicity — the snapshot reference cannot change mid-query, so a `Filter` touching `Salary` in its condition group, its orders, and its selects gets one coherent decision — while avoiding resolution of 60 properties when the filter touches 4.
 
@@ -204,10 +206,10 @@ Store loads are asynchronous; `ToList(filter)` is synchronous. `DwPolicyContext`
 
 ```csharp
 var ctx = await policy.CreateContextAsync(User);   // once per request, async
-query.AsGuarded(ctx).ToList(filter);               // sync, no I/O
+query.ApplyPolicy(ctx).ToList(filter);               // sync, no I/O
 ```
 
-This avoids adding `AsGuardedAsync` overloads to all 17 methods.
+This avoids adding `ApplyPolicyAsync` overloads to all 17 methods.
 
 ### 3.7 Masking mechanics
 
@@ -280,7 +282,7 @@ Class-level:
 public class Employee { }
 ```
 
-An unguarded `ToList(filter)` on this entity throws. Without it, every policy is bypassed by simply not calling `AsGuarded` — this is what makes the opt-in handle a boundary rather than a suggestion.
+An unguarded `ToList(filter)` on this entity throws. Without it, every policy is bypassed by simply not calling `ApplyPolicy` — this is what makes the opt-in handle a boundary rather than a suggestion.
 
 ### 4.4 Transformation
 
@@ -503,7 +505,7 @@ Dry-run is per-context as well as global, so a single canary role can run in dry
 
 ## 6. Enforcement
 
-### 6.1 GuardedQueryable surface
+### 6.1 PolicyQueryable surface
 
 Mirrors all 17 existing methods: `Select`, `Where`, `Order`, `Page`, `Group`, `Filter`, `Summary`, `Segment`, `ToList`, `ToListAsync`, `ToListDynamic`, `ToListAsyncDynamic`, and the `IEnumerable` overloads. Each sanitizes, delegates to the existing extension, then transforms.
 
@@ -562,7 +564,7 @@ Attached to `FilterResult<T>` and `SummaryResult`, and null when unguarded, so e
 
 | Operation | Target |
 |---|---|
-| `AsGuarded(ctx)` | allocation only, no resolution |
+| `ApplyPolicy(ctx)` | allocation only, no resolution |
 | Field resolve, broad zone cached | under 1 microsecond |
 | Sanitize a typical 5-condition filter | under 50 microseconds |
 | Compiled mutator, cache hit | under 100 nanoseconds per row |

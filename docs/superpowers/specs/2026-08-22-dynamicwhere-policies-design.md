@@ -142,10 +142,10 @@ Mirrors the existing `Optimization/Cache` subsystem precedent.
 ```
 Policies/
   Attributes/     DwDeniedAttribute, DwMaskAttribute, ... (24)
-  Config/         DwPolicyOptions, DwTier, DwCaps
-  Context/        DwPolicyContext, DwSubject, DwSubjectKind
+  Config/         DwPolicyOptions, DwCaps
+  Context/        DwPolicyContext, DwSubject
   DTOs/           FieldPolicy, PolicySnapshot, PolicyTrace, PolicyDecision
-  Enums/          MaskStrategy, PolicyFeature, PolicySource, RuleEffect
+  Enums/          DwSubjectKind, DwTier, MaskStrategy, PolicyEffect, PolicyFeature, PolicySource
   Masking/        IValueTransformer, MaskEngine, MutatorCache
   Resolution/     IDwPolicyProvider, AttributeProvider, StoreProvider, PolicyResolver
   Storage/        IDwPolicyStore, InMemoryPolicyStore, PolicyRule, StoreSnapshot
@@ -238,7 +238,7 @@ public abstract class DwPolicyAttribute : Attribute
 
 ```csharp
 [Flags] public enum PolicyFeature
-{ None = 0, Where = 1, Select = 2, Order = 4, Group = 8, Aggregate = 16, All = 31 }
+{ None = 0, Where = 1, Select = 2, Order = 4, Group = 8, Aggregate = 16, Segment = 32, All = 63 }
 
 [DwDeny(PolicyFeature.Select | PolicyFeature.Order)]   // composable primitive
 ```
@@ -389,7 +389,7 @@ PolicyRule
   EntityType   string
   FieldPath    string     "Salary" | "ContactInfo.Email" | "*"
   Feature      PolicyFeature (flags)
-  Effect       Allow | Deny | Mask | Mutate | Default | Generalize
+  Effect       PolicyEffect   Allow | Mask | Deny | Mutate | Default | Generalize
   Payload      string?    JSON - mask spec, default value, bucket step
   Priority     int
   Enabled      bool
@@ -400,7 +400,7 @@ PolicyRule
 
 Four additions beyond the original sketch, each earning its place:
 
-**`Effect` separated from `Feature`.** The original model was binary enable/disable. "Manager sees Salary masked" is a third state and "Admin sees it unmasked" a fourth. `Feature` says where a rule applies; `Effect` says what happens. Without the split, masking cannot be configured at runtime at all — which was the headline use case.
+**`Effect` separated from `Feature`.** The original model was binary enable/disable. "Manager sees Salary masked" is a third state and "Admin sees it unmasked" a fourth. `Feature` says where a rule applies; `Effect` says what happens. Without the split, masking cannot be configured at runtime at all — which was the headline use case. `PolicyEffect` is declared ascending by strictness — `Allow = 0, Mask = 1, Deny = 2` — and that ordering is load-bearing: a tie on every other precedence key resolves to the maximum, so any renumbering would quietly invert which of two conflicting rules wins.
 
 **`FieldPath = "*"` wildcard.** Denying every field of `Employee` to role `Guest` becomes one row rather than forty. Exact field beats wildcard within the same subject level.
 
@@ -725,7 +725,9 @@ The test project runs EF Core 8 on SQLite while the library floor is 6.0.22. Exp
 
 ## 10. Open items for the implementation plan
 
-- Exact `PolicyFeature` flag values and whether `Segment` warrants its own flag rather than composing from Where and Select.
-- Whether `MinGroupSize` is global only or also per-field via an attribute.
-- Tokenize strategy needs a token store; decide whether it ships in v3.0 or is deferred.
-- Naming: `AsGuarded` versus `WithPolicy` versus `Secured`. Affects public API permanently.
+All four were settled before or during Phase 1. Recorded here as the decisions the later phases build on.
+
+- `Segment` has its own `PolicyFeature` flag, `32`; `All` is `63`. Resolved in Phase 1.
+- `MinGroupSize` is a global option with a per-field attribute override. Lands in Phase 8.
+- Tokenize is deferred to v3.1. The other eight mask strategies ship in v3.0.
+- The entry method is `ApplyPolicy(ctx)`; the class-level flag is `[DwEntity(RequirePolicy = true)]`.

@@ -66,6 +66,22 @@ every combination in the precedence grid. No database involved.
 **Exit:** end-to-end guarded queries against the SQLite fixture. Blocked WHERE throws, blocked
 ORDER and SELECT drop or throw per tier, caps reject, unguarded calls on a guarded entity throw.
 
+**Decide `PolicyException.Code`'s type here, before anything throws one.** `ErrorCode` is an
+`internal static class`, but `PolicyException.Code` is a public `string`. A consumer writing
+`catch (PolicyException ex) when (ex.Code == "FieldDeniedForWhere")` must hardcode a literal the
+library can rename with no compile error and no test failure anywhere downstream — the exception is
+public, its data is public, and its vocabulary is not.
+
+Do **not** fix this by making `ErrorCode` public: it holds around thirty members, most of them
+internal validation strings unrelated to policy, and publishing all of them to expose nine commits
+the rest as API surface permanently. Add a `PolicyErrorCode` enum on the exception alongside the
+string instead — the policy codes are a closed set, callers get exhaustive switching with compiler
+help, and the string survives for logging and serialization.
+
+This phase is where library code first throws a `PolicyException`, so it is where the catch-site
+ergonomics become visible. It is also the last moment the choice is free: once v3.0 ships, the
+strings are de-facto API.
+
 ### Phase 3 — Injection
 
 `FilterSanitizer` step 9. `[DwForceWhere]`, `[DwRequireWhere]`, `[DwAlias]`.
@@ -214,3 +230,52 @@ Irrelevant for a fixed entity set; real for a plugin host.
 - **Stage with explicit pathspecs.** Never `git add -A`, `git add .`, or `git add -u`. Name the
   files. This holds even when serialized, because the plan documents are routinely modified in the
   working tree between tasks and must not be swept into a code commit.
+
+## Phase 1 outcome
+
+Closed 2026-08-24, 18 tasks. 509 tests pass. `dotnet build DynamicWhere.ex -c Release` emits zero
+warnings with `GenerateDocumentationFile` on, and `git diff master...HEAD -- DynamicWhere.ex/Source/`
+is empty: nothing in the existing pipeline was touched.
+
+### Public API added
+
+- `DynamicWhere.ex.Policies.Enums` — `PolicyFeature`, `PolicyEffect`, `PolicyLevel`, `DwTier`,
+  `DwSubjectKind`
+- `DynamicWhere.ex.Policies.Context` — `DwPolicyContext`, `DwSubject`
+- `DynamicWhere.ex.Policies.DTOs` — `PolicyFragment`, `FieldPolicy`, `PolicySource`
+- `DynamicWhere.ex.Policies.Attributes` — `DwPolicyAttribute`, `DwDenyAttribute`,
+  `DwEntityAttribute`, and six sugar attributes: `DwDenied`, `DwNoWhere`, `DwNoSelect`, `DwNoOrder`,
+  `DwNoGroup`, `DwNoAggregate`
+- `DynamicWhere.ex.Policies.Config` — `DwPolicyOptions`, `DwCaps`
+- `DynamicWhere.ex.Policies.Resolution` — `IDwPolicyProvider`, `AttributePolicyProvider`,
+  `PolicyResolver`
+- `DynamicWhere.ex.Exceptions` — `PolicyException`
+
+### Five fail-open defects found and fixed
+
+1. Subject identity compared case-sensitively while field paths did not.
+2. Field paths trimmed only at the ends.
+3. Nested paths not normalized per segment, so `Customer. Name` missed a deny aimed at
+   `Customer.Name`.
+4. Array, interface, and struct navigations not descended.
+5. Custom collection types not unwrapped.
+
+All five are the same defect in five places: a lookup key and a stored key normalized differently,
+in a system where a fragment that fails to match means access granted. None of the five was caught
+by a test. All five were caught by review.
+
+### Known limitation
+
+Jagged collections are not walked. See the section above.
+
+### What Phase 2 inherits
+
+- **The `PolicyErrorCode` decision.** Settle `PolicyException.Code`'s type before library code
+  first throws one — that happens in Phase 2, and after v3.0 ships the strings are de-facto API.
+- **The provider cache-key gate.** `AttributePolicyProvider`'s static cache is keyed on `Type`
+  alone; it must be re-keyed or made per-instance in the same change that gives the provider any
+  configuration.
+- **The `default(PolicyLevel)` gate.** `PolicyLevel` has no member with value `0`, so an unmapped
+  level outranks a sealed attribute. Reject it at the store boundary in Phase 5.
+- **The explain-attribution note.** A four-way tie decides the effect deterministically but
+  attributes one arbitrary source of several. Due with the explain endpoint in Phase 7.

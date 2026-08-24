@@ -1351,6 +1351,50 @@ git commit -m "feat(policies): add provider abstraction and test fake"
 
 ---
 
+## Task 7A: DTO consistency pass
+
+Added during execution. Tasks 4 and 5 each landed byte-exact to plan, and each surfaced a small
+inconsistency in the DTO layer that only became visible once the neighbouring types existed. They
+are collected here rather than patched piecemeal, and run after Task 7 so the whole DTO surface is
+present at once.
+
+None of these is a defect in the commit that introduced it. All four are cheap now and awkward
+later, because Phase 2 onward treats `FieldPolicy` as trusted and `PolicyFragment` as the thing
+providers emit.
+
+**Files:**
+- Modify: `DynamicWhere.ex/Policies/DTOs/FieldPolicy.cs`
+- Modify: `DynamicWhere.ex/Policies/DTOs/PolicySource.cs`
+- Modify: `DynamicWhere.ex/Policies/DTOs/PolicyFragment.cs`
+- Modify: `DynamicWhere.Tests/Policies/FieldPolicyTests.cs`
+
+- [ ] **Item 1 — `FieldPolicy` claims immutability it does not enforce.**
+  It stores the supplied `IReadOnlyDictionary` and `IReadOnlyList` by reference, so a caller
+  retaining the original `Dictionary` can mutate a resolved policy after construction. Do **not**
+  add a defensive copy: the resolver allocates both collections per field per query, and copying
+  would double that on the hot path for a caller that does not exist. Instead make the contract
+  honest — document on the constructor that the instance takes ownership of both collections and
+  that callers must not retain or mutate them afterwards.
+
+- [ ] **Item 2 — `FieldPolicy` validates nothing while `PolicyFragment` validates its path and source.**
+  Bring `FieldPolicy` up to the same standard: reject a null or blank `fieldPath`, and reject null
+  `effects` or `sources`.
+
+- [ ] **Item 3 — `PolicySource.FromAttribute` and `FromRule` accept blank strings.**
+  A blank `ruleId` yields the origin string `"Rule "`, which reaches the explain endpoint and the
+  trace. Reject blank arguments in both factories.
+
+- [ ] **Item 4 — `PolicyFragment`'s constructor throws `ArgumentNullException` for a null source but documents only `ArgumentException`.**
+  Add the missing `<exception>` tag. Note this is narrower than the `WithValue` case reviewed and
+  declined in Tasks 2–3: that one was an undocumented throw with no sibling tag, matching repo
+  precedent in `CacheReflection.Configure`. This one has a tag that is actively incomplete.
+
+Each item needs a test proving the new guard, written and seen to fail first.
+
+**Commit:** `refactor(policies): make DTO validation and ownership contracts consistent`
+
+---
+
 ## Task 8: Resolver — one level, one feature
 
 **Files:**

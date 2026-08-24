@@ -95,6 +95,14 @@ The fake provider from Phase 1 is replaced by the real store provider against th
 **Exit:** store conformance suite passes against InMemory. Startup load failure throws, refresh
 failure holds last-known-good, staleness ceiling escalates to FailClosed.
 
+**Carried in from Phase 1 review — must be handled here.** `PolicyLevel` has no member with the
+value `0`, so `default(PolicyLevel)` is `0` and sorts as *more* authoritative than
+`SealedAttribute = 1` under the resolver's `Min()`. Phase 1 cannot reach that state because
+`PolicyFragment` takes its level as a required positional argument. This phase can: a level read
+from a database column or a JSON payload defaults to `0` when absent or unparsed, which would
+silently outrank a sealed attribute. Reject an unmapped level at the store boundary rather than
+letting it reach the resolver.
+
 ### Phase 6 — Store providers
 
 `DynamicWhere.ex.Policies.Redis` and `DynamicWhere.ex.Policies.EntityFrameworkCore`, including the
@@ -162,3 +170,10 @@ likewise independent once Phase 5 lands.
 - Existing tests stay green at every commit. The unguarded path must remain byte-identical in
   behaviour to v2.1.5.
 - Nothing is pushed to master until Phase 9 is complete and verified.
+- **One implementing agent at a time per worktree.** Disjoint files are not sufficient isolation:
+  the git index is shared process-wide, so a tree-wide `git add` in one agent stages and commits
+  another agent's in-flight work. This happened during Phase 1 Task 6 and required splitting a
+  mixed commit back apart. Either serialize implementers, or give each one its own worktree.
+- **Stage with explicit pathspecs.** Never `git add -A`, `git add .`, or `git add -u`. Name the
+  files. This holds even when serialized, because the plan documents are routinely modified in the
+  working tree between tasks and must not be swept into a code commit.

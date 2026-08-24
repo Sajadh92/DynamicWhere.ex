@@ -51,3 +51,58 @@ internal class SecuredNode
 
     public SecuredNode? Next { get; set; }
 }
+
+/// <summary>
+/// A DTO holding an array-typed collection navigation. EF Core would not map this shape, but the
+/// policy attributes are supported on DTOs as well as entities, where an array is ordinary.
+/// </summary>
+internal class SecuredInvoiceDto
+{
+    public int Id { get; set; }
+
+    public SecuredLineDto[] Lines { get; set; } = Array.Empty<SecuredLineDto>();
+
+    /// <summary>An array of a primitive: a value, not a navigation into <see cref="byte"/>.</summary>
+    public byte[] Signature { get; set; } = Array.Empty<byte>();
+}
+
+/// <summary>The element type behind an array-typed navigation.</summary>
+internal class SecuredLineDto
+{
+    [DwDenied]
+    public decimal Cost { get; set; }
+
+    public string Sku { get; set; } = string.Empty;
+}
+
+/// <summary>A contact reference expressed as an interface, an ordinary shape on a DTO.</summary>
+internal interface ISecuredContact
+{
+    /// <summary>Carries a policy attribute the walker must reach through the interface.</summary>
+    [DwDenied]
+    string Email { get; }
+
+    /// <summary>Undecorated, so it must produce no fragment.</summary>
+    string Phone { get; }
+}
+
+/// <summary>
+/// A DTO holding an interface-typed reference navigation and a user-defined struct held by value.
+/// </summary>
+internal class SecuredCustomerDto
+{
+    public string Name { get; set; } = string.Empty;
+
+    public ISecuredContact? Contact { get; set; }
+
+    public SecuredAuditStamp Audit { get; set; }
+}
+
+/// <summary>A user-defined struct carrying its own policy attributes.</summary>
+internal struct SecuredAuditStamp
+{
+    [DwDenied]
+    public string? ChangedBy { get; set; }
+
+    public DateTime ChangedAt { get; set; }
+}

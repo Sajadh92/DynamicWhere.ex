@@ -122,4 +122,57 @@ public class AttributeProviderTests
         Assert.Null(fragments as List<PolicyFragment>);
         Assert.Throws<NotSupportedException>(() => ((IList<PolicyFragment>)fragments).Clear());
     }
+
+    [Fact]
+    public void Attributes_beneath_an_array_typed_navigation_produce_dotted_paths()
+    {
+        PolicyFragment fragment = FragmentsFor<SecuredInvoiceDto>()
+            .Single(f => f.FieldPath == "Lines.Cost");
+
+        Assert.Equal(PolicyFeature.All, fragment.Features);
+        Assert.Equal(PolicyLevel.SealedAttribute, fragment.Level);
+    }
+
+    [Fact]
+    public void An_array_of_a_primitive_is_a_value_rather_than_a_navigation()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredInvoiceDto>();
+
+        Assert.DoesNotContain(fragments, f => f.FieldPath.StartsWith("Signature."));
+    }
+
+    [Fact]
+    public void Attributes_beneath_an_interface_typed_navigation_produce_dotted_paths()
+    {
+        PolicyFragment fragment = FragmentsFor<SecuredCustomerDto>()
+            .Single(f => f.FieldPath == "Contact.Email");
+
+        Assert.Equal(PolicyFeature.All, fragment.Features);
+        Assert.Equal(PolicyLevel.SealedAttribute, fragment.Level);
+    }
+
+    [Fact]
+    public void Attributes_beneath_a_struct_typed_navigation_produce_dotted_paths()
+    {
+        PolicyFragment fragment = FragmentsFor<SecuredCustomerDto>()
+            .Single(f => f.FieldPath == "Audit.ChangedBy");
+
+        Assert.Equal(PolicyFeature.All, fragment.Features);
+        Assert.Equal(PolicyLevel.SealedAttribute, fragment.Level);
+    }
+
+    [Fact]
+    public void Undecorated_members_beneath_a_followed_navigation_produce_no_fragments()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredCustomerDto>();
+
+        Assert.DoesNotContain(fragments, f => f.FieldPath == "Contact.Phone");
+        Assert.DoesNotContain(fragments, f => f.FieldPath == "Audit.ChangedAt");
+    }
+
+    [Fact]
+    public void A_cyclic_entity_graph_terminates_instead_of_recursing_forever()
+    {
+        Assert.Empty(FragmentsFor<Blog>());
+    }
 }

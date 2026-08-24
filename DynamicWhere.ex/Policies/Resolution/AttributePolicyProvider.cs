@@ -99,31 +99,46 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     }
 
     /// <summary>
-    /// Returns the type to descend into for a property, or null when the property is a scalar.
-    /// Collections yield their element type, so <c>Orders.Total</c> resolves the same way a
-    /// reference navigation does.
+    /// Returns the type to descend into for a property, or null when the property holds a value
+    /// rather than a navigation. Arrays and generic collections yield their element type, so
+    /// <c>Orders.Total</c> resolves the same way a reference navigation does.
     /// </summary>
+    /// <remarks>
+    /// A navigation the walker fails to recognize produces no fragments for anything beneath it,
+    /// and a field with no fragment is allowed — so this errs toward descending. Interfaces and
+    /// user-defined structs are followed as well as classes, because these attributes are supported
+    /// on DTOs, where an <c>IContact</c> reference or a record struct is ordinary.
+    /// </remarks>
     private static Type? NavigationTypeOf(Type propertyType)
     {
-        if (propertyType == typeof(string) || propertyType.IsPrimitive || propertyType.IsEnum)
+        Type underlying = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+
+        if (underlying.IsArray)
+        {
+            return AsNavigation(underlying.GetElementType());
+        }
+
+        if (underlying.Namespace?.StartsWith("System", StringComparison.Ordinal) == true)
+        {
+            return underlying.IsGenericType
+                ? AsNavigation(underlying.GetGenericArguments().FirstOrDefault())
+                : null;
+        }
+
+        return AsNavigation(underlying);
+    }
+
+    /// <summary>
+    /// Returns the type when it is one the walker should descend into, otherwise null.
+    /// </summary>
+    private static Type? AsNavigation(Type? type)
+    {
+        if (type is null || type == typeof(string) || type.IsPrimitive || type.IsEnum)
         {
             return null;
         }
 
-        Type underlying = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
-
-        if (underlying.IsPrimitive || underlying.IsEnum || underlying.Namespace?.StartsWith("System", StringComparison.Ordinal) == true)
-        {
-            Type? element = underlying.IsGenericType
-                ? underlying.GetGenericArguments().FirstOrDefault()
-                : null;
-
-            return element is not null && element.Namespace?.StartsWith("System", StringComparison.Ordinal) != true
-                ? element
-                : null;
-        }
-
-        return underlying.IsClass ? underlying : null;
+        return type.Namespace?.StartsWith("System", StringComparison.Ordinal) == true ? null : type;
     }
 
     /// <summary>

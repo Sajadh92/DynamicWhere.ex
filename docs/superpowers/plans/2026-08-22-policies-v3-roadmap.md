@@ -168,6 +168,36 @@ likewise independent once Phase 5 lands.
 
 ---
 
+## Known limitation — jagged collections are not walked
+
+`AttributePolicyProvider` does not descend through a collection nested directly inside another
+collection. `PagedList<LineDto>[]`, `List<Post>[]`, and `List<List<Post>>` all resolve to scalar, so
+policy attributes on the innermost element type produce no fragments — and a field with no fragment
+is allowed.
+
+This is a deliberate stopping point rather than an oversight. Five navigation gaps of this shape
+were found and closed during Phase 1 (casing, outer whitespace, path segments, arrays/interfaces/
+structs, custom collection types); jagged collections are the sixth and by far the most obscure, and
+no entity or DTO shape in this repository uses one. Document it in the public reference rather than
+letting a consumer discover it by having a denial silently not apply. If it is ever fixed, the array
+branch in `NavigationTypeOf` needs to recurse rather than calling `AsNavigation` directly.
+
+## Carried forward from Phase 1
+
+**If `AttributePolicyProvider` ever gains configuration, fix its cache key first.** The provider
+caches fragments in a `static ConcurrentDictionary<Type, IReadOnlyList<PolicyFragment>>` shared
+across every instance. That is sound only while the mapping from attribute to fragment depends on
+nothing but the type — which is true today, since `GetFragments` ignores its `context` argument
+entirely. The moment options are introduced (anything changing how attributes map to levels, or
+which attributes are read), two differently-configured instances would silently share whichever
+result was computed first. In a security component that is a wrong answer, not a stale one, and it
+would not surface as a test failure in the task that introduced the options. Either include the
+options in the cache key or make the cache per-instance, in the same change that adds them.
+
+Secondary, lower priority: `Type` keys held in a process-lifetime static pin their assemblies, so a
+consumer using a collectible `AssemblyLoadContext` for plugins or runtime codegen cannot unload it.
+Irrelevant for a fixed entity set; real for a plugin host.
+
 ## Standing rules for every phase
 
 - TDD. The failing test comes first, and it is run and seen to fail before implementation.

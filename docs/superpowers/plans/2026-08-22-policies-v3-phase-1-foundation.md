@@ -1521,6 +1521,7 @@ public sealed class PolicyResolver
     /// Initializes the resolver.
     /// </summary>
     /// <param name="providers">The fragment sources, in any order.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="providers"/> is null.</exception>
     public PolicyResolver(IEnumerable<IDwPolicyProvider> providers) =>
         _providers = providers?.ToList() ?? throw new ArgumentNullException(nameof(providers));
 
@@ -1579,7 +1580,7 @@ public sealed class PolicyResolver
             isSealed |= winner.Level == PolicyLevel.SealedAttribute;
         }
 
-        return new FieldPolicy(fieldPath, effects, sources, isSealed);
+        return new FieldPolicy(path, effects, sources, isSealed);
     }
 
     /// <summary>

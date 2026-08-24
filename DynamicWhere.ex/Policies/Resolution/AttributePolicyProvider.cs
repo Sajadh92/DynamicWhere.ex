@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.ObjectModel;
 using System.Reflection;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Context;
@@ -21,6 +22,12 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
 {
     private static readonly ConcurrentDictionary<Type, IReadOnlyList<PolicyFragment>> Cache = new();
 
+    /// <summary>
+    /// How many navigation segments a generated field path may contain. Matches the default
+    /// navigation-depth cap, so the provider never produces a path the sanitizer would reject.
+    /// </summary>
+    public const int MaxDepth = 4;
+
     /// <inheritdoc />
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="entityType"/> is null.</exception>
     public IReadOnlyList<PolicyFragment> GetFragments(Type entityType, DwPolicyContext context)
@@ -34,21 +41,89 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     }
 
     /// <summary>
-    /// Reflects over one type's properties, turning every policy attribute into a fragment.
+    /// Reflects over one type, turning every policy attribute into a fragment. Reference
+    /// navigations and collection element types are walked so that dotted paths such as
+    /// <c>Contact.Email</c> carry their own policy.
     /// </summary>
+    /// <remarks>
+    /// The result is handed to every caller and lives in a process-wide cache, so it is wrapped
+    /// before it leaves: a caller who cast it back to <see cref="List{T}"/> and removed a fragment
+    /// would be granting access to a denied field for the lifetime of the process.
+    /// </remarks>
     private static IReadOnlyList<PolicyFragment> Build(Type entityType)
     {
         List<PolicyFragment> fragments = new();
 
-        foreach (PropertyInfo property in entityType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        Walk(entityType, prefix: string.Empty, depth: 0, fragments);
+
+        return new ReadOnlyCollection<PolicyFragment>(fragments);
+    }
+
+    /// <summary>
+    /// Adds fragments for one type, then descends into its navigations.
+    /// </summary>
+    /// <param name="type">The type being walked.</param>
+    /// <param name="prefix">The dotted path leading to this type, empty at the root.</param>
+    /// <param name="depth">How many navigations deep the walk currently is.</param>
+    /// <param name="fragments">The accumulator.</param>
+    /// <remarks>
+    /// Depth alone terminates the walk. A visited-type guard would be cheaper on a graph with many
+    /// cycles, but it would also suppress legitimate paths: a self-referencing type would never
+    /// yield <c>Next.Secret</c>, even though a caller can filter on exactly that path. Bidirectional
+    /// navigations are cyclic by nature, so the depth cap is doing the real work either way, and the
+    /// whole walk is computed once per type and cached.
+    /// </remarks>
+    private static void Walk(Type type, string prefix, int depth, List<PolicyFragment> fragments)
+    {
+        if (depth >= MaxDepth)
         {
-            foreach (DwDenyAttribute attribute in property.GetCustomAttributes<DwDenyAttribute>(inherit: true))
-            {
-                fragments.Add(ToFragment(property.Name, attribute));
-            }
+            return;
         }
 
-        return fragments;
+        foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            string path = prefix.Length == 0 ? property.Name : $"{prefix}.{property.Name}";
+
+            foreach (DwDenyAttribute attribute in property.GetCustomAttributes<DwDenyAttribute>(inherit: true))
+            {
+                fragments.Add(ToFragment(path, attribute));
+            }
+
+            Type? navigation = NavigationTypeOf(property.PropertyType);
+
+            if (navigation is not null)
+            {
+                Walk(navigation, path, depth + 1, fragments);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns the type to descend into for a property, or null when the property is a scalar.
+    /// Collections yield their element type, so <c>Orders.Total</c> resolves the same way a
+    /// reference navigation does.
+    /// </summary>
+    private static Type? NavigationTypeOf(Type propertyType)
+    {
+        if (propertyType == typeof(string) || propertyType.IsPrimitive || propertyType.IsEnum)
+        {
+            return null;
+        }
+
+        Type underlying = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+
+        if (underlying.IsPrimitive || underlying.IsEnum || underlying.Namespace?.StartsWith("System", StringComparison.Ordinal) == true)
+        {
+            Type? element = underlying.IsGenericType
+                ? underlying.GetGenericArguments().FirstOrDefault()
+                : null;
+
+            return element is not null && element.Namespace?.StartsWith("System", StringComparison.Ordinal) != true
+                ? element
+                : null;
+        }
+
+        return underlying.IsClass ? underlying : null;
     }
 
     /// <summary>

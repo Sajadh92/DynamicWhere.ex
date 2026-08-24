@@ -42,3 +42,12 @@ internal class PlainProduct
 
     public string Name { get; set; } = string.Empty;
 }
+
+/// <summary>A self-referencing type, used to prove the nested walk terminates.</summary>
+internal class SecuredNode
+{
+    [DwDenied]
+    public string Secret { get; set; } = string.Empty;
+
+    public SecuredNode? Next { get; set; }
+}

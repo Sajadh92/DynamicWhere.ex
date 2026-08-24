@@ -80,4 +80,46 @@ public class AttributeProviderTests
         Assert.DoesNotContain(fragments, f => f.FieldPath == "Name");
         Assert.DoesNotContain(fragments, f => f.FieldPath == "Id");
     }
+
+    [Fact]
+    public void Attributes_on_a_nested_reference_type_produce_dotted_paths()
+    {
+        PolicyFragment fragment = FragmentsFor<SecuredEmployee>()
+            .Single(f => f.FieldPath == "Contact.Email");
+
+        Assert.True(fragment.Covers(PolicyFeature.Where));
+        Assert.Equal(PolicyLevel.SealedAttribute, fragment.Level);
+    }
+
+    [Fact]
+    public void Undecorated_nested_properties_produce_no_fragments()
+    {
+        Assert.DoesNotContain(FragmentsFor<SecuredEmployee>(), f => f.FieldPath == "Contact.Phone");
+    }
+
+    [Fact]
+    public void A_self_referencing_type_terminates_instead_of_recursing_forever()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredNode>();
+
+        Assert.Contains(fragments, f => f.FieldPath == "Secret");
+        Assert.Contains(fragments, f => f.FieldPath == "Next.Secret");
+    }
+
+    [Fact]
+    public void Nesting_stops_at_the_configured_depth()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredNode>();
+
+        Assert.All(fragments, f => Assert.True(f.FieldPath.Count(c => c == '.') < AttributePolicyProvider.MaxDepth));
+    }
+
+    [Fact]
+    public void The_returned_fragments_cannot_be_cast_back_and_mutated()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredEmployee>();
+
+        Assert.Null(fragments as List<PolicyFragment>);
+        Assert.Throws<NotSupportedException>(() => ((IList<PolicyFragment>)fragments).Clear());
+    }
 }

@@ -50,10 +50,16 @@ public sealed class DwPolicyOptions
     /// <summary>
     /// Prevents any further change. Calling it more than once is harmless.
     /// </summary>
+    /// <remarks>
+    /// Not thread-safe. Call it during startup, before this instance is shared with request
+    /// threads. The caps are frozen before <see cref="IsFrozen"/> is set so that a caller racing
+    /// the freeze is refused rather than allowed through: the remaining window can only produce a
+    /// spurious rejection, never a write that slips past.
+    /// </remarks>
     public void Freeze()
     {
-        IsFrozen = true;
         Caps.Freeze();
+        IsFrozen = true;
     }
 
     /// <summary>

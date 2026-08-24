@@ -170,4 +170,49 @@ internal static class ErrorCode
     /// </returns>
     public static string HavingFieldMustExistInAggregateByAlias(string fieldName) =>
         $"HavingField[{fieldName}]MustExistInAggregateByAliases";
+
+    /// <summary>
+    /// Indicates that a policy refuses filtering on the requested field.
+    /// </summary>
+    public static string FieldDeniedForWhere => "FieldDeniedForWhere";
+
+    /// <summary>
+    /// Indicates that a policy refuses projecting the requested field.
+    /// </summary>
+    public static string FieldDeniedForSelect => "FieldDeniedForSelect";
+
+    /// <summary>
+    /// Indicates that a policy refuses sorting by the requested field.
+    /// </summary>
+    public static string FieldDeniedForOrder => "FieldDeniedForOrder";
+
+    /// <summary>
+    /// Indicates that a policy refuses grouping by the requested field.
+    /// </summary>
+    public static string FieldDeniedForGroup => "FieldDeniedForGroup";
+
+    /// <summary>
+    /// Indicates that a policy refuses aggregating the requested field.
+    /// </summary>
+    public static string FieldDeniedForAggregate => "FieldDeniedForAggregate";
+
+    /// <summary>
+    /// Indicates that a policy refuses the requested field inside a set operation.
+    /// </summary>
+    public static string FieldDeniedForSegment => "FieldDeniedForSegment";
+
+    /// <summary>
+    /// Indicates that every requested select field was refused, leaving no projection.
+    /// </summary>
+    public static string AllSelectsDenied => "AllSelectsDenied";
+
+    /// <summary>
+    /// Indicates that a query exceeded a configured cap.
+    /// </summary>
+    public static string CapExceeded => "CapExceeded";
+
+    /// <summary>
+    /// Indicates that a type requiring a policy context was queried without one.
+    /// </summary>
+    public static string PolicyRequired => "PolicyContextRequiredForThisEntity";
 }

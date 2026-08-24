@@ -61,4 +61,15 @@ public class PolicyOptionsTests
 
         Assert.True(options.IsFrozen);
     }
+
+    [Fact]
+    public void A_cap_below_one_is_rejected()
+    {
+        DwCaps caps = new DwPolicyOptions().Caps;
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxPageSize = 0);
+        Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxConditions = -1);
+        Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxOrderFields = 0);
+        Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxNavigationDepth = -5);
+    }
 }

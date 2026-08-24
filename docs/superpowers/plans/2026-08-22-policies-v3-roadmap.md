@@ -184,19 +184,24 @@ likewise independent once Phase 5 lands.
 
 ---
 
-## Known limitation — jagged collections are not walked
+## Resolved after Phase 1 — jagged collections are walked
 
-`AttributePolicyProvider` does not descend through a collection nested directly inside another
-collection. `PagedList<LineDto>[]`, `List<Post>[]`, and `List<List<Post>>` all resolve to scalar, so
-policy attributes on the innermost element type produce no fragments — and a field with no fragment
-is allowed.
+This was recorded as a known limitation and has since been fixed in `020ab4f`. Investigating it
+found the defect was wider than reported: an array type's `Namespace` is its *element's* namespace,
+so `AsNavigation` was accepting the array itself and `Post[][]` resolved to `Post[]`, sending the
+walker into `Length`, `Rank`, and `SyncRoot`. `PagedList<LineDto>[]` and `List<List<Post>>` each
+failed differently again.
 
-This is a deliberate stopping point rather than an oversight. Five navigation gaps of this shape
-were found and closed during Phase 1 (casing, outer whitespace, path segments, arrays/interfaces/
-structs, custom collection types); jagged collections are the sixth and by far the most obscure, and
-no entity or DTO shape in this repository uses one. Document it in the public reference rather than
-letting a consumer discover it by having a denial silently not apply. If it is ever fixed, the array
-branch in `NavigationTypeOf` needs to recurse rather than calling `AsNavigation` directly.
+`NavigationTypeOf` now peels collection layers in one bounded loop and applies the scalar checks
+once at the end, so arrays and collections cannot drift apart. The bound is a layer count, not a
+`next == current` check — the latter loops forever on a two-step cycle
+(`A : IEnumerable<B>`, `B : IEnumerable<A>`), and unbounded recursion on `class Weird :
+IEnumerable<Weird>` was confirmed to kill the process with a stack overflow rather than throw.
+On exhausting the bound the walker descends into the type it reached rather than returning null,
+because returning null would skip the subtree and fail open again.
+
+Phase 9 owes the public reference nothing here. Six navigation gaps of this shape were found during
+and after Phase 1; all six are closed.
 
 ## Carried forward from Phase 1
 
@@ -264,9 +269,10 @@ All five are the same defect in five places: a lookup key and a stored key norma
 in a system where a fragment that fails to match means access granted. None of the five was caught
 by a test. All five were caught by review.
 
-### Known limitation
+### Known limitations
 
-Jagged collections are not walked. See the section above.
+None outstanding. Jagged collections were the one open item and were fixed in `020ab4f`; see
+"Resolved after Phase 1" above.
 
 ### What Phase 2 inherits
 

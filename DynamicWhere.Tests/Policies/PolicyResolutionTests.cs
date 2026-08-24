@@ -281,4 +281,44 @@ public class PolicyResolutionTests
 
         Assert.True(policy.Allows(PolicyFeature.Select));
     }
+
+    [Fact]
+    public void No_runtime_rule_can_loosen_a_sealed_attribute()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("NationalId", PolicyFeature.All, PolicyEffect.Deny, PolicyLevel.SealedAttribute)
+            .Add("NationalId", PolicyFeature.All, PolicyEffect.Allow, PolicyLevel.DynamicUser, priority: 999);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "NationalId", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+        Assert.False(policy.Allows(PolicyFeature.Where));
+        Assert.True(policy.IsSealed);
+    }
+
+    [Fact]
+    public void A_sealed_attribute_on_one_feature_leaves_other_features_open_to_rules()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.SealedAttribute)
+            .Add("Salary", PolicyFeature.Order, PolicyEffect.Allow, PolicyLevel.DynamicRole)
+            .Add("Salary", PolicyFeature.Order, PolicyEffect.Deny, PolicyLevel.OverridableAttribute);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+        Assert.True(policy.Allows(PolicyFeature.Order));
+        Assert.True(policy.IsSealed);
+    }
+
+    [Fact]
+    public void A_policy_decided_only_by_rules_is_not_marked_sealed()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.False(policy.IsSealed);
+    }
 }

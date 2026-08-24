@@ -1,4 +1,7 @@
+using DynamicWhere.ex.Policies.Context;
+using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
+using DynamicWhere.ex.Policies.Resolution;
 
 namespace DynamicWhere.Tests.Policies;
 
@@ -50,5 +53,19 @@ public class PolicyResolutionTests
         Assert.True(PolicyLevel.DynamicRole < PolicyLevel.DynamicTenant);
         Assert.True(PolicyLevel.DynamicTenant < PolicyLevel.DynamicGlobal);
         Assert.True(PolicyLevel.DynamicGlobal < PolicyLevel.OverridableAttribute);
+    }
+
+    [Fact]
+    public void Fake_provider_returns_the_fragments_it_was_given()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        IReadOnlyList<PolicyFragment> fragments =
+            provider.GetFragments(typeof(object), new DwPolicyContext());
+
+        Assert.Single(fragments);
+        Assert.Equal("Salary", fragments[0].FieldPath);
+        Assert.Equal(PolicyLevel.DynamicRole, fragments[0].Level);
     }
 }

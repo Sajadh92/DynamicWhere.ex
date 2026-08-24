@@ -100,14 +100,17 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
 
     /// <summary>
     /// Returns the type to descend into for a property, or null when the property holds a value
-    /// rather than a navigation. Arrays and generic collections yield their element type, so
-    /// <c>Orders.Total</c> resolves the same way a reference navigation does.
+    /// rather than a navigation. Collections yield their element type, so <c>Orders.Total</c>
+    /// resolves the same way a reference navigation does.
     /// </summary>
     /// <remarks>
     /// A navigation the walker fails to recognize produces no fragments for anything beneath it,
-    /// and a field with no fragment is allowed — so this errs toward descending. Interfaces and
-    /// user-defined structs are followed as well as classes, because these attributes are supported
-    /// on DTOs, where an <c>IContact</c> reference or a record struct is ordinary.
+    /// and a field with no fragment is allowed — so this errs toward descending. Element types are
+    /// taken from the <see cref="IEnumerable{T}"/> a type implements rather than from where that
+    /// type is declared, which covers arrays, the BCL collections, and an application's own
+    /// <c>PagedList&lt;T&gt;</c> alike. Interfaces and user-defined structs are followed as well as
+    /// classes, because these attributes are supported on DTOs, where an <c>IContact</c> reference
+    /// or a record struct is ordinary.
     /// </remarks>
     private static Type? NavigationTypeOf(Type propertyType)
     {
@@ -118,14 +121,48 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             return AsNavigation(underlying.GetElementType());
         }
 
-        if (underlying.Namespace?.StartsWith("System", StringComparison.Ordinal) == true)
+        Type? element = ElementTypeOf(underlying);
+
+        if (element is not null)
         {
-            return underlying.IsGenericType
-                ? AsNavigation(underlying.GetGenericArguments().FirstOrDefault())
-                : null;
+            return AsNavigation(element);
         }
 
-        return AsNavigation(underlying);
+        return underlying.Namespace?.StartsWith("System", StringComparison.Ordinal) == true
+            ? null
+            : AsNavigation(underlying);
+    }
+
+    /// <summary>
+    /// Returns the <c>T</c> of the first <see cref="IEnumerable{T}"/> a type implements, or null
+    /// when it implements none.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="string"/> is excluded explicitly: it implements <c>IEnumerable&lt;char&gt;</c>,
+    /// and treating text as a collection of characters would send the walker into
+    /// <see cref="char"/> on every string property in the model.
+    /// </remarks>
+    private static Type? ElementTypeOf(Type type)
+    {
+        if (type == typeof(string))
+        {
+            return null;
+        }
+
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+        {
+            return type.GetGenericArguments()[0];
+        }
+
+        foreach (Type contract in type.GetInterfaces())
+        {
+            if (contract.IsGenericType && contract.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            {
+                return contract.GetGenericArguments()[0];
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

@@ -106,3 +106,38 @@ internal struct SecuredAuditStamp
 
     public DateTime ChangedAt { get; set; }
 }
+
+/// <summary>
+/// An application's own collection type. It is declared outside the <c>System</c> namespace, so it
+/// is recognizable as a collection only through the <see cref="IEnumerable{T}"/> it inherits.
+/// </summary>
+/// <typeparam name="T">The element type.</typeparam>
+internal class SecuredPagedList<T> : List<T>
+{
+}
+
+/// <summary>
+/// An application's own collection of simple values: a collection by contract, but its element is
+/// a value rather than a navigation.
+/// </summary>
+internal class SecuredNameList : List<string>
+{
+}
+
+/// <summary>
+/// A DTO holding navigations typed as the application's own collection types rather than an array
+/// or a BCL collection.
+/// </summary>
+internal class SecuredPagedInvoiceDto
+{
+    public int Id { get; set; }
+
+    /// <summary>A custom collection whose element type carries a policy attribute.</summary>
+    public SecuredPagedList<SecuredLineDto> Lines { get; set; } = new();
+
+    /// <summary>A custom collection of strings: a value, not a navigation into <see cref="char"/>.</summary>
+    public SecuredNameList Reviewers { get; set; } = new();
+
+    /// <summary>A keyed collection whose element is a <see cref="KeyValuePair{TKey,TValue}"/>.</summary>
+    public Dictionary<string, SecuredLineDto> LinesBySku { get; set; } = new();
+}

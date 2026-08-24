@@ -175,4 +175,39 @@ public class AttributeProviderTests
     {
         Assert.Empty(FragmentsFor<Blog>());
     }
+
+    [Fact]
+    public void Attributes_beneath_a_custom_collection_navigation_produce_dotted_paths()
+    {
+        PolicyFragment fragment = FragmentsFor<SecuredPagedInvoiceDto>()
+            .Single(f => f.FieldPath == "Lines.Cost");
+
+        Assert.Equal(PolicyFeature.All, fragment.Features);
+        Assert.Equal(PolicyLevel.SealedAttribute, fragment.Level);
+    }
+
+    [Fact]
+    public void A_custom_collection_of_simple_values_is_a_value_rather_than_a_navigation()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredPagedInvoiceDto>();
+
+        Assert.DoesNotContain(fragments, f => f.FieldPath.StartsWith("Reviewers."));
+    }
+
+    [Fact]
+    public void A_keyed_collection_is_a_value_rather_than_a_navigation()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredPagedInvoiceDto>();
+
+        Assert.DoesNotContain(fragments, f => f.FieldPath.StartsWith("LinesBySku."));
+    }
+
+    [Fact]
+    public void A_string_property_is_never_walked_as_a_collection_of_characters()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredEmployee>();
+
+        Assert.DoesNotContain(fragments, f => f.FieldPath.StartsWith("Name."));
+        Assert.DoesNotContain(fragments, f => f.FieldPath.StartsWith("NationalId."));
+    }
 }

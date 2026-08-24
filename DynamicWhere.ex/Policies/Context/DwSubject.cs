@@ -6,6 +6,19 @@ namespace DynamicWhere.ex.Policies.Context;
 /// One principal dimension of the caller — a role they hold, the tenant they belong to, or their
 /// own user identity. A caller is described by several of these at once.
 /// </summary>
+/// <remarks>
+/// Identity comparison is deliberately case-insensitive. Identities arrive from JWT claims and
+/// other token sources whose casing this library does not control, so comparing them ordinally
+/// would fail open: a rule targeting <c>Role:Manager</c> would not match a caller whose token
+/// says <c>manager</c>, and a rule written to deny access would silently not apply. Field paths
+/// in <c>PolicyFragment</c> are matched the same way, for the same reason. The accepted tradeoff
+/// is that two identities differing only in case are treated as the same subject.
+/// <para>
+/// Only comparison is case-insensitive. <see cref="Identity"/> is stored exactly as supplied —
+/// trimmed, but with its original casing — so <see cref="ToString"/> and any future explain
+/// output still show the operator what they actually typed.
+/// </para>
+/// </remarks>
 public sealed class DwSubject : IEquatable<DwSubject>
 {
     /// <summary>
@@ -40,13 +53,14 @@ public sealed class DwSubject : IEquatable<DwSubject>
     /// <inheritdoc />
     public bool Equals(DwSubject? other) =>
         other is not null && other.Kind == Kind &&
-        string.Equals(other.Identity, Identity, StringComparison.Ordinal);
+        string.Equals(other.Identity, Identity, StringComparison.OrdinalIgnoreCase);
 
     /// <inheritdoc />
     public override bool Equals(object? obj) => Equals(obj as DwSubject);
 
     /// <inheritdoc />
-    public override int GetHashCode() => HashCode.Combine(Kind, Identity);
+    public override int GetHashCode() =>
+        HashCode.Combine(Kind, StringComparer.OrdinalIgnoreCase.GetHashCode(Identity));
 
     /// <inheritdoc />
     public override string ToString() =>

@@ -68,4 +68,73 @@ public class PolicyResolutionTests
         Assert.Equal("Salary", fragments[0].FieldPath);
         Assert.Equal(PolicyLevel.DynamicRole, fragments[0].Level);
     }
+
+    private static PolicyResolver Resolver(params IDwPolicyProvider[] providers) => new(providers);
+
+    [Fact]
+    public void A_single_deny_fragment_denies_that_feature_and_leaves_others_alone()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+        Assert.True(policy.Allows(PolicyFeature.Where));
+        Assert.True(policy.Allows(PolicyFeature.Order));
+    }
+
+    [Fact]
+    public void A_field_with_no_fragments_allows_everything()
+    {
+        FieldPolicy policy = Resolver(new FakePolicyProvider())
+            .Resolve(typeof(object), "Name", new DwPolicyContext());
+
+        Assert.True(policy.Allows(PolicyFeature.Where));
+        Assert.True(policy.Allows(PolicyFeature.Select));
+        Assert.Empty(policy.Sources);
+    }
+
+    [Fact]
+    public void A_multi_feature_fragment_applies_to_every_feature_it_names()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select | PolicyFeature.Order, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+        Assert.False(policy.Allows(PolicyFeature.Order));
+        Assert.True(policy.Allows(PolicyFeature.Group));
+    }
+
+    [Fact]
+    public void Fragments_for_other_fields_are_ignored()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.All, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Name", new DwPolicyContext());
+
+        Assert.True(policy.Allows(PolicyFeature.Select));
+    }
+
+    [Fact]
+    public void A_padded_field_path_still_matches_its_fragments()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "  Salary  ", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+        Assert.Equal("Salary", policy.FieldPath);
+    }
+
+    [Fact]
+    public void A_blank_field_path_is_rejected()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            Resolver(new FakePolicyProvider()).Resolve(typeof(object), "  ", new DwPolicyContext()));
+    }
 }

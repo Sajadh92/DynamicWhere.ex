@@ -223,4 +223,62 @@ public class PolicyResolutionTests
 
         Assert.False(policy.Allows(PolicyFeature.Select));
     }
+
+    [Fact]
+    public void Higher_priority_wins_within_a_level()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole, priority: 1)
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Allow, PolicyLevel.DynamicRole, priority: 10);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.True(policy.Allows(PolicyFeature.Select));
+    }
+
+    [Fact]
+    public void Deny_beats_allow_when_two_roles_tie_on_priority()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Allow, PolicyLevel.DynamicRole)
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+    }
+
+    [Fact]
+    public void Deny_beats_mask_and_mask_beats_allow_on_a_three_way_tie()
+    {
+        FakePolicyProvider maskOverAllow = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Allow, PolicyLevel.DynamicRole)
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Mask, PolicyLevel.DynamicRole);
+
+        FieldPolicy masked = Resolver(maskOverAllow)
+            .Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.Equal(PolicyEffect.Mask, masked.EffectFor(PolicyFeature.Select));
+
+        FakePolicyProvider denyOverMask = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Mask, PolicyLevel.DynamicRole)
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy denied = Resolver(denyOverMask)
+            .Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.Equal(PolicyEffect.Deny, denied.EffectFor(PolicyFeature.Select));
+    }
+
+    [Fact]
+    public void Priority_is_compared_before_effect()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole, priority: 1)
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Allow, PolicyLevel.DynamicRole, priority: 5);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.True(policy.Allows(PolicyFeature.Select));
+    }
 }

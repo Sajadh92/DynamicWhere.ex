@@ -93,10 +93,11 @@ public sealed class PolicyResolver
     /// Picks the single fragment that decides one feature, or null when none speaks to it.
     /// </summary>
     /// <remarks>
-    /// Level is compared first: the most authoritative level that supplies any fragment wins
-    /// outright, and levels below it are discarded rather than merged. Within that level a rule
-    /// naming the field beats a wildcard, so a broad denial can be relaxed field by field without
-    /// deleting it.
+    /// Comparison runs in four passes. Level first: the most authoritative level that supplies any
+    /// fragment wins outright, and levels below it are discarded rather than merged. Then
+    /// specificity, so a rule naming the field beats a wildcard. Then priority, highest first.
+    /// Whatever still ties is settled by effect, where Deny beats Mask and Mask beats Allow — which
+    /// is what makes a caller holding two roles fall to the stricter of them.
     /// </remarks>
     private static PolicyFragment? Decide(IReadOnlyList<PolicyFragment> candidates, PolicyFeature feature)
     {
@@ -118,6 +119,12 @@ public sealed class PolicyResolver
             atLevel = exact;
         }
 
-        return atLevel[0];
+        int topPriority = atLevel.Max(f => f.Priority);
+
+        List<PolicyFragment> contenders = atLevel.Where(f => f.Priority == topPriority).ToList();
+
+        PolicyEffect strongest = contenders.Max(f => f.Effect);
+
+        return contenders.First(f => f.Effect == strongest);
     }
 }

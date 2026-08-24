@@ -69,6 +69,15 @@ public class PolicyFragmentTests
     }
 
     [Fact]
+    public void Normalizing_a_null_path_names_the_parameter_rather_than_dereferencing_it()
+    {
+        ArgumentNullException error =
+            Assert.Throws<ArgumentNullException>(() => PolicyFragment.NormalizePath(null!));
+
+        Assert.Equal("fieldPath", error.ParamName);
+    }
+
+    [Fact]
     public void Attribute_source_records_the_attribute_name_and_whether_it_was_sealed()
     {
         PolicySource source = PolicySource.FromAttribute("DwDeniedAttribute", isSealed: true);

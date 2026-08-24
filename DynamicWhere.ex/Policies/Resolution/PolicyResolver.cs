@@ -163,38 +163,68 @@ public sealed class PolicyResolver
     /// Picks the single fragment that decides one feature, or null when none speaks to it.
     /// </summary>
     /// <remarks>
-    /// Comparison runs in four passes. Level first: the most authoritative level that supplies any
-    /// fragment wins outright, and levels below it are discarded rather than merged. Then
-    /// specificity, so a rule naming the field beats a wildcard. Then priority, highest first.
-    /// Whatever still ties is settled by effect, where Deny beats Mask and Mask beats Allow — which
-    /// is what makes a caller holding two roles fall to the stricter of them.
+    /// One pass, no allocation. Runs once per feature per field per query, so the staged filtering
+    /// this replaced — four intermediate lists and as many closures — cost more than the work it did.
+    /// <para>
+    /// The ranking is unchanged: level, then specificity, then priority, then strongest effect. See
+    /// <see cref="Outranks"/>.
+    /// </para>
     /// </remarks>
     private static PolicyFragment? Decide(IReadOnlyList<PolicyFragment> candidates, PolicyFeature feature)
     {
-        List<PolicyFragment> speaking = candidates.Where(f => f.Covers(feature)).ToList();
+        PolicyFragment? best = null;
 
-        if (speaking.Count == 0)
+        for (int i = 0; i < candidates.Count; i++)
         {
-            return null;
+            PolicyFragment candidate = candidates[i];
+
+            if (!candidate.Covers(feature))
+            {
+                continue;
+            }
+
+            if (best is null || Outranks(candidate, best))
+            {
+                best = candidate;
+            }
         }
 
-        PolicyLevel best = speaking.Min(f => f.Level);
+        return best;
+    }
 
-        List<PolicyFragment> atLevel = speaking.Where(f => f.Level == best).ToList();
-
-        List<PolicyFragment> exact = atLevel.Where(f => !f.IsWildcard).ToList();
-
-        if (exact.Count > 0)
+    /// <summary>
+    /// True when <paramref name="candidate"/> beats <paramref name="incumbent"/> under the four
+    /// precedence rules, compared in order.
+    /// </summary>
+    /// <remarks>
+    /// Level first: the most authoritative level wins outright, and weaker levels are discarded
+    /// rather than merged — that is what makes a sealed attribute absolute. Then specificity, so a
+    /// rule naming the field beats a wildcard and a broad denial can be relaxed field by field
+    /// without deleting it. Then priority, highest first, so an operator can author a deliberate
+    /// exception. Whatever still ties falls to the strictest effect, which is what makes a caller
+    /// holding two conflicting roles land on the stricter of them.
+    /// <para>
+    /// A fragment tying on all four does not outrank the incumbent, so the earliest-encountered
+    /// fragment wins. That matches the filtering this replaced.
+    /// </para>
+    /// </remarks>
+    private static bool Outranks(PolicyFragment candidate, PolicyFragment incumbent)
+    {
+        if (candidate.Level != incumbent.Level)
         {
-            atLevel = exact;
+            return candidate.Level < incumbent.Level;
         }
 
-        int topPriority = atLevel.Max(f => f.Priority);
+        if (candidate.IsWildcard != incumbent.IsWildcard)
+        {
+            return !candidate.IsWildcard;
+        }
 
-        List<PolicyFragment> contenders = atLevel.Where(f => f.Priority == topPriority).ToList();
+        if (candidate.Priority != incumbent.Priority)
+        {
+            return candidate.Priority > incumbent.Priority;
+        }
 
-        PolicyEffect strongest = contenders.Max(f => f.Effect);
-
-        return contenders.First(f => f.Effect == strongest);
+        return candidate.Effect > incumbent.Effect;
     }
 }

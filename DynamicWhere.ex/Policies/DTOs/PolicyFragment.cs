@@ -104,8 +104,14 @@ public sealed class PolicyFragment
     /// </remarks>
     /// <param name="fieldPath">The raw path.</param>
     /// <returns>The canonical path, or <see cref="Wildcard"/> unchanged.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="fieldPath"/> is null.</exception>
     public static string NormalizePath(string fieldPath)
     {
+        if (fieldPath is null)
+        {
+            throw new ArgumentNullException(nameof(fieldPath));
+        }
+
         string trimmed = fieldPath.Trim();
 
         if (trimmed == Wildcard)

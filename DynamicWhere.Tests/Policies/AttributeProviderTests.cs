@@ -210,4 +210,67 @@ public class AttributeProviderTests
         Assert.DoesNotContain(fragments, f => f.FieldPath.StartsWith("Name."));
         Assert.DoesNotContain(fragments, f => f.FieldPath.StartsWith("NationalId."));
     }
+
+    [Fact]
+    public void Attributes_beneath_an_array_of_a_custom_collection_produce_dotted_paths()
+    {
+        PolicyFragment fragment = FragmentsFor<SecuredJaggedInvoiceDto>()
+            .Single(f => f.FieldPath == "Lines.Cost");
+
+        Assert.Equal(PolicyFeature.All, fragment.Features);
+        Assert.Equal(PolicyLevel.SealedAttribute, fragment.Level);
+    }
+
+    [Fact]
+    public void Attributes_beneath_a_collection_of_collections_produce_dotted_paths()
+    {
+        PolicyFragment fragment = FragmentsFor<SecuredJaggedInvoiceDto>()
+            .Single(f => f.FieldPath == "Batches.Cost");
+
+        Assert.Equal(PolicyFeature.All, fragment.Features);
+        Assert.Equal(PolicyLevel.SealedAttribute, fragment.Level);
+    }
+
+    [Fact]
+    public void Attributes_beneath_a_jagged_array_produce_dotted_paths()
+    {
+        PolicyFragment fragment = FragmentsFor<SecuredJaggedInvoiceDto>()
+            .Single(f => f.FieldPath == "Grid.Cost");
+
+        Assert.Equal(PolicyFeature.All, fragment.Features);
+        Assert.Equal(PolicyLevel.SealedAttribute, fragment.Level);
+    }
+
+    [Fact]
+    public void An_array_of_a_collection_of_simple_values_is_a_value_rather_than_a_navigation()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredJaggedInvoiceDto>();
+
+        Assert.DoesNotContain(fragments, f => f.FieldPath.StartsWith("Reviewers."));
+    }
+
+    [Fact]
+    public void A_jagged_array_of_simple_values_is_a_value_rather_than_a_navigation()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredJaggedInvoiceDto>();
+
+        Assert.DoesNotContain(fragments, f => f.FieldPath.StartsWith("Signatures."));
+        Assert.DoesNotContain(fragments, f => f.FieldPath.StartsWith("Labels."));
+    }
+
+    [Fact]
+    public void A_type_that_enumerates_itself_terminates_and_is_still_walked()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredRecursiveDto>();
+
+        Assert.Contains(fragments, f => f.FieldPath == "Children.Secret");
+    }
+
+    [Fact]
+    public void A_two_step_collection_cycle_terminates_and_is_still_walked()
+    {
+        IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredRecursiveDto>();
+
+        Assert.Contains(fragments, f => f.FieldPath is "Cycle.SecretA" or "Cycle.SecretB");
+    }
 }

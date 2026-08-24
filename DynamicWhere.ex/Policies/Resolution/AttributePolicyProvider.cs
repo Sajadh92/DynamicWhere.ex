@@ -99,6 +99,23 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     }
 
     /// <summary>
+    /// How many collection layers <see cref="NavigationTypeOf"/> peels off a single property type
+    /// before it stops and walks whatever it has reached.
+    /// </summary>
+    /// <remarks>
+    /// Two layers cover every shape seen in practice — an array of a collection, a jagged array, a
+    /// collection of collections — so four leaves headroom without the count ever mattering to a
+    /// real model. The limit exists for the types that have no bottom to reach: a tree node
+    /// declared as <c>class Node : IEnumerable&lt;Node&gt;</c> unwraps to itself forever, and a pair
+    /// declared as <c>A : IEnumerable&lt;B&gt;</c> and <c>B : IEnumerable&lt;A&gt;</c> alternates
+    /// forever without ever unwrapping to the type it just came from, so a guard comparing one
+    /// layer against the next would not stop it. Any fixed count stops both, whatever the length of
+    /// the cycle. Reaching the limit is not treated as "no navigation": the type reached is still
+    /// walked, because skipping it would suppress every attribute beneath it.
+    /// </remarks>
+    private const int MaxCollectionLayers = 4;
+
+    /// <summary>
     /// Returns the type to descend into for a property, or null when the property holds a value
     /// rather than a navigation. Collections yield their element type, so <c>Orders.Total</c>
     /// resolves the same way a reference navigation does.
@@ -108,36 +125,44 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// and a field with no fragment is allowed — so this errs toward descending. Element types are
     /// taken from the <see cref="IEnumerable{T}"/> a type implements rather than from where that
     /// type is declared, which covers arrays, the BCL collections, and an application's own
-    /// <c>PagedList&lt;T&gt;</c> alike. Interfaces and user-defined structs are followed as well as
-    /// classes, because these attributes are supported on DTOs, where an <c>IContact</c> reference
-    /// or a record struct is ordinary.
+    /// <c>PagedList&lt;T&gt;</c> alike. Collection layers are peeled until a non-collection is
+    /// reached, so <c>PagedList&lt;LineDto&gt;[]</c>, <c>LineDto[][]</c> and
+    /// <c>List&lt;List&lt;LineDto&gt;&gt;</c> all resolve to <c>LineDto</c> rather than to the
+    /// collection in between, whose own members (<c>Count</c>, <c>Length</c>, <c>Item</c>) carry no
+    /// policy and would end the walk short of the decorated fields. The value tests are applied
+    /// once, to whatever is left at the bottom, so peeling extra layers never turns
+    /// <c>byte[][]</c> into a walk over <see cref="byte"/>. Interfaces and user-defined structs are
+    /// followed as well as classes, because these attributes are supported on DTOs, where an
+    /// <c>IContact</c> reference or a record struct is ordinary.
     /// </remarks>
     private static Type? NavigationTypeOf(Type propertyType)
     {
-        Type underlying = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+        Type current = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
 
-        if (underlying.IsArray)
+        for (int layer = 0; layer < MaxCollectionLayers; layer++)
         {
-            return AsNavigation(underlying.GetElementType());
+            Type? element = ElementTypeOf(current);
+
+            if (element is null)
+            {
+                break;
+            }
+
+            current = Nullable.GetUnderlyingType(element) ?? element;
         }
 
-        Type? element = ElementTypeOf(underlying);
-
-        if (element is not null)
-        {
-            return AsNavigation(element);
-        }
-
-        return underlying.Namespace?.StartsWith("System", StringComparison.Ordinal) == true
-            ? null
-            : AsNavigation(underlying);
+        return AsNavigation(current);
     }
 
     /// <summary>
-    /// Returns the <c>T</c> of the first <see cref="IEnumerable{T}"/> a type implements, or null
-    /// when it implements none.
+    /// Returns the element type of one collection layer — the element of an array, or the <c>T</c>
+    /// of the first <see cref="IEnumerable{T}"/> a type implements — or null when the type is not a
+    /// collection.
     /// </summary>
     /// <remarks>
+    /// Arrays are read through <see cref="Type.GetElementType"/> rather than through their
+    /// interfaces, because a multidimensional array implements only the non-generic
+    /// <see cref="System.Collections.IEnumerable"/> and would otherwise be mistaken for a value.
     /// <see cref="string"/> is excluded explicitly: it implements <c>IEnumerable&lt;char&gt;</c>,
     /// and treating text as a collection of characters would send the walker into
     /// <see cref="char"/> on every string property in the model.
@@ -147,6 +172,11 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
         if (type == typeof(string))
         {
             return null;
+        }
+
+        if (type.IsArray)
+        {
+            return type.GetElementType();
         }
 
         if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
@@ -168,6 +198,15 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// <summary>
     /// Returns the type when it is one the walker should descend into, otherwise null.
     /// </summary>
+    /// <remarks>
+    /// This is the only place a type is rejected as a value, and it runs once, on what is left
+    /// after every collection layer has been peeled — which is what keeps <c>byte[][]</c>, and an
+    /// array of a <c>List&lt;string&gt;</c> subclass, from being walked as navigations. The
+    /// namespace test stands in for "declared by the framework rather than by the application": a
+    /// BCL type reached at the bottom of a property, such as <see cref="DateTime"/> or a
+    /// <see cref="KeyValuePair{TKey,TValue}"/> out of a dictionary, holds no policy attributes and
+    /// is a value as far as a filter is concerned.
+    /// </remarks>
     private static Type? AsNavigation(Type? type)
     {
         if (type is null || type == typeof(string) || type.IsPrimitive || type.IsEnum)

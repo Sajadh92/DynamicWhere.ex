@@ -1,3 +1,4 @@
+using System.Collections;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Enums;
 
@@ -140,4 +141,91 @@ internal class SecuredPagedInvoiceDto
 
     /// <summary>A keyed collection whose element is a <see cref="KeyValuePair{TKey,TValue}"/>.</summary>
     public Dictionary<string, SecuredLineDto> LinesBySku { get; set; } = new();
+}
+
+/// <summary>
+/// A DTO whose navigations are wrapped in more than one collection layer. Each of these holds
+/// <see cref="SecuredLineDto"/> at the bottom, so a walker that stops after peeling a single layer
+/// lands on collection plumbing — or on nothing — and never reaches the denied field.
+/// </summary>
+internal class SecuredJaggedInvoiceDto
+{
+    public int Id { get; set; }
+
+    /// <summary>An array whose element is the application's own collection type.</summary>
+    public SecuredPagedList<SecuredLineDto>[] Lines { get; set; } =
+        Array.Empty<SecuredPagedList<SecuredLineDto>>();
+
+    /// <summary>A BCL collection nested inside another: not an array at any level.</summary>
+    public List<List<SecuredLineDto>> Batches { get; set; } = new();
+
+    /// <summary>A jagged array: two array layers rather than an array over a collection.</summary>
+    public SecuredLineDto[][] Grid { get; set; } = Array.Empty<SecuredLineDto[]>();
+
+    /// <summary>An array of a collection of simple values: still a value, not a navigation.</summary>
+    public SecuredNameList[] Reviewers { get; set; } = Array.Empty<SecuredNameList>();
+
+    /// <summary>A jagged array of a primitive: peeling both layers must still reach a value.</summary>
+    public byte[][] Signatures { get; set; } = Array.Empty<byte[]>();
+
+    /// <summary>A jagged array of text: peeling both layers must not walk into <see cref="char"/>.</summary>
+    public string[][] Labels { get; set; } = Array.Empty<string[]>();
+}
+
+/// <summary>
+/// A tree node that implements its own child collection. Ordinary in application code, and the
+/// shape that makes an unbounded unwrap non-terminating: its element type is itself.
+/// </summary>
+internal class SecuredTreeNode : IEnumerable<SecuredTreeNode>
+{
+    [DwDenied]
+    public string Secret { get; set; } = string.Empty;
+
+    /// <inheritdoc />
+    public IEnumerator<SecuredTreeNode> GetEnumerator() =>
+        Enumerable.Empty<SecuredTreeNode>().GetEnumerator();
+
+    /// <inheritdoc />
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+/// <summary>
+/// Half of a two-step collection cycle. Its element type is never itself, so a guard that only
+/// compares one unwrap against the next would follow this pair forever.
+/// </summary>
+internal class SecuredCycleA : IEnumerable<SecuredCycleB>
+{
+    [DwDenied]
+    public string SecretA { get; set; } = string.Empty;
+
+    /// <inheritdoc />
+    public IEnumerator<SecuredCycleB> GetEnumerator() =>
+        Enumerable.Empty<SecuredCycleB>().GetEnumerator();
+
+    /// <inheritdoc />
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+/// <summary>The other half of the two-step collection cycle.</summary>
+internal class SecuredCycleB : IEnumerable<SecuredCycleA>
+{
+    [DwDenied]
+    public string SecretB { get; set; } = string.Empty;
+
+    /// <inheritdoc />
+    public IEnumerator<SecuredCycleA> GetEnumerator() =>
+        Enumerable.Empty<SecuredCycleA>().GetEnumerator();
+
+    /// <inheritdoc />
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+/// <summary>A DTO holding the two collection shapes that have no bottom to unwrap to.</summary>
+internal class SecuredRecursiveDto
+{
+    /// <summary>A type whose own element type is itself.</summary>
+    public SecuredTreeNode? Children { get; set; }
+
+    /// <summary>The entry point into a two-step collection cycle.</summary>
+    public SecuredCycleA? Cycle { get; set; }
 }

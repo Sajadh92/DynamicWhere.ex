@@ -22,7 +22,9 @@ public sealed class PolicyFragment
     /// <param name="source">Where it came from, for tracing.</param>
     /// <param name="priority">Tiebreak within a level. Higher wins.</param>
     /// <param name="payload">Strategy detail, unused until masking arrives.</param>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="fieldPath"/> is blank.</exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="fieldPath"/> is blank, or names no segment once normalized.
+    /// </exception>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="source"/> is null.</exception>
     public PolicyFragment(
         string fieldPath,
@@ -38,7 +40,15 @@ public sealed class PolicyFragment
             throw new ArgumentException("A fragment requires a field path.", nameof(fieldPath));
         }
 
-        FieldPath = fieldPath.Trim();
+        string normalized = NormalizePath(fieldPath);
+
+        if (normalized.Length == 0)
+        {
+            throw new ArgumentException(
+                "A fragment requires a field path with at least one segment.", nameof(fieldPath));
+        }
+
+        FieldPath = normalized;
         Features = features;
         Effect = effect;
         Level = level;
@@ -80,4 +90,29 @@ public sealed class PolicyFragment
 
     /// <summary>True when this fragment speaks to the given feature.</summary>
     public bool Covers(PolicyFeature feature) => (Features & feature) == feature;
+
+    /// <summary>
+    /// Reduces a field path to the canonical form used for matching: outer whitespace removed,
+    /// each segment trimmed, empty segments dropped.
+    /// </summary>
+    /// <remarks>
+    /// This must agree with how the rest of the library normalizes a property path — see
+    /// <c>CacheReflection.ValidatePropertyPathInternal</c>, which a query's own field names pass
+    /// through. A fragment stored under one spelling and looked up under another simply does not
+    /// match, and a fragment that does not match is access granted. Segment casing needs no
+    /// handling here because <see cref="Matches"/> compares case-insensitively.
+    /// </remarks>
+    /// <param name="fieldPath">The raw path.</param>
+    /// <returns>The canonical path, or <see cref="Wildcard"/> unchanged.</returns>
+    public static string NormalizePath(string fieldPath)
+    {
+        string trimmed = fieldPath.Trim();
+
+        if (trimmed == Wildcard)
+        {
+            return Wildcard;
+        }
+
+        return string.Join('.', trimmed.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
 }

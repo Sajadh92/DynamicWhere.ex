@@ -321,4 +321,156 @@ public class PolicyResolutionTests
 
         Assert.False(policy.IsSealed);
     }
+
+    [Fact]
+    public void Every_provider_contributes_not_only_the_first()
+    {
+        FakePolicyProvider selectRules = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FakePolicyProvider orderRules = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Order, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(selectRules, orderRules)
+            .Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+        Assert.False(policy.Allows(PolicyFeature.Order));
+        Assert.True(policy.Allows(PolicyFeature.Where));
+    }
+
+    [Fact]
+    public void The_sealed_flag_is_derived_from_the_level_of_the_fragment_that_won()
+    {
+        FieldPolicy fromAttribute = Resolver(new FakePolicyProvider()
+                .Add("NationalId", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.SealedAttribute))
+            .Resolve(typeof(object), "NationalId", new DwPolicyContext());
+
+        FieldPolicy fromRule = Resolver(new FakePolicyProvider()
+                .Add("NationalId", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole))
+            .Resolve(typeof(object), "NationalId", new DwPolicyContext());
+
+        Assert.True(fromAttribute.IsSealed);
+        Assert.False(fromRule.IsSealed);
+    }
+
+    [Fact]
+    public void One_fragment_deciding_two_features_is_recorded_as_one_source()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select | PolicyFeature.Order, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+        Assert.False(policy.Allows(PolicyFeature.Order));
+        Assert.Single(policy.Sources);
+    }
+
+    [Theory]
+    // Every row here is a fragment path and a lookup path that name the same field. Both sides must
+    // reduce to the same canonical spelling, in both directions, or the Deny fragment is missed --
+    // and a field with no matching fragment is allowed.
+    [InlineData("Customer. Name", "Customer.Name")]
+    [InlineData("Customer.Name", "Customer. Name")]
+    [InlineData("Customer .Name", "Customer.Name")]
+    [InlineData("Customer.Name", "Customer .Name")]
+    [InlineData("Customer..Name", "Customer.Name")]
+    [InlineData("Customer.Name", "Customer..Name")]
+    [InlineData(" Customer . Name ", "Customer.Name")]
+    [InlineData("Customer.Name", " Customer . Name ")]
+    public void A_nested_path_matches_however_its_separators_are_spaced(string fragmentPath, string lookupPath)
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add(fragmentPath, PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), lookupPath, new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+        Assert.Equal("Customer.Name", policy.FieldPath);
+    }
+
+    [Fact]
+    public void A_padded_wildcard_still_addresses_every_field()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add(" * ", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy topLevel = Resolver(provider).Resolve(typeof(object), "Name", new DwPolicyContext());
+        FieldPolicy nested = Resolver(provider).Resolve(typeof(object), "Customer.Name", new DwPolicyContext());
+
+        Assert.False(topLevel.Allows(PolicyFeature.Select));
+        Assert.False(nested.Allows(PolicyFeature.Select));
+    }
+
+    [Fact]
+    public void A_path_of_nothing_but_separators_is_rejected_at_both_entry_points()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new PolicyFragment("...", PolicyFeature.All, PolicyEffect.Deny,
+                PolicyLevel.DynamicRole, PolicySource.FromRule("r1", "Role:Manager")));
+
+        Assert.Throws<ArgumentException>(() =>
+            Resolver(new FakePolicyProvider()).Resolve(typeof(object), "...", new DwPolicyContext()));
+    }
+
+    [Fact]
+    public void A_null_entity_type_is_rejected_rather_than_resolved_against_no_fragments()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            Resolver(new FakePolicyProvider()).Resolve(null!, "Salary", new DwPolicyContext()));
+    }
+
+    [Fact]
+    public void A_null_context_is_rejected_rather_than_resolved_against_no_fragments()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            Resolver(new FakePolicyProvider()).Resolve(typeof(object), "Salary", null!));
+    }
+
+    [Fact]
+    public void A_provider_returning_null_fails_closed_and_is_named_in_the_message()
+    {
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(() =>
+            Resolver(new NullReturningProvider()).Resolve(typeof(object), "Salary", new DwPolicyContext()));
+
+        Assert.Contains(nameof(NullReturningProvider), error.Message);
+    }
+
+    [Fact]
+    public void A_provider_returning_a_null_fragment_fails_closed_and_is_named_in_the_message()
+    {
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(() =>
+            Resolver(new NullFragmentProvider()).Resolve(typeof(object), "Salary", new DwPolicyContext()));
+
+        Assert.Contains(nameof(NullFragmentProvider), error.Message);
+    }
+
+    [Fact]
+    public void A_null_provider_in_the_sequence_is_rejected_when_the_resolver_is_built()
+    {
+        ArgumentException error =
+            Assert.Throws<ArgumentException>(() => Resolver(new FakePolicyProvider(), null!));
+
+        Assert.Contains("1", error.Message);
+    }
+
+    /// <summary>
+    /// A provider that returns null rather than an empty list. Legal against the compiler only
+    /// because nullable annotations are advisory, and exactly what a third-party implementation
+    /// might do by accident.
+    /// </summary>
+    private sealed class NullReturningProvider : IDwPolicyProvider
+    {
+        /// <inheritdoc />
+        public IReadOnlyList<PolicyFragment> GetFragments(Type entityType, DwPolicyContext context) => null!;
+    }
+
+    /// <summary>A provider whose returned list holds a null element.</summary>
+    private sealed class NullFragmentProvider : IDwPolicyProvider
+    {
+        /// <inheritdoc />
+        public IReadOnlyList<PolicyFragment> GetFragments(Type entityType, DwPolicyContext context) =>
+            new PolicyFragment[] { null! };
+    }
 }

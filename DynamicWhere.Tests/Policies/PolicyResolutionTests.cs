@@ -1,0 +1,37 @@
+using DynamicWhere.ex.Policies.Enums;
+
+namespace DynamicWhere.Tests.Policies;
+
+/// <summary>
+/// Covers <see cref="PolicyResolver"/> and the models it merges. No database is involved;
+/// every test constructs fragments directly or through <see cref="FakePolicyProvider"/>.
+/// </summary>
+public class PolicyResolutionTests
+{
+    [Fact]
+    public void PolicyFeature_All_covers_every_individual_flag()
+    {
+        PolicyFeature all = PolicyFeature.All;
+
+        Assert.True(all.HasFlag(PolicyFeature.Where));
+        Assert.True(all.HasFlag(PolicyFeature.Select));
+        Assert.True(all.HasFlag(PolicyFeature.Order));
+        Assert.True(all.HasFlag(PolicyFeature.Group));
+        Assert.True(all.HasFlag(PolicyFeature.Aggregate));
+        Assert.True(all.HasFlag(PolicyFeature.Segment));
+        Assert.Equal(63, (int)all);
+    }
+
+    [Fact]
+    public void PolicyFeature_flags_are_distinct_powers_of_two()
+    {
+        int[] singles =
+        {
+            (int)PolicyFeature.Where, (int)PolicyFeature.Select, (int)PolicyFeature.Order,
+            (int)PolicyFeature.Group, (int)PolicyFeature.Aggregate, (int)PolicyFeature.Segment
+        };
+
+        Assert.Equal(singles.Length, singles.Distinct().Count());
+        Assert.All(singles, v => Assert.Equal(0, v & (v - 1)));
+    }
+}

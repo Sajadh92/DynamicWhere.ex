@@ -92,10 +92,21 @@ public sealed class PolicyResolver
     /// <summary>
     /// Picks the single fragment that decides one feature, or null when none speaks to it.
     /// </summary>
+    /// <remarks>
+    /// The most authoritative level that supplies any fragment wins outright. Levels below it are
+    /// discarded, not merged — that is what makes a sealed attribute absolute.
+    /// </remarks>
     private static PolicyFragment? Decide(IReadOnlyList<PolicyFragment> candidates, PolicyFeature feature)
     {
         List<PolicyFragment> speaking = candidates.Where(f => f.Covers(feature)).ToList();
 
-        return speaking.Count == 0 ? null : speaking[0];
+        if (speaking.Count == 0)
+        {
+            return null;
+        }
+
+        PolicyLevel best = speaking.Min(f => f.Level);
+
+        return speaking.First(f => f.Level == best);
     }
 }

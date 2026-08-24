@@ -137,4 +137,54 @@ public class PolicyResolutionTests
         Assert.Throws<ArgumentException>(() =>
             Resolver(new FakePolicyProvider()).Resolve(typeof(object), "  ", new DwPolicyContext()));
     }
+
+    [Fact]
+    public void A_role_rule_replaces_an_overridable_attribute_default()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.OverridableAttribute)
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Allow, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.True(policy.Allows(PolicyFeature.Select));
+    }
+
+    [Fact]
+    public void A_user_rule_beats_a_role_rule()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Allow, PolicyLevel.DynamicRole)
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicUser);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+    }
+
+    [Fact]
+    public void A_global_rule_loses_to_a_tenant_rule()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicGlobal)
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Allow, PolicyLevel.DynamicTenant);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.True(policy.Allows(PolicyFeature.Select));
+    }
+
+    [Fact]
+    public void Levels_are_decided_per_feature_not_once_for_the_whole_field()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Where, PolicyEffect.Deny, PolicyLevel.DynamicUser)
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.OverridableAttribute)
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Allow, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "Salary", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Where));
+        Assert.True(policy.Allows(PolicyFeature.Select));
+    }
 }

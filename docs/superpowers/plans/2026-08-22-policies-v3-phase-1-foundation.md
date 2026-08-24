@@ -1455,7 +1455,32 @@ Add to `PolicyResolutionTests.cs`, inside the class:
 
         Assert.True(policy.Allows(PolicyFeature.Select));
     }
+
+    [Fact]
+    public void A_padded_field_path_still_matches_its_fragments()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Salary", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicRole);
+
+        FieldPolicy policy = Resolver(provider).Resolve(typeof(object), "  Salary  ", new DwPolicyContext());
+
+        Assert.False(policy.Allows(PolicyFeature.Select));
+        Assert.Equal("Salary", policy.FieldPath);
+    }
+
+    [Fact]
+    public void A_blank_field_path_is_rejected()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            Resolver(new FakePolicyProvider()).Resolve(typeof(object), "  ", new DwPolicyContext()));
+    }
 ```
+
+The last two tests were added during execution, after Task 7A found that `PolicyFragment` trims its stored
+path while `FieldPolicy` did not. An untrimmed lookup would fail to match a fragment targeting the same
+field, and a `Deny` fragment that fails to match is access granted — the same fail-open shape as the
+subject-casing bug, on a different axis. Normalizing once at the resolver boundary closes it in one place
+rather than trimming in two DTOs and hoping they stay in sync.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1505,15 +1530,26 @@ public sealed class PolicyResolver
     /// <param name="entityType">The type being queried.</param>
     /// <param name="fieldPath">The field path, as it appears after alias resolution.</param>
     /// <param name="context">The caller.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="fieldPath"/> is blank.</exception>
     public FieldPolicy Resolve(Type entityType, string fieldPath, DwPolicyContext context)
     {
+        if (string.IsNullOrWhiteSpace(fieldPath))
+        {
+            throw new ArgumentException("A policy lookup requires a field path.", nameof(fieldPath));
+        }
+
+        // Normalize once, here, because this is where paths enter the policy system. PolicyFragment
+        // trims its own path at construction, so an untrimmed lookup would fail to match a fragment
+        // that targets the same field — and a Deny fragment that fails to match is access granted.
+        string path = fieldPath.Trim();
+
         List<PolicyFragment> candidates = new();
 
         foreach (IDwPolicyProvider provider in _providers)
         {
             foreach (PolicyFragment fragment in provider.GetFragments(entityType, context))
             {
-                if (fragment.Matches(fieldPath))
+                if (fragment.Matches(path))
                 {
                     candidates.Add(fragment);
                 }

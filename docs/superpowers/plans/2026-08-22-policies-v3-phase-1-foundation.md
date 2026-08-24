@@ -76,7 +76,7 @@ Out of scope, deliberately: `ApplyPolicy()`, any `IQueryable` interaction, any m
 - Create: `DynamicWhere.ex/Policies/Enums/PolicyFeature.cs`
 - Test: `DynamicWhere.Tests/Policies/PolicyResolutionTests.cs`
 
-Note the design spec listed `All = 31`. `Segment` was subsequently given its own flag, so `All` is now 63. Update the spec's §4.3 snippet when this task lands.
+Note the design spec listed `All = 31`. `Segment` was subsequently given its own flag, so `All` is now 63. The spec snippet itself is corrected in Task 18, where every Phase 1 documentation change is batched — do not edit the spec from this task.
 
 - [ ] **Step 1: Write the failing test**
 

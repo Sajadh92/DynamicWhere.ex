@@ -100,6 +100,154 @@ internal static class FilterSanitizer
     }
 
     /// <summary>
+    /// Canonicalizes and gates a summary, returning a sanitized copy.
+    /// </summary>
+    /// <typeparam name="T">The entity type being queried.</typeparam>
+    /// <param name="summary">The caller's summary. Never modified.</param>
+    /// <param name="resolver">Resolves the policy for one field.</param>
+    /// <param name="context">The caller.</param>
+    /// <param name="options">The enforcement posture.</param>
+    /// <param name="trace">Collects what was decided.</param>
+    /// <returns>A sanitized copy, safe to hand to the existing pipeline.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
+    /// <exception cref="PolicyException">Thrown when the policy refuses part of the summary.</exception>
+    /// <remarks>
+    /// Only <c>GroupBy.Fields</c> and <c>AggregateBy.Field</c> are property paths, and only they
+    /// are canonicalized here. <c>Having</c> and <c>Orders</c> name aggregate aliases and
+    /// dot-stripped group-by keys, which reflection cannot resolve; they are gated through the
+    /// fields they stand for instead.
+    /// </remarks>
+    internal static Summary Sanitize<T>(
+        Summary summary,
+        PolicyResolver resolver,
+        DwPolicyContext context,
+        DwPolicyOptions options,
+        PolicyTrace trace)
+        where T : class
+    {
+        if (summary is null)
+        {
+            throw new ArgumentNullException(nameof(summary));
+        }
+
+        if (resolver is null)
+        {
+            throw new ArgumentNullException(nameof(resolver));
+        }
+
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        if (options is null)
+        {
+            throw new ArgumentNullException(nameof(options));
+        }
+
+        if (trace is null)
+        {
+            throw new ArgumentNullException(nameof(trace));
+        }
+
+        Summary working = summary.Clone();
+
+        if (working.ConditionGroup is not null)
+        {
+            CanonicalizeGroup<T>(working.ConditionGroup);
+        }
+
+        CanonicalizeGrouping<T>(working.GroupBy);
+
+        Gate gate = new(typeof(T), resolver, context, options, trace);
+
+        GateConditions(working.ConditionGroup, gate);
+        GateGrouping(working.GroupBy, gate);
+
+        return working;
+    }
+
+    /// <summary>
+    /// Rewrites the grouping and aggregation paths into canonical form.
+    /// </summary>
+    private static void CanonicalizeGrouping<T>(GroupBy? groupBy) where T : class
+    {
+        if (groupBy is null)
+        {
+            return;
+        }
+
+        if (groupBy.Fields is not null)
+        {
+            for (int i = 0; i < groupBy.Fields.Count; i++)
+            {
+                groupBy.Fields[i] = groupBy.Fields[i].Validate<T>();
+            }
+        }
+
+        if (groupBy.AggregateBy is not null)
+        {
+            foreach (AggregateBy aggregate in groupBy.AggregateBy)
+            {
+                // A Count needs no field, and an aggregate with no field has no underlying policy.
+                if (!string.IsNullOrWhiteSpace(aggregate.Field))
+                {
+                    aggregate.Field = aggregate.Field!.Validate<T>();
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Refuses every grouping key and aggregated field the policy denies.
+    /// </summary>
+    /// <remarks>
+    /// Both throw in both tiers. A grouping key cannot be dropped the way a sort can: removing one
+    /// collapses rows together and changes every aggregate in the result, so the caller would get
+    /// numbers that answer a different question than the one they asked. Dropping an aggregate
+    /// would silently delete a column the caller is about to read by alias.
+    /// </remarks>
+    private static void GateGrouping(GroupBy? groupBy, Gate gate)
+    {
+        if (groupBy is null)
+        {
+            return;
+        }
+
+        if (groupBy.Fields is not null)
+        {
+            foreach (string field in groupBy.Fields)
+            {
+                FieldPolicy policy = gate.PolicyFor(field);
+
+                if (!policy.Allows(PolicyFeature.Group))
+                {
+                    gate.Deny(field, PolicyFeature.Group, PolicyErrorCode.FieldDeniedForGroup, policy);
+                }
+            }
+        }
+
+        if (groupBy.AggregateBy is not null)
+        {
+            foreach (AggregateBy aggregate in groupBy.AggregateBy)
+            {
+                if (string.IsNullOrWhiteSpace(aggregate.Field))
+                {
+                    continue;
+                }
+
+                string field = aggregate.Field!;
+                FieldPolicy policy = gate.PolicyFor(field);
+
+                if (!policy.Allows(PolicyFeature.Aggregate))
+                {
+                    gate.Deny(field, PolicyFeature.Aggregate, PolicyErrorCode.FieldDeniedForAggregate, policy);
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Refuses every filter condition the policy denies, at any depth.
     /// </summary>
     /// <remarks>

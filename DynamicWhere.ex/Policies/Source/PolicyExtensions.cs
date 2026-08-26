@@ -35,6 +35,29 @@ public static class PolicyExtensions
         ApplyPolicy(query, context, DwPolicy.Options, DwPolicy.Resolver);
 
     /// <summary>
+    /// Attaches a caller to an in-memory sequence.
+    /// </summary>
+    /// <typeparam name="T">The entity type being queried.</typeparam>
+    /// <param name="query">The source sequence.</param>
+    /// <param name="context">Who is asking.</param>
+    /// <returns>A handle mirroring the ordinary query methods, with enforcement in front of them.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="query"/> or <paramref name="context"/> is null.
+    /// </exception>
+    /// <remarks>
+    /// The unguarded surface carries the same overloads, and leaving them off here would mean a
+    /// caller holding an <see cref="IEnumerable{T}"/> had to step outside the guarded path to use
+    /// the library at all.
+    /// </remarks>
+    public static PolicyQueryable<T> ApplyPolicy<T>(this IEnumerable<T> query, DwPolicyContext context)
+        where T : class =>
+        ApplyPolicy(
+            query?.AsQueryable() ?? throw new ArgumentNullException(nameof(query)),
+            context,
+            DwPolicy.Options,
+            DwPolicy.Resolver);
+
+    /// <summary>
     /// Attaches a caller to a query using an explicit posture and resolver, rather than the
     /// application-wide configuration.
     /// </summary>

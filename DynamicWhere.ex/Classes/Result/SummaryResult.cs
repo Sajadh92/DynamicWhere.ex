@@ -1,4 +1,6 @@
-﻿namespace DynamicWhere.ex.Classes.Result;
+﻿using DTOs = DynamicWhere.ex.Policies.DTOs;
+
+namespace DynamicWhere.ex.Classes.Result;
 
 /// <summary>
 /// Represents the result of a summary query execution, including pagination information and a list of dynamic grouped entities.
@@ -34,4 +36,9 @@ public class SummaryResult
     /// Represents the query string that applied on database side.
     /// </summary>
     public string? QueryString { get; set; }
+
+    /// <summary>
+    /// What the policy did to this query, or null when the query was not guarded.
+    /// </summary>
+    public DTOs.PolicyTrace? Policy { get; set; }
 }

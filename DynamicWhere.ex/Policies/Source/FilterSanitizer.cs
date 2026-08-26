@@ -48,6 +48,10 @@ internal static class FilterSanitizer
     /// <param name="context">The caller.</param>
     /// <param name="options">The enforcement posture.</param>
     /// <param name="trace">Collects what was decided.</param>
+    /// <param name="synthesizeProjection">
+    /// When true, a null projection is replaced by the allowed fields if anything is denied. False
+    /// when the caller is composing one clause at a time and sent no projection to speak of.
+    /// </param>
     /// <returns>A sanitized copy, safe to hand to the existing pipeline.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     /// <exception cref="LogicException">
@@ -62,7 +66,8 @@ internal static class FilterSanitizer
         PolicyResolver resolver,
         DwPolicyContext context,
         DwPolicyOptions options,
-        PolicyTrace trace)
+        PolicyTrace trace,
+        bool synthesizeProjection = true)
         where T : class
     {
         if (filter is null)
@@ -100,7 +105,7 @@ internal static class FilterSanitizer
 
         GateConditions(working.ConditionGroup, gate);
         GateOrders(working, gate);
-        GateSelects(working, gate);
+        GateSelects(working, gate, synthesizeProjection);
 
         return working;
     }
@@ -462,6 +467,286 @@ internal static class FilterSanitizer
     }
 
     /// <summary>
+    /// Canonicalizes and gates a segment, returning a sanitized copy.
+    /// </summary>
+    /// <typeparam name="T">The entity type being queried.</typeparam>
+    /// <param name="segment">The caller's segment. Never modified.</param>
+    /// <param name="resolver">Resolves the policy for one field.</param>
+    /// <param name="context">The caller.</param>
+    /// <param name="options">The enforcement posture.</param>
+    /// <param name="trace">Collects what was decided.</param>
+    /// <returns>A sanitized copy, safe to hand to the existing pipeline.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
+    /// <exception cref="PolicyException">Thrown when the policy refuses part of the segment.</exception>
+    /// <remarks>
+    /// Every condition set is gated independently, because each one becomes its own subquery and a
+    /// field refused in one must not be reachable through another.
+    /// <para>
+    /// A field refused for <see cref="PolicyFeature.Segment"/> is refused anywhere inside a segment,
+    /// in either tier. Union, Intersect and Except disclose through set membership rather than
+    /// through the columns they return, so narrowing a projection does not help: whether a row
+    /// survives an Except already answers the question the projection was hiding.
+    /// </para>
+    /// </remarks>
+    internal static Segment Sanitize<T>(
+        Segment segment,
+        PolicyResolver resolver,
+        DwPolicyContext context,
+        DwPolicyOptions options,
+        PolicyTrace trace)
+        where T : class
+    {
+        if (segment is null)
+        {
+            throw new ArgumentNullException(nameof(segment));
+        }
+
+        if (resolver is null)
+        {
+            throw new ArgumentNullException(nameof(resolver));
+        }
+
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        if (options is null)
+        {
+            throw new ArgumentNullException(nameof(options));
+        }
+
+        if (trace is null)
+        {
+            throw new ArgumentNullException(nameof(trace));
+        }
+
+        Segment working = segment.Clone();
+
+        if (working.ConditionSets is not null)
+        {
+            foreach (ConditionSet set in working.ConditionSets)
+            {
+                if (set.ConditionGroup is not null)
+                {
+                    CanonicalizeGroup<T>(set.ConditionGroup);
+                }
+            }
+        }
+
+        if (working.Selects is not null)
+        {
+            for (int i = 0; i < working.Selects.Count; i++)
+            {
+                working.Selects[i] = working.Selects[i].Validate<T>();
+            }
+        }
+
+        if (working.Orders is not null)
+        {
+            foreach (OrderBy order in working.Orders)
+            {
+                CanonicalizeOrder<T>(order);
+            }
+        }
+
+        Gate gate = new(typeof(T), resolver, context, options, trace);
+
+        EnforceCaps(working, gate);
+        GateSegmentParticipation(working, gate);
+
+        if (working.ConditionSets is not null)
+        {
+            foreach (ConditionSet set in working.ConditionSets)
+            {
+                GateConditions(set.ConditionGroup, gate);
+            }
+        }
+
+        GateSegmentOrders(working, gate);
+        GateSegmentSelects(working, gate);
+
+        return working;
+    }
+
+    /// <summary>
+    /// Refuses any field the policy keeps out of a set operation entirely.
+    /// </summary>
+    private static void GateSegmentParticipation(Segment segment, Gate gate)
+    {
+        foreach (string field in SegmentFields(segment))
+        {
+            FieldPolicy policy = gate.PolicyFor(field);
+
+            if (!policy.Allows(PolicyFeature.Segment))
+            {
+                gate.Deny(field, PolicyFeature.Segment, PolicyErrorCode.FieldDeniedForSegment, policy);
+            }
+        }
+    }
+
+    /// <summary>Every field path a segment names, at any depth, in any clause.</summary>
+    private static IEnumerable<string> SegmentFields(Segment segment)
+    {
+        if (segment.ConditionSets is not null)
+        {
+            foreach (ConditionSet set in segment.ConditionSets)
+            {
+                foreach (string field in GroupFields(set.ConditionGroup))
+                {
+                    yield return field;
+                }
+            }
+        }
+
+        if (segment.Selects is not null)
+        {
+            foreach (string field in segment.Selects)
+            {
+                yield return field;
+            }
+        }
+
+        if (segment.Orders is not null)
+        {
+            foreach (OrderBy order in segment.Orders)
+            {
+                if (!string.IsNullOrWhiteSpace(order.Field))
+                {
+                    yield return order.Field!;
+                }
+            }
+        }
+    }
+
+    /// <summary>Every field path a condition group names, at any depth.</summary>
+    private static IEnumerable<string> GroupFields(ConditionGroup? group)
+    {
+        if (group is null)
+        {
+            yield break;
+        }
+
+        if (group.Conditions is not null)
+        {
+            foreach (Condition condition in group.Conditions)
+            {
+                if (!string.IsNullOrWhiteSpace(condition.Field))
+                {
+                    yield return condition.Field!;
+                }
+            }
+        }
+
+        if (group.SubConditionGroups is not null)
+        {
+            foreach (ConditionGroup sub in group.SubConditionGroups)
+            {
+                foreach (string field in GroupFields(sub))
+                {
+                    yield return field;
+                }
+            }
+        }
+    }
+
+    /// <summary>Removes, or refuses, every segment sort field the policy denies.</summary>
+    private static void GateSegmentOrders(Segment segment, Gate gate)
+    {
+        if (segment.Orders is null || segment.Orders.Count == 0)
+        {
+            return;
+        }
+
+        List<OrderBy> kept = new(segment.Orders.Count);
+
+        foreach (OrderBy order in segment.Orders)
+        {
+            string field = order.Field!;
+            FieldPolicy policy = gate.PolicyFor(field);
+
+            if (policy.Allows(PolicyFeature.Order))
+            {
+                kept.Add(order);
+
+                continue;
+            }
+
+            gate.Refuse(field, PolicyFeature.Order, PolicyErrorCode.FieldDeniedForOrder, policy);
+        }
+
+        segment.Orders = kept;
+    }
+
+    /// <summary>
+    /// Removes, or refuses, every segment projection field the policy denies.
+    /// </summary>
+    /// <remarks>
+    /// No projection is synthesized here. A segment with no selects composes whole rows, and
+    /// narrowing the projection would not close the disclosure anyway — participation is what
+    /// <see cref="GateSegmentParticipation"/> refuses.
+    /// </remarks>
+    private static void GateSegmentSelects(Segment segment, Gate gate)
+    {
+        if (segment.Selects is null || segment.Selects.Count == 0)
+        {
+            return;
+        }
+
+        List<string> kept = new(segment.Selects.Count);
+
+        foreach (string field in segment.Selects)
+        {
+            FieldPolicy policy = gate.PolicyFor(field);
+
+            if (policy.Allows(PolicyFeature.Select))
+            {
+                kept.Add(field);
+
+                continue;
+            }
+
+            gate.Refuse(field, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy);
+        }
+
+        if (kept.Count == 0)
+        {
+            throw gate.Exception(WholeClause, PolicyFeature.Select, PolicyErrorCode.AllSelectsDenied, null);
+        }
+
+        segment.Selects = kept;
+    }
+
+    /// <summary>
+    /// Refuses a segment that exceeds a configured limit.
+    /// </summary>
+    /// <remarks>
+    /// Conditions are counted across every set together. Each set becomes its own subquery, so the
+    /// budget has to cover their sum or a caller buys the whole limit once per set.
+    /// </remarks>
+    private static void EnforceCaps(Segment segment, Gate gate)
+    {
+        int conditions = 0;
+
+        if (segment.ConditionSets is not null)
+        {
+            foreach (ConditionSet set in segment.ConditionSets)
+            {
+                conditions += CountConditions(set.ConditionGroup);
+            }
+        }
+
+        gate.CheckConditionCount(conditions);
+        gate.CheckOrderCount(segment.Orders?.Count ?? 0);
+        gate.CheckPage(segment.Page);
+
+        foreach (string field in SegmentFields(segment))
+        {
+            gate.CheckDepth(field);
+        }
+    }
+
+    /// <summary>
     /// Refuses a filter that exceeds a configured limit.
     /// </summary>
     /// <remarks>
@@ -688,11 +973,17 @@ internal static class FilterSanitizer
     /// entity — turning the strictest possible policy into the widest possible result.
     /// </para>
     /// </remarks>
-    private static void GateSelects(Filter filter, Gate gate)
+    private static void GateSelects(Filter filter, Gate gate, bool synthesize)
     {
         if (filter.Selects is null || filter.Selects.Count == 0)
         {
-            SynthesizeSelects(filter, gate);
+            // Skipped when the caller is composing one clause at a time rather than sending a whole
+            // filter: a lone Where or Order carries no projection, and synthesizing one for it would
+            // refuse the call outright on a type whose every field is denied for select.
+            if (synthesize)
+            {
+                SynthesizeSelects(filter, gate);
+            }
 
             return;
         }

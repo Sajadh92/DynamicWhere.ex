@@ -14,4 +14,13 @@ public class GroupBy
     /// The list of aggregations to apply to each group.
     /// </summary>
     public List<AggregateBy> AggregateBy { get; set; } = new();
+
+    /// <summary>
+    /// Returns a deep copy. Both lists are rewritten in place by the validator.
+    /// </summary>
+    internal GroupBy Clone() => new()
+    {
+        Fields = Fields is null ? null! : new List<string>(Fields),
+        AggregateBy = AggregateBy is null ? null! : AggregateBy.ConvertAll(a => a.Clone())
+    };
 }

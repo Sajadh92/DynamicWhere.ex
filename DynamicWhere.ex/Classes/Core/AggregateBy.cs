@@ -21,4 +21,14 @@ public class AggregateBy
     /// The aggregation operation to apply.
     /// </summary>
     public Aggregator Aggregator { get; set; }
+
+    /// <summary>
+    /// Returns a copy. <see cref="Field"/> is rewritten in place by the validator.
+    /// </summary>
+    internal AggregateBy Clone() => new()
+    {
+        Field = Field,
+        Alias = Alias,
+        Aggregator = Aggregator
+    };
 }

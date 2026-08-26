@@ -11,6 +11,14 @@
     <PackageReference Include="System.Linq.Dynamic.Core" Version="1.6.7" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The policy gate is internal on purpose: the sanitizer, the deep clones it relies on, and
+         the guard check are implementation details of ApplyPolicy, not API a consumer calls. They
+         still need direct tests, and publishing them to get those would commit them as surface
+         permanently. -->
+    <InternalsVisibleTo Include="DynamicWhere.Tests" />
+  </ItemGroup>
+
   <PropertyGroup>
       <PackageId>DynamicWhere.ex</PackageId>
       <Title>DynamicWhere.ex — JSON-driven queries for EF Core</Title>

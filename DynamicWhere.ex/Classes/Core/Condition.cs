@@ -37,4 +37,20 @@ public class Condition
     /// </para>
     /// </summary>
     public List<object> Values { get; set; } = new();
+
+    /// <summary>
+    /// Returns a deep copy.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Values"/> becomes a new list, though the values inside it are shared by
+    /// reference: they are scalars decoded from JSON, and nothing in the pipeline writes to them.
+    /// </remarks>
+    internal Condition Clone() => new()
+    {
+        Sort = Sort,
+        Field = Field,
+        DataType = DataType,
+        Operator = Operator,
+        Values = Values is null ? null! : new List<object>(Values)
+    };
 }

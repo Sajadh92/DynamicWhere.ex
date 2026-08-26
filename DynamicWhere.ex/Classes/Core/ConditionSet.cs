@@ -21,4 +21,14 @@ public class ConditionSet
     /// The condition group associated with the set.
     /// </summary>
     public ConditionGroup ConditionGroup { get; set; } = new();
+
+    /// <summary>
+    /// Returns a deep copy.
+    /// </summary>
+    internal ConditionSet Clone() => new()
+    {
+        Sort = Sort,
+        Intersection = Intersection,
+        ConditionGroup = ConditionGroup is null ? null! : ConditionGroup.Clone()
+    };
 }

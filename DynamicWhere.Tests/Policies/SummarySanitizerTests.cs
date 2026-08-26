@@ -41,6 +41,33 @@ public class SummarySanitizerTests
         return (result, trace);
     }
 
+    private static (Summary Result, PolicyTrace Trace) Guard<T>(
+        Summary summary, DwTier tier, FakePolicyProvider provider)
+        where T : class
+    {
+        PolicyTrace trace = new(tier, dryRun: false);
+
+        Summary result = FilterSanitizer.Sanitize<T>(
+            summary, new PolicyResolver(new IDwPolicyProvider[] { provider }),
+            Caller(), new DwPolicyOptions { Tier = tier }, trace);
+
+        return (result, trace);
+    }
+
+    private static ConditionGroup Having(string field, int value) => new()
+    {
+        Conditions =
+        {
+            new Condition
+            {
+                Field = field,
+                DataType = DataType.Number,
+                Operator = Operator.GreaterThan,
+                Values = { value }
+            }
+        }
+    };
+
     private static Summary GroupedBy(string field, params AggregateBy[] aggregates) => new()
     {
         GroupBy = new GroupBy
@@ -171,5 +198,150 @@ public class SummarySanitizerTests
 
         Assert.Equal("Name", result.GroupBy!.Fields[0]);
         Assert.Empty(trace.Decisions);
+    }
+
+    // ------------------------------------------------------------------- aliases
+
+    [Fact]
+    public void A_having_clause_cannot_filter_through_an_alias_onto_a_field_denied_for_where()
+    {
+        // Contact.Email carries [DwNoWhere] but nothing forbids counting it. Without this gate,
+        // HAVING COUNT(DISTINCT Email) > n is a working oracle over a column the caller is not
+        // allowed to filter on -- ask repeatedly and narrow the answer down.
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "Contact.Email", Alias = "Emails", Aggregator = Aggregator.CountDistinct });
+
+        summary.Having = Having("Emails", 1);
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(summary, DwTier.Convenience));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, exception.ErrorCode);
+        Assert.Equal("Contact.Email", exception.FieldPath);
+    }
+
+    [Fact]
+    public void A_having_clause_over_an_allowed_alias_survives_untouched()
+    {
+        // The other half of the same guarantee: Validate<T>() throws on an alias, so a sanitizer
+        // that canonicalized this would break a query that works today.
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "Salary", Alias = "TotalPay", Aggregator = Aggregator.Sumation });
+
+        summary.Having = Having("TotalPay", 1000);
+
+        (Summary result, PolicyTrace trace) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("TotalPay", result.Having!.Conditions[0].Field);
+        Assert.Empty(trace.Decisions);
+    }
+
+    [Fact]
+    public void An_alias_is_matched_the_way_the_validator_matches_it()
+    {
+        // Validator compares aliases with OrdinalIgnoreCase. A stricter comparison here would let
+        // a differently-cased alias miss the gate entirely, which is access granted.
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "Contact.Email", Alias = "Emails", Aggregator = Aggregator.CountDistinct });
+
+        summary.Having = Having("EMAILS", 1);
+
+        Assert.Throws<PolicyException>(() => Guard<SecuredEmployee>(summary, DwTier.Convenience));
+    }
+
+    [Fact]
+    public void A_count_alias_with_no_source_field_can_be_filtered_on()
+    {
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Alias = "Rows", Aggregator = Aggregator.Count });
+
+        summary.Having = Having("Rows", 5);
+
+        (Summary result, _) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("Rows", result.Having!.Conditions[0].Field);
+    }
+
+    [Fact]
+    public void An_order_naming_an_alias_is_not_sent_through_reflection()
+    {
+        // The regression this guards: an alias is not a property, so canonicalizing it would throw
+        // a validation error on a summary the library accepts today.
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "Salary", Alias = "TotalPay", Aggregator = Aggregator.Sumation });
+
+        summary.Orders = new List<OrderBy> { new() { Field = "TotalPay", Direction = Direction.Descending } };
+
+        (Summary result, _) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("TotalPay", result.Orders![0].Field);
+    }
+
+    [Fact]
+    public void An_order_naming_an_alias_over_a_field_denied_for_order_is_gated()
+    {
+        // InternalNotes carries [DwDeny(Order | Group)]. Sorting by an aggregate of it reveals the
+        // ordering the policy refuses, so the alias inherits the refusal.
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "InternalNotes", Alias = "Notes", Aggregator = Aggregator.CountDistinct });
+
+        summary.Orders = new List<OrderBy> { new() { Field = "Notes" } };
+
+        (Summary dropped, PolicyTrace trace) = Guard<SecuredEmployee>(summary, DwTier.Convenience);
+
+        Assert.Empty(dropped.Orders!);
+        Assert.Contains(trace.Decisions, d => d.FieldPath == "InternalNotes" && d.Action == PolicyAction.Dropped);
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(summary, DwTier.Strict));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForOrder, exception.ErrorCode);
+    }
+
+    [Fact]
+    public void An_order_naming_a_dotted_group_by_key_is_accepted()
+    {
+        Summary summary = GroupedBy("Contact.Phone");
+        summary.Orders = new List<OrderBy> { new() { Field = "Contact.Phone" } };
+
+        (Summary result, _) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("Contact.Phone", result.Orders![0].Field);
+    }
+
+    [Fact]
+    public void An_order_naming_the_dot_stripped_form_of_a_group_by_key_is_gated_through_it()
+    {
+        // The validator accepts "ContactPhone" for a group-by key of "Contact.Phone", because that
+        // is the alias the projection emits. It is neither a property path nor an aggregate alias,
+        // so a gate that knew only those two vocabularies would wave it straight through.
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Contact.Phone", PolicyFeature.Order, PolicyEffect.Deny, PolicyLevel.SealedAttribute);
+
+        Summary summary = GroupedBy("Contact.Phone");
+        summary.Orders = new List<OrderBy> { new() { Field = "ContactPhone" } };
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(summary, DwTier.Strict, provider));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForOrder, exception.ErrorCode);
+        Assert.Equal("Contact.Phone", exception.FieldPath);
+    }
+
+    [Fact]
+    public void An_order_naming_nothing_recognizable_is_left_for_the_validator_to_reject()
+    {
+        Summary summary = GroupedBy("Name");
+        summary.Orders = new List<OrderBy> { new() { Field = "NotAnythingAtAll" } };
+
+        (Summary result, _) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("NotAnythingAtAll", result.Orders![0].Field);
     }
 }

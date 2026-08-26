@@ -164,6 +164,13 @@ internal static class FilterSanitizer
         GateConditions(working.ConditionGroup, gate);
         GateGrouping(working.GroupBy, gate);
 
+        // Built after grouping is canonical, because the references below stand for the canonical
+        // paths and nothing else would map back to them.
+        Dictionary<string, List<string>> references = BuildReferences(working.GroupBy);
+
+        GateHaving(working.Having, references, gate);
+        GateSummaryOrders(working, references, gate);
+
         return working;
     }
 
@@ -245,6 +252,195 @@ internal static class FilterSanitizer
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Maps every name a <c>Having</c> or <c>Orders</c> clause may use back to the property paths
+    /// it stands for.
+    /// </summary>
+    /// <remarks>
+    /// The validator accepts three spellings in those clauses, and only one of them is a property
+    /// path: a group-by key as written (<c>"Contact.Phone"</c>), the same key with its dots
+    /// stripped (<c>"ContactPhone"</c>, which is the alias the projection actually emits), and an
+    /// aggregate alias. A gate that knew only about property paths and aliases would wave the
+    /// stripped form straight through.
+    /// <para>
+    /// A name maps to a <em>list</em> because two names can legitimately collide before the
+    /// validator has run: <c>"A.B"</c> and <c>"AB"</c> strip to the same thing, and duplicate
+    /// aliases are rejected downstream rather than here. Gating every path a name could mean is the
+    /// only resolution that cannot fail open.
+    /// </para>
+    /// <para>
+    /// Comparison is <see cref="StringComparer.OrdinalIgnoreCase"/>, matching the validator's own
+    /// sets. A stricter comparison here would let a differently-cased alias miss the gate, and a
+    /// reference that misses the gate is a field left allowed.
+    /// </para>
+    /// </remarks>
+    private static Dictionary<string, List<string>> BuildReferences(GroupBy? groupBy)
+    {
+        Dictionary<string, List<string>> references = new(StringComparer.OrdinalIgnoreCase);
+
+        if (groupBy is null)
+        {
+            return references;
+        }
+
+        if (groupBy.Fields is not null)
+        {
+            foreach (string field in groupBy.Fields)
+            {
+                Map(references, field, field);
+                Map(references, field.Replace(".", string.Empty), field);
+            }
+        }
+
+        if (groupBy.AggregateBy is not null)
+        {
+            foreach (AggregateBy aggregate in groupBy.AggregateBy)
+            {
+                // A Count carries no field. There is no underlying policy to inherit, so the alias
+                // stands for nothing and is left alone.
+                if (!string.IsNullOrWhiteSpace(aggregate.Alias)
+                    && !string.IsNullOrWhiteSpace(aggregate.Field))
+                {
+                    Map(references, aggregate.Alias!, aggregate.Field!);
+                }
+            }
+        }
+
+        return references;
+    }
+
+    /// <summary>Records that one reference name stands for one property path.</summary>
+    private static void Map(Dictionary<string, List<string>> references, string name, string path)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        if (!references.TryGetValue(name, out List<string>? paths))
+        {
+            paths = new List<string>();
+            references[name] = paths;
+        }
+
+        if (!paths.Contains(path, StringComparer.Ordinal))
+        {
+            paths.Add(path);
+        }
+    }
+
+    /// <summary>
+    /// Refuses a <c>Having</c> clause that filters, through an alias, on a field denied for
+    /// filtering.
+    /// </summary>
+    /// <remarks>
+    /// A having clause is a filter, so it throws in both tiers for the same reason the where clause
+    /// does. The attack it closes is specific: a field can be allowed for aggregation and refused
+    /// for filtering, and <c>HAVING SUM(Salary) &gt; n</c> then answers the question the where
+    /// clause was not allowed to ask. Repeat it and the answer narrows to a value.
+    /// <para>
+    /// A reference matching nothing is left exactly as it is. The validator rejects it downstream
+    /// with its own error, which keeps the guarded and unguarded failures identical.
+    /// </para>
+    /// </remarks>
+    private static void GateHaving(
+        ConditionGroup? having,
+        Dictionary<string, List<string>> references,
+        Gate gate)
+    {
+        if (having is null)
+        {
+            return;
+        }
+
+        if (having.Conditions is not null)
+        {
+            foreach (Condition condition in having.Conditions)
+            {
+                if (condition.Field is null
+                    || !references.TryGetValue(condition.Field, out List<string>? paths))
+                {
+                    continue;
+                }
+
+                foreach (string path in paths)
+                {
+                    FieldPolicy policy = gate.PolicyFor(path);
+
+                    if (!policy.Allows(PolicyFeature.Where))
+                    {
+                        gate.Deny(
+                            path, PolicyFeature.Where, PolicyErrorCode.FieldDeniedForWhere,
+                            policy, condition.Field);
+                    }
+                }
+            }
+        }
+
+        if (having.SubConditionGroups is not null)
+        {
+            foreach (ConditionGroup sub in having.SubConditionGroups)
+            {
+                GateHaving(sub, references, gate);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes, or refuses, a summary sort that reaches a field denied for sorting.
+    /// </summary>
+    /// <remarks>
+    /// Sorting by an aggregate of a field discloses the ordering of that field, so the reference
+    /// inherits the refusal of whatever it stands for. Droppable in the convenience tier, like any
+    /// other sort.
+    /// </remarks>
+    private static void GateSummaryOrders(
+        Summary summary,
+        Dictionary<string, List<string>> references,
+        Gate gate)
+    {
+        if (summary.Orders is null || summary.Orders.Count == 0)
+        {
+            return;
+        }
+
+        List<OrderBy> kept = new(summary.Orders.Count);
+
+        foreach (OrderBy order in summary.Orders)
+        {
+            if (order.Field is null || !references.TryGetValue(order.Field, out List<string>? paths))
+            {
+                kept.Add(order);
+
+                continue;
+            }
+
+            bool allowed = true;
+
+            foreach (string path in paths)
+            {
+                FieldPolicy policy = gate.PolicyFor(path);
+
+                if (policy.Allows(PolicyFeature.Order))
+                {
+                    continue;
+                }
+
+                allowed = false;
+
+                gate.Refuse(
+                    path, PolicyFeature.Order, PolicyErrorCode.FieldDeniedForOrder, policy, order.Field);
+            }
+
+            if (allowed)
+            {
+                kept.Add(order);
+            }
+        }
+
+        summary.Orders = kept;
     }
 
     /// <summary>
@@ -585,33 +781,58 @@ internal static class FilterSanitizer
         /// Applies a refusal for a feature that may be dropped: throws in the strict tier, records
         /// the drop otherwise.
         /// </summary>
-        internal void Refuse(string fieldPath, PolicyFeature feature, PolicyErrorCode code, FieldPolicy policy)
+        internal void Refuse(
+            string fieldPath,
+            PolicyFeature feature,
+            PolicyErrorCode code,
+            FieldPolicy policy,
+            string? via = null)
         {
             if (IsStrict)
             {
-                Record(fieldPath, feature, PolicyAction.Denied, policy);
+                Record(fieldPath, feature, PolicyAction.Denied, policy, via);
 
                 throw Exception(fieldPath, feature, code, policy);
             }
 
-            Record(fieldPath, feature, PolicyAction.Dropped, policy);
+            Record(fieldPath, feature, PolicyAction.Dropped, policy, via);
         }
 
         /// <summary>
         /// Applies a refusal for a feature that can never be dropped, because dropping it would
         /// widen the result set.
         /// </summary>
-        internal void Deny(string fieldPath, PolicyFeature feature, PolicyErrorCode code, FieldPolicy policy)
+        internal void Deny(
+            string fieldPath,
+            PolicyFeature feature,
+            PolicyErrorCode code,
+            FieldPolicy policy,
+            string? via = null)
         {
-            Record(fieldPath, feature, PolicyAction.Denied, policy);
+            Record(fieldPath, feature, PolicyAction.Denied, policy, via);
 
             throw Exception(fieldPath, feature, code, policy);
         }
 
         /// <summary>Records one decision against the query's trace.</summary>
-        internal void Record(string fieldPath, PolicyFeature feature, PolicyAction action, FieldPolicy? policy)
+        internal void Record(
+            string fieldPath,
+            PolicyFeature feature,
+            PolicyAction action,
+            FieldPolicy? policy,
+            string? via = null)
         {
-            _trace.Add(new PolicyDecision(fieldPath, feature, action, Describe(policy)));
+            // The decision names the field the policy governs, not the alias the caller wrote, so
+            // a trace can be read straight against the policy. The alias goes in the reason,
+            // because otherwise the caller cannot tell which part of their query was refused.
+            string? reason = Describe(policy);
+
+            if (via is not null && !string.Equals(via, fieldPath, StringComparison.Ordinal))
+            {
+                reason = reason is null ? "via '" + via + "'" : reason + " (via '" + via + "')";
+            }
+
+            _trace.Add(new PolicyDecision(fieldPath, feature, action, reason));
         }
 
         /// <summary>Builds the refusal, attributing it only where the attribution is unambiguous.</summary>

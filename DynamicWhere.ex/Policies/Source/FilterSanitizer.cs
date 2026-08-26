@@ -4,6 +4,7 @@ using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
+using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Source;
 
@@ -27,6 +28,12 @@ namespace DynamicWhere.ex.Policies.Source;
 internal static class FilterSanitizer
 {
     /// <summary>
+    /// The field path reported when a refusal concerns a whole clause rather than one field.
+    /// Matches the wildcard <c>PolicyFragment</c> already uses to mean "every field".
+    /// </summary>
+    private const string WholeClause = "*";
+
+    /// <summary>
     /// Canonicalizes and gates a filter, returning a sanitized copy.
     /// </summary>
     /// <typeparam name="T">The entity type being queried.</typeparam>
@@ -43,6 +50,7 @@ internal static class FilterSanitizer
     /// it fails identically whether the query is guarded or not, so the error discloses nothing
     /// about which fields a caller may see.
     /// </exception>
+    /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
     internal static Filter Sanitize<T>(
         Filter filter,
         PolicyResolver resolver,
@@ -80,7 +88,55 @@ internal static class FilterSanitizer
 
         Canonicalize<T>(working);
 
+        Gate gate = new(typeof(T), resolver, context, options, trace);
+
+        GateSelects(working, gate);
+
         return working;
+    }
+
+    /// <summary>
+    /// Removes, or refuses, every projection field the policy denies.
+    /// </summary>
+    /// <remarks>
+    /// Dropping is safe for a projection in a way it never is for a filter: a narrower projection
+    /// returns less, where a narrower filter returns more. That asymmetry is why this tier check
+    /// exists here and does not exist on the where clause.
+    /// <para>
+    /// Dropping every field is refused outright rather than left as an empty list. An empty list
+    /// reaches the pipeline as an unrelated validation error, and a null one projects the whole
+    /// entity — turning the strictest possible policy into the widest possible result.
+    /// </para>
+    /// </remarks>
+    private static void GateSelects(Filter filter, Gate gate)
+    {
+        if (filter.Selects is null || filter.Selects.Count == 0)
+        {
+            return;
+        }
+
+        List<string> kept = new(filter.Selects.Count);
+
+        foreach (string field in filter.Selects)
+        {
+            FieldPolicy policy = gate.PolicyFor(field);
+
+            if (policy.Allows(PolicyFeature.Select))
+            {
+                kept.Add(field);
+
+                continue;
+            }
+
+            gate.Refuse(field, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy);
+        }
+
+        if (kept.Count == 0)
+        {
+            throw gate.Exception(WholeClause, PolicyFeature.Select, PolicyErrorCode.AllSelectsDenied, null);
+        }
+
+        filter.Selects = kept;
     }
 
     /// <summary>
@@ -155,5 +211,111 @@ internal static class FilterSanitizer
         }
 
         order.Field = order.Field!.Validate<T>();
+    }
+
+    /// <summary>
+    /// The per-query state every gating step needs: who is asking, what the posture is, where
+    /// decisions go, and the policies resolved so far.
+    /// </summary>
+    private sealed class Gate
+    {
+        private readonly Type _entityType;
+        private readonly PolicyResolver _resolver;
+        private readonly DwPolicyContext _context;
+        private readonly DwPolicyOptions _options;
+        private readonly PolicyTrace _trace;
+
+        // Canonicalization has already run, so every key here is the exact canonical spelling and
+        // an ordinal comparison is both correct and the cheaper one. A filter routinely names the
+        // same field in a condition, an order, and a projection.
+        private readonly Dictionary<string, FieldPolicy> _resolved = new(StringComparer.Ordinal);
+
+        internal Gate(
+            Type entityType,
+            PolicyResolver resolver,
+            DwPolicyContext context,
+            DwPolicyOptions options,
+            PolicyTrace trace)
+        {
+            _entityType = entityType;
+            _resolver = resolver;
+            _context = context;
+            _options = options;
+            _trace = trace;
+        }
+
+        /// <summary>True when every refusal throws rather than being applied quietly.</summary>
+        internal bool IsStrict => _options.Tier == DwTier.Strict;
+
+        /// <summary>Resolves one field's policy, once per query.</summary>
+        internal FieldPolicy PolicyFor(string fieldPath)
+        {
+            if (!_resolved.TryGetValue(fieldPath, out FieldPolicy? policy))
+            {
+                policy = _resolver.Resolve(_entityType, fieldPath, _context);
+                _resolved[fieldPath] = policy;
+            }
+
+            return policy;
+        }
+
+        /// <summary>
+        /// Applies a refusal for a feature that may be dropped: throws in the strict tier, records
+        /// the drop otherwise.
+        /// </summary>
+        internal void Refuse(string fieldPath, PolicyFeature feature, PolicyErrorCode code, FieldPolicy policy)
+        {
+            if (IsStrict)
+            {
+                Record(fieldPath, feature, PolicyAction.Denied, policy);
+
+                throw Exception(fieldPath, feature, code, policy);
+            }
+
+            Record(fieldPath, feature, PolicyAction.Dropped, policy);
+        }
+
+        /// <summary>
+        /// Applies a refusal for a feature that can never be dropped, because dropping it would
+        /// widen the result set.
+        /// </summary>
+        internal void Deny(string fieldPath, PolicyFeature feature, PolicyErrorCode code, FieldPolicy policy)
+        {
+            Record(fieldPath, feature, PolicyAction.Denied, policy);
+
+            throw Exception(fieldPath, feature, code, policy);
+        }
+
+        /// <summary>Records one decision against the query's trace.</summary>
+        internal void Record(string fieldPath, PolicyFeature feature, PolicyAction action, FieldPolicy? policy)
+        {
+            _trace.Add(new PolicyDecision(fieldPath, feature, action, Describe(policy)));
+        }
+
+        /// <summary>Builds the refusal, attributing it only where the attribution is unambiguous.</summary>
+        internal PolicyException Exception(
+            string fieldPath,
+            PolicyFeature feature,
+            PolicyErrorCode code,
+            FieldPolicy? policy)
+        {
+            // A resolved policy lists the winning source for every feature it decided, not for this
+            // one alone, so naming a single source is only honest when there is a single source.
+            // Per-feature attribution arrives with the explain endpoint; guessing here would put a
+            // wrong rule id in front of an operator diagnosing a refusal.
+            PolicySource? sole = policy is { Sources.Count: 1 } ? policy.Sources[0] : null;
+
+            return new PolicyException(code, fieldPath, feature, _options.Tier)
+            {
+                RuleId = sole?.RuleId,
+                SourceOrigin = sole?.Origin
+            };
+        }
+
+        /// <summary>Names every source that contributed, for the trace.</summary>
+        private static string? Describe(FieldPolicy? policy) =>
+            policy is null || policy.Sources.Count == 0
+                ? null
+                : string.Join(", ", policy.Sources);
     }
 }

@@ -23,12 +23,29 @@ public class FilterSanitizerTests
     private static DwPolicyContext Caller() =>
         new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
 
-    private static DwPolicyOptions Options() => new();
+    private static PolicyResolver AttributeResolver() =>
+        new(new IDwPolicyProvider[] { new AttributePolicyProvider() });
+
+    private static DwPolicyOptions Options(DwTier tier) => new() { Tier = tier };
 
     private static PolicyTrace Trace() => new(DwTier.Convenience, dryRun: false);
 
+    /// <summary>Sanitizes against no policy at all, for the canonicalization tests.</summary>
     private static Filter Sanitize<T>(Filter filter) where T : class =>
-        FilterSanitizer.Sanitize<T>(filter, EmptyResolver(), Caller(), Options(), Trace());
+        FilterSanitizer.Sanitize<T>(
+            filter, EmptyResolver(), Caller(), Options(DwTier.Convenience), Trace());
+
+    /// <summary>Sanitizes against the attributes on <typeparamref name="T"/> at a given tier.</summary>
+    private static (Filter Result, PolicyTrace Trace) Guard<T>(Filter filter, DwTier tier)
+        where T : class
+    {
+        PolicyTrace trace = new(tier, dryRun: false);
+
+        Filter result = FilterSanitizer.Sanitize<T>(
+            filter, AttributeResolver(), Caller(), Options(tier), trace);
+
+        return (result, trace);
+    }
 
     [Fact]
     public void The_callers_filter_is_never_touched()
@@ -176,5 +193,94 @@ public class FilterSanitizerTests
 
         Assert.Equal(2, sanitized.Page!.PageNumber);
         Assert.Equal(30, sanitized.Page.PageSize);
+    }
+
+    [Fact]
+    public void Convenience_drops_a_field_the_policy_refuses_to_project()
+    {
+        // Salary carries [DwNoSelect]. Dropping is safe here in a way it never is for a filter:
+        // a narrower projection cannot widen the result set.
+        Filter filter = new() { Selects = new List<string> { "Name", "Salary" } };
+
+        (Filter result, PolicyTrace trace) = Guard<SecuredEmployee>(filter, DwTier.Convenience);
+
+        Assert.Equal(new[] { "Name" }, result.Selects!);
+        Assert.Contains(
+            trace.Decisions,
+            d => d.FieldPath == "Salary"
+                 && d.Feature == PolicyFeature.Select
+                 && d.Action == PolicyAction.Dropped);
+    }
+
+    [Fact]
+    public void Strict_throws_rather_than_quietly_returning_less_than_was_asked_for()
+    {
+        Filter filter = new() { Selects = new List<string> { "Name", "Salary" } };
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(filter, DwTier.Strict));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForSelect, exception.ErrorCode);
+        Assert.Equal("Salary", exception.FieldPath);
+        Assert.Equal(PolicyFeature.Select, exception.Feature);
+        Assert.Equal(DwTier.Strict, exception.Tier);
+    }
+
+    [Fact]
+    public void A_field_denied_for_every_feature_is_denied_for_select_too()
+    {
+        Filter filter = new() { Selects = new List<string> { "Name", "NationalId" } };
+
+        (Filter result, _) = Guard<SecuredEmployee>(filter, DwTier.Convenience);
+
+        Assert.Equal(new[] { "Name" }, result.Selects!);
+    }
+
+    [Fact]
+    public void A_field_denied_only_for_where_still_projects()
+    {
+        // Contact.Email carries [DwNoWhere]. Gating has to be per feature, or a single denial
+        // would spread across the whole query.
+        Filter filter = new() { Selects = new List<string> { "Contact.Email" } };
+
+        (Filter result, PolicyTrace trace) = Guard<SecuredEmployee>(filter, DwTier.Convenience);
+
+        Assert.Equal(new[] { "Contact.Email" }, result.Selects!);
+        Assert.Empty(trace.Decisions);
+    }
+
+    [Fact]
+    public void Dropping_every_requested_field_throws_rather_than_widening_the_projection()
+    {
+        // An empty Selects list would reach the pipeline as a validation error, and a null one
+        // would project the whole entity -- the exact inversion of what the policy asked for.
+        Filter filter = new() { Selects = new List<string> { "Salary", "NationalId" } };
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(filter, DwTier.Convenience));
+
+        Assert.Equal(PolicyErrorCode.AllSelectsDenied, exception.ErrorCode);
+    }
+
+    [Fact]
+    public void An_allowed_projection_records_nothing_and_keeps_its_order()
+    {
+        Filter filter = new() { Selects = new List<string> { "Name", "Id" } };
+
+        (Filter result, PolicyTrace trace) = Guard<SecuredEmployee>(filter, DwTier.Strict);
+
+        Assert.Equal(new[] { "Name", "Id" }, result.Selects!);
+        Assert.Empty(trace.Decisions);
+    }
+
+    [Fact]
+    public void A_type_with_no_attributes_is_projected_exactly_as_asked()
+    {
+        Filter filter = new() { Selects = new List<string> { "Id", "Name" } };
+
+        (Filter result, PolicyTrace trace) = Guard<PlainProduct>(filter, DwTier.Strict);
+
+        Assert.Equal(new[] { "Id", "Name" }, result.Selects!);
+        Assert.Empty(trace.Decisions);
     }
 }

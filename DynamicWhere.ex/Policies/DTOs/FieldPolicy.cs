@@ -1,3 +1,4 @@
+using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.DTOs;
@@ -24,6 +25,9 @@ public sealed class FieldPolicy
     /// <param name="effects">The effect decided for each feature. A feature absent here is allowed.</param>
     /// <param name="sources">Every fragment source that contributed, for tracing.</param>
     /// <param name="isSealed">True when a compile-time attribute decided at least one feature absolutely.</param>
+    /// <param name="allowedOperators">
+    /// The operators permitted when filtering on this field, or null when nothing restricts them.
+    /// </param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="fieldPath"/> is blank.</exception>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="effects"/> or <paramref name="sources"/> is null.
@@ -32,7 +36,8 @@ public sealed class FieldPolicy
         string fieldPath,
         IReadOnlyDictionary<PolicyFeature, PolicyEffect> effects,
         IReadOnlyList<PolicySource> sources,
-        bool isSealed)
+        bool isSealed,
+        IReadOnlyList<Operator>? allowedOperators = null)
     {
         if (string.IsNullOrWhiteSpace(fieldPath))
         {
@@ -43,6 +48,7 @@ public sealed class FieldPolicy
         _effects = effects ?? throw new ArgumentNullException(nameof(effects));
         Sources = sources ?? throw new ArgumentNullException(nameof(sources));
         IsSealed = isSealed;
+        AllowedOperators = allowedOperators;
     }
 
     /// <summary>The field this policy governs.</summary>
@@ -69,4 +75,19 @@ public sealed class FieldPolicy
 
     /// <summary>True when the feature proceeds but its output value is transformed.</summary>
     public bool IsMasked(PolicyFeature feature) => EffectFor(feature) == PolicyEffect.Mask;
+
+    /// <summary>
+    /// The operators permitted when filtering on this field, or null when nothing restricts them.
+    /// </summary>
+    /// <remarks>
+    /// Null and empty mean opposite things. Null is "no fragment spoke to operators", so every
+    /// operator is permitted; empty is "the restrictions that applied left nothing", so none is.
+    /// </remarks>
+    public IReadOnlyList<Operator>? AllowedOperators { get; }
+
+    /// <summary>
+    /// True when the operator may be used against this field.
+    /// </summary>
+    public bool AllowsOperator(Operator op) =>
+        AllowedOperators is null || AllowedOperators.Contains(op);
 }

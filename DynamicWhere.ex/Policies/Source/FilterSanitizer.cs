@@ -1,6 +1,7 @@
 using System.Reflection;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
+using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Policies.Config;
@@ -375,6 +376,16 @@ internal static class FilterSanitizer
                             path, PolicyFeature.Where, PolicyErrorCode.FieldDeniedForWhere,
                             policy, condition.Field);
                     }
+
+                    // An aggregate does not launder an operator restriction. HAVING MAX(NationalId)
+                    // LIKE '12%' searches the column exactly as a where clause would, so the alias
+                    // inherits the restriction along with the refusal.
+                    if (!policy.AllowsOperator(condition.Operator))
+                    {
+                        gate.Deny(
+                            path, PolicyFeature.Where, PolicyErrorCode.OperatorNotAllowed,
+                            policy, condition.Field);
+                    }
                 }
             }
         }
@@ -475,6 +486,13 @@ internal static class FilterSanitizer
                 if (!policy.Allows(PolicyFeature.Where))
                 {
                     gate.Deny(field, PolicyFeature.Where, PolicyErrorCode.FieldDeniedForWhere, policy);
+                }
+
+                // Checked after the feature, so a field refused outright reports that rather than
+                // an operator complaint that would imply filtering it is otherwise fine.
+                if (!policy.AllowsOperator(condition.Operator))
+                {
+                    gate.Deny(field, PolicyFeature.Where, PolicyErrorCode.OperatorNotAllowed, policy);
                 }
             }
         }

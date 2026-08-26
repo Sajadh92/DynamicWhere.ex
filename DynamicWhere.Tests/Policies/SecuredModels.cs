@@ -1,4 +1,5 @@
 using System.Collections;
+using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Enums;
 
@@ -228,4 +229,21 @@ internal class SecuredRecursiveDto
 
     /// <summary>The entry point into a two-step collection cycle.</summary>
     public SecuredCycleA? Cycle { get; set; }
+}
+
+/// <summary>
+/// A type restricting which operators may be used on its fields. Kept apart from
+/// <see cref="SecuredEmployee"/> so the fragment counts the provider tests assert stay unchanged.
+/// </summary>
+internal class SecuredAccount
+{
+    public int Id { get; set; }
+
+    [DwOperators(Allow = new[] { Operator.Equal, Operator.In })]
+    public string NationalId { get; set; } = string.Empty;
+
+    [DwOperators(Deny = new[] { Operator.Contains, Operator.StartsWith })]
+    public string Iban { get; set; } = string.Empty;
+
+    public decimal Balance { get; set; }
 }

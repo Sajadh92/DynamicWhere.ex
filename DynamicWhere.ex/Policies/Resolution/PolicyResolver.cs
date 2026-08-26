@@ -1,3 +1,4 @@
+using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
@@ -156,7 +157,49 @@ public sealed class PolicyResolver
             isSealed |= winner.Level == PolicyLevel.SealedAttribute;
         }
 
-        return new FieldPolicy(path, effects, sources, isSealed);
+        return new FieldPolicy(path, effects, sources, isSealed, IntersectOperators(candidates));
+    }
+
+    /// <summary>
+    /// Narrows every operator restriction that matched into one permitted set, or null when none
+    /// spoke to operators.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately outside the per-feature election above. A restriction is not an effect: the
+    /// election keeps one winner per feature and discards the rest, so a restriction riding on a
+    /// discarded fragment would silently vanish and the field would accept every operator again.
+    /// Intersecting instead means an additional fragment can only ever narrow the set, which is the
+    /// only direction that is safe to get wrong.
+    /// <para>
+    /// An intersection that empties is kept as empty rather than dropped to null. Null means "no
+    /// restriction" and would re-permit everything; empty means the restrictions genuinely left no
+    /// operator, and filtering on the field is refused.
+    /// </para>
+    /// </remarks>
+    private static IReadOnlyList<Operator>? IntersectOperators(IReadOnlyList<PolicyFragment> candidates)
+    {
+        List<Operator>? permitted = null;
+
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            IReadOnlyList<Operator>? restriction = candidates[i].AllowedOperators;
+
+            if (restriction is null)
+            {
+                continue;
+            }
+
+            if (permitted is null)
+            {
+                permitted = new List<Operator>(restriction);
+
+                continue;
+            }
+
+            permitted.RemoveAll(op => !restriction.Contains(op));
+        }
+
+        return permitted;
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Reflection;
+using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
@@ -85,6 +86,11 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             string path = prefix.Length == 0 ? property.Name : $"{prefix}.{property.Name}";
 
             foreach (DwDenyAttribute attribute in property.GetCustomAttributes<DwDenyAttribute>(inherit: true))
+            {
+                fragments.Add(ToFragment(path, attribute));
+            }
+
+            foreach (DwOperatorsAttribute attribute in property.GetCustomAttributes<DwOperatorsAttribute>(inherit: true))
             {
                 fragments.Add(ToFragment(path, attribute));
             }
@@ -231,5 +237,34 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             isSealed: !attribute.Overridable);
 
         return new PolicyFragment(fieldPath, attribute.Features, PolicyEffect.Deny, level, source);
+    }
+
+    /// <summary>
+    /// Converts an operator restriction into a fragment.
+    /// </summary>
+    /// <remarks>
+    /// The effect is <see cref="PolicyEffect.Allow"/> and the features are
+    /// <see cref="PolicyFeature.Where"/>, because a restriction refuses nothing on its own — it
+    /// only narrows what a permitted filter may do. The restriction itself rides on the fragment's
+    /// typed operator list, which the resolver intersects rather than elects, so this fragment
+    /// losing the election for <c>Where</c> does not discard it.
+    /// </remarks>
+    private static PolicyFragment ToFragment(string fieldPath, DwOperatorsAttribute attribute)
+    {
+        PolicyLevel level = attribute.Overridable
+            ? PolicyLevel.OverridableAttribute
+            : PolicyLevel.SealedAttribute;
+
+        PolicySource source = PolicySource.FromAttribute(
+            attribute.GetType().Name,
+            isSealed: !attribute.Overridable);
+
+        return new PolicyFragment(
+            fieldPath,
+            PolicyFeature.Where,
+            PolicyEffect.Allow,
+            level,
+            source,
+            allowedOperators: attribute.Resolve());
     }
 }

@@ -1,3 +1,4 @@
+using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.DTOs;
@@ -22,6 +23,9 @@ public sealed class PolicyFragment
     /// <param name="source">Where it came from, for tracing.</param>
     /// <param name="priority">Tiebreak within a level. Higher wins.</param>
     /// <param name="payload">Strategy detail, unused until masking arrives.</param>
+    /// <param name="allowedOperators">
+    /// The operators this fragment permits, or null when it says nothing about operators.
+    /// </param>
     /// <exception cref="ArgumentException">
     /// Thrown when <paramref name="fieldPath"/> is blank, or names no segment once normalized.
     /// </exception>
@@ -33,7 +37,8 @@ public sealed class PolicyFragment
         PolicyLevel level,
         PolicySource source,
         int priority = 0,
-        object? payload = null)
+        object? payload = null,
+        IReadOnlyList<Operator>? allowedOperators = null)
     {
         if (string.IsNullOrWhiteSpace(fieldPath))
         {
@@ -55,6 +60,7 @@ public sealed class PolicyFragment
         Source = source ?? throw new ArgumentNullException(nameof(source));
         Priority = priority;
         Payload = payload;
+        AllowedOperators = allowedOperators;
     }
 
     /// <summary>The field path this fragment addresses, or <see cref="Wildcard"/>.</summary>
@@ -77,6 +83,19 @@ public sealed class PolicyFragment
 
     /// <summary>Strategy detail carried opaquely through resolution.</summary>
     public object? Payload { get; }
+
+    /// <summary>
+    /// The operators this fragment permits, or null when it says nothing about operators.
+    /// </summary>
+    /// <remarks>
+    /// Typed rather than carried in <see cref="Payload"/>. Reading a restriction back out of an
+    /// <see cref="object"/> means an unchecked cast, and a cast that fails yields null — which here
+    /// means "no restriction", so a mistake in the carrier type would silently permit every
+    /// operator rather than fail. A restriction is also not an effect: it never competes in the
+    /// per-feature election, because a restriction attached to a fragment that lost would simply
+    /// disappear.
+    /// </remarks>
+    public IReadOnlyList<Operator>? AllowedOperators { get; }
 
     /// <summary>True when this fragment addresses every field.</summary>
     public bool IsWildcard => FieldPath == Wildcard;

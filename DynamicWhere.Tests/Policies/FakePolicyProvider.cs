@@ -1,3 +1,4 @@
+using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
@@ -35,6 +36,28 @@ internal sealed class FakePolicyProvider : IDwPolicyProvider
             : PolicySource.FromRule($"{level}-{_fragments.Count}", level.ToString());
 
         _fragments.Add(new PolicyFragment(fieldPath, features, effect, level, source, priority));
+
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a fragment that restricts operators without refusing anything.
+    /// </summary>
+    /// <param name="fieldPath">A field path, or <c>"*"</c> for every field.</param>
+    /// <param name="level">How authoritative it is.</param>
+    /// <param name="operators">The operators it permits.</param>
+    /// <returns>This provider, for chaining.</returns>
+    public FakePolicyProvider AddOperators(string fieldPath, PolicyLevel level, params Operator[] operators)
+    {
+        PolicySource source = PolicySource.FromAttribute($"FakeOperators{_fragments.Count}", isSealed: false);
+
+        _fragments.Add(new PolicyFragment(
+            fieldPath,
+            PolicyFeature.Where,
+            PolicyEffect.Allow,
+            level,
+            source,
+            allowedOperators: operators));
 
         return this;
     }

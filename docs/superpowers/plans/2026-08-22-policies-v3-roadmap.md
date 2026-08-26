@@ -285,3 +285,94 @@ None outstanding. Jagged collections were the one open item and were fixed in `0
   level outranks a sealed attribute. Reject it at the store boundary in Phase 5.
 - **The explain-attribution note.** A four-way tie decides the effect deterministically but
   attributes one arbitrary source of several. Due with the explain endpoint in Phase 7.
+
+## Phase 2 outcome
+
+Closed 2026-08-26, 19 tasks. 663 tests pass, up from 516. `dotnet build -c Release` across the whole
+solution emits zero warnings with `GenerateDocumentationFile` on.
+
+The gate check was narrowed during review, from the whole `DynamicWhere.ex/Source/` directory to the
+four files the standing rule actually names. `Extention.cs` lives in that directory and had to take
+the `RequirePolicy` guard, so the directory form and Task 13 could not both hold. The four named
+files remain untouched; `Extention.cs` gained 43 lines, all insertions, all of them the same
+two-line guard plus one `using`.
+
+### Public API added
+
+- `DynamicWhere.ex.Policies.Enums` — `PolicyErrorCode`, `PolicyAction`
+- `DynamicWhere.ex.Policies.DTOs` — `PolicyDecision`, `PolicyTrace`
+- `DynamicWhere.ex.Policies.Attributes` — `DwOperatorsAttribute`
+- `DynamicWhere.ex.Policies.Config` — `DwPolicy`
+- `DynamicWhere.ex.Policies.Source` — `PolicyQueryable<T>`, `PolicyExtensions.ApplyPolicy`
+- `PolicyException.ErrorCode`; `FieldPolicy.AllowedOperators` and `AllowsOperator`;
+  `PolicyFragment.AllowedOperators`; `FilterResult<T>.Policy` and `SummaryResult.Policy`
+- `InternalsVisibleTo("DynamicWhere.Tests")`, so the sanitizer, the deep clones, and the guard stay
+  internal rather than being published to be testable
+
+### Three defects found in review, before any code was written
+
+Same shape as Phase 1's five: a fragment that fails to match resolves to Allow, so every naming axis
+is a place access can be granted silently. None would have been caught by the tests as planned.
+
+1. **Deny-select did nothing unless the caller volunteered a projection.** `Extension.ToList`
+   projects only `if (filter.Selects != null)`, so gating that list enforced the policy against
+   exactly the callers who asked for less. Closed by synthesizing a projection from the allowed
+   fields when something is denied — and only then, so a type nothing is denied on still produces a
+   null projection and byte-identical SQL.
+2. **`Summary.Having` reaches fields through aggregate aliases.** `Validate<T>()` throws on an
+   alias, so canonicalizing one would have rejected queries that work today; skipping it would have
+   let `HAVING SUM(Salary) > n` ask what the where clause was refused. Gated through the field each
+   alias aggregates.
+3. **`Summary.Orders` accepts a third spelling nobody had accounted for.** Beyond property paths and
+   aliases, the validator also accepts a group-by key with its dots stripped — `Contact.Phone`
+   becomes `ContactPhone`, because that is the alias the projection emits. Found while implementing
+   the fix for (2). Every reference name now maps to a *list* of paths and all of them are gated,
+   so colliding names fail closed.
+
+Phase 1 also left nine policy code strings on the internal `ErrorCode` class. Nothing referenced
+them and one had already drifted from its own member name — `PolicyRequired` returned
+`"PolicyContextRequiredForThisEntity"`. Removed; `ErrorCode.cs` is identical to master again.
+
+### Decisions worth not re-litigating
+
+- **`PolicyFragment.Payload` is not the carrier for operator restrictions.** It is `object?`, so
+  reading one back needs an unchecked cast whose failure yields null — meaning "no restriction".
+  More decisively, a restriction is not an effect: the resolver elects one winner per feature and
+  discards the losers, so a restriction on a losing fragment would vanish. Restrictions ride on a
+  typed field and are **intersected** outside the election, which can only narrow.
+- **The policy scope is ambient.** The guarded path delegates to the very extension methods being
+  guarded, and those call one another internally, so a checked/unchecked split would have had to
+  reach all the way down. `AsyncLocal`, not `ThreadStatic`, because a scope must survive an `await`.
+- **`DwPolicy` defaults to enforcing, not to inertness.** A policy layer that does nothing until
+  someone switches it on is worse than none, because the attributes in the source read as though
+  they are already in force. `AttributePolicyProvider` is always in the resolver whether listed or
+  not — attributes are the sealed level, and omitting them would let a store grant what the code
+  refuses.
+- **Projection synthesis never throws in the strict tier.** Strict refuses what a caller *asks* for;
+  a caller who named no projection has asked for nothing to refuse, and throwing would fail every
+  strict query against a type carrying any denied field.
+
+### Known limitations
+
+- **Deny-select on a nested field is not enforced through an eagerly loaded navigation.** Synthesis
+  covers scalars only. An unguarded call does not populate navigations anyway, so the ordinary path
+  is closed; a caller who `Include`s one and holds a type with denials has that navigation dropped
+  from the synthesized projection, which fails closed rather than open. Masking on the materialized
+  graph is the real answer and belongs to Phase 4.
+- **`Segment` gets participation gating only.** A field denied for `Segment` is refused anywhere
+  inside one, and each condition set is gated independently. The strict-tier rule making a
+  deny-select field automatically deny-where inside a `Segment` is Phase 8, as planned.
+
+### What Phase 3 inherits
+
+- **The alias axis is now three-valued.** `[DwAlias]` adds a fourth spelling to a system where three
+  already exist and one of them was missed. Whatever Phase 3 adds must be resolved *before*
+  `Validate<T>()` sees a path, and must be gated through whatever it stands for. `BuildReferences`
+  in `FilterSanitizer` is the existing precedent.
+- **Injection must not reuse `SanitizeClause`.** Forced predicates are never gated against the
+  caller's own policy, and `SanitizeClause` gates everything it is given.
+- **The condition cap counts what the caller sent.** An injected predicate arrives after
+  `EnforceCaps` has run, so injection can push a filter past `MaxConditions`. Decide deliberately
+  whether a forced predicate spends the caller's budget; it should not.
+- **`PolicyAction` has no member for an injected-and-refused case.** `Injected` exists and nothing
+  emits it yet. Phase 3 is what makes it real.

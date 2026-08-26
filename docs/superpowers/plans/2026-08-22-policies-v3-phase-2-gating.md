@@ -117,7 +117,7 @@ Inherited decision from Phase 1: settle `PolicyException.Code`'s type before any
 - Modify: `DynamicWhere.ex/Exceptions/PolicyException.cs`
 - Modify: `DynamicWhere.Tests/Policies/PolicyExceptionTests.cs`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `PolicyExceptionTests.cs`:
 
@@ -140,12 +140,12 @@ Add to `PolicyExceptionTests.cs`:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `dotnet test DynamicWhere.Tests --filter "FullyQualifiedName~PolicyExceptionTests"`
 Expected: FAIL to compile — `PolicyErrorCode` does not exist.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `DynamicWhere.ex/Policies/Enums/PolicyErrorCode.cs`:
 
@@ -197,12 +197,12 @@ public enum PolicyErrorCode
 
 Change `PolicyException`'s constructor to take `PolicyErrorCode`, expose it as `ErrorCode`, and derive the string `Code` from `errorCode.ToString()`. Keep every other member as it is.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `dotnet test DynamicWhere.Tests --filter "FullyQualifiedName~PolicyExceptionTests"`
 Expected: PASS. The three pre-existing tests need their construction updated to the new signature — that is expected and permitted for this task only.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add DynamicWhere.ex/Policies/Enums/PolicyErrorCode.cs DynamicWhere.ex/Exceptions/PolicyException.cs DynamicWhere.Tests/Policies/PolicyExceptionTests.cs
@@ -218,7 +218,7 @@ git commit -m "feat(policies): give PolicyException a typed error code"
 - Create: `DynamicWhere.ex/Policies/DTOs/PolicyDecision.cs`
 - Create: `DynamicWhere.Tests/Policies/PolicyTraceTests.cs`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `PolicyTraceTests.cs`:
 
@@ -254,12 +254,12 @@ public class PolicyTraceTests
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `dotnet test DynamicWhere.Tests --filter "FullyQualifiedName~PolicyTraceTests"`
 Expected: FAIL to compile — `PolicyAction` and `PolicyDecision` do not exist.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `DynamicWhere.ex/Policies/Enums/PolicyAction.cs`:
 
@@ -290,12 +290,12 @@ public enum PolicyAction
 
 Create `DynamicWhere.ex/Policies/DTOs/PolicyDecision.cs` — an immutable record of `FieldPath`, `Feature`, `Action`, `Reason`, rejecting a blank path, with XML docs on every member.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `dotnet test DynamicWhere.Tests --filter "FullyQualifiedName~PolicyTraceTests"`
 Expected: PASS, 2 tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add DynamicWhere.ex/Policies/Enums/PolicyAction.cs DynamicWhere.ex/Policies/DTOs/PolicyDecision.cs DynamicWhere.Tests/Policies/PolicyTraceTests.cs

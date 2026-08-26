@@ -1,6 +1,8 @@
+using System.Reflection;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
@@ -112,6 +114,8 @@ internal static class FilterSanitizer
     {
         if (filter.Selects is null || filter.Selects.Count == 0)
         {
+            SynthesizeSelects(filter, gate);
+
             return;
         }
 
@@ -137,6 +141,66 @@ internal static class FilterSanitizer
         }
 
         filter.Selects = kept;
+    }
+
+    /// <summary>
+    /// Builds a projection from the allowed fields when the caller sent none and something is
+    /// denied.
+    /// </summary>
+    /// <remarks>
+    /// A caller who sends no projection gets the whole entity, denied columns included, because
+    /// the pipeline only projects when <c>Selects</c> is non-null. Gating the list alone would
+    /// therefore enforce deny-select against precisely the callers who volunteered one, and leave
+    /// it bypassable by asking for less.
+    /// <para>
+    /// Nothing is synthesized unless a field is actually denied. A type the policy has no opinion
+    /// about keeps its null projection and generates the same SQL as the unguarded path, which is
+    /// the difference between a policy layer that is invisible until it has something to say and
+    /// one that rewrites every query in the application.
+    /// </para>
+    /// <para>
+    /// Scalars only. A navigation is not loaded by an unguarded call in the first place, and
+    /// projecting one whole would carry every field beneath it — reopening the same hole one level
+    /// down. Where a caller had eagerly loaded one, narrowing it away fails closed.
+    /// </para>
+    /// <para>
+    /// This never throws in the strict tier for a denied field. Strict refuses what a caller asks
+    /// for, and here the caller named nothing; throwing would fail every strict query against a
+    /// type carrying any denied field at all.
+    /// </para>
+    /// </remarks>
+    private static void SynthesizeSelects(Filter filter, Gate gate)
+    {
+        List<string> allowed = new();
+        bool anyDenied = false;
+
+        foreach (string field in gate.ProjectableFields())
+        {
+            FieldPolicy policy = gate.PolicyFor(field);
+
+            if (policy.Allows(PolicyFeature.Select))
+            {
+                allowed.Add(field);
+
+                continue;
+            }
+
+            anyDenied = true;
+
+            gate.Record(field, PolicyFeature.Select, PolicyAction.Dropped, policy);
+        }
+
+        if (!anyDenied)
+        {
+            return;
+        }
+
+        if (allowed.Count == 0)
+        {
+            throw gate.Exception(WholeClause, PolicyFeature.Select, PolicyErrorCode.AllSelectsDenied, null);
+        }
+
+        filter.Selects = allowed;
     }
 
     /// <summary>
@@ -246,6 +310,30 @@ internal static class FilterSanitizer
 
         /// <summary>True when every refusal throws rather than being applied quietly.</summary>
         internal bool IsStrict => _options.Tier == DwTier.Strict;
+
+        /// <summary>
+        /// The scalar properties of the entity that a typed projection can actually assign.
+        /// </summary>
+        /// <remarks>
+        /// Read through the same reflection cache the validator uses, so a synthesized projection
+        /// cannot name a field the pipeline would then reject. Write-only and indexed members are
+        /// excluded because a typed projection assigns into them.
+        /// </remarks>
+        internal IEnumerable<string> ProjectableFields()
+        {
+            foreach (KeyValuePair<string, PropertyInfo> entry in CacheReflection.GetTypeProperties(_entityType))
+            {
+                PropertyInfo property = entry.Value;
+
+                if (property.CanRead
+                    && property.CanWrite
+                    && property.GetIndexParameters().Length == 0
+                    && CacheReflection.IsSimpleType(property.PropertyType))
+                {
+                    yield return property.Name;
+                }
+            }
+        }
 
         /// <summary>Resolves one field's policy, once per query.</summary>
         internal FieldPolicy PolicyFor(string fieldPath)

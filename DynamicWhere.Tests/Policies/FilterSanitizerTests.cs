@@ -47,6 +47,20 @@ public class FilterSanitizerTests
         return (result, trace);
     }
 
+    /// <summary>Sanitizes against fragments a test supplies directly.</summary>
+    private static (Filter Result, PolicyTrace Trace) Guard<T>(
+        Filter filter, DwTier tier, FakePolicyProvider provider)
+        where T : class
+    {
+        PolicyTrace trace = new(tier, dryRun: false);
+
+        Filter result = FilterSanitizer.Sanitize<T>(
+            filter, new PolicyResolver(new IDwPolicyProvider[] { provider }),
+            Caller(), Options(tier), trace);
+
+        return (result, trace);
+    }
+
     [Fact]
     public void The_callers_filter_is_never_touched()
     {
@@ -282,5 +296,98 @@ public class FilterSanitizerTests
 
         Assert.Equal(new[] { "Id", "Name" }, result.Selects!);
         Assert.Empty(trace.Decisions);
+    }
+
+    // ---------------------------------------------------------------- synthesized projection
+
+    [Fact]
+    public void A_query_that_asks_for_no_projection_still_loses_the_denied_fields()
+    {
+        // Extension.ToList projects only when Selects is non-null, so leaving it null returns the
+        // whole entity. Gating a list the caller never sent would enforce deny-select against
+        // exactly the callers who volunteered one.
+        Filter filter = new();
+
+        (Filter result, _) = Guard<SecuredEmployee>(filter, DwTier.Convenience);
+
+        Assert.NotNull(result.Selects);
+        Assert.DoesNotContain("Salary", result.Selects!);
+        Assert.DoesNotContain("NationalId", result.Selects!);
+        Assert.Contains("Id", result.Selects!);
+        Assert.Contains("Name", result.Selects!);
+        Assert.Contains("InternalNotes", result.Selects!);
+    }
+
+    [Fact]
+    public void A_type_that_denies_nothing_keeps_a_null_projection()
+    {
+        // The unguarded path generates no projection at all here, and the guarded one must
+        // generate the same SQL. A policy layer that rewrites every query in the application is a
+        // different product from one that is invisible until it has something to say.
+        Filter filter = new();
+
+        (Filter result, PolicyTrace trace) = Guard<PlainProduct>(filter, DwTier.Strict);
+
+        Assert.Null(result.Selects);
+        Assert.Empty(trace.Decisions);
+    }
+
+    [Fact]
+    public void Each_field_the_synthesis_leaves_out_is_recorded()
+    {
+        Filter filter = new();
+
+        (_, PolicyTrace trace) = Guard<SecuredEmployee>(filter, DwTier.Convenience);
+
+        Assert.Contains(trace.Decisions, d => d.FieldPath == "Salary" && d.Action == PolicyAction.Dropped);
+        Assert.Contains(trace.Decisions, d => d.FieldPath == "NationalId" && d.Action == PolicyAction.Dropped);
+    }
+
+    [Fact]
+    public void Strict_synthesizes_rather_than_throwing_because_nothing_was_asked_for()
+    {
+        // Strict refuses what a caller asks for. Here the caller named no field at all, so there
+        // is nothing to refuse -- and throwing would make every strict-tier query against a type
+        // with any denied field fail outright.
+        Filter filter = new();
+
+        (Filter result, _) = Guard<SecuredEmployee>(filter, DwTier.Strict);
+
+        Assert.NotNull(result.Selects);
+        Assert.DoesNotContain("Salary", result.Selects!);
+    }
+
+    [Fact]
+    public void Synthesis_covers_scalars_only_and_leaves_navigations_out()
+    {
+        // A navigation is not loaded by an unguarded ToList in the first place, and projecting one
+        // whole would carry every field beneath it -- reopening the same hole one level down.
+        Filter filter = new();
+
+        (Filter result, _) = Guard<SecuredEmployee>(filter, DwTier.Convenience);
+
+        Assert.DoesNotContain("Contact", result.Selects!);
+    }
+
+    [Fact]
+    public void Denying_every_field_throws_rather_than_synthesizing_an_empty_projection()
+    {
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("*", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.SealedAttribute);
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<PlainProduct>(new Filter(), DwTier.Convenience, provider));
+
+        Assert.Equal(PolicyErrorCode.AllSelectsDenied, exception.ErrorCode);
+    }
+
+    [Fact]
+    public void An_explicit_projection_is_never_replaced_by_a_synthesized_one()
+    {
+        Filter filter = new() { Selects = new List<string> { "Name" } };
+
+        (Filter result, _) = Guard<SecuredEmployee>(filter, DwTier.Convenience);
+
+        Assert.Equal(new[] { "Name" }, result.Selects!);
     }
 }

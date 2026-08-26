@@ -32,6 +32,51 @@ The sanitizer clones first, so a guarded query leaves the caller's object untouc
 
 ---
 
+## Three decisions taken during review
+
+The draft above was reviewed against the code on 2026-08-26 before execution. Three items were
+wrong or missing; all three are settled here and the affected tasks below are rewritten to match.
+
+### The phase gate checks four files, not the `Source/` directory
+
+`DynamicWhere.ex/Source/` holds exactly five files: the four this project must never touch, plus
+`Extention.cs`, which defines the `Extension` class. Task 13 puts the `RequirePolicy` check in
+`Extension` -- it has to live where the *unguarded* path can see it -- so the directory-wide gate in
+Task 17 and Task 13 could not both hold. The directory check was always an over-approximation of
+the roadmap's actual standing rule, which names four files and has never named `Extention.cs`. It
+passed until now only because nothing had touched the fifth file yet.
+
+Task 17's gate is therefore narrowed to the four named files. `Extention.cs` gains exactly one
+guard clause and is reviewed on its own.
+
+### `Summary` carries two field vocabularies and only one of them is a property path
+
+`GroupBy.Fields` and `AggregateBy.Field` are property paths. `Summary.Having`'s condition fields
+and `Summary.Orders`'s fields are **aggregate aliases** -- `Validator.ValidateHavingCondition`
+checks `validAliases.Contains(condition.Field)` and never touches reflection, and
+`Validate<T>(this Summary)` accepts an order field matching a group-by field *or* an alias.
+
+Running such a field through `Validate<T>()` throws `LogicException` on a query that is valid
+today. Skipping it instead opens the fail-open cousin: `AggregateBy { Field = "Salary", Alias =
+"S" }` followed by `Having S > 100000` reads a deny-aggregate field through its alias.
+
+Neither this plan's draft nor spec section 6.2 mentions `Having` at all. The Summary overload
+therefore builds the alias-to-source-field map first, and gates each aliased reference against the
+policy of the field it aggregates rather than against a path lookup that would throw.
+
+### Deny-select is enforced by synthesizing a projection
+
+`Extension.ToList` projects only `if (filter.Selects != null)`. A caller who sends no `Selects`
+gets the whole entity with every denied column populated, so gating a projection list alone leaves
+`[DwNoSelect]` bypassable by omission -- which is the phase's own recurring fail-open shape,
+reached by doing less rather than more.
+
+When `Selects` is null *and* the resolved policy denies `Select` on any field of `T`, the sanitizer
+builds the projection from the allowed fields instead of leaving it null. A caller who denies
+nothing still gets `Selects == null` and the byte-identical unguarded path.
+
+---
+
 ## File structure
 
 **Create in `DynamicWhere.ex/Policies/`:**
@@ -277,12 +322,30 @@ The sanitizer must not mutate the caller's object, and `Validator` rewrites `Fie
 
 **Files:**
 - Modify: `DynamicWhere.ex/Classes/Complex/Filter.cs`
+- Modify: `DynamicWhere.ex/Classes/Complex/Summary.cs`
+- Modify: `DynamicWhere.ex/Classes/Complex/Segment.cs`
 - Modify: `DynamicWhere.ex/Classes/Core/ConditionGroup.cs`
+- Modify: `DynamicWhere.ex/Classes/Core/ConditionSet.cs`
+- Modify: `DynamicWhere.ex/Classes/Core/Condition.cs`
+- Modify: `DynamicWhere.ex/Classes/Core/OrderBy.cs`
+- Modify: `DynamicWhere.ex/Classes/Core/GroupBy.cs`
+- Modify: `DynamicWhere.ex/Classes/Core/AggregateBy.cs`
+- Modify: `DynamicWhere.ex/Classes/Core/PageBy.cs`
 - Create: `DynamicWhere.Tests/Policies/FilterCloneTests.cs`
 
-Add an `internal Filter Clone()` and `internal ConditionGroup Clone()`. `ConditionGroup` recurses through `SubConditionGroups`; `Condition.Values` is a `List<object>` and must be a new list, though the values themselves are shared by reference (they are scalars from JSON).
+Add an `internal Clone()` to every one of them. The draft named only `Filter` and `ConditionGroup`,
+but Task 9 sanitizes a `Summary` and Task 14 sanitizes a `Segment`, and both reach the same leaf
+types -- cloning the whole reachable graph once here is cheaper than discovering each missing
+branch from a mutation bug three tasks later.
 
-Tests must prove: mutating the clone's nested `SubConditionGroups[0].Conditions[0].Field` leaves the original unchanged, and the same for `Selects`, `Orders`, and `Page`.
+`ConditionGroup` recurses through `SubConditionGroups`; `Condition.Values` is a `List<object>` and
+must be a new list, though the values themselves are shared by reference (they are scalars from
+JSON). `Summary` reaches `ConditionGroup` twice -- through `ConditionGroup` and through `Having` --
+and both must be cloned. `Segment` reaches it once per `ConditionSet`.
+
+Tests must prove: mutating the clone's nested `SubConditionGroups[0].Conditions[0].Field` leaves
+the original unchanged, and the same for `Selects`, `Orders`, `Page`, `Summary.Having`, and
+`Segment.ConditionSets`.
 
 **These are the only edits to `Classes/` in the whole phase.** They add a member; they change no existing behaviour.
 
@@ -320,6 +383,28 @@ Record a `PolicyDecision` for each drop.
 
 ---
 
+## Task 6b: Synthesize a projection when the caller sends none
+
+Settled in review. Gating the `Selects` list alone enforces deny-select only against callers who
+volunteer one; `Extension.ToList` projects only `if (filter.Selects != null)`, so omitting it
+returns the whole entity with denied columns populated.
+
+When `Selects` is null **and** the resolved policy denies `Select` on at least one field of `T`,
+replace it with the list of allowed top-level fields. When nothing is denied, leave it null so the
+generated query stays byte-identical to the unguarded path -- this is the difference between a
+policy layer that is invisible when unused and one that rewrites every query in the application.
+
+Enumerate candidate fields through `CacheReflection`, the same source `Validate<T>()` reads, so the
+synthesized list cannot drift from what the pipeline accepts.
+
+Tests must prove: a denied field is absent from the result when no `Selects` was sent; a type with
+no denials produces a null `Selects` and the identical SQL; and denying every field throws
+`AllSelectsDenied` rather than projecting nothing.
+
+**Commit:** `feat(policies): synthesize a projection when select is denied`
+
+---
+
 ## Task 7: Gate ORDER
 
 Drop denied fields in convenience, throw in strict. Unlike SELECT, an empty `Orders` list after dropping is fine — the query simply returns unordered.
@@ -342,7 +427,37 @@ Must recurse through `SubConditionGroups`. Must gate every condition, not stop a
 
 Both throw in both tiers. `Summary` carries `GroupBy` and `AggregateBy`; the sanitizer needs a `Summary` overload alongside the `Filter` one.
 
+Only `GroupBy.Fields` and `AggregateBy.Field` are property paths and only they go through
+`Validate<T>()`. `Summary.Having` and `Summary.Orders` are handled in Task 9b.
+
 **Commit:** `feat(policies): gate grouping and aggregation`
+
+---
+
+## Task 9b: Gate Having and Summary orders through their aliases
+
+Settled in review. `Summary.Having`'s condition fields, and any `Summary.Orders` field naming an
+aggregate rather than a group-by field, are **aggregate aliases**, not property paths.
+`Validate<T>()` throws on them, and skipping them lets an alias read a field whose underlying
+policy denies aggregation.
+
+Build the alias-to-source-field map from `summary.GroupBy.AggregateBy` first. Then, for each
+`Having` condition and each `Summary.Orders` entry:
+
+- If the field matches an alias, resolve the policy of that alias's `AggregateBy.Field` and gate
+  the reference against it. An alias over a `Count` with no field has no underlying field and is
+  allowed.
+- If the field matches a group-by field, gate it as the property path it is.
+- Otherwise leave it untouched and let `Validate<T>(this Summary)` reject it downstream, unchanged.
+
+Alias comparison is `OrdinalIgnoreCase`, matching `Validator`'s own `validAliases` set. A mismatch
+here is a fragment that fails to match, which is access granted.
+
+Tests must prove: a `Having` clause over an alias whose source field is deny-aggregate throws; a
+`Having` clause over an allowed alias survives untouched; a `Summary.Orders` entry naming an alias
+is not sent through `Validate<T>()`; and a `Count` alias with no source field is allowed.
+
+**Commit:** `feat(policies): gate having and summary orders through aliases`
 
 ---
 
@@ -434,7 +549,14 @@ Against the existing SQLite `SalesFixture`, with a decorated fixture entity. Mus
 ## Task 17: Phase gate
 
 - `dotnet test` green, `dotnet build -c Release` at zero warnings
-- `git diff --name-only master...HEAD -- DynamicWhere.ex/Source/` — **must still be empty**
+- The four-file gate -- **must still be empty**:
+
+```bash
+git diff --name-only master...HEAD -- DynamicWhere.ex/Source/Builder.cs DynamicWhere.ex/Source/Validator.cs DynamicWhere.ex/Source/Converter.cs DynamicWhere.ex/Source/Normalizer.cs
+```
+
+- `git diff --stat master...HEAD -- DynamicWhere.ex/Source/Extention.cs` -- expected to show the
+  Task 13 guard clause and nothing else. Read the diff; do not just count lines.
 - Nothing pushed
 - Append `## Phase 2 outcome` to the roadmap
 - Record what Phase 3 inherits
@@ -445,6 +567,7 @@ Against the existing SQLite `SalesFixture`, with a decorated fixture entity. Mus
 
 - One implementing agent at a time. The git index is process-wide.
 - Explicit pathspecs when staging. Never `git add -A`.
-- No edits to `Builder.cs`, `Validator.cs`, `Converter.cs`, `Normalizer.cs`.
+- No edits to `Builder.cs`, `Validator.cs`, `Converter.cs`, `Normalizer.cs`. `Extention.cs` takes
+  the Task 13 guard clause and nothing else.
 - The unguarded path stays byte-identical in behaviour to v2.1.5, except for the `RequirePolicy` check in Task 13.
 - Every task ends green.

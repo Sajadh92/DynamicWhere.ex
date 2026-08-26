@@ -54,11 +54,18 @@ public sealed class PolicyQueryable<T> where T : class
     {
         PolicyTrace trace = NewTrace();
 
-        FilterResult<T> result = Guarded().ToList(Sanitize(filter, trace), getQueryString);
+        Filter sanitized = Sanitize(filter, trace);
 
-        result.Policy = trace;
+        // Entered after sanitizing, not before: sanitization is where a refusal is decided, and it
+        // needs no scope of its own.
+        using (PolicyScope.Enter(_context))
+        {
+            FilterResult<T> result = Guarded().ToList(sanitized, getQueryString);
 
-        return result;
+            result.Policy = trace;
+
+            return result;
+        }
     }
 
     /// <summary>
@@ -73,11 +80,16 @@ public sealed class PolicyQueryable<T> where T : class
     {
         PolicyTrace trace = NewTrace();
 
-        FilterResult<T> result = await Guarded().ToListAsync(Sanitize(filter, trace), getQueryString);
+        Filter sanitized = Sanitize(filter, trace);
 
-        result.Policy = trace;
+        using (PolicyScope.Enter(_context))
+        {
+            FilterResult<T> result = await Guarded().ToListAsync(sanitized, getQueryString);
 
-        return result;
+            result.Policy = trace;
+
+            return result;
+        }
     }
 
     /// <summary>

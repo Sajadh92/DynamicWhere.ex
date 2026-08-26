@@ -71,13 +71,19 @@ public class ApplyPolicyTests
     }
 
     [Fact]
-    public void An_unguarded_query_over_the_same_data_still_returns_everything()
+    public void An_unguarded_query_on_a_type_that_does_not_require_policy_is_untouched()
     {
-        // The point of the comparison: the policy layer changes what a guarded call returns and
-        // nothing else. Existing callers are untouched.
-        FilterResult<SecuredEmployee> result = People().ToList(new Filter());
+        // The point of the comparison: the policy layer changes what a *guarded* call returns and
+        // nothing else. SecuredEmployee cannot stand in here, because it carries
+        // [DwEntity(RequirePolicy = true)] and refuses an unguarded read outright.
+        IQueryable<PlainProduct> products = new List<PlainProduct>
+        {
+            new() { Id = 1, Name = "Widget" }
+        }.AsQueryable();
 
-        Assert.All(result.Data, row => Assert.NotEqual(string.Empty, row.NationalId));
+        FilterResult<PlainProduct> result = products.ToList(new Filter());
+
+        Assert.Equal("Widget", result.Data[0].Name);
         Assert.Null(result.Policy);
     }
 

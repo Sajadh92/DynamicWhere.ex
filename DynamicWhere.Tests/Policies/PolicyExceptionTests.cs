@@ -12,7 +12,7 @@ public class PolicyExceptionTests
     [Fact]
     public void A_policy_exception_is_catchable_as_a_logic_exception()
     {
-        PolicyException exception = new("FieldDeniedForWhere", "Salary", PolicyFeature.Where, DwTier.Strict);
+        PolicyException exception = new(PolicyErrorCode.FieldDeniedForWhere, "Salary", PolicyFeature.Where, DwTier.Strict);
 
         Assert.IsAssignableFrom<LogicException>(exception);
     }
@@ -20,7 +20,7 @@ public class PolicyExceptionTests
     [Fact]
     public void Structured_data_survives_onto_the_exception()
     {
-        PolicyException exception = new("FieldDeniedForWhere", "Contact.Email", PolicyFeature.Where, DwTier.Convenience)
+        PolicyException exception = new(PolicyErrorCode.FieldDeniedForWhere, "Contact.Email", PolicyFeature.Where, DwTier.Convenience)
         {
             RuleId = "a3f2",
             SourceOrigin = "DwNoWhereAttribute"
@@ -36,10 +36,27 @@ public class PolicyExceptionTests
     [Fact]
     public void The_message_names_the_code_the_field_and_the_feature()
     {
-        PolicyException exception = new("FieldDeniedForWhere", "Salary", PolicyFeature.Where, DwTier.Strict);
+        PolicyException exception = new(PolicyErrorCode.FieldDeniedForWhere, "Salary", PolicyFeature.Where, DwTier.Strict);
 
         Assert.Contains("FieldDeniedForWhere", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Salary", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Where", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_policy_exception_carries_a_typed_code_a_caller_can_switch_on()
+    {
+        PolicyException exception = new(PolicyErrorCode.FieldDeniedForWhere, "Salary", PolicyFeature.Where, DwTier.Strict);
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, exception.ErrorCode);
+        Assert.Equal("FieldDeniedForWhere", exception.Code);
+    }
+
+    [Fact]
+    public void Every_error_code_has_a_distinct_name_usable_as_the_string_code()
+    {
+        PolicyErrorCode[] codes = Enum.GetValues<PolicyErrorCode>();
+
+        Assert.Equal(codes.Length, codes.Select(c => c.ToString()).Distinct().Count());
     }
 }

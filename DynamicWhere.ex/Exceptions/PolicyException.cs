@@ -9,27 +9,40 @@ namespace DynamicWhere.ex.Exceptions;
 /// Derives from <see cref="LogicException"/> so existing catch blocks continue to work unchanged.
 /// The structured properties let an API layer turn a refusal into a useful response without
 /// parsing the message.
+/// <para>
+/// The reason is carried twice on purpose. <see cref="ErrorCode"/> is the one to branch on — it is
+/// a closed set, so a <c>switch</c> over it is exhaustive and the compiler reports the gap when a
+/// later release adds a member. <see cref="Code"/> is its name, for log lines and serialized
+/// payloads that cannot hold an enum.
+/// </para>
 /// </remarks>
 public class PolicyException : LogicException
 {
     /// <summary>
     /// Initializes the exception.
     /// </summary>
-    /// <param name="code">The error code, from <c>ErrorCode</c>.</param>
+    /// <param name="errorCode">The reason the policy refused.</param>
     /// <param name="fieldPath">The field the policy refused.</param>
     /// <param name="feature">The feature that was refused.</param>
     /// <param name="tier">The enforcement tier in force when the refusal happened.</param>
-    public PolicyException(string code, string fieldPath, PolicyFeature feature, DwTier tier)
-        : base($"{code}: field '{fieldPath}', feature '{feature}', tier '{tier}'.")
+    public PolicyException(PolicyErrorCode errorCode, string fieldPath, PolicyFeature feature, DwTier tier)
+        : base($"{errorCode}: field '{fieldPath}', feature '{feature}', tier '{tier}'.")
     {
-        Code = code;
+        ErrorCode = errorCode;
         FieldPath = fieldPath;
         Feature = feature;
         Tier = tier;
     }
 
-    /// <summary>The error code.</summary>
-    public string Code { get; }
+    /// <summary>
+    /// The reason the policy refused. Branch on this rather than on <see cref="Code"/>.
+    /// </summary>
+    public PolicyErrorCode ErrorCode { get; }
+
+    /// <summary>
+    /// The name of <see cref="ErrorCode"/>, for logging and serialization.
+    /// </summary>
+    public string Code => ErrorCode.ToString();
 
     /// <summary>The field the policy refused.</summary>
     public string FieldPath { get; }

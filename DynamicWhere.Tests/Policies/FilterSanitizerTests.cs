@@ -390,4 +390,75 @@ public class FilterSanitizerTests
 
         Assert.Equal(new[] { "Name" }, result.Selects!);
     }
+
+    // ---------------------------------------------------------------------------- order
+
+    [Fact]
+    public void Convenience_drops_an_order_field_the_policy_refuses()
+    {
+        // InternalNotes carries [DwDeny(Order | Group)].
+        Filter filter = new()
+        {
+            Orders = new List<OrderBy>
+            {
+                new() { Sort = 1, Field = "Name" },
+                new() { Sort = 2, Field = "InternalNotes" }
+            }
+        };
+
+        (Filter result, PolicyTrace trace) = Guard<SecuredEmployee>(filter, DwTier.Convenience);
+
+        Assert.Single(result.Orders!);
+        Assert.Equal("Name", result.Orders![0].Field);
+        Assert.Contains(
+            trace.Decisions,
+            d => d.FieldPath == "InternalNotes"
+                 && d.Feature == PolicyFeature.Order
+                 && d.Action == PolicyAction.Dropped);
+    }
+
+    [Fact]
+    public void Strict_throws_on_an_order_field_the_policy_refuses()
+    {
+        Filter filter = new()
+        {
+            Orders = new List<OrderBy> { new() { Field = "InternalNotes" } }
+        };
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(filter, DwTier.Strict));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForOrder, exception.ErrorCode);
+        Assert.Equal("InternalNotes", exception.FieldPath);
+    }
+
+    [Fact]
+    public void Dropping_every_order_leaves_the_query_unordered_rather_than_refused()
+    {
+        // Unlike a projection, an empty order list is meaningful: the pipeline returns the query
+        // unchanged, so the result is simply unordered.
+        Filter filter = new()
+        {
+            Orders = new List<OrderBy> { new() { Field = "InternalNotes" } }
+        };
+
+        (Filter result, _) = Guard<SecuredEmployee>(filter, DwTier.Convenience);
+
+        Assert.Empty(result.Orders!);
+    }
+
+    [Fact]
+    public void A_field_denied_for_order_can_still_be_projected()
+    {
+        Filter filter = new()
+        {
+            Selects = new List<string> { "InternalNotes" },
+            Orders = new List<OrderBy> { new() { Field = "InternalNotes" } }
+        };
+
+        (Filter result, _) = Guard<SecuredEmployee>(filter, DwTier.Convenience);
+
+        Assert.Equal(new[] { "InternalNotes" }, result.Selects!);
+        Assert.Empty(result.Orders!);
+    }
 }

@@ -92,9 +92,49 @@ internal static class FilterSanitizer
 
         Gate gate = new(typeof(T), resolver, context, options, trace);
 
+        GateOrders(working, gate);
         GateSelects(working, gate);
 
         return working;
+    }
+
+    /// <summary>
+    /// Removes, or refuses, every sort field the policy denies.
+    /// </summary>
+    /// <remarks>
+    /// An empty order list is meaningful where an empty projection is not: the pipeline returns
+    /// the query unchanged, so the result is simply unordered. There is nothing to refuse.
+    /// <para>
+    /// Worth knowing when reading a result: pagination is applied after ordering, so a convenience
+    /// tier that drops the only sort field leaves the page boundaries at the provider's discretion.
+    /// The rows are still ones the caller may see; which page they land on stops being stable.
+    /// </para>
+    /// </remarks>
+    private static void GateOrders(Filter filter, Gate gate)
+    {
+        if (filter.Orders is null || filter.Orders.Count == 0)
+        {
+            return;
+        }
+
+        List<OrderBy> kept = new(filter.Orders.Count);
+
+        foreach (OrderBy order in filter.Orders)
+        {
+            string field = order.Field!;
+            FieldPolicy policy = gate.PolicyFor(field);
+
+            if (policy.Allows(PolicyFeature.Order))
+            {
+                kept.Add(order);
+
+                continue;
+            }
+
+            gate.Refuse(field, PolicyFeature.Order, PolicyErrorCode.FieldDeniedForOrder, policy);
+        }
+
+        filter.Orders = kept;
     }
 
     /// <summary>

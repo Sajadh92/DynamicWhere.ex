@@ -258,3 +258,17 @@ internal class PlainNode
 
     public PlainNode? Next { get; set; }
 }
+
+/// <summary>
+/// Carries a denial but no policy requirement, so a guarded run and an unguarded one can be
+/// compared directly. A type marked RequirePolicy cannot stand in: the unguarded half refuses.
+/// </summary>
+internal class OpenLedger
+{
+    public int Id { get; set; }
+
+    public string Reference { get; set; } = string.Empty;
+
+    [DwDenied]
+    public decimal Amount { get; set; }
+}

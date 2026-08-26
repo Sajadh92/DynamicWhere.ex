@@ -451,9 +451,7 @@ internal static class FilterSanitizer
                     continue;
                 }
 
-                allowed = false;
-
-                gate.Refuse(
+                allowed &= !gate.Refuse(
                     path, PolicyFeature.Order, PolicyErrorCode.FieldDeniedForOrder, policy, order.Field);
             }
 
@@ -665,14 +663,11 @@ internal static class FilterSanitizer
             string field = order.Field!;
             FieldPolicy policy = gate.PolicyFor(field);
 
-            if (policy.Allows(PolicyFeature.Order))
+            if (policy.Allows(PolicyFeature.Order)
+                || !gate.Refuse(field, PolicyFeature.Order, PolicyErrorCode.FieldDeniedForOrder, policy))
             {
                 kept.Add(order);
-
-                continue;
             }
-
-            gate.Refuse(field, PolicyFeature.Order, PolicyErrorCode.FieldDeniedForOrder, policy);
         }
 
         segment.Orders = kept;
@@ -699,14 +694,11 @@ internal static class FilterSanitizer
         {
             FieldPolicy policy = gate.PolicyFor(field);
 
-            if (policy.Allows(PolicyFeature.Select))
+            if (policy.Allows(PolicyFeature.Select)
+                || !gate.Refuse(field, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy))
             {
                 kept.Add(field);
-
-                continue;
             }
-
-            gate.Refuse(field, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy);
         }
 
         if (kept.Count == 0)
@@ -947,14 +939,11 @@ internal static class FilterSanitizer
             string field = order.Field!;
             FieldPolicy policy = gate.PolicyFor(field);
 
-            if (policy.Allows(PolicyFeature.Order))
+            if (policy.Allows(PolicyFeature.Order)
+                || !gate.Refuse(field, PolicyFeature.Order, PolicyErrorCode.FieldDeniedForOrder, policy))
             {
                 kept.Add(order);
-
-                continue;
             }
-
-            gate.Refuse(field, PolicyFeature.Order, PolicyErrorCode.FieldDeniedForOrder, policy);
         }
 
         filter.Orders = kept;
@@ -994,14 +983,11 @@ internal static class FilterSanitizer
         {
             FieldPolicy policy = gate.PolicyFor(field);
 
-            if (policy.Allows(PolicyFeature.Select))
+            if (policy.Allows(PolicyFeature.Select)
+                || !gate.Refuse(field, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy))
             {
                 kept.Add(field);
-
-                continue;
             }
-
-            gate.Refuse(field, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy);
         }
 
         if (kept.Count == 0)
@@ -1059,7 +1045,7 @@ internal static class FilterSanitizer
             gate.Record(field, PolicyFeature.Select, PolicyAction.Dropped, policy);
         }
 
-        if (!anyDenied)
+        if (!anyDenied || gate.IsDryRun)
         {
             return;
         }
@@ -1181,6 +1167,17 @@ internal static class FilterSanitizer
         internal bool IsStrict => _options.Tier == DwTier.Strict;
 
         /// <summary>
+        /// True when nothing is enforced and every decision is only recorded.
+        /// </summary>
+        /// <remarks>
+        /// The union of two switches. The global one turns enforcement off everywhere; the
+        /// per-context one turns it off for a single caller, which is what lets one canary subject
+        /// run unenforced while everyone else stays enforced. An all-or-nothing global flag would
+        /// force the rollout to be all-or-nothing too.
+        /// </remarks>
+        internal bool IsDryRun => _options.DryRun || _context.DryRun;
+
+        /// <summary>
         /// The scalar properties of the entity that a typed projection can actually assign.
         /// </summary>
         /// <remarks>
@@ -1209,7 +1206,7 @@ internal static class FilterSanitizer
         {
             if (count > _options.Caps.MaxConditions)
             {
-                throw Cap("MaxConditions", _options.Caps.MaxConditions, count, WholeClause);
+                Raise(Cap("MaxConditions", _options.Caps.MaxConditions, count, WholeClause));
             }
         }
 
@@ -1218,7 +1215,7 @@ internal static class FilterSanitizer
         {
             if (count > _options.Caps.MaxOrderFields)
             {
-                throw Cap("MaxOrderFields", _options.Caps.MaxOrderFields, count, WholeClause);
+                Raise(Cap("MaxOrderFields", _options.Caps.MaxOrderFields, count, WholeClause));
             }
         }
 
@@ -1227,7 +1224,7 @@ internal static class FilterSanitizer
         {
             if (page is not null && page.PageSize > _options.Caps.MaxPageSize)
             {
-                throw Cap("MaxPageSize", _options.Caps.MaxPageSize, page.PageSize, WholeClause);
+                Raise(Cap("MaxPageSize", _options.Caps.MaxPageSize, page.PageSize, WholeClause));
             }
         }
 
@@ -1261,22 +1258,36 @@ internal static class FilterSanitizer
 
             if (segments > _options.Caps.MaxNavigationDepth)
             {
-                throw Cap("MaxNavigationDepth", _options.Caps.MaxNavigationDepth, segments, fieldPath);
+                Raise(Cap("MaxNavigationDepth", _options.Caps.MaxNavigationDepth, segments, fieldPath));
             }
         }
 
-        /// <summary>Records and builds a cap refusal.</summary>
+        /// <summary>Throws a cap refusal, unless the dry run suppressed it.</summary>
+        private static void Raise(PolicyException? refusal)
+        {
+            if (refusal is not null)
+            {
+                throw refusal;
+            }
+        }
+
+        /// <summary>Records and builds a cap refusal, or records only in a dry run.</summary>
         /// <remarks>
         /// The feature is <see cref="PolicyFeature.None"/> because a cap is structural: it is about
         /// the size of the request, not about what the caller may do with a field. The cap that
         /// fired is named in <c>SourceOrigin</c>, since it is the thing that decided and there is
         /// otherwise no way to tell which limit was hit.
         /// </remarks>
-        private PolicyException Cap(string name, int limit, int actual, string fieldPath)
+        private PolicyException? Cap(string name, int limit, int actual, string fieldPath)
         {
             string origin = $"{name} cap ({limit}), request had {actual}";
 
             _trace.Add(new PolicyDecision(fieldPath, PolicyFeature.None, PolicyAction.Denied, origin));
+
+            if (IsDryRun)
+            {
+                return null;
+            }
 
             return new PolicyException(PolicyErrorCode.CapExceeded, fieldPath, PolicyFeature.None, _options.Tier)
             {
@@ -1300,21 +1311,30 @@ internal static class FilterSanitizer
         /// Applies a refusal for a feature that may be dropped: throws in the strict tier, records
         /// the drop otherwise.
         /// </summary>
-        internal void Refuse(
+        /// <returns>
+        /// True when the caller must remove the clause. False in a dry run, where the decision is
+        /// recorded and the query is left exactly as the caller wrote it.
+        /// </returns>
+        internal bool Refuse(
             string fieldPath,
             PolicyFeature feature,
             PolicyErrorCode code,
             FieldPolicy policy,
             string? via = null)
         {
+            Record(fieldPath, feature, IsStrict ? PolicyAction.Denied : PolicyAction.Dropped, policy, via);
+
+            if (IsDryRun)
+            {
+                return false;
+            }
+
             if (IsStrict)
             {
-                Record(fieldPath, feature, PolicyAction.Denied, policy, via);
-
                 throw Exception(fieldPath, feature, code, policy);
             }
 
-            Record(fieldPath, feature, PolicyAction.Dropped, policy, via);
+            return true;
         }
 
         /// <summary>
@@ -1329,6 +1349,11 @@ internal static class FilterSanitizer
             string? via = null)
         {
             Record(fieldPath, feature, PolicyAction.Denied, policy, via);
+
+            if (IsDryRun)
+            {
+                return;
+            }
 
             throw Exception(fieldPath, feature, code, policy);
         }

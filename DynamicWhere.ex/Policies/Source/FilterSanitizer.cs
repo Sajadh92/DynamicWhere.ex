@@ -36,6 +36,9 @@ internal static class FilterSanitizer
     /// </summary>
     private const string WholeClause = "*";
 
+    /// <summary>The character separating one navigation segment from the next.</summary>
+    private const char SegmentSeparator = '.';
+
     /// <summary>
     /// Canonicalizes and gates a filter, returning a sanitized copy.
     /// </summary>
@@ -92,6 +95,8 @@ internal static class FilterSanitizer
         Canonicalize<T>(working);
 
         Gate gate = new(typeof(T), resolver, context, options, trace);
+
+        EnforceCaps(working, gate);
 
         GateConditions(working.ConditionGroup, gate);
         GateOrders(working, gate);
@@ -161,6 +166,8 @@ internal static class FilterSanitizer
         CanonicalizeGrouping<T>(working.GroupBy);
 
         Gate gate = new(typeof(T), resolver, context, options, trace);
+
+        EnforceCaps(working, gate);
 
         GateConditions(working.ConditionGroup, gate);
         GateGrouping(working.GroupBy, gate);
@@ -452,6 +459,129 @@ internal static class FilterSanitizer
         }
 
         summary.Orders = kept;
+    }
+
+    /// <summary>
+    /// Refuses a filter that exceeds a configured limit.
+    /// </summary>
+    /// <remarks>
+    /// Run before any policy is resolved. Caps exist to stop a request generating unbounded work,
+    /// and resolving a policy for every field of an unbounded filter is exactly the work being
+    /// avoided, so the cheap structural check has to come first.
+    /// <para>
+    /// Every cap refuses in both tiers, and none of them clamps. Truncating a filter would widen
+    /// its result the way dropping a condition does, and silently shrinking a page would make a
+    /// caller stepping through results skip rows while every call reported success.
+    /// </para>
+    /// </remarks>
+    private static void EnforceCaps(Filter filter, Gate gate)
+    {
+        gate.CheckConditionCount(CountConditions(filter.ConditionGroup));
+        gate.CheckOrderCount(filter.Orders?.Count ?? 0);
+        gate.CheckPage(filter.Page);
+
+        CheckDepth(filter.ConditionGroup, gate);
+
+        if (filter.Selects is not null)
+        {
+            foreach (string field in filter.Selects)
+            {
+                gate.CheckDepth(field);
+            }
+        }
+
+        if (filter.Orders is not null)
+        {
+            foreach (OrderBy order in filter.Orders)
+            {
+                gate.CheckDepth(order.Field);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Refuses a summary that exceeds a configured limit.
+    /// </summary>
+    /// <remarks>
+    /// The condition budget covers the where clause and the having clause together: both compile
+    /// into predicates on the same query, so counting them apart would let a caller spend the
+    /// budget twice.
+    /// </remarks>
+    private static void EnforceCaps(Summary summary, Gate gate)
+    {
+        gate.CheckConditionCount(CountConditions(summary.ConditionGroup) + CountConditions(summary.Having));
+        gate.CheckOrderCount(summary.Orders?.Count ?? 0);
+        gate.CheckPage(summary.Page);
+
+        CheckDepth(summary.ConditionGroup, gate);
+
+        if (summary.GroupBy?.Fields is not null)
+        {
+            foreach (string field in summary.GroupBy.Fields)
+            {
+                gate.CheckDepth(field);
+            }
+        }
+
+        if (summary.GroupBy?.AggregateBy is not null)
+        {
+            foreach (AggregateBy aggregate in summary.GroupBy.AggregateBy)
+            {
+                gate.CheckDepth(aggregate.Field);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Counts every condition in a group and everything nested beneath it.
+    /// </summary>
+    /// <remarks>
+    /// Counting the root group alone would let any budget be evaded by nesting, which is the
+    /// cheapest way to rebuild the unbounded join the cap exists to prevent.
+    /// </remarks>
+    private static int CountConditions(ConditionGroup? group)
+    {
+        if (group is null)
+        {
+            return 0;
+        }
+
+        int count = group.Conditions?.Count ?? 0;
+
+        if (group.SubConditionGroups is not null)
+        {
+            foreach (ConditionGroup sub in group.SubConditionGroups)
+            {
+                count += CountConditions(sub);
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>Checks the navigation depth of every condition in a group tree.</summary>
+    private static void CheckDepth(ConditionGroup? group, Gate gate)
+    {
+        if (group is null)
+        {
+            return;
+        }
+
+        if (group.Conditions is not null)
+        {
+            foreach (Condition condition in group.Conditions)
+            {
+                gate.CheckDepth(condition.Field);
+            }
+        }
+
+        if (group.SubConditionGroups is not null)
+        {
+            foreach (ConditionGroup sub in group.SubConditionGroups)
+            {
+                CheckDepth(sub, gate);
+            }
+        }
     }
 
     /// <summary>
@@ -781,6 +911,86 @@ internal static class FilterSanitizer
                     yield return property.Name;
                 }
             }
+        }
+
+        /// <summary>Refuses a filter holding more conditions than the budget allows.</summary>
+        internal void CheckConditionCount(int count)
+        {
+            if (count > _options.Caps.MaxConditions)
+            {
+                throw Cap("MaxConditions", _options.Caps.MaxConditions, count, WholeClause);
+            }
+        }
+
+        /// <summary>Refuses a query sorting by more fields than the budget allows.</summary>
+        internal void CheckOrderCount(int count)
+        {
+            if (count > _options.Caps.MaxOrderFields)
+            {
+                throw Cap("MaxOrderFields", _options.Caps.MaxOrderFields, count, WholeClause);
+            }
+        }
+
+        /// <summary>Refuses a page larger than the budget allows.</summary>
+        internal void CheckPage(PageBy? page)
+        {
+            if (page is not null && page.PageSize > _options.Caps.MaxPageSize)
+            {
+                throw Cap("MaxPageSize", _options.Caps.MaxPageSize, page.PageSize, WholeClause);
+            }
+        }
+
+        /// <summary>
+        /// Refuses a field path traversing more navigations than the budget allows.
+        /// </summary>
+        /// <remarks>
+        /// Measured in segments, which matches the depth the attribute provider walks to, so the
+        /// provider can never emit a fragment for a path this would then reject. A self-referencing
+        /// type otherwise lets a caller write a path of any length and make the provider emit one
+        /// join per segment.
+        /// </remarks>
+        internal void CheckDepth(string? fieldPath)
+        {
+            if (string.IsNullOrEmpty(fieldPath))
+            {
+                return;
+            }
+
+            // Canonicalization has already collapsed empty segments, so counting separators gives
+            // the same count Validate<T>() walked.
+            int segments = 1;
+
+            for (int i = 0; i < fieldPath!.Length; i++)
+            {
+                if (fieldPath[i] == SegmentSeparator)
+                {
+                    segments++;
+                }
+            }
+
+            if (segments > _options.Caps.MaxNavigationDepth)
+            {
+                throw Cap("MaxNavigationDepth", _options.Caps.MaxNavigationDepth, segments, fieldPath);
+            }
+        }
+
+        /// <summary>Records and builds a cap refusal.</summary>
+        /// <remarks>
+        /// The feature is <see cref="PolicyFeature.None"/> because a cap is structural: it is about
+        /// the size of the request, not about what the caller may do with a field. The cap that
+        /// fired is named in <c>SourceOrigin</c>, since it is the thing that decided and there is
+        /// otherwise no way to tell which limit was hit.
+        /// </remarks>
+        private PolicyException Cap(string name, int limit, int actual, string fieldPath)
+        {
+            string origin = $"{name} cap ({limit}), request had {actual}";
+
+            _trace.Add(new PolicyDecision(fieldPath, PolicyFeature.None, PolicyAction.Denied, origin));
+
+            return new PolicyException(PolicyErrorCode.CapExceeded, fieldPath, PolicyFeature.None, _options.Tier)
+            {
+                SourceOrigin = origin
+            };
         }
 
         /// <summary>Resolves one field's policy, once per query.</summary>

@@ -247,3 +247,14 @@ internal class SecuredAccount
 
     public decimal Balance { get; set; }
 }
+
+/// <summary>
+/// A self-referencing type with no policy attributes at all, so a depth cap can be exercised
+/// without a denial reaching the assertion first.
+/// </summary>
+internal class PlainNode
+{
+    public string Label { get; set; } = string.Empty;
+
+    public PlainNode? Next { get; set; }
+}

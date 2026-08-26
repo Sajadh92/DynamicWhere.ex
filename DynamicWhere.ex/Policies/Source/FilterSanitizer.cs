@@ -92,10 +92,56 @@ internal static class FilterSanitizer
 
         Gate gate = new(typeof(T), resolver, context, options, trace);
 
+        GateConditions(working.ConditionGroup, gate);
         GateOrders(working, gate);
         GateSelects(working, gate);
 
         return working;
+    }
+
+    /// <summary>
+    /// Refuses every filter condition the policy denies, at any depth.
+    /// </summary>
+    /// <remarks>
+    /// This throws in both tiers, and that asymmetry with projection and ordering is the point the
+    /// whole design rests on. A dropped projection field returns less than was asked for; a dropped
+    /// condition returns <em>more</em>. Silently removing a tenant predicate hands back every
+    /// tenant's rows, so there is no posture in which quietly discarding a filter is the lenient
+    /// option — it is the catastrophic one.
+    /// <para>
+    /// The walk is complete: every condition in every group, not the first of each. A gate that
+    /// stopped early would be bypassed by ordering the conditions differently, or by nesting one
+    /// level deeper than the walk reaches.
+    /// </para>
+    /// </remarks>
+    private static void GateConditions(ConditionGroup? group, Gate gate)
+    {
+        if (group is null)
+        {
+            return;
+        }
+
+        if (group.Conditions is not null)
+        {
+            foreach (Condition condition in group.Conditions)
+            {
+                string field = condition.Field!;
+                FieldPolicy policy = gate.PolicyFor(field);
+
+                if (!policy.Allows(PolicyFeature.Where))
+                {
+                    gate.Deny(field, PolicyFeature.Where, PolicyErrorCode.FieldDeniedForWhere, policy);
+                }
+            }
+        }
+
+        if (group.SubConditionGroups is not null)
+        {
+            foreach (ConditionGroup sub in group.SubConditionGroups)
+            {
+                GateConditions(sub, gate);
+            }
+        }
     }
 
     /// <summary>

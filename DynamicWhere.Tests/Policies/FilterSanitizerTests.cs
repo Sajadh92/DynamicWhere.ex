@@ -461,4 +461,185 @@ public class FilterSanitizerTests
         Assert.Equal(new[] { "InternalNotes" }, result.Selects!);
         Assert.Empty(result.Orders!);
     }
+
+    // ---------------------------------------------------------------------------- where
+
+    [Fact]
+    public void A_denied_filter_throws_even_in_the_convenience_tier()
+    {
+        // The asymmetry the whole design rests on. Dropping a projection field returns less;
+        // dropping a filter returns MORE. A dropped TenantId predicate hands back every tenant's
+        // rows, so there is no tier in which silently removing a condition is acceptable.
+        Filter filter = new()
+        {
+            ConditionGroup = new ConditionGroup
+            {
+                Conditions =
+                {
+                    new Condition
+                    {
+                        Field = "Contact.Email",
+                        DataType = DataType.Text,
+                        Operator = Operator.Equal,
+                        Values = { "a@b.c" }
+                    }
+                }
+            }
+        };
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(filter, DwTier.Convenience));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, exception.ErrorCode);
+        Assert.Equal("Contact.Email", exception.FieldPath);
+        Assert.Equal(DwTier.Convenience, exception.Tier);
+    }
+
+    [Fact]
+    public void A_denied_filter_throws_in_the_strict_tier_too()
+    {
+        Filter filter = new()
+        {
+            ConditionGroup = new ConditionGroup
+            {
+                Conditions =
+                {
+                    new Condition
+                    {
+                        Field = "NationalId",
+                        DataType = DataType.Text,
+                        Operator = Operator.Equal,
+                        Values = { "x" }
+                    }
+                }
+            }
+        };
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(filter, DwTier.Strict));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, exception.ErrorCode);
+    }
+
+    [Fact]
+    public void A_denied_condition_buried_in_a_subgroup_is_still_caught()
+    {
+        // A walk that checked only the root group would let the whole gate be bypassed by nesting
+        // one level deeper than it looks.
+        Filter filter = new()
+        {
+            ConditionGroup = new ConditionGroup
+            {
+                Conditions =
+                {
+                    new Condition
+                    {
+                        Field = "Name",
+                        DataType = DataType.Text,
+                        Operator = Operator.Equal,
+                        Values = { "alpha" }
+                    }
+                },
+                SubConditionGroups =
+                {
+                    new ConditionGroup
+                    {
+                        SubConditionGroups =
+                        {
+                            new ConditionGroup
+                            {
+                                Conditions =
+                                {
+                                    new Condition
+                                    {
+                                        Field = "NationalId",
+                                        DataType = DataType.Text,
+                                        Operator = Operator.Equal,
+                                        Values = { "x" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(filter, DwTier.Convenience));
+
+        Assert.Equal("NationalId", exception.FieldPath);
+    }
+
+    [Fact]
+    public void A_denied_condition_after_an_allowed_one_is_still_caught()
+    {
+        // Stopping at the first condition would gate only whatever the caller happened to send
+        // first.
+        Filter filter = new()
+        {
+            ConditionGroup = new ConditionGroup
+            {
+                Conditions =
+                {
+                    new Condition
+                    {
+                        Field = "Name",
+                        DataType = DataType.Text,
+                        Operator = Operator.Equal,
+                        Values = { "alpha" }
+                    },
+                    new Condition
+                    {
+                        Field = "NationalId",
+                        DataType = DataType.Text,
+                        Operator = Operator.Equal,
+                        Values = { "x" }
+                    }
+                }
+            }
+        };
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(filter, DwTier.Convenience));
+
+        Assert.Equal("NationalId", exception.FieldPath);
+    }
+
+    [Fact]
+    public void A_field_denied_only_for_where_is_refused_there_and_nowhere_else()
+    {
+        Filter selectOnly = new() { Selects = new List<string> { "Contact.Email" } };
+
+        (Filter result, _) = Guard<SecuredEmployee>(selectOnly, DwTier.Strict);
+
+        Assert.Equal(new[] { "Contact.Email" }, result.Selects!);
+    }
+
+    [Fact]
+    public void An_allowed_filter_passes_through_and_records_nothing()
+    {
+        Filter filter = new()
+        {
+            ConditionGroup = new ConditionGroup
+            {
+                Conditions =
+                {
+                    new Condition
+                    {
+                        Field = "name",
+                        DataType = DataType.Text,
+                        Operator = Operator.Equal,
+                        Values = { "alpha" }
+                    }
+                }
+            },
+            Selects = new List<string> { "Name" }
+        };
+
+        (Filter result, PolicyTrace trace) = Guard<SecuredEmployee>(filter, DwTier.Strict);
+
+        Assert.Equal("Name", result.ConditionGroup!.Conditions[0].Field);
+        Assert.Empty(trace.Decisions);
+    }
 }

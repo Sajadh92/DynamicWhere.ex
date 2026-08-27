@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Exceptions;
+﻿using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.Tests.Policies;
@@ -58,5 +58,23 @@ public class PolicyExceptionTests
         PolicyErrorCode[] codes = Enum.GetValues<PolicyErrorCode>();
 
         Assert.Equal(codes.Length, codes.Select(c => c.ToString()).Distinct().Count());
+    }
+
+    [Theory]
+    [InlineData(PolicyErrorCode.RequiredFilterMissing, 11)]
+    [InlineData(PolicyErrorCode.MissingContextValue, 12)]
+    [InlineData(PolicyErrorCode.AmbiguousFieldName, 13)]
+    public void The_injection_codes_are_appended_never_renumbered(PolicyErrorCode code, int expected)
+    {
+        // The numeric values are contract the moment a caller serializes one. Appending is the only
+        // safe edit, and this pins the three this phase adds against a later reshuffle.
+        Assert.Equal(expected, (int)code);
+    }
+
+    [Fact]
+    public void Every_existing_code_keeps_the_value_it_shipped_with()
+    {
+        Assert.Equal(1, (int)PolicyErrorCode.FieldDeniedForWhere);
+        Assert.Equal(10, (int)PolicyErrorCode.PolicyRequired);
     }
 }

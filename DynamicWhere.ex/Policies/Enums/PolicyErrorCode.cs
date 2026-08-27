@@ -48,5 +48,27 @@ public enum PolicyErrorCode
     CapExceeded = 9,
 
     /// <summary>The entity requires a policy context and the query supplied none.</summary>
-    PolicyRequired = 10
+    PolicyRequired = 10,
+
+    /// <summary>
+    /// A field the policy requires the caller to filter on was not filtered on in a way that
+    /// narrows the result.
+    /// </summary>
+    RequiredFilterMissing = 11,
+
+    /// <summary>
+    /// A forced predicate reads an ambient value the caller's context does not supply.
+    /// </summary>
+    MissingContextValue = 12,
+
+    /// <summary>
+    /// A field name the caller used could mean more than one field, so the query was refused rather
+    /// than resolved in favour of one.
+    /// </summary>
+    /// <remarks>
+    /// Reachable because an alias may come from a runtime rule as well as an attribute, so an alias
+    /// can be introduced that collides with a real property path, or with another alias. Choosing
+    /// either reading silently sends a filter somewhere the caller did not mean.
+    /// </remarks>
+    AmbiguousFieldName = 13
 }

@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
@@ -97,9 +97,11 @@ internal static class FilterSanitizer
 
         Filter working = filter.Clone();
 
-        Canonicalize<T>(working);
-
+        // The gate is built first now, because canonicalizing a name needs the type's alias map and
+        // the gate is what carries it. Nothing the gate does depends on the paths being canonical.
         Gate gate = new(typeof(T), resolver, context, options, trace);
+
+        Canonicalize<T>(working, gate);
 
         EnforceCaps(working, gate);
 
@@ -163,14 +165,14 @@ internal static class FilterSanitizer
 
         Summary working = summary.Clone();
 
+        Gate gate = new(typeof(T), resolver, context, options, trace);
+
         if (working.ConditionGroup is not null)
         {
-            CanonicalizeGroup<T>(working.ConditionGroup);
+            CanonicalizeGroup<T>(working.ConditionGroup, gate);
         }
 
-        CanonicalizeGrouping<T>(working.GroupBy);
-
-        Gate gate = new(typeof(T), resolver, context, options, trace);
+        CanonicalizeGrouping<T>(working.GroupBy, gate);
 
         EnforceCaps(working, gate);
 
@@ -179,7 +181,7 @@ internal static class FilterSanitizer
 
         // Built after grouping is canonical, because the references below stand for the canonical
         // paths and nothing else would map back to them.
-        Dictionary<string, List<string>> references = BuildReferences(working.GroupBy);
+        Dictionary<string, List<string>> references = BuildReferences(working.GroupBy, gate);
 
         GateHaving(working.Having, references, gate);
         GateSummaryOrders(working, references, gate);
@@ -190,7 +192,7 @@ internal static class FilterSanitizer
     /// <summary>
     /// Rewrites the grouping and aggregation paths into canonical form.
     /// </summary>
-    private static void CanonicalizeGrouping<T>(GroupBy? groupBy) where T : class
+    private static void CanonicalizeGrouping<T>(GroupBy? groupBy, Gate gate) where T : class
     {
         if (groupBy is null)
         {
@@ -201,7 +203,7 @@ internal static class FilterSanitizer
         {
             for (int i = 0; i < groupBy.Fields.Count; i++)
             {
-                groupBy.Fields[i] = groupBy.Fields[i].Validate<T>();
+                groupBy.Fields[i] = ResolveName<T>(groupBy.Fields[i], gate);
             }
         }
 
@@ -212,7 +214,7 @@ internal static class FilterSanitizer
                 // A Count needs no field, and an aggregate with no field has no underlying policy.
                 if (!string.IsNullOrWhiteSpace(aggregate.Field))
                 {
-                    aggregate.Field = aggregate.Field!.Validate<T>();
+                    aggregate.Field = ResolveName<T>(aggregate.Field!, gate);
                 }
             }
         }
@@ -289,7 +291,7 @@ internal static class FilterSanitizer
     /// reference that misses the gate is a field left allowed.
     /// </para>
     /// </remarks>
-    private static Dictionary<string, List<string>> BuildReferences(GroupBy? groupBy)
+    private static Dictionary<string, List<string>> BuildReferences(GroupBy? groupBy, Gate gate)
     {
         Dictionary<string, List<string>> references = new(StringComparer.OrdinalIgnoreCase);
 
@@ -304,6 +306,7 @@ internal static class FilterSanitizer
             {
                 Map(references, field, field);
                 Map(references, field.Replace(".", string.Empty), field);
+                MapAliases(references, field, gate);
             }
         }
 
@@ -322,6 +325,31 @@ internal static class FilterSanitizer
         }
 
         return references;
+    }
+
+    /// <summary>
+    /// Records every public name that stands for one grouping key.
+    /// </summary>
+    /// <remarks>
+    /// The fourth spelling, and the reason it is easy to miss. A caller who groups by
+    /// <c>customer_name</c> has that key rewritten to its canonical path before the references are
+    /// built, and then writes <c>customer_name</c> again in <c>Orders</c> or <c>Having</c> — where
+    /// nothing would recognize it. A reference that matches nothing is skipped by the gate, and a
+    /// clause the gate skips is a field left allowed.
+    /// <para>
+    /// Every alias standing for the key is mapped, not only the one this caller happened to use, so
+    /// a second name for the same field cannot slip past either.
+    /// </para>
+    /// </remarks>
+    private static void MapAliases(Dictionary<string, List<string>> references, string field, Gate gate)
+    {
+        foreach (KeyValuePair<string, IReadOnlyList<string>> entry in gate.TypePolicy.Aliases)
+        {
+            if (entry.Value.Contains(field, StringComparer.OrdinalIgnoreCase))
+            {
+                Map(references, entry.Key, field);
+            }
+        }
     }
 
     /// <summary>Records that one reference name stands for one property path.</summary>
@@ -521,13 +549,15 @@ internal static class FilterSanitizer
 
         Segment working = segment.Clone();
 
+        Gate gate = new(typeof(T), resolver, context, options, trace);
+
         if (working.ConditionSets is not null)
         {
             foreach (ConditionSet set in working.ConditionSets)
             {
                 if (set.ConditionGroup is not null)
                 {
-                    CanonicalizeGroup<T>(set.ConditionGroup);
+                    CanonicalizeGroup<T>(set.ConditionGroup, gate);
                 }
             }
         }
@@ -536,7 +566,7 @@ internal static class FilterSanitizer
         {
             for (int i = 0; i < working.Selects.Count; i++)
             {
-                working.Selects[i] = working.Selects[i].Validate<T>();
+                working.Selects[i] = ResolveName<T>(working.Selects[i], gate);
             }
         }
 
@@ -544,11 +574,9 @@ internal static class FilterSanitizer
         {
             foreach (OrderBy order in working.Orders)
             {
-                CanonicalizeOrder<T>(order);
+                CanonicalizeOrder<T>(order, gate);
             }
         }
-
-        Gate gate = new(typeof(T), resolver, context, options, trace);
 
         EnforceCaps(working, gate);
         GateSegmentParticipation(working, gate);
@@ -1059,20 +1087,129 @@ internal static class FilterSanitizer
     }
 
     /// <summary>
+    /// Turns a name the caller wrote into the canonical field path it stands for, resolving an
+    /// alias where there is one.
+    /// </summary>
+    /// <remarks>
+    /// The single entry point for every name a caller supplies, in every clause. Nothing else may
+    /// rewrite one: the defect this feature keeps producing is two spellings normalized by two
+    /// routines, where a policy fragment then fails to match and a field that fails to match is a
+    /// field left allowed.
+    /// <para>
+    /// A name can mean an alias, a property path, or both. Both is not a case with a safe answer —
+    /// preferring the property ignores a rule the caller was granted, preferring the alias sends the
+    /// filter to a different column — so it is refused rather than resolved. The same applies when
+    /// two aliases collide, and when one aliased type is reachable by two navigations.
+    /// </para>
+    /// <para>
+    /// A name matching nothing is handed to <c>Validate&lt;T&gt;()</c> unchanged, so it fails with
+    /// the error an unguarded query would give. A caller therefore cannot probe for which fields
+    /// exist by watching how the policy layer refuses them.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="T">The entity type being queried.</typeparam>
+    /// <param name="name">The name as the caller wrote it.</param>
+    /// <param name="gate">The per-query state, carrying the type's alias map.</param>
+    /// <returns>The canonical field path.</returns>
+    /// <exception cref="PolicyException">Thrown when the name could mean more than one field.</exception>
+    /// <exception cref="LogicException">Thrown when the name names nothing.</exception>
+    private static string ResolveName<T>(string name, Gate gate) where T : class
+    {
+        // A type nobody has aliased takes the path it always did, with no extra reflection and no
+        // behavioural difference from before this existed.
+        if (gate.TypePolicy.Aliases.Count == 0)
+        {
+            return name.Validate<T>();
+        }
+
+        string spoken = name.Trim();
+
+        List<string> candidates = new();
+
+        if (gate.TypePolicy.Aliases.TryGetValue(spoken, out IReadOnlyList<string>? aliased))
+        {
+            foreach (string path in aliased)
+            {
+                // Canonicalized here rather than at resolution, because the alias target is a path
+                // on T and only the pipeline's own routine can say what its canonical spelling is.
+                Add(candidates, path.Validate<T>());
+            }
+        }
+
+        // Probed, not assumed. An alias adds a spelling and never removes one, so a name that is
+        // also a real property path still means that property — and if it means both, that is the
+        // collision this refuses.
+        string? asPath = TryValidate<T>(spoken);
+
+        if (asPath is not null)
+        {
+            Add(candidates, asPath);
+        }
+
+        if (candidates.Count > 1)
+        {
+            throw gate.Exception(spoken, PolicyFeature.None, PolicyErrorCode.AmbiguousFieldName, null);
+        }
+
+        if (candidates.Count == 0)
+        {
+            // Nothing matched. Hand it back to the validator so the failure is the ordinary one.
+            return name.Validate<T>();
+        }
+
+        string canonical = candidates[0];
+
+        gate.RecordSpelling(canonical, spoken);
+
+        return canonical;
+    }
+
+    /// <summary>Adds a path to the candidate set, ignoring one already present in another casing.</summary>
+    private static void Add(List<string> candidates, string path)
+    {
+        if (!candidates.Contains(path, StringComparer.OrdinalIgnoreCase))
+        {
+            candidates.Add(path);
+        }
+    }
+
+    /// <summary>
+    /// Returns the canonical form of a name when it is a real property path, otherwise null.
+    /// </summary>
+    /// <remarks>
+    /// Control flow through an exception, and deliberately so. The alternative is a second copy of
+    /// the reflection walk that decides what a valid path is — and a second copy is exactly how the
+    /// two spellings drift apart, which is the failure mode this whole routine exists to prevent.
+    /// The call is cached by <c>CacheReflection</c>, so the cost is a dictionary lookup on the
+    /// path that succeeds and a throw only on a name that is an alias rather than a path.
+    /// </remarks>
+    private static string? TryValidate<T>(string name) where T : class
+    {
+        try
+        {
+            return name.Validate<T>();
+        }
+        catch (LogicException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Rewrites every field path on the clone into the canonical form the pipeline uses.
     /// </summary>
-    private static void Canonicalize<T>(Filter filter) where T : class
+    private static void Canonicalize<T>(Filter filter, Gate gate) where T : class
     {
         if (filter.ConditionGroup is not null)
         {
-            CanonicalizeGroup<T>(filter.ConditionGroup);
+            CanonicalizeGroup<T>(filter.ConditionGroup, gate);
         }
 
         if (filter.Selects is not null)
         {
             for (int i = 0; i < filter.Selects.Count; i++)
             {
-                filter.Selects[i] = filter.Selects[i].Validate<T>();
+                filter.Selects[i] = ResolveName<T>(filter.Selects[i], gate);
             }
         }
 
@@ -1080,7 +1217,7 @@ internal static class FilterSanitizer
         {
             foreach (OrderBy order in filter.Orders)
             {
-                CanonicalizeOrder<T>(order);
+                CanonicalizeOrder<T>(order, gate);
             }
         }
     }
@@ -1093,7 +1230,7 @@ internal static class FilterSanitizer
     /// the top level would leave nested paths uncanonicalized, and an uncanonicalized path is one a
     /// deny fragment fails to match.
     /// </remarks>
-    private static void CanonicalizeGroup<T>(ConditionGroup group) where T : class
+    private static void CanonicalizeGroup<T>(ConditionGroup group, Gate gate) where T : class
     {
         if (group.Conditions is not null)
         {
@@ -1106,7 +1243,7 @@ internal static class FilterSanitizer
                     throw new LogicException(ErrorCode.InvalidField);
                 }
 
-                condition.Field = condition.Field!.Validate<T>();
+                condition.Field = ResolveName<T>(condition.Field!, gate);
             }
         }
 
@@ -1114,7 +1251,7 @@ internal static class FilterSanitizer
         {
             foreach (ConditionGroup sub in group.SubConditionGroups)
             {
-                CanonicalizeGroup<T>(sub);
+                CanonicalizeGroup<T>(sub, gate);
             }
         }
     }
@@ -1122,14 +1259,14 @@ internal static class FilterSanitizer
     /// <summary>
     /// Canonicalizes one order clause.
     /// </summary>
-    private static void CanonicalizeOrder<T>(OrderBy order) where T : class
+    private static void CanonicalizeOrder<T>(OrderBy order, Gate gate) where T : class
     {
         if (string.IsNullOrWhiteSpace(order.Field))
         {
             throw new LogicException(ErrorCode.InvalidField);
         }
 
-        order.Field = order.Field!.Validate<T>();
+        order.Field = ResolveName<T>(order.Field!, gate);
     }
 
     /// <summary>
@@ -1149,6 +1286,12 @@ internal static class FilterSanitizer
         // same field in a condition, an order, and a projection.
         private readonly Dictionary<string, FieldPolicy> _resolved = new(StringComparer.Ordinal);
 
+        // The name the caller actually wrote for a canonical path, when the two differ. Only a
+        // refusal reads this: the trace records the path the policy governs, so it can be read
+        // straight against the policy, while the exception crosses the boundary and must not carry
+        // an internal column name back to a caller who never used one.
+        private readonly Dictionary<string, string> _spoken = new(StringComparer.Ordinal);
+
         internal Gate(
             Type entityType,
             PolicyResolver resolver,
@@ -1161,7 +1304,37 @@ internal static class FilterSanitizer
             _context = context;
             _options = options;
             _trace = trace;
+            TypePolicy = resolver.ResolveType(entityType, context);
         }
+
+        /// <summary>
+        /// What this type's policy says that no single field can answer: the names this caller may
+        /// use, the predicates to inject, and the fields the caller must filter on.
+        /// </summary>
+        internal TypePolicy TypePolicy { get; }
+
+        /// <summary>The caller this query is being sanitized for.</summary>
+        internal DwPolicyContext Context => _context;
+
+        /// <summary>The enforcement posture in force.</summary>
+        internal DwPolicyOptions Options => _options;
+
+        /// <summary>
+        /// Remembers that the caller reached a canonical path by writing some other name.
+        /// </summary>
+        internal void RecordSpelling(string canonicalPath, string spoken)
+        {
+            if (!string.Equals(canonicalPath, spoken, StringComparison.Ordinal))
+            {
+                _spoken[canonicalPath] = spoken;
+            }
+        }
+
+        /// <summary>
+        /// The name the caller wrote for a path, or the path itself when they wrote that.
+        /// </summary>
+        internal string Spoken(string fieldPath) =>
+            _spoken.TryGetValue(fieldPath, out string? spoken) ? spoken : fieldPath;
 
         /// <summary>True when every refusal throws rather than being applied quietly.</summary>
         internal bool IsStrict => _options.Tier == DwTier.Strict;
@@ -1371,6 +1544,10 @@ internal static class FilterSanitizer
             // because otherwise the caller cannot tell which part of their query was refused.
             string? reason = Describe(policy);
 
+            // An explicit via wins: it names an aggregate alias or a grouping key, which is more
+            // specific than the field alias this would otherwise fall back to.
+            via ??= Spoken(fieldPath);
+
             if (via is not null && !string.Equals(via, fieldPath, StringComparison.Ordinal))
             {
                 reason = reason is null ? "via '" + via + "'" : reason + " (via '" + via + "')";
@@ -1392,7 +1569,10 @@ internal static class FilterSanitizer
             // wrong rule id in front of an operator diagnosing a refusal.
             PolicySource? sole = policy is { Sources.Count: 1 } ? policy.Sources[0] : null;
 
-            return new PolicyException(code, fieldPath, feature, _options.Tier)
+            // Reported under the name the caller used. Handing back the canonical path for a field
+            // they only ever named by alias turns every refusal into schema disclosure, which is one
+            // of the two reasons aliases exist. The trace keeps the canonical path.
+            return new PolicyException(code, Spoken(fieldPath), feature, _options.Tier)
             {
                 RuleId = sole?.RuleId,
                 SourceOrigin = sole?.Origin

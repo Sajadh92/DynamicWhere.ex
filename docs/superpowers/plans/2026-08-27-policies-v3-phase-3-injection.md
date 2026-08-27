@@ -205,9 +205,19 @@ one field are a range, and they compose by conjunction.
 default positive membership set, mirroring `DwOperatorsAttribute.Resolve()`.
 
 `DwForceWhereAttribute` carries `Operator` positionally, plus `Value` and `ContextValue`. Setting
-neither, or both, is a configuration error refused at resolution. `DataType` is inferred from the
-decorated member's CLR type by the provider, which holds the `PropertyInfo`; an explicit `DataType`
-property overrides it.
+neither, or both, is a configuration error refused at resolution.
+
+`DataType` is inferred from the decorated member's CLR type by the provider, which holds the
+`PropertyInfo`, and there is **no override property**. C# forbids `Nullable<DataType>` as an
+attribute argument, so an override would need a sentinel member on the public `DataType` enum or a
+paired `Specified` flag — and it could only ever be wrong, since the pipeline validates values
+against the property's own type. A CLR type with no `DataType` counterpart (`TimeSpan`, `TimeOnly`)
+is refused at resolution rather than guessed.
+
+`Operators` on `DwRequireWhere` follows `DwOperatorsAttribute.Allow` exactly: null means "unset, use
+the default set", an empty array means "this set, which is empty", so a requirement declared with
+no satisfying operator can never be met. Distinguishing the two is the sibling attribute's existing
+contract and the fail-closed reading of an obvious typo.
 
 - [ ] **Step 1: Write the failing tests** — construction, `Resolve()` defaults, usage flags
 - [ ] **Step 2: Implement**

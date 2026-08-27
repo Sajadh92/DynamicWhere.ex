@@ -363,6 +363,137 @@ them and one had already drifted from its own member name — `PolicyRequired` r
   inside one, and each condition set is gated independently. The strict-tier rule making a
   deny-select field automatically deny-where inside a `Segment` is Phase 8, as planned.
 
+## Phase 3 outcome
+
+Closed 2026-08-27, 11 commits. 805 tests pass, up from 663. `dotnet build -c Release` across the
+whole solution emits zero warnings with `GenerateDocumentationFile` on, and the four named files are
+untouched — `git diff master...HEAD` over `DynamicWhere.ex/Source/` shows only the 43 lines
+`Extention.cs` took in Phase 2.
+
+Plan: [2026-08-27-policies-v3-phase-3-injection.md](2026-08-27-policies-v3-phase-3-injection.md).
+
+### Four forks settled before implementation
+
+1. **`[DwRequireWhere]` is satisfied only by a conjunctively binding condition** — one whose path
+   from the root is unbroken `And`, using an operator from the satisfying set (`Equal`, `IEqual`,
+   `In`, `IIn` by default). `Status = A OR TenantId = 5` names the field and still returns every
+   other tenant's rows matching A.
+2. **`[DwAlias]` adds a spelling and never removes one.** The internal path keeps working, so
+   aliasing a field is not a breaking change. Hiding the internal name is Phase 7's `/schema` job.
+3. **A refusal reports the spelling the caller used.** Returning the canonical path for a field the
+   caller only ever named by alias turns every refusal into schema disclosure.
+4. **Runtime rules may set an alias, not only attributes** — chosen deliberately so a caller with
+   the entitlement can rename fields to match their own understanding of the data.
+
+The fourth answer is the consequential one. It makes the public field vocabulary **per-caller**, so
+`TypePolicy` resolves against a context and cannot be cached per type. It also makes collision
+security-relevant rather than cosmetic: a rule aliasing `"Salary"` onto another field, on a type that
+already has a `Salary` property, gives one name two paths. Neither reading is safe to guess, so an
+ambiguous name is refused outright with a new `AmbiguousFieldName` code.
+
+### Public API added
+
+- `DynamicWhere.ex.Policies.Attributes` — `DwAliasAttribute`, `DwRequireWhereAttribute`,
+  `DwForceWhereAttribute`
+- `DynamicWhere.ex.Policies.DTOs` — `ForcedPredicate`, `TypePolicy`
+- `DynamicWhere.ex.Policies.Enums` — `PolicyErrorCode.RequiredFilterMissing`, `.MissingContextValue`,
+  `.AmbiguousFieldName`, appended at 11–13
+- `PolicyFragment.Alias`, `.Forced`, `.RequiredOperators`
+- `FieldPolicy.Alias`, `.ForcedPredicates`, `.RequiredOperators`, `.IsRequiredInWhere`,
+  `.SatisfiesRequirement`
+- `PolicyResolver.ResolveType`
+
+Alias and required are **elected** — one per field per caller, by the ranking the effects use, so a
+sealed attribute beats a rule. Forced predicates are **collected and ANDed**, like the operator
+intersection: a conjunction can only narrow, and electing one would let a low-authority rule
+silently discard a sealed tenant scope.
+
+### Three fail-open defects found, none by a test
+
+Ten now across three phases, all found by reading.
+
+1. **Injection on the filter path alone left three doors open.** Spec section 6.2 lists step 9
+   against the `Filter` pipeline and mentions no other surface. `Summary` would have let a caller
+   read an aggregate across every tenant by asking for a grouped result; `Segment` scoped in one arm
+   of an `Except` and not the other returns precisely the rows the scope hides; and the composable
+   `Select`, `Order` and `Page` each return an `IQueryable` the caller materializes, so a scope
+   applied only to the terminal methods is bypassed by composing instead of terminating. A segment
+   carrying *no* condition sets needed one created, since the pipeline reads an empty set list as
+   "return everything".
+2. **An aliased group-by key reached `Having` and `Summary.Orders` unaliased.** The key is rewritten
+   to its canonical path during resolution, and the caller then names the alias again in a clause
+   `BuildReferences` never learned. The reference matches nothing, the gate skips it, and a field
+   denied for `Order` is sorted by. The fourth spelling arriving exactly where the third one was
+   missed.
+3. **`PolicyQueryable.Where(Condition)` handed the pipeline `Conditions[0]`.** After injection that
+   index is the library's own term and the caller's condition has moved into a subgroup, so the
+   caller's filter would have been silently discarded — and a dropped condition widens the result.
+   Found while wiring Task 8, not by a test.
+
+### Two corrections made during execution
+
+Both settled against the design document rather than against the plan.
+
+- **Dry run wins over injection.** The draft had a missing `ContextValue` throwing in dry run. Spec
+  section 2.5 says dry run overrides the whole table, and dry run's promise is the same data the
+  unguarded path returns — a predicate that narrows the result would make a canary understate its
+  own blast radius. Nothing is injected and nothing throws; both the injection and the unresolved
+  value are recorded instead.
+- **`[DwForceWhere]` accepts `IsNull` and `IsNotNull`.** They compare against nothing, so they set
+  neither `Value` nor `ContextValue`. Soft deletion is usually spelled `DeletedAt IS NULL`, and
+  without this the commonest forced predicate of all needed a sentinel date.
+
+### Decisions worth not re-litigating
+
+- **An alias or a requirement on the wildcard path is refused at construction, not ignored.** One
+  name cannot stand for every field, and a demand to filter on every field refuses every query.
+  Ignoring nonsense is how a misconfigured rule becomes invisible. A forced predicate on a wildcard
+  fragment is fine, because the predicate names its own field.
+- **`[DwForceWhere]` has no `DataType` override.** C# forbids a nullable enum as an attribute
+  argument, and an override could only ever disagree with the type the pipeline validates against.
+  It is read from the decorated member; a CLR type with no counterpart (`TimeSpan`, `TimeOnly`) is
+  refused at the misconfiguration.
+- **`RequireWhere` is checked on every surface, the composable ones included.** Deliberately not
+  Phase 2's projection-synthesis reasoning: there, a caller who named no projection had asked for
+  nothing to refuse; here, a caller who named no scope has asked for everything.
+- **A group with a single child conjoins whatever its connector says.** The pipeline emits that
+  child alone, so treating it as a disjunction would refuse a filter that does narrow the result and
+  push callers into rewriting sound filters to please the checker.
+- **Injected predicates spend neither the condition budget nor the depth budget.** The caps count
+  what the caller sent. A filter sitting exactly on `MaxConditions` must not be refused because the
+  library added a term.
+- **`Resolve` and `ResolveType` share their election helpers**, with a test pinning them to the same
+  answer. Two routines agreeing only by construction is the standing liability on this feature.
+
+### Known limitations
+
+- **Outbound alias renaming is not delivered.** "Bidirectional" is shipped here as inbound rewriting
+  plus alias-faithful refusal and trace reporting. A typed `FilterResult<T>` cannot rename anything,
+  and a dynamic projection's names are baked in by the `Select` projection string in `Extention.cs`,
+  which the standing rule says takes nothing beyond its Phase 2 guard. `FieldPolicy.Alias` is public
+  so Phase 7's `/schema` can advertise the caller's vocabulary.
+- **An aliased type reached by two navigations makes that alias unusable on the root type.** Both
+  paths are recorded and the name is refused as ambiguous. That is the honest consequence of walking
+  navigations; the internal paths still work.
+- **`ValidatePolicyModel()` still does not exist.** Section 4.8's rules are enforced at query time
+  and fail closed. `[DwForceWhere(ContextValue = ...)]` naming a key nothing supplies is listed
+  there as a startup check and cannot be one — what a context supplies is per-request.
+
+### What Phase 4 inherits
+
+- **Outbound renaming on the dynamic surface.** The result transformer owns the materialized shape
+  and is the right home for it.
+- **Mask on canonical paths, never on caller spellings.** Alias resolution is complete before
+  `Validate<T>()` sees anything, so everything downstream of the sanitizer works in canonical paths.
+  A masking rule keyed on what the caller wrote would miss every caller who wrote the other spelling.
+- **`ValidatePolicyModel()` is worth building when the mask rules join it**, since most of section
+  4.8 is about mask and type compatibility.
+- **`PolicyAction` still has no member any code emits for a transformation.** `Masked` exists and
+  nothing emits it; `Mutated`, `Defaulted` and `Generalized` do not exist yet. Add them in the change
+  that makes something able to produce them, as Phase 2 did for `Injected`.
+- **Do not reintroduce a per-type cache for `TypePolicy`.** Aliases are per-caller now. Phase 5's
+  store faces the same trap from the other direction.
+
 ### What Phase 3 inherits
 
 - **The alias axis is now three-valued.** `[DwAlias]` adds a fourth spelling to a system where three

@@ -1,3 +1,4 @@
+﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
 
@@ -102,5 +103,87 @@ public class FieldPolicyTests
                 new Dictionary<PolicyFeature, PolicyEffect>(),
                 null!,
                 isSealed: false));
+    }
+
+    [Fact]
+    public void A_policy_with_no_alias_reports_null_rather_than_its_own_path()
+    {
+        FieldPolicy policy = new(
+            "Salary", new Dictionary<PolicyFeature, PolicyEffect>(), Array.Empty<PolicySource>(),
+            isSealed: false);
+
+        Assert.Null(policy.Alias);
+    }
+
+    [Fact]
+    public void A_policy_carries_the_alias_that_won_the_election()
+    {
+        FieldPolicy policy = new(
+            "Customer.Name", new Dictionary<PolicyFeature, PolicyEffect>(),
+            Array.Empty<PolicySource>(), isSealed: false, alias: "customer_name");
+
+        Assert.Equal("customer_name", policy.Alias);
+    }
+
+    [Fact]
+    public void A_policy_with_no_requirement_is_not_required_in_where()
+    {
+        FieldPolicy policy = new(
+            "Salary", new Dictionary<PolicyFeature, PolicyEffect>(), Array.Empty<PolicySource>(),
+            isSealed: false);
+
+        Assert.False(policy.IsRequiredInWhere);
+        Assert.Null(policy.RequiredOperators);
+    }
+
+    [Fact]
+    public void A_requirement_with_no_satisfying_operator_is_still_a_requirement()
+    {
+        // Empty is not absent. A requirement no operator satisfies refuses every query on the type,
+        // which is the fail-closed reading of a set that was declared and left empty.
+        FieldPolicy policy = new(
+            "TenantId", new Dictionary<PolicyFeature, PolicyEffect>(), Array.Empty<PolicySource>(),
+            isSealed: false, requiredOperators: Array.Empty<Operator>());
+
+        Assert.True(policy.IsRequiredInWhere);
+        Assert.False(policy.SatisfiesRequirement(Operator.Equal));
+    }
+
+    [Fact]
+    public void A_requirement_is_satisfied_only_by_an_operator_in_its_set()
+    {
+        FieldPolicy policy = new(
+            "TenantId", new Dictionary<PolicyFeature, PolicyEffect>(), Array.Empty<PolicySource>(),
+            isSealed: false, requiredOperators: new[] { Operator.Equal, Operator.In });
+
+        Assert.True(policy.SatisfiesRequirement(Operator.Equal));
+        Assert.True(policy.SatisfiesRequirement(Operator.In));
+        Assert.False(policy.SatisfiesRequirement(Operator.NotEqual));
+        Assert.False(policy.SatisfiesRequirement(Operator.GreaterThan));
+    }
+
+    [Fact]
+    public void Forced_predicates_accumulate_rather_than_electing_one()
+    {
+        ForcedPredicate low = ForcedPredicate.FromConstant(
+            "Age", Operator.GreaterThanOrEqual, DataType.Number, "18");
+        ForcedPredicate high = ForcedPredicate.FromConstant(
+            "Age", Operator.LessThanOrEqual, DataType.Number, "65");
+
+        FieldPolicy policy = new(
+            "Age", new Dictionary<PolicyFeature, PolicyEffect>(), Array.Empty<PolicySource>(),
+            isSealed: false, forced: new[] { low, high });
+
+        Assert.Equal(2, policy.ForcedPredicates.Count);
+    }
+
+    [Fact]
+    public void A_policy_with_no_forced_predicate_reports_an_empty_list_not_null()
+    {
+        FieldPolicy policy = new(
+            "Salary", new Dictionary<PolicyFeature, PolicyEffect>(), Array.Empty<PolicySource>(),
+            isSealed: false);
+
+        Assert.Empty(policy.ForcedPredicates);
     }
 }

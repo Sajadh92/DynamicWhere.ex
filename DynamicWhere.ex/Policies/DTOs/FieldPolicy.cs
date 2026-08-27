@@ -28,6 +28,14 @@ public sealed class FieldPolicy
     /// <param name="allowedOperators">
     /// The operators permitted when filtering on this field, or null when nothing restricts them.
     /// </param>
+    /// <param name="alias">The public name callers may use for this field, or null when it has none.</param>
+    /// <param name="forced">
+    /// Predicates the library adds to every query on this type, or null when there are none.
+    /// </param>
+    /// <param name="requiredOperators">
+    /// The operators that satisfy a filtering requirement on this field, or null when the caller is
+    /// not required to filter on it.
+    /// </param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="fieldPath"/> is blank.</exception>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="effects"/> or <paramref name="sources"/> is null.
@@ -37,7 +45,10 @@ public sealed class FieldPolicy
         IReadOnlyDictionary<PolicyFeature, PolicyEffect> effects,
         IReadOnlyList<PolicySource> sources,
         bool isSealed,
-        IReadOnlyList<Operator>? allowedOperators = null)
+        IReadOnlyList<Operator>? allowedOperators = null,
+        string? alias = null,
+        IReadOnlyList<ForcedPredicate>? forced = null,
+        IReadOnlyList<Operator>? requiredOperators = null)
     {
         if (string.IsNullOrWhiteSpace(fieldPath))
         {
@@ -49,6 +60,9 @@ public sealed class FieldPolicy
         Sources = sources ?? throw new ArgumentNullException(nameof(sources));
         IsSealed = isSealed;
         AllowedOperators = allowedOperators;
+        Alias = alias;
+        ForcedPredicates = forced ?? Array.Empty<ForcedPredicate>();
+        RequiredOperators = requiredOperators;
     }
 
     /// <summary>The field this policy governs.</summary>
@@ -90,4 +104,48 @@ public sealed class FieldPolicy
     /// </summary>
     public bool AllowsOperator(Operator op) =>
         AllowedOperators is null || AllowedOperators.Contains(op);
+
+    /// <summary>
+    /// The public name callers may use for this field, or null when it has none.
+    /// </summary>
+    /// <remarks>
+    /// An alias adds a spelling and never removes one, so the field path here remains accepted
+    /// whether or not this is set. The alias is what a schema endpoint advertises and what a
+    /// refusal reports back to a caller who used it.
+    /// </remarks>
+    public string? Alias { get; }
+
+    /// <summary>
+    /// Predicates the library adds to every query on this type. Empty when there are none.
+    /// </summary>
+    /// <remarks>
+    /// Never gated against this policy. These are the library filtering on the caller's behalf, so
+    /// a field the caller may not filter on can still carry one — that pairing is the usual shape
+    /// of a tenant boundary.
+    /// </remarks>
+    public IReadOnlyList<ForcedPredicate> ForcedPredicates { get; }
+
+    /// <summary>
+    /// The operators that satisfy a filtering requirement on this field, or null when the caller is
+    /// not required to filter on it.
+    /// </summary>
+    /// <remarks>
+    /// Null and empty differ, as they do on <see cref="AllowedOperators"/> and for the same reason.
+    /// Null is "no requirement"; empty is "a requirement nothing satisfies".
+    /// </remarks>
+    public IReadOnlyList<Operator>? RequiredOperators { get; }
+
+    /// <summary>True when the caller must filter on this field for the request to proceed.</summary>
+    public bool IsRequiredInWhere => RequiredOperators is not null;
+
+    /// <summary>
+    /// True when a condition using this operator counts towards the field's filtering requirement.
+    /// </summary>
+    /// <remarks>
+    /// The operator is only half the test. The condition must also be conjunctively binding — in an
+    /// <c>And</c> group whose every ancestor is also <c>And</c> — because a requirement satisfied
+    /// inside an <c>Or</c> has been met on paper and defeated in fact. The sanitizer owns that half.
+    /// </remarks>
+    public bool SatisfiesRequirement(Operator op) =>
+        RequiredOperators is not null && RequiredOperators.Contains(op);
 }

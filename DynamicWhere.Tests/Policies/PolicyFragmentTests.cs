@@ -1,3 +1,4 @@
+﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
 
@@ -110,4 +111,105 @@ public class PolicyFragmentTests
         Assert.Throws<ArgumentException>(() => PolicySource.FromRule("r1", string.Empty));
         Assert.Throws<ArgumentException>(() => PolicySource.FromRule("r1", " "));
     }
+
+    [Fact]
+    public void A_fragment_may_carry_an_alias()
+    {
+        PolicyFragment fragment = Alias("Customer.Name", "customer_name");
+
+        Assert.Equal("customer_name", fragment.Alias);
+    }
+
+    [Fact]
+    public void An_alias_is_trimmed_the_way_a_field_path_is()
+    {
+        Assert.Equal("customer_name", Alias("Customer.Name", "  customer_name  ").Alias);
+    }
+
+    [Fact]
+    public void A_blank_alias_is_refused()
+    {
+        // Null means "this fragment says nothing about naming". A blank string is a mistake, and
+        // treating it as silence would make a misconfigured rule invisible.
+        Assert.Throws<ArgumentException>(() => Alias("Customer.Name", string.Empty));
+        Assert.Throws<ArgumentException>(() => Alias("Customer.Name", "   "));
+    }
+
+    [Fact]
+    public void An_alias_may_not_look_like_a_navigation_path()
+    {
+        // A dotted alias is indistinguishable from a real nested path at the point a caller's name
+        // is resolved, so one could shadow a genuine navigation the caller meant.
+        Assert.Throws<ArgumentException>(() => Alias("Customer.Name", "customer.name"));
+    }
+
+    [Fact]
+    public void An_alias_may_not_be_the_wildcard()
+    {
+        Assert.Throws<ArgumentException>(() => Alias("Customer.Name", PolicyFragment.Wildcard));
+    }
+
+    [Fact]
+    public void A_fragment_may_carry_a_forced_predicate()
+    {
+        ForcedPredicate forced = ForcedPredicate.FromContext(
+            "TenantId", Operator.Equal, DataType.Number, "TenantId");
+
+        PolicyFragment fragment = new(
+            "TenantId", PolicyFeature.Where, PolicyEffect.Allow, PolicyLevel.SealedAttribute,
+            PolicySource.FromAttribute("DwForceWhereAttribute", isSealed: true),
+            forced: forced);
+
+        Assert.Same(forced, fragment.Forced);
+    }
+
+    [Fact]
+    public void A_fragment_may_carry_the_operators_that_satisfy_a_requirement()
+    {
+        PolicyFragment fragment = new(
+            "TenantId", PolicyFeature.Where, PolicyEffect.Allow, PolicyLevel.SealedAttribute,
+            PolicySource.FromAttribute("DwRequireWhereAttribute", isSealed: true),
+            requiredOperators: new[] { Operator.Equal });
+
+        Assert.Equal(new[] { Operator.Equal }, fragment.RequiredOperators);
+    }
+
+    [Fact]
+    public void A_forced_predicate_from_a_constant_carries_no_context_key()
+    {
+        ForcedPredicate forced = ForcedPredicate.FromConstant(
+            "IsDeleted", Operator.Equal, DataType.Boolean, "false");
+
+        Assert.Equal("IsDeleted", forced.FieldPath);
+        Assert.Equal("false", forced.Value);
+        Assert.Null(forced.ContextValue);
+        Assert.False(forced.ReadsContext);
+    }
+
+    [Fact]
+    public void A_forced_predicate_from_the_context_carries_no_constant()
+    {
+        ForcedPredicate forced = ForcedPredicate.FromContext(
+            "TenantId", Operator.Equal, DataType.Number, "TenantId");
+
+        Assert.Equal("TenantId", forced.ContextValue);
+        Assert.Null(forced.Value);
+        Assert.True(forced.ReadsContext);
+    }
+
+    [Fact]
+    public void A_forced_predicate_needs_a_field_and_a_value()
+    {
+        Assert.Throws<ArgumentException>(
+            () => ForcedPredicate.FromConstant(" ", Operator.Equal, DataType.Boolean, "false"));
+        Assert.Throws<ArgumentException>(
+            () => ForcedPredicate.FromConstant("IsDeleted", Operator.Equal, DataType.Boolean, null!));
+        Assert.Throws<ArgumentException>(
+            () => ForcedPredicate.FromContext("TenantId", Operator.Equal, DataType.Number, " "));
+    }
+
+    /// <summary>Builds a fragment whose only interesting property is its alias.</summary>
+    private static PolicyFragment Alias(string fieldPath, string alias) =>
+        new(fieldPath, PolicyFeature.Where, PolicyEffect.Allow, PolicyLevel.SealedAttribute,
+            PolicySource.FromAttribute("DwAliasAttribute", isSealed: true), alias: alias);
 }

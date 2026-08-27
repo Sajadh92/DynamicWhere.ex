@@ -26,8 +26,20 @@ public sealed class PolicyFragment
     /// <param name="allowedOperators">
     /// The operators this fragment permits, or null when it says nothing about operators.
     /// </param>
+    /// <param name="alias">
+    /// The public name this fragment gives the field, or null when it says nothing about naming.
+    /// </param>
+    /// <param name="forced">
+    /// A predicate to add to every query on this type, or null when this fragment forces none.
+    /// </param>
+    /// <param name="requiredOperators">
+    /// The operators that satisfy a filtering requirement on this field, or null when this fragment
+    /// requires no filter. An empty list is a requirement nothing satisfies, which is not the same
+    /// thing as no requirement.
+    /// </param>
     /// <exception cref="ArgumentException">
-    /// Thrown when <paramref name="fieldPath"/> is blank, or names no segment once normalized.
+    /// Thrown when <paramref name="fieldPath"/> is blank, or names no segment once normalized, or
+    /// when <paramref name="alias"/> is supplied and is blank, dotted, or the wildcard.
     /// </exception>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="source"/> is null.</exception>
     public PolicyFragment(
@@ -38,7 +50,10 @@ public sealed class PolicyFragment
         PolicySource source,
         int priority = 0,
         object? payload = null,
-        IReadOnlyList<Operator>? allowedOperators = null)
+        IReadOnlyList<Operator>? allowedOperators = null,
+        string? alias = null,
+        ForcedPredicate? forced = null,
+        IReadOnlyList<Operator>? requiredOperators = null)
     {
         if (string.IsNullOrWhiteSpace(fieldPath))
         {
@@ -61,6 +76,9 @@ public sealed class PolicyFragment
         Priority = priority;
         Payload = payload;
         AllowedOperators = allowedOperators;
+        Alias = NormalizeAlias(alias);
+        Forced = forced;
+        RequiredOperators = requiredOperators;
     }
 
     /// <summary>The field path this fragment addresses, or <see cref="Wildcard"/>.</summary>
@@ -96,6 +114,37 @@ public sealed class PolicyFragment
     /// disappear.
     /// </remarks>
     public IReadOnlyList<Operator>? AllowedOperators { get; }
+
+    /// <summary>
+    /// The public name this fragment gives the field, or null when it says nothing about naming.
+    /// </summary>
+    /// <remarks>
+    /// Elected rather than accumulated: a field has one name per caller, decided by the same
+    /// ranking the effects use, so a sealed attribute beats a runtime rule and an overridable one
+    /// does not. Two names for one field is not a question with an answer.
+    /// </remarks>
+    public string? Alias { get; }
+
+    /// <summary>
+    /// A predicate to add to every query on this type, or null when this fragment forces none.
+    /// </summary>
+    /// <remarks>
+    /// Collected rather than elected, and that difference is deliberate. A conjunction of forced
+    /// predicates can only narrow the result, so an additional one is always safe; electing a single
+    /// winner would let a low-authority rule silently discard a sealed tenant scope, which is the
+    /// one outcome the level ordering exists to prevent.
+    /// </remarks>
+    public ForcedPredicate? Forced { get; }
+
+    /// <summary>
+    /// The operators that satisfy a filtering requirement on this field, or null when this fragment
+    /// requires no filter.
+    /// </summary>
+    /// <remarks>
+    /// Null and empty differ. Null is "no requirement"; empty is "a requirement nothing satisfies",
+    /// which refuses every query on the type rather than quietly permitting one.
+    /// </remarks>
+    public IReadOnlyList<Operator>? RequiredOperators { get; }
 
     /// <summary>True when this fragment addresses every field.</summary>
     public bool IsWildcard => FieldPath == Wildcard;
@@ -139,5 +188,64 @@ public sealed class PolicyFragment
         }
 
         return string.Join('.', trimmed.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    /// <summary>
+    /// Reduces an alias to the form it is matched in, refusing the spellings that could shadow
+    /// something else.
+    /// </summary>
+    /// <remarks>
+    /// One validator for every alias, whether it came from an attribute or from a runtime rule, so
+    /// the two cannot be held to different standards. Three spellings are refused rather than
+    /// normalized away:
+    /// <list type="bullet">
+    /// <item><description>
+    /// Blank. Null already means "this fragment says nothing about naming", so accepting a blank
+    /// string as the same thing would make a misconfigured rule invisible.
+    /// </description></item>
+    /// <item><description>
+    /// Dotted. A caller's name is resolved before it reaches <c>Validate&lt;T&gt;()</c>, at which
+    /// point a dotted alias is indistinguishable from a real navigation path and could shadow one.
+    /// </description></item>
+    /// <item><description>
+    /// The wildcard. One name cannot stand for every field.
+    /// </description></item>
+    /// </list>
+    /// </remarks>
+    /// <param name="alias">The raw alias, or null.</param>
+    /// <returns>The trimmed alias, or null when none was supplied.</returns>
+    /// <exception cref="ArgumentException">Thrown when the alias is blank, dotted, or the wildcard.</exception>
+    private static string? NormalizeAlias(string? alias)
+    {
+        if (alias is null)
+        {
+            return null;
+        }
+
+        string trimmed = alias.Trim();
+
+        if (trimmed.Length == 0)
+        {
+            throw new ArgumentException(
+                "An alias cannot be blank. Leave it null to say nothing about naming.", nameof(alias));
+        }
+
+        if (trimmed.Contains('.', StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"The alias '{trimmed}' contains a path separator. An alias is resolved before a " +
+                "field path is validated, so a dotted one cannot be told apart from a navigation " +
+                "path and could shadow a field the caller meant.",
+                nameof(alias));
+        }
+
+        if (trimmed == Wildcard)
+        {
+            throw new ArgumentException(
+                "An alias cannot be the wildcard: one name cannot stand for every field.",
+                nameof(alias));
+        }
+
+        return trimmed;
     }
 }

@@ -219,9 +219,9 @@ the default set", an empty array means "this set, which is empty", so a requirem
 no satisfying operator can never be met. Distinguishing the two is the sibling attribute's existing
 contract and the fail-closed reading of an obvious typo.
 
-- [ ] **Step 1: Write the failing tests** — construction, `Resolve()` defaults, usage flags
-- [ ] **Step 2: Implement**
-- [ ] **Step 3: Run, green, commit** — `feat(policies): add the injection and alias attributes`
+- [x] **Step 1: Write the failing tests** — construction, `Resolve()` defaults, usage flags
+- [x] **Step 2: Implement**
+- [x] **Step 3: Run, green, commit** — `feat(policies): add the injection and alias attributes`
 
 ## Task 2: Error codes
 
@@ -235,9 +235,9 @@ renumber: the values are contract once a caller has serialized one.
 `AmbiguousFieldName` is not in the spec's list. It exists because runtime aliases can collide with
 a real property path, and the spec was written when aliases were compile-time only.
 
-- [ ] **Step 1: Write the failing test**
-- [ ] **Step 2: Implement**
-- [ ] **Step 3: Run, green, commit** — `feat(policies): add the injection error codes`
+- [x] **Step 1: Write the failing test**
+- [x] **Step 2: Implement**
+- [x] **Step 3: Run, green, commit** — `feat(policies): add the injection error codes`
 
 ## Task 3: Fragment and policy carriers
 
@@ -255,9 +255,9 @@ restriction".
 `DataType`. It is resolved to a `Condition` at injection time, not at construction, because
 `ContextValue` reads the caller's context.
 
-- [ ] **Step 1: Write the failing tests**
-- [ ] **Step 2: Implement**
-- [ ] **Step 3: Run, green, commit** — `feat(policies): carry injection data on fragments`
+- [x] **Step 1: Write the failing tests**
+- [x] **Step 2: Implement**
+- [x] **Step 3: Run, green, commit** — `feat(policies): carry injection data on fragments`
 
 ## Task 4: The attribute provider emits the new fragments
 
@@ -273,9 +273,9 @@ three: none of them refuses anything on its own.
 New fixture types go in `SecuredModels.cs`, kept apart from `SecuredEmployee` so the fragment counts
 the existing provider tests assert stay unchanged — the same discipline `SecuredAccount` follows.
 
-- [ ] **Step 1: Write the failing tests**
-- [ ] **Step 2: Implement**
-- [ ] **Step 3: Run, green, commit** — `feat(policies): read the injection attributes`
+- [x] **Step 1: Write the failing tests**
+- [x] **Step 2: Implement**
+- [x] **Step 3: Run, green, commit** — `feat(policies): read the injection attributes`
 
 ## Task 5: `PolicyResolver.ResolveType`
 
@@ -305,9 +305,9 @@ ever written against the type. Ignoring a nonsensical fragment is how a misconfi
 invisible; refusing it tells the store that emitted it. A forced predicate on a wildcard fragment is
 fine, because the predicate names its own field.
 
-- [ ] **Step 1: Write the failing tests** — election, collection, per-caller variation, wildcard
-- [ ] **Step 2: Implement**
-- [ ] **Step 3: Run, green, commit** — `feat(policies): resolve type-wide policy`
+- [x] **Step 1: Write the failing tests** — election, collection, per-caller variation, wildcard
+- [x] **Step 2: Implement**
+- [x] **Step 3: Run, green, commit** — `feat(policies): resolve type-wide policy`
 
 ## Task 6: Alias rewriting in the sanitizer
 
@@ -337,9 +337,9 @@ spelling the group-by clause used.
 The alias the caller wrote is retained alongside the canonical path and passed as `via` to
 `Gate.Record`, and as the reported `FieldPath` on any `PolicyException` raised for that clause.
 
-- [ ] **Step 1: Write the failing tests** — every clause, collision, casing, per-caller, `Having` reach-through
-- [ ] **Step 2: Implement**
-- [ ] **Step 3: Run, green, commit** — `feat(policies): resolve field aliases`
+- [x] **Step 1: Write the failing tests** — every clause, collision, casing, per-caller, `Having` reach-through
+- [x] **Step 2: Implement**
+- [x] **Step 3: Run, green, commit** — `feat(policies): resolve field aliases`
 
 ## Task 7: Injection
 
@@ -382,9 +382,9 @@ predicate of all would need a sentinel date.
 `ConditionGroup.Validate()`'s uniqueness checks. Each injected condition records
 `PolicyAction.Injected`, which nothing has emitted until now.
 
-- [ ] **Step 1: Write the failing tests** — the pinned shape first
-- [ ] **Step 2: Implement for `Filter`**
-- [ ] **Step 3: Run, green, commit** — `feat(policies): inject forced predicates`
+- [x] **Step 1: Write the failing tests** — the pinned shape first
+- [x] **Step 2: Implement for `Filter`**
+- [x] **Step 3: Run, green, commit** — `feat(policies): inject forced predicates`
 
 ## Task 8: Injection on summary, segment, and the composable surface
 
@@ -409,9 +409,9 @@ extension directly. They gain the injected predicate, applied through `Guarded()
 the clause they were asked for. Injection is not routed through `SanitizeClause`: that gates
 everything it is given, and a forced predicate is never gated.
 
-- [ ] **Step 1: Write the failing tests** — one per surface, plus the Except reconstruction
-- [ ] **Step 2: Implement**
-- [ ] **Step 3: Run, green, commit** — `feat(policies): inject across every queryable surface`
+- [x] **Step 1: Write the failing tests** — one per surface, plus the Except reconstruction
+- [x] **Step 2: Implement**
+- [x] **Step 3: Run, green, commit** — `feat(policies): inject across every queryable surface`
 
 ## Task 9: Required filter verification
 
@@ -430,9 +430,9 @@ missing `[DwRequireWhere]` in the throw-in-both-tiers row. This is deliberately 
 projection-synthesis reasoning from Phase 2 — there, a caller who named no projection had asked for
 nothing to refuse; here, a caller who named no scope has asked for everything.
 
-- [ ] **Step 1: Write the failing tests** — the OR case first, then nesting, operators, satisfaction by injection
-- [ ] **Step 2: Implement**
-- [ ] **Step 3: Run, green, commit** — `feat(policies): verify required filters`
+- [x] **Step 1: Write the failing tests** — the OR case first, then nesting, operators, satisfaction by injection
+- [x] **Step 2: Implement**
+- [x] **Step 3: Run, green, commit** — `feat(policies): verify required filters`
 
 ## Task 10: End-to-end against SQLite
 
@@ -444,17 +444,17 @@ The injected predicate appears in generated SQL and actually removes rows. An al
 the same rows as the same filter written with the internal path. A required filter missing throws
 before the query is built.
 
-- [ ] **Step 1: Write the failing tests**
-- [ ] **Step 2: Implement whatever they expose**
-- [ ] **Step 3: Run, green, commit** — `test(policies): end-to-end injection and aliases`
+- [x] **Step 1: Write the failing tests**
+- [x] **Step 2: Implement whatever they expose**
+- [x] **Step 3: Run, green, commit** — `test(policies): end-to-end injection and aliases`
 
 ## Task 11: Phase gate
 
-- [ ] `dotnet build -c Release` across the solution, zero warnings, `GenerateDocumentationFile` on
-- [ ] Full suite green
-- [ ] `git diff --name-only master...HEAD -- DynamicWhere.ex/Source/Builder.cs DynamicWhere.ex/Source/Validator.cs DynamicWhere.ex/Source/Converter.cs DynamicWhere.ex/Source/Normalizer.cs` is empty
-- [ ] Roadmap updated with the Phase 3 outcome and what Phase 4 inherits
-- [ ] Commit — `docs: record the Phase 3 outcome`
+- [x] `dotnet build -c Release` across the solution, zero warnings, `GenerateDocumentationFile` on
+- [x] Full suite green
+- [x] `git diff --name-only master...HEAD -- DynamicWhere.ex/Source/Builder.cs DynamicWhere.ex/Source/Validator.cs DynamicWhere.ex/Source/Converter.cs DynamicWhere.ex/Source/Normalizer.cs` is empty
+- [x] Roadmap updated with the Phase 3 outcome and what Phase 4 inherits
+- [x] Commit — `docs: record the Phase 3 outcome`
 
 ---
 

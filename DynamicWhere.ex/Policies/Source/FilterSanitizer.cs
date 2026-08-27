@@ -114,6 +114,10 @@ internal static class FilterSanitizer
         // running it through the gate would refuse the scope on exactly the field it exists for.
         working.ConditionGroup = Inject<T>(working.ConditionGroup, gate);
 
+        // After injection, so that forcing a scope and requiring it compose: the library supplies
+        // the predicate and the same walk that checks the caller's conditions sees it.
+        VerifyRequired(working.ConditionGroup, gate);
+
         return working;
     }
 
@@ -195,6 +199,8 @@ internal static class FilterSanitizer
         // Injecting on the filter path alone would let a caller read an aggregate across every
         // tenant simply by asking for a grouped result instead of a list.
         working.ConditionGroup = Inject<T>(working.ConditionGroup, gate);
+
+        VerifyRequired(working.ConditionGroup, gate);
 
         return working;
     }
@@ -603,6 +609,20 @@ internal static class FilterSanitizer
         GateSegmentSelects(working, gate);
 
         InjectIntoSets<T>(working, gate);
+
+        // Every set, independently. One unscoped arm of a set operation is enough: Union hands the
+        // unscoped rows back directly, and Except hands back their complement.
+        if (working.ConditionSets is null || working.ConditionSets.Count == 0)
+        {
+            VerifyRequired(null, gate);
+        }
+        else
+        {
+            foreach (ConditionSet set in working.ConditionSets)
+            {
+                VerifyRequired(set.ConditionGroup, gate);
+            }
+        }
 
         return working;
     }
@@ -1146,6 +1166,113 @@ internal static class FilterSanitizer
     }
 
     /// <summary>
+    /// Refuses a request that fails to supply a filter the policy requires.
+    /// </summary>
+    /// <remarks>
+    /// Naming the required field is not the test. A caller sending
+    /// <c>Status = A OR TenantId = 5</c> has named it and still receives every other tenant's rows
+    /// matching <c>Status = A</c> — a requirement met on paper and defeated in fact, which is worse
+    /// than no requirement because the attribute in the source reads as though it is in force.
+    /// <para>
+    /// A condition counts only when it is <em>conjunctively binding</em>: the path from the root
+    /// down to the group holding it must be unbroken <c>And</c>, and its operator must be one the
+    /// requirement accepts. Both halves matter — an <c>And</c> group nested inside an <c>Or</c> is
+    /// not binding, and <c>TenantId != 5</c> inside a perfectly good <c>And</c> is every tenant but
+    /// one.
+    /// </para>
+    /// <para>
+    /// Throws in both tiers. Spec section 2.5 puts a missing requirement in the throw-in-both-tiers
+    /// row for the same reason a blocked <c>WHERE</c> is there: there is no lenient way to drop a
+    /// scope, only a catastrophic one.
+    /// </para>
+    /// </remarks>
+    private static void VerifyRequired(ConditionGroup? group, Gate gate)
+    {
+        if (gate.TypePolicy.Required.Count == 0)
+        {
+            return;
+        }
+
+        Dictionary<string, List<Operator>> binding = new(StringComparer.OrdinalIgnoreCase);
+
+        CollectBinding(group, ancestorsBind: true, binding);
+
+        foreach (KeyValuePair<string, IReadOnlyList<Operator>> requirement in gate.TypePolicy.Required)
+        {
+            if (binding.TryGetValue(requirement.Key, out List<Operator>? used)
+                && used.Exists(op => requirement.Value.Contains(op)))
+            {
+                continue;
+            }
+
+            gate.RequireMissing(requirement.Key);
+        }
+    }
+
+    /// <summary>
+    /// Collects the operators used against each field by a condition that actually narrows the
+    /// result.
+    /// </summary>
+    /// <param name="group">The group being walked.</param>
+    /// <param name="ancestorsBind">False once any ancestor group has been found to disjoin.</param>
+    /// <param name="binding">The accumulator.</param>
+    private static void CollectBinding(
+        ConditionGroup? group, bool ancestorsBind, Dictionary<string, List<Operator>> binding)
+    {
+        if (group is null)
+        {
+            return;
+        }
+
+        bool binds = ancestorsBind && Conjoins(group);
+
+        if (binds && group.Conditions is not null)
+        {
+            foreach (Condition condition in group.Conditions)
+            {
+                if (string.IsNullOrWhiteSpace(condition.Field))
+                {
+                    continue;
+                }
+
+                if (!binding.TryGetValue(condition.Field!, out List<Operator>? operators))
+                {
+                    operators = new List<Operator>();
+                    binding[condition.Field!] = operators;
+                }
+
+                operators.Add(condition.Operator);
+            }
+        }
+
+        if (group.SubConditionGroups is not null)
+        {
+            foreach (ConditionGroup sub in group.SubConditionGroups)
+            {
+                CollectBinding(sub, binds, binding);
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when every child of a group must hold for the group to hold.
+    /// </summary>
+    /// <remarks>
+    /// A group with a single child conjoins whatever its connector says, because there is nothing to
+    /// disjoin it with — the pipeline emits that child alone. Treating it as a disjunction would
+    /// refuse a filter that genuinely does narrow the result and push callers into rewriting sound
+    /// filters to please the checker.
+    /// <para>
+    /// Children are counted without asking whether each one contributes a predicate. An empty
+    /// subgroup emits nothing, so counting it makes this stricter than it strictly needs to be,
+    /// which is the direction to be wrong in.
+    /// </para>
+    /// </remarks>
+    private static bool Conjoins(ConditionGroup group) =>
+        group.Connector == Connector.And
+        || (group.Conditions?.Count ?? 0) + (group.SubConditionGroups?.Count ?? 0) <= 1;
+
+    /// <summary>
     /// Wraps a caller's condition group in a new root that also carries every forced predicate.
     /// </summary>
     /// <remarks>
@@ -1673,6 +1800,36 @@ internal static class FilterSanitizer
                 DataType = predicate.DataType,
                 Operator = predicate.Operator,
                 Values = values
+            };
+        }
+
+        /// <summary>
+        /// Refuses a request that did not supply a filter the policy requires.
+        /// </summary>
+        /// <remarks>
+        /// Reported under the field's public name where it has one. This refusal is unlike a denial:
+        /// the caller has to act on it, and naming the field in a vocabulary they are allowed to use
+        /// is the difference between a fixable error and a riddle. The trace keeps the canonical
+        /// path, as it does everywhere else.
+        /// </remarks>
+        internal void RequireMissing(string fieldPath)
+        {
+            string named = PolicyFor(fieldPath).Alias ?? fieldPath;
+
+            string origin =
+                $"required filter on '{named}' was not supplied by a condition that narrows the result";
+
+            _trace.Add(new PolicyDecision(fieldPath, PolicyFeature.Where, PolicyAction.Denied, origin));
+
+            if (IsDryRun)
+            {
+                return;
+            }
+
+            throw new PolicyException(
+                PolicyErrorCode.RequiredFilterMissing, named, PolicyFeature.Where, _options.Tier)
+            {
+                SourceOrigin = origin
             };
         }
 

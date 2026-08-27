@@ -418,3 +418,35 @@ internal class SoftDeletedLedger
 
     public decimal Amount { get; set; }
 }
+
+/// <summary>
+/// One requirement and nothing else, so a test can assert on which condition satisfied it without
+/// a second requirement failing first.
+/// </summary>
+internal class TenantScopedLedger
+{
+    public int Id { get; set; }
+
+    [DwRequireWhere]
+    public int TenantId { get; set; }
+
+    [DwAlias("tenant")]
+    public string Owner { get; set; } = string.Empty;
+
+    public decimal Amount { get; set; }
+}
+
+/// <summary>
+/// A required field that also carries a public name, so a refusal can be checked to name the
+/// vocabulary the caller is allowed to use rather than the internal path.
+/// </summary>
+internal class AliasRequiredLedger
+{
+    public int Id { get; set; }
+
+    [DwAlias("tenant_id")]
+    [DwRequireWhere]
+    public int TenantId { get; set; }
+
+    public decimal Amount { get; set; }
+}

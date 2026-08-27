@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Classes.Complex;
+﻿using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Enums;
@@ -349,5 +349,191 @@ public class GuardedQueryTests : IDisposable
         Assert.Equal(3, result.Data.Count);
         Assert.All(result.Data, row => Assert.Equal(string.Empty, row.NationalId));
         Assert.NotNull(result.Policy);
+    }
+
+    // ------------------------------------------------- injection and aliases, end to end
+
+    private static DwPolicyContext Tenant(int id) =>
+        new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1").WithValue("TenantId", id);
+
+    private PolicyQueryable<Invoice> Books(int tenant = 5, DwTier tier = DwTier.Convenience) =>
+        _db.Invoices.ApplyPolicy(Tenant(tenant), new DwPolicyOptions { Tier = tier }, Resolver());
+
+    [Fact]
+    public void The_injected_predicate_reaches_the_generated_sql()
+    {
+        FilterResult<Invoice> result = Books().ToList(new Filter(), getQueryString: true);
+
+        Assert.Contains("TenantId", result.QueryString!, StringComparison.Ordinal);
+        Assert.Contains("IsVoid", result.QueryString!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_injected_predicate_actually_removes_rows()
+    {
+        // Four invoices exist. Tenant 5 owns two of them and one of those is void, so the scope
+        // leaves exactly one.
+        FilterResult<Invoice> result = Books().ToList(new Filter());
+
+        Invoice only = Assert.Single(result.Data);
+
+        Assert.Equal(1, only.Id);
+        Assert.Equal(4, _db.Invoices.Count());
+    }
+
+    [Fact]
+    public void A_different_caller_sees_a_different_set_of_rows()
+    {
+        List<int> mine = Books(5).ToList(new Filter()).Data.ConvertAll(i => i.Id);
+        List<int> theirs = Books(9).ToList(new Filter()).Data.ConvertAll(i => i.Id);
+
+        Assert.Equal(new[] { 1 }, mine);
+        Assert.Equal(new[] { 3, 4 }, theirs);
+    }
+
+    [Fact]
+    public void A_caller_cannot_widen_the_scope_by_filtering_for_another_tenant()
+    {
+        // The caller's own term is conjoined with the forced one, so asking for tenant 9 while
+        // scoped to tenant 5 returns nothing rather than tenant 9's rows.
+        Filter filter = new()
+        {
+            ConditionGroup = new ConditionGroup
+            {
+                Conditions =
+                {
+                    new Condition
+                    {
+                        Field = "TenantId", DataType = DataType.Number,
+                        Operator = Operator.Equal, Values = { 9 }
+                    }
+                }
+            }
+        };
+
+        Assert.Empty(Books().ToList(filter).Data);
+    }
+
+    [Fact]
+    public void An_or_filter_cannot_escape_the_scope()
+    {
+        // The shape the wrap exists for. Merged into the caller's group this would read
+        // (Number = INV-3 OR Number = INV-1 OR TenantId = 5) and return tenant 9's rows.
+        Filter filter = new()
+        {
+            ConditionGroup = new ConditionGroup
+            {
+                Connector = Connector.Or,
+                Conditions =
+                {
+                    new Condition
+                    {
+                        Sort = 0, Field = "Number", DataType = DataType.Text,
+                        Operator = Operator.Equal, Values = { "INV-3" }
+                    },
+                    new Condition
+                    {
+                        Sort = 1, Field = "Number", DataType = DataType.Text,
+                        Operator = Operator.Equal, Values = { "INV-1" }
+                    }
+                }
+            }
+        };
+
+        Invoice only = Assert.Single(Books().ToList(filter).Data);
+
+        Assert.Equal(1, only.Id);
+    }
+
+    [Fact]
+    public void An_aliased_filter_returns_exactly_what_the_internal_path_returns()
+    {
+        Filter ByName(string field) => new()
+        {
+            ConditionGroup = new ConditionGroup
+            {
+                Conditions =
+                {
+                    new Condition
+                    {
+                        Field = field, DataType = DataType.Text,
+                        Operator = Operator.Equal, Values = { "INV-1" }
+                    }
+                }
+            }
+        };
+
+        List<int> byAlias = Books().ToList(ByName("reference")).Data.ConvertAll(i => i.Id);
+        List<int> byPath = Books().ToList(ByName("Number")).Data.ConvertAll(i => i.Id);
+
+        Assert.Equal(byPath, byAlias);
+        Assert.Equal(new[] { 1 }, byAlias);
+    }
+
+    [Fact]
+    public void An_aliased_projection_reaches_the_column_it_names()
+    {
+        FilterResult<Invoice> result = Books().ToList(
+            new Filter { Selects = new List<string> { "Id", "reference" } },
+            getQueryString: true);
+
+        Assert.Contains("Number", result.QueryString!, StringComparison.Ordinal);
+        Assert.Equal("INV-1", Assert.Single(result.Data).Number);
+    }
+
+    [Fact]
+    public void An_aliased_sort_reaches_the_column_it_names()
+    {
+        FilterResult<Invoice> result = Books(9).ToList(new Filter
+        {
+            Orders = new List<OrderBy> { new() { Field = "reference", Direction = Direction.Descending } }
+        });
+
+        Assert.Equal(new[] { 3, 4 }, result.Data.ConvertAll(i => i.Id));
+    }
+
+    [Fact]
+    public void A_required_filter_is_refused_before_any_sql_is_built()
+    {
+        PolicyQueryable<Journal> journals = _db.Journals.ApplyPolicy(
+            Tenant(5), new DwPolicyOptions(), Resolver());
+
+        PolicyException error = Assert.Throws<PolicyException>(() => journals.ToList(new Filter()));
+
+        Assert.Equal(PolicyErrorCode.RequiredFilterMissing, error.ErrorCode);
+    }
+
+    [Fact]
+    public void A_required_filter_supplied_by_the_caller_lets_the_query_through()
+    {
+        PolicyQueryable<Journal> journals = _db.Journals.ApplyPolicy(
+            Tenant(5), new DwPolicyOptions(), Resolver());
+
+        FilterResult<Journal> result = journals.ToList(new Filter
+        {
+            ConditionGroup = new ConditionGroup
+            {
+                Conditions =
+                {
+                    new Condition
+                    {
+                        Field = "TenantId", DataType = DataType.Number,
+                        Operator = Operator.Equal, Values = { 5 }
+                    }
+                }
+            }
+        });
+
+        Assert.Equal(1, Assert.Single(result.Data).Id);
+    }
+
+    [Fact]
+    public void A_scoped_query_leaves_the_change_tracker_clean()
+    {
+        // The injected predicate must not resurrect tracking. AsNoTracking is applied at the one
+        // point every guarded query passes through, and injection happens well before that.
+        FilterResult<Invoice> result = Books().ToList(new Filter());
+
+        Assert.All(result.Data, row => Assert.Equal(EntityState.Detached, _db.Entry(row).State));
     }
 }

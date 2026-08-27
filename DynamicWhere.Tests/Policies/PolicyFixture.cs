@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Enums;
+﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Enums;
 using Microsoft.Data.Sqlite;
@@ -54,6 +54,42 @@ public class Office
     public int Capacity { get; set; }
 }
 
+/// <summary>
+/// A tenant-scoped record. The library filters it whether the caller asked or not, which is the
+/// whole point of a forced predicate.
+/// </summary>
+public class Invoice
+{
+    public int Id { get; set; }
+
+    /// <summary>Scoped from the caller's ambient values.</summary>
+    [DwForceWhere(Operator.Equal, ContextValue = "TenantId")]
+    public int TenantId { get; set; }
+
+    /// <summary>Scoped by a constant: the soft-delete case.</summary>
+    [DwForceWhere(Operator.Equal, Value = "false")]
+    public bool IsVoid { get; set; }
+
+    /// <summary>Answers to a public name as well as its own.</summary>
+    [DwAlias("reference")]
+    public string Number { get; set; } = string.Empty;
+
+    public decimal Amount { get; set; }
+}
+
+/// <summary>
+/// A record that demands the caller supply the scope rather than supplying it for them.
+/// </summary>
+public class Journal
+{
+    public int Id { get; set; }
+
+    [DwRequireWhere]
+    public int TenantId { get; set; }
+
+    public decimal Amount { get; set; }
+}
+
 /// <summary>The context behind the policy integration tests.</summary>
 public class PolicyContext : DbContext
 {
@@ -64,6 +100,10 @@ public class PolicyContext : DbContext
     public DbSet<Staff> Staff => Set<Staff>();
 
     public DbSet<Office> Offices => Set<Office>();
+
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+
+    public DbSet<Journal> Journals => Set<Journal>();
 }
 
 /// <summary>
@@ -109,6 +149,16 @@ public sealed class PolicyFixture : IDisposable
         context.Offices.AddRange(
             new Office { Id = 1, City = "Baghdad", Capacity = 40 },
             new Office { Id = 2, City = "Amman", Capacity = 25 });
+
+        context.Invoices.AddRange(
+            new Invoice { Id = 1, TenantId = 5, IsVoid = false, Number = "INV-1", Amount = 100m },
+            new Invoice { Id = 2, TenantId = 5, IsVoid = true, Number = "INV-2", Amount = 200m },
+            new Invoice { Id = 3, TenantId = 9, IsVoid = false, Number = "INV-3", Amount = 300m },
+            new Invoice { Id = 4, TenantId = 9, IsVoid = false, Number = "INV-1", Amount = 400m });
+
+        context.Journals.AddRange(
+            new Journal { Id = 1, TenantId = 5, Amount = 10m },
+            new Journal { Id = 2, TenantId = 9, Amount = 20m });
 
         context.SaveChanges();
     }

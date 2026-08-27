@@ -1,3 +1,5 @@
+﻿using DynamicWhere.ex.Policies.Attributes;
+using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
@@ -272,5 +274,126 @@ public class AttributeProviderTests
         IReadOnlyList<PolicyFragment> fragments = FragmentsFor<SecuredRecursiveDto>();
 
         Assert.Contains(fragments, f => f.FieldPath is "Cycle.SecretA" or "Cycle.SecretB");
+    }
+
+    [Fact]
+    public void An_alias_attribute_produces_a_fragment_carrying_the_public_name()
+    {
+        PolicyFragment fragment = FragmentsFor<AliasedCustomer>()
+            .Single(f => f.FieldPath == "Name");
+
+        Assert.Equal("customer_name", fragment.Alias);
+    }
+
+    [Fact]
+    public void An_alias_on_a_nested_reference_is_pathed_from_the_root()
+    {
+        PolicyFragment fragment = FragmentsFor<AliasedCustomer>()
+            .Single(f => f.Alias == "email_address");
+
+        Assert.Equal("Contact.Email", fragment.FieldPath);
+    }
+
+    [Fact]
+    public void An_aliased_type_reached_twice_produces_one_fragment_per_path()
+    {
+        // Neither path is the obvious one, which is why the sanitizer refuses the name rather than
+        // picking. The provider's job is only to report both.
+        string[] paths = FragmentsFor<TwoContactCustomer>()
+            .Where(f => f.Alias == "email_address")
+            .Select(f => f.FieldPath)
+            .OrderBy(p => p, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(new[] { "Home.Email", "Work.Email" }, paths);
+    }
+
+    [Fact]
+    public void A_forced_predicate_reading_the_context_is_produced()
+    {
+        PolicyFragment fragment = FragmentsFor<ScopedInvoice>()
+            .Single(f => f.FieldPath == "TenantId" && f.Forced is not null);
+
+        Assert.NotNull(fragment.Forced);
+        Assert.Equal("TenantId", fragment.Forced!.ContextValue);
+        Assert.Equal(Operator.Equal, fragment.Forced.Operator);
+        Assert.True(fragment.Forced.ReadsContext);
+    }
+
+    [Fact]
+    public void A_forced_predicate_infers_its_data_type_from_the_member()
+    {
+        PolicyFragment tenant = FragmentsFor<ScopedInvoice>()
+            .Single(f => f.FieldPath == "TenantId" && f.Forced is not null);
+        PolicyFragment deleted = FragmentsFor<ScopedInvoice>()
+            .Single(f => f.FieldPath == "IsDeleted" && f.Forced is not null);
+
+        Assert.Equal(DataType.Number, tenant.Forced!.DataType);
+        Assert.Equal(DataType.Boolean, deleted.Forced!.DataType);
+        Assert.Equal("false", deleted.Forced.Value);
+    }
+
+    [Fact]
+    public void A_forced_predicate_on_an_unmappable_clr_type_is_refused()
+    {
+        // Guessing a data type the pipeline is about to validate against can only produce a
+        // confusing downstream failure, so the misconfiguration is named where it was made.
+        ArgumentException error = Assert.Throws<ArgumentException>(() => FragmentsFor<UnmappableForce>());
+
+        Assert.Contains("Window", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Two_forced_predicates_on_one_member_produce_two_fragments()
+    {
+        PolicyFragment[] fragments = FragmentsFor<BoundedWindow>()
+            .Where(f => f.FieldPath == "Age" && f.Forced is not null)
+            .ToArray();
+
+        Assert.Equal(2, fragments.Length);
+        Assert.Contains(fragments, f => f.Forced!.Operator == Operator.GreaterThanOrEqual);
+        Assert.Contains(fragments, f => f.Forced!.Operator == Operator.LessThanOrEqual);
+    }
+
+    [Fact]
+    public void A_required_filter_produces_the_default_operator_set()
+    {
+        PolicyFragment fragment = FragmentsFor<RequiredScopeLedger>()
+            .Single(f => f.FieldPath == "TenantId" && f.RequiredOperators is not null);
+
+        Assert.Equal(DwRequireWhereAttribute.DefaultOperators, fragment.RequiredOperators);
+    }
+
+    [Fact]
+    public void A_required_filter_honours_an_explicit_operator_set()
+    {
+        PolicyFragment fragment = FragmentsFor<RequiredScopeLedger>()
+            .Single(f => f.FieldPath == "OccurredAt" && f.RequiredOperators is not null);
+
+        Assert.Equal(
+            new[] { Operator.GreaterThanOrEqual, Operator.Between },
+            fragment.RequiredOperators);
+    }
+
+    [Fact]
+    public void An_injection_attribute_marked_overridable_lands_at_the_overridable_level()
+    {
+        PolicyFragment sealedAlias = FragmentsFor<AliasedCustomer>().Single(f => f.FieldPath == "Name");
+        PolicyFragment openAlias = FragmentsFor<BoundedWindow>().Single(f => f.FieldPath == "Label");
+
+        Assert.Equal(PolicyLevel.SealedAttribute, sealedAlias.Level);
+        Assert.Equal(PolicyLevel.OverridableAttribute, openAlias.Level);
+    }
+
+    [Fact]
+    public void The_injection_attributes_refuse_nothing_on_their_own()
+    {
+        // None of the three is an effect. A fragment that denied anything here would take a field
+        // away from a caller as a side effect of naming or scoping it.
+        PolicyFragment[] fragments = FragmentsFor<ScopedInvoice>()
+            .Concat(FragmentsFor<RequiredScopeLedger>())
+            .ToArray();
+
+        Assert.All(fragments, f => Assert.Equal(PolicyEffect.Allow, f.Effect));
     }
 }

@@ -95,6 +95,25 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
                 fragments.Add(ToFragment(path, attribute));
             }
 
+            DwAliasAttribute? alias = property.GetCustomAttribute<DwAliasAttribute>(inherit: true);
+
+            if (alias is not null)
+            {
+                fragments.Add(ToFragment(path, alias));
+            }
+
+            DwRequireWhereAttribute? required = property.GetCustomAttribute<DwRequireWhereAttribute>(inherit: true);
+
+            if (required is not null)
+            {
+                fragments.Add(ToFragment(path, required));
+            }
+
+            foreach (DwForceWhereAttribute attribute in property.GetCustomAttributes<DwForceWhereAttribute>(inherit: true))
+            {
+                fragments.Add(ToFragment(path, property, attribute));
+            }
+
             Type? navigation = NavigationTypeOf(property.PropertyType);
 
             if (navigation is not null)
@@ -266,5 +285,141 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             level,
             source,
             allowedOperators: attribute.Resolve());
+    }
+
+    /// <summary>
+    /// Converts a public name into a fragment.
+    /// </summary>
+    /// <remarks>
+    /// The effect is <see cref="PolicyEffect.Allow"/> and the feature is
+    /// <see cref="PolicyFeature.Where"/> because naming a field refuses nothing. The alias rides on
+    /// the fragment's typed field and is elected outside the per-feature contest, so this fragment
+    /// losing the contest for <c>Where</c> does not discard the name.
+    /// </remarks>
+    private static PolicyFragment ToFragment(string fieldPath, DwAliasAttribute attribute) =>
+        new(fieldPath,
+            PolicyFeature.Where,
+            PolicyEffect.Allow,
+            LevelOf(attribute),
+            SourceOf(attribute),
+            alias: attribute.Name);
+
+    /// <summary>
+    /// Converts a filtering requirement into a fragment.
+    /// </summary>
+    private static PolicyFragment ToFragment(string fieldPath, DwRequireWhereAttribute attribute) =>
+        new(fieldPath,
+            PolicyFeature.Where,
+            PolicyEffect.Allow,
+            LevelOf(attribute),
+            SourceOf(attribute),
+            requiredOperators: attribute.Resolve());
+
+    /// <summary>
+    /// Converts a forced predicate into a fragment, resolving the value's data type from the member
+    /// it decorates.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the attribute names neither a constant nor a context key, names both, or
+    /// decorates a member whose CLR type has no <see cref="DataType"/> counterpart.
+    /// </exception>
+    private static PolicyFragment ToFragment(
+        string fieldPath, PropertyInfo property, DwForceWhereAttribute attribute)
+    {
+        bool hasValue = attribute.Value is not null;
+        bool hasContextValue = attribute.ContextValue is not null;
+
+        // Refused rather than resolved in favour of one. Neither leaves nothing to inject, and both
+        // leaves no way to choose -- and the wrong choice here is a tenant scope filtering on a
+        // constant somebody left behind.
+        if (hasValue == hasContextValue)
+        {
+            throw new ArgumentException(
+                $"[DwForceWhere] on '{fieldPath}' must set exactly one of Value or ContextValue; " +
+                (hasValue ? "it sets both." : "it sets neither."));
+        }
+
+        DataType dataType = DataTypeOf(property, fieldPath);
+
+        ForcedPredicate forced = hasContextValue
+            ? ForcedPredicate.FromContext(fieldPath, attribute.Operator, dataType, attribute.ContextValue!)
+            : ForcedPredicate.FromConstant(fieldPath, attribute.Operator, dataType, attribute.Value!);
+
+        return new PolicyFragment(
+            fieldPath,
+            PolicyFeature.Where,
+            PolicyEffect.Allow,
+            LevelOf(attribute),
+            SourceOf(attribute),
+            forced: forced);
+    }
+
+    /// <summary>The level an attribute's <c>Overridable</c> flag places it at.</summary>
+    private static PolicyLevel LevelOf(DwPolicyAttribute attribute) =>
+        attribute.Overridable ? PolicyLevel.OverridableAttribute : PolicyLevel.SealedAttribute;
+
+    /// <summary>The source describing one attribute.</summary>
+    private static PolicySource SourceOf(DwPolicyAttribute attribute) =>
+        PolicySource.FromAttribute(attribute.GetType().Name, isSealed: !attribute.Overridable);
+
+    /// <summary>
+    /// Maps a member's CLR type onto the <see cref="DataType"/> the pipeline will validate the
+    /// injected value against.
+    /// </summary>
+    /// <remarks>
+    /// Read from the member rather than declared on the attribute. C# forbids a nullable enum as an
+    /// attribute argument, so an override would need a sentinel or a paired flag — and it could only
+    /// ever disagree with the type the value is about to be parsed as.
+    /// <para>
+    /// A type with no counterpart is refused here, at the misconfiguration, rather than guessed into
+    /// a downstream parse failure that names neither the field nor the attribute.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentException">Thrown when the CLR type has no counterpart.</exception>
+    private static DataType DataTypeOf(PropertyInfo property, string fieldPath)
+    {
+        Type type = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+
+        if (type.IsEnum)
+        {
+            return DataType.Enum;
+        }
+
+        if (type == typeof(string) || type == typeof(char))
+        {
+            return DataType.Text;
+        }
+
+        if (type == typeof(Guid))
+        {
+            return DataType.Guid;
+        }
+
+        if (type == typeof(bool))
+        {
+            return DataType.Boolean;
+        }
+
+        if (type == typeof(DateOnly))
+        {
+            return DataType.Date;
+        }
+
+        if (type == typeof(DateTime) || type == typeof(DateTimeOffset))
+        {
+            return DataType.DateTime;
+        }
+
+        if (type == typeof(byte) || type == typeof(sbyte) || type == typeof(short)
+            || type == typeof(ushort) || type == typeof(int) || type == typeof(uint)
+            || type == typeof(long) || type == typeof(ulong) || type == typeof(float)
+            || type == typeof(double) || type == typeof(decimal))
+        {
+            return DataType.Number;
+        }
+
+        throw new ArgumentException(
+            $"[DwForceWhere] on '{fieldPath}' decorates a {type.Name}, which has no DataType " +
+            "counterpart, so the injected value has no form the pipeline could parse it into.");
     }
 }

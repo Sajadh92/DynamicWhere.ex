@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Enums;
@@ -271,4 +271,122 @@ internal class OpenLedger
 
     [DwDenied]
     public decimal Amount { get; set; }
+}
+
+/// <summary>
+/// The shape the injection feature exists for: rows belong to a tenant, and a caller must never see
+/// another tenant's. Deliberately not <c>RequirePolicy</c>, so a guarded run and an unguarded one
+/// can be compared directly.
+/// </summary>
+internal class ScopedInvoice
+{
+    public int Id { get; set; }
+
+    [DwForceWhere(Operator.Equal, ContextValue = "TenantId")]
+    public int TenantId { get; set; }
+
+    [DwForceWhere(Operator.Equal, Value = "false")]
+    public bool IsDeleted { get; set; }
+
+    [DwAlias("reference")]
+    public string Number { get; set; } = string.Empty;
+
+    public decimal Amount { get; set; }
+}
+
+/// <summary>
+/// A type that demands the caller supply the scope rather than supplying it for them.
+/// </summary>
+internal class RequiredScopeLedger
+{
+    public int Id { get; set; }
+
+    [DwRequireWhere]
+    public int TenantId { get; set; }
+
+    [DwRequireWhere(Operators = new[] { Operator.GreaterThanOrEqual, Operator.Between })]
+    public DateTime OccurredAt { get; set; }
+
+    public decimal Amount { get; set; }
+}
+
+/// <summary>
+/// Both attributes on one member: the pairing that proves an injected predicate satisfies the
+/// requirement it would otherwise fall foul of.
+/// </summary>
+internal class ForcedAndRequiredLedger
+{
+    public int Id { get; set; }
+
+    [DwRequireWhere]
+    [DwForceWhere(Operator.Equal, ContextValue = "TenantId")]
+    public int TenantId { get; set; }
+
+    public decimal Amount { get; set; }
+}
+
+/// <summary>Two forced predicates on one member, which compose into a range by conjunction.</summary>
+internal class BoundedWindow
+{
+    [DwForceWhere(Operator.GreaterThanOrEqual, Value = "18")]
+    [DwForceWhere(Operator.LessThanOrEqual, Value = "65")]
+    public int Age { get; set; }
+
+    [DwAlias("label", Overridable = true)]
+    public string Label { get; set; } = string.Empty;
+}
+
+/// <summary>Aliases on a root field and through a reference navigation.</summary>
+internal class AliasedCustomer
+{
+    public int Id { get; set; }
+
+    [DwAlias("customer_name")]
+    public string Name { get; set; } = string.Empty;
+
+    public AliasedContact? Contact { get; set; }
+}
+
+/// <summary>The nested type behind <see cref="AliasedCustomer.Contact"/>.</summary>
+internal class AliasedContact
+{
+    [DwAlias("email_address")]
+    public string Email { get; set; } = string.Empty;
+
+    [DwNoOrder]
+    [DwAlias("phone_number")]
+    public string Phone { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// An alias colliding with a real property name on the same type. One caller-supplied name, two
+/// fields it could mean.
+/// </summary>
+internal class CollidingAliasDto
+{
+    public string Salary { get; set; } = string.Empty;
+
+    [DwAlias("Salary")]
+    public string Notes { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// One aliased type reached by two navigations, so its alias stands for two paths and neither is
+/// the obvious one.
+/// </summary>
+internal class TwoContactCustomer
+{
+    public AliasedContact? Home { get; set; }
+
+    public AliasedContact? Work { get; set; }
+}
+
+/// <summary>
+/// A forced predicate on a member whose CLR type has no <see cref="DataType"/> counterpart. Refused
+/// rather than guessed: the pipeline is about to validate the value against this type.
+/// </summary>
+internal class UnmappableForce
+{
+    [DwForceWhere(Operator.Equal, Value = "01:00:00")]
+    public TimeSpan Window { get; set; }
 }

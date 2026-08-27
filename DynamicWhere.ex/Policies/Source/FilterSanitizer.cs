@@ -109,6 +109,11 @@ internal static class FilterSanitizer
         GateOrders(working, gate);
         GateSelects(working, gate, synthesizeProjection);
 
+        // Last, and after gating rather than before it. A forced predicate is the library filtering
+        // on the caller's behalf, so it is never checked against the caller's own policy — and
+        // running it through the gate would refuse the scope on exactly the field it exists for.
+        working.ConditionGroup = Inject<T>(working.ConditionGroup, gate);
+
         return working;
     }
 
@@ -1087,6 +1092,75 @@ internal static class FilterSanitizer
     }
 
     /// <summary>
+    /// Wraps a caller's condition group in a new root that also carries every forced predicate.
+    /// </summary>
+    /// <remarks>
+    /// The shape is a correctness requirement and not an implementation detail. Given a caller
+    /// group of <c>(Status = A OR Status = B)</c>, appending the tenant term <em>inside</em> that
+    /// group produces <c>(Status = A OR Status = B OR TenantId = 5)</c> — an OR that returns every
+    /// tenant's rows matching A or B. The forced term must always sit at a new root, joined by
+    /// <c>And</c>, whatever the caller's own group does.
+    /// <para>
+    /// A caller who sent no group at all still gets one. That caller is precisely who a forced scope
+    /// exists for: a null group reaches the pipeline as "no where clause", and leaving it null hands
+    /// back every row of the table.
+    /// </para>
+    /// <para>
+    /// Nothing is injected in a dry run. Dry run promises the same data the unguarded path would
+    /// return, and a predicate that narrows the result would make a canary understate its own blast
+    /// radius. The decision is still recorded, which is the whole point of the canary.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="T">The entity type being queried.</typeparam>
+    /// <param name="callers">The caller's group, already gated. May be null.</param>
+    /// <param name="gate">The per-query state.</param>
+    /// <returns>The group to hand the pipeline.</returns>
+    /// <exception cref="PolicyException">
+    /// Thrown when a predicate reads an ambient value the caller's context does not supply.
+    /// </exception>
+    private static ConditionGroup? Inject<T>(ConditionGroup? callers, Gate gate) where T : class
+    {
+        if (gate.TypePolicy.Forced.Count == 0)
+        {
+            return callers;
+        }
+
+        List<Condition> injected = new(gate.TypePolicy.Forced.Count);
+
+        foreach (ForcedPredicate predicate in gate.TypePolicy.Forced)
+        {
+            Condition? condition = gate.Materialize<T>(predicate, injected.Count);
+
+            if (condition is not null)
+            {
+                injected.Add(condition);
+            }
+        }
+
+        if (injected.Count == 0)
+        {
+            return callers;
+        }
+
+        ConditionGroup root = new()
+        {
+            Sort = 0,
+            Connector = Connector.And,
+            Conditions = injected,
+            SubConditionGroups = new List<ConditionGroup>()
+        };
+
+        if (callers is not null)
+        {
+            callers.Sort = 0;
+
+            root.SubConditionGroups.Add(callers);
+        }
+
+        return root;
+    }
+
+    /// <summary>
     /// Turns a name the caller wrote into the canonical field path it stands for, resolving an
     /// alias where there is one.
     /// </summary>
@@ -1467,6 +1541,91 @@ internal static class FilterSanitizer
                 SourceOrigin = origin
             };
         }
+
+        /// <summary>
+        /// Turns a forced predicate into the condition that will be injected, or null when the dry
+        /// run means nothing is to be injected at all.
+        /// </summary>
+        /// <typeparam name="T">The entity type being queried.</typeparam>
+        /// <param name="predicate">The predicate to materialize.</param>
+        /// <param name="sort">
+        /// Its position among the injected conditions. <c>ConditionGroup.Validate</c> refuses
+        /// duplicate sort values, so a second forced predicate on a type would otherwise turn every
+        /// query on it into a validation failure.
+        /// </param>
+        /// <returns>The condition to inject, or null.</returns>
+        /// <exception cref="PolicyException">
+        /// Thrown when the predicate reads an ambient value the caller's context does not supply.
+        /// </exception>
+        /// <exception cref="LogicException">
+        /// Thrown when the predicate names a field that does not exist on <typeparamref name="T"/>.
+        /// That is a misconfiguration rather than a policy decision, and it fails loudly.
+        /// </exception>
+        internal Condition? Materialize<T>(ForcedPredicate predicate, int sort) where T : class
+        {
+            // Validated against T because a predicate from a runtime rule carries whatever field
+            // path the rule was written with, and the pipeline only accepts canonical ones.
+            string path = predicate.FieldPath.Validate<T>();
+
+            List<object> values = new();
+
+            if (predicate.ReadsContext)
+            {
+                // Present-but-null counts as missing. That is the shape a forgotten claim actually
+                // takes, and filtering by null is not the scope anybody meant. Spec section 4.3: a
+                // tenant scope that silently fails to apply is worse than a failed request.
+                if (!_context.TryGetValue(predicate.ContextValue!, out object? value) || value is null)
+                {
+                    string origin =
+                        $"forced predicate on '{path}' reads the ambient value " +
+                        $"'{predicate.ContextValue}', which the context does not supply";
+
+                    _trace.Add(new PolicyDecision(
+                        path, PolicyFeature.Where, PolicyAction.Denied, origin));
+
+                    // Dry run overrides the whole table, this row included. An operator running a
+                    // canary needs to be told the scope would not have resolved, and the trace above
+                    // is how they are told.
+                    if (IsDryRun)
+                    {
+                        return null;
+                    }
+
+                    throw new PolicyException(
+                        PolicyErrorCode.MissingContextValue, path, PolicyFeature.Where, _options.Tier)
+                    {
+                        SourceOrigin = origin
+                    };
+                }
+
+                values.Add(value);
+            }
+            else if (!predicate.IsNullCheck)
+            {
+                values.Add(predicate.Value!);
+            }
+
+            RecordInjected(path, predicate.Operator);
+
+            if (IsDryRun)
+            {
+                return null;
+            }
+
+            return new Condition
+            {
+                Sort = sort,
+                Field = path,
+                DataType = predicate.DataType,
+                Operator = predicate.Operator,
+                Values = values
+            };
+        }
+
+        /// <summary>Records that the library added a predicate the caller did not send.</summary>
+        internal void RecordInjected(string fieldPath, Operator op) =>
+            _trace.Add(new PolicyDecision(
+                fieldPath, PolicyFeature.Where, PolicyAction.Injected, $"forced predicate ({op})"));
 
         /// <summary>Resolves one field's policy, once per query.</summary>
         internal FieldPolicy PolicyFor(string fieldPath)

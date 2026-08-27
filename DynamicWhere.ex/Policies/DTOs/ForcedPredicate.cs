@@ -91,6 +91,37 @@ public sealed class ForcedPredicate
         return new ForcedPredicate(fieldPath.Trim(), op, dataType, value: null, contextValue.Trim());
     }
 
+    /// <summary>
+    /// Creates a predicate testing a field for null, which needs no value at all.
+    /// </summary>
+    /// <param name="fieldPath">The field to test.</param>
+    /// <param name="op">Either <see cref="Operator.IsNull"/> or <see cref="Operator.IsNotNull"/>.</param>
+    /// <param name="dataType">The field's data type.</param>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="fieldPath"/> is blank, or <paramref name="op"/> is an operator
+    /// that needs a value.
+    /// </exception>
+    /// <remarks>
+    /// Soft deletion is usually spelled this way — <c>DeletedAt IS NULL</c> — and without this the
+    /// commonest forced predicate of all would have to be written as a comparison against a
+    /// sentinel date.
+    /// </remarks>
+    public static ForcedPredicate FromNullCheck(string fieldPath, Operator op, DataType dataType)
+    {
+        Require(fieldPath, nameof(fieldPath), "A forced predicate requires a field path.");
+
+        if (op is not (Operator.IsNull or Operator.IsNotNull))
+        {
+            throw new ArgumentException(
+                $"'{op}' compares against a value, so it cannot be built as a null check.", nameof(op));
+        }
+
+        return new ForcedPredicate(fieldPath.Trim(), op, dataType, value: null, contextValue: null);
+    }
+
+    /// <summary>True when this predicate compares against nothing, because it tests for null.</summary>
+    public bool IsNullCheck => Operator is Operator.IsNull or Operator.IsNotNull;
+
     /// <summary>Refuses a blank argument.</summary>
     private static void Require(string value, string parameter, string message)
     {

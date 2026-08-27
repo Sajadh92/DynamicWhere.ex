@@ -390,3 +390,31 @@ internal class UnmappableForce
     [DwForceWhere(Operator.Equal, Value = "01:00:00")]
     public TimeSpan Window { get; set; }
 }
+
+/// <summary>
+/// A field the caller may not filter on that the library filters on anyway. The usual pairing: a
+/// caller who may not name a tenant column is exactly the caller who must be confined to one.
+/// </summary>
+internal class HiddenTenantLedger
+{
+    public int Id { get; set; }
+
+    [DwNoWhere]
+    [DwForceWhere(Operator.Equal, ContextValue = "TenantId")]
+    public int TenantId { get; set; }
+
+    public decimal Amount { get; set; }
+}
+
+/// <summary>
+/// Soft deletion expressed as a null check, which needs no value at all.
+/// </summary>
+internal class SoftDeletedLedger
+{
+    public int Id { get; set; }
+
+    [DwForceWhere(Operator.IsNull)]
+    public DateTime? DeletedAt { get; set; }
+
+    public decimal Amount { get; set; }
+}

@@ -328,11 +328,20 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     {
         bool hasValue = attribute.Value is not null;
         bool hasContextValue = attribute.ContextValue is not null;
+        bool isNullCheck = attribute.Operator is Operator.IsNull or Operator.IsNotNull;
 
         // Refused rather than resolved in favour of one. Neither leaves nothing to inject, and both
         // leaves no way to choose -- and the wrong choice here is a tenant scope filtering on a
-        // constant somebody left behind.
-        if (hasValue == hasContextValue)
+        // constant somebody left behind. A null check is the exception: it compares against
+        // nothing, which is how soft deletion is usually spelled.
+        if (isNullCheck && (hasValue || hasContextValue))
+        {
+            throw new ArgumentException(
+                $"[DwForceWhere({attribute.Operator})] on '{fieldPath}' compares against nothing, " +
+                "so it must set neither Value nor ContextValue.");
+        }
+
+        if (!isNullCheck && hasValue == hasContextValue)
         {
             throw new ArgumentException(
                 $"[DwForceWhere] on '{fieldPath}' must set exactly one of Value or ContextValue; " +
@@ -341,9 +350,11 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
 
         DataType dataType = DataTypeOf(property, fieldPath);
 
-        ForcedPredicate forced = hasContextValue
-            ? ForcedPredicate.FromContext(fieldPath, attribute.Operator, dataType, attribute.ContextValue!)
-            : ForcedPredicate.FromConstant(fieldPath, attribute.Operator, dataType, attribute.Value!);
+        ForcedPredicate forced = isNullCheck
+            ? ForcedPredicate.FromNullCheck(fieldPath, attribute.Operator, dataType)
+            : hasContextValue
+                ? ForcedPredicate.FromContext(fieldPath, attribute.Operator, dataType, attribute.ContextValue!)
+                : ForcedPredicate.FromConstant(fieldPath, attribute.Operator, dataType, attribute.Value!);
 
         return new PolicyFragment(
             fieldPath,

@@ -1,3 +1,5 @@
+﻿using DynamicWhere.ex.Classes.Result;
+using System.Linq.Dynamic.Core;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
@@ -266,5 +268,152 @@ public class PolicyInjectionTests
         Assert.Contains(
             trace.Decisions,
             d => d.Action == PolicyAction.Denied && d.Reason!.Contains("TenantId", StringComparison.Ordinal));
+    }
+
+    // ----------------------------------------------------------- the other queryable surfaces
+
+    private static List<ScopedInvoice> Books() => new()
+    {
+        new() { Id = 1, TenantId = 5, IsDeleted = false, Number = "A", Amount = 10m },
+        new() { Id = 2, TenantId = 9, IsDeleted = false, Number = "B", Amount = 20m },
+        new() { Id = 3, TenantId = 5, IsDeleted = true, Number = "C", Amount = 30m }
+    };
+
+    private static PolicyQueryable<ScopedInvoice> Handle(int tenant = 5) =>
+        Books().AsQueryable().ApplyPolicy(Tenant(tenant), Options(), Attributes());
+
+    [Fact]
+    public void A_summary_carries_the_scope_too()
+    {
+        // Injecting on the filter path alone would let a caller read SUM over every tenant by
+        // asking for a grouped result instead of a list.
+        Summary summary = new()
+        {
+            GroupBy = new GroupBy { Fields = new List<string> { "Number" } }
+        };
+
+        Summary result = FilterSanitizer.Sanitize<ScopedInvoice>(
+            summary, Attributes(), Tenant(), Options(), new PolicyTrace(DwTier.Convenience, false));
+
+        Assert.NotNull(result.ConditionGroup);
+        Assert.Contains(result.ConditionGroup!.Conditions, c => c.Field == "TenantId");
+    }
+
+    [Fact]
+    public void Every_condition_set_in_a_segment_is_scoped_independently()
+    {
+        // Each set becomes its own subquery. Scoping one arm of an Except and not the other returns
+        // precisely the rows the scope was meant to hide.
+        Segment segment = new()
+        {
+            ConditionSets = new List<ConditionSet>
+            {
+                new() { Sort = 0, ConditionGroup = new ConditionGroup { Conditions = { On("Number", value: "A") } } },
+                new()
+                {
+                    Sort = 1,
+                    Intersection = Intersection.Except,
+                    ConditionGroup = new ConditionGroup { Conditions = { On("Number", value: "B") } }
+                }
+            }
+        };
+
+        Segment result = FilterSanitizer.Sanitize<ScopedInvoice>(
+            segment, Attributes(), Tenant(), Options(), new PolicyTrace(DwTier.Convenience, false));
+
+        Assert.All(
+            result.ConditionSets!,
+            set => Assert.Contains(set.ConditionGroup.Conditions, c => c.Field == "TenantId"));
+    }
+
+    [Fact]
+    public void A_segment_with_no_condition_sets_is_given_one()
+    {
+        // The pipeline treats an empty set list as "return everything", so there would otherwise be
+        // no group for the scope to wrap.
+        Segment result = FilterSanitizer.Sanitize<ScopedInvoice>(
+            new Segment { ConditionSets = new List<ConditionSet>() },
+            Attributes(), Tenant(), Options(), new PolicyTrace(DwTier.Convenience, false));
+
+        ConditionSet only = Assert.Single(result.ConditionSets!);
+
+        Assert.Contains(only.ConditionGroup.Conditions, c => c.Field == "TenantId");
+    }
+
+    [Fact]
+    public void The_composable_where_applies_the_scope()
+    {
+        List<ScopedInvoice> rows = Handle()
+            .Where(new ConditionGroup { Conditions = { On("Number", Operator.NotEqual, "Z") } })
+            .ToList();
+
+        Assert.All(rows, r => Assert.Equal(5, r.TenantId));
+        Assert.All(rows, r => Assert.False(r.IsDeleted));
+    }
+
+    [Fact]
+    public void The_composable_where_on_one_condition_applies_the_scope()
+    {
+        // The single-condition overload used to hand the pipeline Conditions[0]. After injection
+        // that index is a forced predicate and the caller's own condition sits in a subgroup, so
+        // taking the first condition would have silently dropped what the caller asked for.
+        List<ScopedInvoice> rows = Handle().Where(On("Number", Operator.NotEqual, "Z")).ToList();
+
+        Assert.All(rows, r => Assert.Equal(5, r.TenantId));
+        Assert.Single(rows);
+    }
+
+    [Fact]
+    public void The_composable_select_applies_the_scope()
+    {
+        // A scope applied to ToList and not to Select is bypassed by composing instead of
+        // terminating.
+        List<ScopedInvoice> rows = Handle().Select(new List<string> { "Id", "TenantId" }).ToList();
+
+        Assert.All(rows, r => Assert.Equal(5, r.TenantId));
+        Assert.Single(rows);
+    }
+
+    [Fact]
+    public void The_composable_order_applies_the_scope()
+    {
+        List<ScopedInvoice> rows = Handle()
+            .Order(new List<OrderBy> { new() { Field = "Amount", Direction = Direction.Ascending } })
+            .ToList();
+
+        Assert.All(rows, r => Assert.Equal(5, r.TenantId));
+        Assert.Single(rows);
+    }
+
+    [Fact]
+    public void The_composable_page_applies_the_scope()
+    {
+        List<ScopedInvoice> rows = Handle()
+            .Page(new PageBy { PageNumber = 1, PageSize = 10 })
+            .ToList();
+
+        Assert.All(rows, r => Assert.Equal(5, r.TenantId));
+        Assert.Single(rows);
+    }
+
+    [Fact]
+    public void The_composable_group_applies_the_scope()
+    {
+        int groups = Handle()
+            .Group(new GroupBy { Fields = new List<string> { "Number" } })
+            .ToDynamicList()
+            .Count;
+
+        // Tenant 5 has two rows, one of them soft deleted, so exactly one group survives.
+        Assert.Equal(1, groups);
+    }
+
+    [Fact]
+    public void A_terminal_list_call_applies_the_scope()
+    {
+        FilterResult<ScopedInvoice> result = Handle().ToList(new Filter());
+
+        Assert.Single(result.Data!);
+        Assert.All(result.Data!, r => Assert.Equal(5, r.TenantId));
     }
 }

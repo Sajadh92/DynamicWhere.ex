@@ -191,6 +191,11 @@ internal static class FilterSanitizer
         GateHaving(working.Having, references, gate);
         GateSummaryOrders(working, references, gate);
 
+        // A summary is a query that returns rows, so it takes the same scope a filter does.
+        // Injecting on the filter path alone would let a caller read an aggregate across every
+        // tenant simply by asking for a grouped result instead of a list.
+        working.ConditionGroup = Inject<T>(working.ConditionGroup, gate);
+
         return working;
     }
 
@@ -597,7 +602,56 @@ internal static class FilterSanitizer
         GateSegmentOrders(working, gate);
         GateSegmentSelects(working, gate);
 
+        InjectIntoSets<T>(working, gate);
+
         return working;
+    }
+
+    /// <summary>
+    /// Scopes every condition set in a segment, and gives a segment with no sets one to be scoped.
+    /// </summary>
+    /// <remarks>
+    /// Each set becomes its own subquery, so each takes the scope independently. Scoping one arm of
+    /// an <c>Except</c> and not the other returns precisely the rows the scope exists to hide:
+    /// <c>AllRows EXCEPT (AllRows WHERE TenantId = 5)</c> is every other tenant, by name.
+    /// <para>
+    /// A segment carrying no sets is treated by the pipeline as "return everything", and it builds
+    /// itself a filter with a null condition group to do so. There is nothing for the scope to wrap,
+    /// so one set is created to hold it — without which the emptiest possible segment would be the
+    /// widest possible result.
+    /// </para>
+    /// </remarks>
+    private static void InjectIntoSets<T>(Segment segment, Gate gate) where T : class
+    {
+        if (gate.TypePolicy.Forced.Count == 0)
+        {
+            return;
+        }
+
+        if (segment.ConditionSets is null || segment.ConditionSets.Count == 0)
+        {
+            ConditionGroup? scope = Inject<T>(null, gate);
+
+            if (scope is not null)
+            {
+                segment.ConditionSets = new List<ConditionSet>
+                {
+                    new() { Sort = 0, ConditionGroup = scope }
+                };
+            }
+
+            return;
+        }
+
+        foreach (ConditionSet set in segment.ConditionSets)
+        {
+            ConditionGroup? scoped = Inject<T>(set.ConditionGroup, gate);
+
+            if (scoped is not null)
+            {
+                set.ConditionGroup = scoped;
+            }
+        }
     }
 
     /// <summary>

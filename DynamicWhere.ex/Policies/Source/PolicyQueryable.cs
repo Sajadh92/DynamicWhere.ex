@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Classes.Complex;
+﻿using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Exceptions;
@@ -218,7 +218,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         using (PolicyScope.Enter(_context))
         {
-            return Guarded().Select(sanitized.Selects!);
+            return Scoped(sanitized).Select(sanitized.Selects!);
         }
     }
 
@@ -231,7 +231,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         using (PolicyScope.Enter(_context))
         {
-            return Guarded().SelectDynamic(sanitized.Selects!);
+            return Scoped(sanitized).SelectDynamic(sanitized.Selects!);
         }
     }
 
@@ -246,9 +246,12 @@ public sealed class PolicyQueryable<T> where T : class
 
         Filter sanitized = SanitizeClause(new Filter { ConditionGroup = group });
 
+        // The whole group, not Conditions[0]. Once a forced predicate is injected, index zero is
+        // the library's own term and the caller's condition has moved into a subgroup -- taking the
+        // first condition would silently drop what the caller actually asked for.
         using (PolicyScope.Enter(_context))
         {
-            return Guarded().Where(sanitized.ConditionGroup!.Conditions[0]);
+            return Scoped(sanitized);
         }
     }
 
@@ -261,7 +264,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         using (PolicyScope.Enter(_context))
         {
-            return Guarded().Where(sanitized.ConditionGroup!);
+            return Scoped(sanitized);
         }
     }
 
@@ -279,7 +282,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         using (PolicyScope.Enter(_context))
         {
-            return Guarded().Order(sanitized.Orders!);
+            return Scoped(sanitized).Order(sanitized.Orders!);
         }
     }
 
@@ -292,7 +295,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         using (PolicyScope.Enter(_context))
         {
-            return Guarded().Page(sanitized.Page!);
+            return Scoped(sanitized).Page(sanitized.Page!);
         }
     }
 
@@ -305,7 +308,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         using (PolicyScope.Enter(_context))
         {
-            return Guarded().Group(sanitized.GroupBy!);
+            return Scoped(sanitized.ConditionGroup).Group(sanitized.GroupBy!);
         }
     }
 
@@ -366,6 +369,26 @@ public sealed class PolicyQueryable<T> where T : class
     /// </para>
     /// </remarks>
     private IQueryable<T> Guarded() => _source.AsNoTracking();
+
+    /// <summary>
+    /// The detached query with any forced predicate already applied.
+    /// </summary>
+    /// <remarks>
+    /// The composable methods each return an <see cref="IQueryable{T}"/> that the caller goes on to
+    /// materialize, so a scope applied only to the terminal methods is bypassed by composing rather
+    /// than terminating. The sanitizer has already put the forced predicate into the clause's
+    /// condition group -- including for a clause that carried none, which is exactly the caller a
+    /// scope exists for -- so applying that group here covers every one of them.
+    /// <para>
+    /// When nothing is forced the group is whatever the caller sent, and for the clauses that carry
+    /// no conditions at all it is null, so this is the query unchanged.
+    /// </para>
+    /// </remarks>
+    private IQueryable<T> Scoped(Filter sanitized) => Scoped(sanitized.ConditionGroup);
+
+    /// <summary>The detached query filtered by a condition group, or unfiltered when it is null.</summary>
+    private IQueryable<T> Scoped(ConditionGroup? group) =>
+        group is null ? Guarded() : Guarded().Where(group);
 
     /// <summary>Sanitizes a whole filter and records the outcome.</summary>
     private Filter Sanitize(Filter filter, PolicyTrace trace)

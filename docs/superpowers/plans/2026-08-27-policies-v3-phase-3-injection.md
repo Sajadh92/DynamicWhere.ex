@@ -299,8 +299,11 @@ discard a sealed tenant scope.
 `Resolve` and `ResolveType` share the election helpers. Two code paths that agree only by
 construction is the standing liability this project keeps paying for.
 
-Wildcard fragments carrying an alias are ignored — one name cannot stand for every field. Ignoring
-grants nothing: the alias simply does not exist and callers use the real path.
+An alias or a requirement on the wildcard path is **refused at construction**, not ignored. One name
+cannot stand for every field, and a demand that the caller filter on every field refuses every query
+ever written against the type. Ignoring a nonsensical fragment is how a misconfigured rule becomes
+invisible; refusing it tells the store that emitted it. A forced predicate on a wildcard fragment is
+fine, because the predicate names its own field.
 
 - [ ] **Step 1: Write the failing tests** — election, collection, per-caller variation, wildcard
 - [ ] **Step 2: Implement**
@@ -359,9 +362,21 @@ conditions are the forced ones — written so a later "simplification" into a me
 A null `ConditionGroup` still produces the root. A caller who sends no filter at all is exactly the
 caller a forced scope exists for.
 
-`ContextValue` resolving to a missing key, or to null, throws `MissingContextValue` in both tiers
-and in dry run. Spec section 4.3: a tenant scope that silently fails to apply is worse than a failed
-request, and dry run's promise is that it changes no data — not that it grants access.
+`ContextValue` resolving to a missing key, or to null, throws `MissingContextValue` in both tiers.
+Spec section 4.3: a tenant scope that silently fails to apply is worse than a failed request.
+Present-but-null counts as missing, because that is the shape a forgotten claim actually takes.
+
+**Corrected during execution: dry run wins over injection.** The draft above had a missing context
+value throwing in dry run too. It does not. Spec section 2.5 says dry run overrides the whole table,
+and dry run's promise is the same data the unguarded path returns — a predicate that narrows the
+result would make a canary understate its own blast radius. Nothing is injected in a dry run and
+nothing throws; both the injection and the unresolved context value are recorded instead, which is
+what the canary is for.
+
+**Corrected during execution: `IsNull` and `IsNotNull` are accepted.** They compare against nothing,
+so they must set neither `Value` nor `ContextValue`, and the "exactly one" rule above does not apply
+to them. Soft deletion is usually spelled `DeletedAt IS NULL`; without this the commonest forced
+predicate of all would need a sentinel date.
 
 `Sort` values are assigned so the injected conditions and the wrapped subgroup satisfy
 `ConditionGroup.Validate()`'s uniqueness checks. Each injected condition records
@@ -380,6 +395,14 @@ request, and dry run's promise is that it changes no data — not that it grants
 
 The three doors from the review section. `Segment` injects into **each** `ConditionSet`
 independently — a set operation missing the scope in one arm returns the complement of it.
+
+A segment carrying *no* condition sets is given one. The pipeline reads an empty set list as "return
+everything" and builds itself a filter with a null condition group to do it, so there is nothing for
+the scope to wrap and the emptiest possible segment would otherwise be the widest possible result.
+
+`PolicyQueryable.Where(Condition)` handed the pipeline `Conditions[0]`. After injection that index is
+the library's own term and the caller's condition has moved into a subgroup, so it now passes the
+whole group.
 
 `Select`, `Order`, and `Page` on `PolicyQueryable` currently hand their clause to the unguarded
 extension directly. They gain the injected predicate, applied through `Guarded().Where(...)` before

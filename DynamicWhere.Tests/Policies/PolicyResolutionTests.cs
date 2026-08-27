@@ -1,3 +1,4 @@
+﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
@@ -473,4 +474,237 @@ public class PolicyResolutionTests
         public IReadOnlyList<PolicyFragment> GetFragments(Type entityType, DwPolicyContext context) =>
             new PolicyFragment[] { null! };
     }
+
+    [Fact]
+    public void A_type_nothing_speaks_to_resolves_to_an_empty_type_policy()
+    {
+        TypePolicy policy = Resolver().ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.True(policy.IsEmpty);
+        Assert.Empty(policy.Aliases);
+        Assert.Empty(policy.Forced);
+        Assert.Empty(policy.Required);
+    }
+
+    [Fact]
+    public void An_alias_maps_to_the_path_it_names()
+    {
+        TypePolicy policy = Resolver(
+            new FakePolicyProvider().AddAlias("Customer.Name", "customer_name", PolicyLevel.SealedAttribute))
+            .ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.Equal(new[] { "Customer.Name" }, policy.Aliases["customer_name"]);
+    }
+
+    [Fact]
+    public void An_alias_is_matched_without_regard_to_case()
+    {
+        TypePolicy policy = Resolver(
+            new FakePolicyProvider().AddAlias("Name", "customer_name", PolicyLevel.SealedAttribute))
+            .ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.True(policy.Aliases.ContainsKey("CUSTOMER_NAME"));
+    }
+
+    [Fact]
+    public void A_sealed_alias_cannot_be_replaced_by_a_runtime_rule()
+    {
+        TypePolicy policy = Resolver(
+            new FakePolicyProvider()
+                .AddAlias("Name", "official_name", PolicyLevel.SealedAttribute)
+                .AddAlias("Name", "my_name", PolicyLevel.DynamicUser))
+            .ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.True(policy.Aliases.ContainsKey("official_name"));
+        Assert.False(policy.Aliases.ContainsKey("my_name"));
+    }
+
+    [Fact]
+    public void A_rule_replaces_an_overridable_alias()
+    {
+        // The headline case for runtime aliases: a caller entitled to rename a field gets a filter
+        // they can read, and the attribute's name was only ever a default.
+        TypePolicy policy = Resolver(
+            new FakePolicyProvider()
+                .AddAlias("Name", "official_name", PolicyLevel.OverridableAttribute)
+                .AddAlias("Name", "my_name", PolicyLevel.DynamicUser))
+            .ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.True(policy.Aliases.ContainsKey("my_name"));
+        Assert.False(policy.Aliases.ContainsKey("official_name"));
+    }
+
+    [Fact]
+    public void A_rule_may_name_a_field_no_attribute_names()
+    {
+        TypePolicy policy = Resolver(
+            new FakePolicyProvider().AddAlias("Name", "my_name", PolicyLevel.DynamicRole))
+            .ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.Equal(new[] { "Name" }, policy.Aliases["my_name"]);
+    }
+
+    [Fact]
+    public void The_public_vocabulary_varies_by_caller()
+    {
+        PolicyResolver resolver = Resolver(
+            new FakePolicyProvider().OnlyFor("u1").AddAlias("Name", "my_name", PolicyLevel.DynamicUser));
+
+        TypePolicy mine = resolver.ResolveType(typeof(PlainProduct), User("u1"));
+        TypePolicy theirs = resolver.ResolveType(typeof(PlainProduct), User("u2"));
+
+        Assert.True(mine.Aliases.ContainsKey("my_name"));
+        Assert.Empty(theirs.Aliases);
+    }
+
+    [Fact]
+    public void A_colliding_alias_records_every_path_it_could_mean()
+    {
+        // Recording only the first would resolve the collision by arrival order, which is no
+        // resolution at all. The sanitizer refuses the name; it can only do that if it can see both.
+        TypePolicy policy = Resolver(
+            new FakePolicyProvider()
+                .AddAlias("Home.Email", "email", PolicyLevel.SealedAttribute)
+                .AddAlias("Work.Email", "email", PolicyLevel.SealedAttribute))
+            .ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.Equal(2, policy.Aliases["email"].Count);
+    }
+
+    [Fact]
+    public void Forced_predicates_from_two_sources_both_survive()
+    {
+        // The difference from an alias, and the reason it is not an election: a conjunction can only
+        // narrow, so a rule adding a scope is safe while a rule replacing one is not.
+        TypePolicy policy = Resolver(
+            new FakePolicyProvider()
+                .AddForced(
+                    ForcedPredicate.FromContext("TenantId", Operator.Equal, DataType.Number, "TenantId"),
+                    PolicyLevel.SealedAttribute)
+                .AddForced(
+                    ForcedPredicate.FromConstant("IsDeleted", Operator.Equal, DataType.Boolean, "false"),
+                    PolicyLevel.DynamicGlobal))
+            .ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.Equal(2, policy.Forced.Count);
+    }
+
+    [Fact]
+    public void A_low_level_rule_cannot_discard_a_sealed_forced_predicate()
+    {
+        TypePolicy policy = Resolver(
+            new FakePolicyProvider()
+                .AddForced(
+                    ForcedPredicate.FromContext("TenantId", Operator.Equal, DataType.Number, "TenantId"),
+                    PolicyLevel.SealedAttribute)
+                .AddForced(
+                    ForcedPredicate.FromConstant("TenantId", Operator.Equal, DataType.Number, "0"),
+                    PolicyLevel.DynamicGlobal))
+            .ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.Contains(policy.Forced, f => f.ReadsContext);
+        Assert.Equal(2, policy.Forced.Count);
+    }
+
+    [Fact]
+    public void A_sealed_requirement_cannot_be_lifted_by_a_rule()
+    {
+        TypePolicy policy = Resolver(
+            new FakePolicyProvider()
+                .AddRequired("TenantId", PolicyLevel.SealedAttribute, Operator.Equal)
+                .AddRequired("TenantId", PolicyLevel.DynamicUser, Operator.NotEqual))
+            .ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.Equal(new[] { Operator.Equal }, policy.Required["TenantId"]);
+    }
+
+    [Fact]
+    public void A_rule_may_impose_a_requirement_where_no_attribute_speaks()
+    {
+        TypePolicy policy = Resolver(
+            new FakePolicyProvider().AddRequired("TenantId", PolicyLevel.DynamicTenant, Operator.In))
+            .ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.Equal(new[] { Operator.In }, policy.Required["TenantId"]);
+    }
+
+    [Fact]
+    public void The_field_lookup_and_the_type_sweep_agree_on_every_elected_answer()
+    {
+        // The standing liability on this feature is two routines that agree only by construction.
+        // Resolve and ResolveType share their election helpers precisely so this holds; the test
+        // exists so that a future change which splits them is caught here rather than in production.
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .AddAlias("Name", "official_name", PolicyLevel.OverridableAttribute)
+            .AddAlias("Name", "my_name", PolicyLevel.DynamicUser)
+            .AddRequired("Name", PolicyLevel.SealedAttribute, Operator.Equal)
+            .AddForced(
+                ForcedPredicate.FromConstant("Name", Operator.NotEqual, DataType.Text, "x"),
+                PolicyLevel.DynamicGlobal);
+
+        PolicyResolver resolver = Resolver(provider);
+
+        TypePolicy sweep = resolver.ResolveType(typeof(PlainProduct), Anyone);
+        FieldPolicy field = resolver.Resolve(typeof(PlainProduct), "Name", Anyone);
+
+        Assert.Equal("my_name", field.Alias);
+        Assert.Equal(new[] { "Name" }, sweep.Aliases[field.Alias!]);
+        Assert.Equal(sweep.Required["Name"], field.RequiredOperators);
+        Assert.Equal(sweep.Forced.Count, field.ForcedPredicates.Count);
+    }
+
+    [Fact]
+    public void An_alias_on_the_wildcard_path_is_refused_rather_than_ignored()
+    {
+        // Ignoring it is how a misconfigured rule becomes invisible. One name cannot stand for
+        // every field, so the store that emitted it hears about it.
+        Assert.Throws<ArgumentException>(() => new PolicyFragment(
+            PolicyFragment.Wildcard, PolicyFeature.Where, PolicyEffect.Allow,
+            PolicyLevel.DynamicGlobal, PolicySource.FromRule("r1", "Global"), alias: "everything"));
+    }
+
+    [Fact]
+    public void A_requirement_on_the_wildcard_path_is_refused_rather_than_ignored()
+    {
+        Assert.Throws<ArgumentException>(() => new PolicyFragment(
+            PolicyFragment.Wildcard, PolicyFeature.Where, PolicyEffect.Allow,
+            PolicyLevel.DynamicGlobal, PolicySource.FromRule("r1", "Global"),
+            requiredOperators: new[] { Operator.Equal }));
+    }
+
+    [Fact]
+    public void A_fragment_may_not_force_a_predicate_on_another_field()
+    {
+        Assert.Throws<ArgumentException>(() => new PolicyFragment(
+            "Salary", PolicyFeature.Where, PolicyEffect.Allow, PolicyLevel.DynamicGlobal,
+            PolicySource.FromRule("r1", "Global"),
+            forced: ForcedPredicate.FromConstant("TenantId", Operator.Equal, DataType.Number, "5")));
+    }
+
+    [Fact]
+    public void A_wildcard_fragment_may_carry_a_forced_predicate_because_it_names_its_own_field()
+    {
+        TypePolicy policy = Resolver(
+            new FakePolicyProvider().AddForced(
+                ForcedPredicate.FromConstant("TenantId", Operator.Equal, DataType.Number, "5"),
+                PolicyLevel.DynamicGlobal))
+            .ResolveType(typeof(PlainProduct), Anyone);
+
+        Assert.Equal("TenantId", policy.Forced.Single().FieldPath);
+    }
+
+    [Fact]
+    public void Resolving_a_type_refuses_a_null_argument()
+    {
+        Assert.Throws<ArgumentNullException>(() => Resolver().ResolveType(null!, Anyone));
+        Assert.Throws<ArgumentNullException>(() => Resolver().ResolveType(typeof(PlainProduct), null!));
+    }
+
+    /// <summary>The caller used where identity is irrelevant to what is being asserted.</summary>
+    private static readonly DwPolicyContext Anyone = new();
+
+    /// <summary>A caller identified as one user.</summary>
+    private static DwPolicyContext User(string identity) =>
+        new DwPolicyContext().WithSubject(DwSubjectKind.User, identity);
+
 }

@@ -107,30 +107,11 @@ public sealed class PolicyResolver
 
         List<PolicyFragment> candidates = new();
 
-        foreach (IDwPolicyProvider provider in _providers)
+        foreach (PolicyFragment fragment in Sweep(entityType, context))
         {
-            // A provider that misbehaves fails the lookup closed rather than quietly contributing
-            // nothing. Name it: the implementation is not necessarily one this library wrote, and
-            // an unattributed NullReferenceException from in here leads nowhere.
-            IReadOnlyList<PolicyFragment> fragments = provider.GetFragments(entityType, context)
-                ?? throw new InvalidOperationException(
-                    $"Policy provider '{provider.GetType().FullName}' returned null from " +
-                    "GetFragments. Return an empty list instead: a null result cannot be told " +
-                    "apart from a field no provider speaks to, and that field would be allowed.");
-
-            foreach (PolicyFragment fragment in fragments)
+            if (fragment.Matches(path))
             {
-                if (fragment is null)
-                {
-                    throw new InvalidOperationException(
-                        $"Policy provider '{provider.GetType().FullName}' returned a null " +
-                        "fragment. Every element of the returned list must be a real fragment.");
-                }
-
-                if (fragment.Matches(path))
-                {
-                    candidates.Add(fragment);
-                }
+                candidates.Add(fragment);
             }
         }
 
@@ -157,7 +138,213 @@ public sealed class PolicyResolver
             isSealed |= winner.Level == PolicyLevel.SealedAttribute;
         }
 
-        return new FieldPolicy(path, effects, sources, isSealed, IntersectOperators(candidates));
+        return new FieldPolicy(
+            path,
+            effects,
+            sources,
+            isSealed,
+            IntersectOperators(candidates),
+            ElectAlias(candidates),
+            CollectForced(candidates),
+            ElectRequired(candidates));
+    }
+
+    /// <summary>
+    /// Resolves everything about a type that cannot be answered one field at a time: the names this
+    /// caller may use, the predicates to inject, and the fields this caller must filter on.
+    /// </summary>
+    /// <param name="entityType">The type being queried.</param>
+    /// <param name="context">The caller.</param>
+    /// <returns>The type-wide policy, empty when nothing speaks to the type.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="entityType"/> or <paramref name="context"/> is null.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when a provider returns null, or a null fragment, naming that provider.
+    /// </exception>
+    /// <remarks>
+    /// One sweep per query, sharing its election helpers with <see cref="Resolve"/>. Two code paths
+    /// that agree only by construction is the standing liability in a system where a fragment that
+    /// fails to match means access granted, so the sweep and the per-field lookup answer through the
+    /// same functions rather than through two implementations of the same rules.
+    /// </remarks>
+    public TypePolicy ResolveType(Type entityType, DwPolicyContext context)
+    {
+        if (entityType is null)
+        {
+            throw new ArgumentNullException(nameof(entityType));
+        }
+
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        // Grouped by the path each fragment names, because an alias and a requirement are elected
+        // per field. Case-insensitive, matching PolicyFragment.Matches: a store spelling a path
+        // differently from the attribute that also names it must land in the same contest, or the
+        // two would each elect a winner and the more authoritative one would not necessarily apply.
+        Dictionary<string, List<PolicyFragment>> byPath = new(StringComparer.OrdinalIgnoreCase);
+        List<ForcedPredicate> forced = new();
+
+        foreach (PolicyFragment fragment in Sweep(entityType, context))
+        {
+            if (fragment.Forced is not null)
+            {
+                forced.Add(fragment.Forced);
+            }
+
+            // A wildcard cannot carry either of the elected properties — PolicyFragment refuses it
+            // at construction — so nothing is lost by keying this on the exact path.
+            if (fragment.Alias is null && fragment.RequiredOperators is null)
+            {
+                continue;
+            }
+
+            if (!byPath.TryGetValue(fragment.FieldPath, out List<PolicyFragment>? group))
+            {
+                group = new List<PolicyFragment>();
+                byPath[fragment.FieldPath] = group;
+            }
+
+            group.Add(fragment);
+        }
+
+        if (byPath.Count == 0 && forced.Count == 0)
+        {
+            return TypePolicy.Empty;
+        }
+
+        Dictionary<string, IReadOnlyList<string>> aliases = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, IReadOnlyList<Operator>> required = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (KeyValuePair<string, List<PolicyFragment>> entry in byPath)
+        {
+            string? alias = ElectAlias(entry.Value);
+
+            if (alias is not null)
+            {
+                // A name accumulates every path it could mean. Two aliases can collide, and one
+                // aliased type reached by two navigations gives one name two paths; keeping only
+                // the first would resolve the collision by arrival order, which is no resolution.
+                if (!aliases.TryGetValue(alias, out IReadOnlyList<string>? paths))
+                {
+                    aliases[alias] = new List<string> { entry.Key };
+                }
+                else
+                {
+                    ((List<string>)paths).Add(entry.Key);
+                }
+            }
+
+            IReadOnlyList<Operator>? operators = ElectRequired(entry.Value);
+
+            if (operators is not null)
+            {
+                required[entry.Key] = operators;
+            }
+        }
+
+        return new TypePolicy(aliases, forced, required);
+    }
+
+    /// <summary>
+    /// Reads every fragment every provider has for a type, refusing a provider that misbehaves.
+    /// </summary>
+    /// <remarks>
+    /// A provider returning null fails the lookup closed rather than quietly contributing nothing.
+    /// The implementation is not necessarily one this library wrote, and an unattributed
+    /// <see cref="NullReferenceException"/> from in here leads nowhere.
+    /// </remarks>
+    private IEnumerable<PolicyFragment> Sweep(Type entityType, DwPolicyContext context)
+    {
+        foreach (IDwPolicyProvider provider in _providers)
+        {
+            IReadOnlyList<PolicyFragment> fragments = provider.GetFragments(entityType, context)
+                ?? throw new InvalidOperationException(
+                    $"Policy provider '{provider.GetType().FullName}' returned null from " +
+                    "GetFragments. Return an empty list instead: a null result cannot be told " +
+                    "apart from a field no provider speaks to, and that field would be allowed.");
+
+            foreach (PolicyFragment fragment in fragments)
+            {
+                if (fragment is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Policy provider '{provider.GetType().FullName}' returned a null " +
+                        "fragment. Every element of the returned list must be a real fragment.");
+                }
+
+                yield return fragment;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Picks the alias the most authoritative fragment gives, or null when none names the field.
+    /// </summary>
+    /// <remarks>
+    /// Elected rather than accumulated: a field has one name per caller. The ranking is the one the
+    /// effects use, so a sealed <c>[DwAlias]</c> beats a runtime rule and an overridable one is
+    /// replaceable — the same ceiling that governs every other compile-time decision.
+    /// </remarks>
+    private static string? ElectAlias(IReadOnlyList<PolicyFragment> candidates) =>
+        Best(candidates, static f => f.Alias is not null)?.Alias;
+
+    /// <summary>
+    /// Picks the satisfying operator set the most authoritative fragment requires, or null when none
+    /// requires a filter.
+    /// </summary>
+    /// <remarks>
+    /// Elected for the same reason the alias is, and with the same consequence: a rule cannot lift a
+    /// sealed requirement, but it can impose one where no attribute speaks.
+    /// </remarks>
+    private static IReadOnlyList<Operator>? ElectRequired(IReadOnlyList<PolicyFragment> candidates) =>
+        Best(candidates, static f => f.RequiredOperators is not null)?.RequiredOperators;
+
+    /// <summary>
+    /// Gathers every forced predicate that matched, in provider order.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not an election. Injected predicates are joined by <c>And</c>, so an extra one
+    /// can only narrow the result — the same argument that keeps operator restrictions out of the
+    /// per-feature contest. Electing a winner here would let a rule at a lower level silently
+    /// discard a sealed tenant scope, which is the one outcome the level ordering exists to prevent.
+    /// </remarks>
+    private static IReadOnlyList<ForcedPredicate>? CollectForced(IReadOnlyList<PolicyFragment> candidates)
+    {
+        List<ForcedPredicate>? forced = null;
+
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            if (candidates[i].Forced is { } predicate)
+            {
+                forced ??= new List<ForcedPredicate>();
+                forced.Add(predicate);
+            }
+        }
+
+        return forced;
+    }
+
+    /// <summary>
+    /// Picks the highest-ranked fragment satisfying a test, or null when none does.
+    /// </summary>
+    private static PolicyFragment? Best(IReadOnlyList<PolicyFragment> candidates, Func<PolicyFragment, bool> test)
+    {
+        PolicyFragment? best = null;
+
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            PolicyFragment candidate = candidates[i];
+
+            if (test(candidate) && (best is null || Outranks(candidate, best)))
+            {
+                best = candidate;
+            }
+        }
+
+        return best;
     }
 
     /// <summary>

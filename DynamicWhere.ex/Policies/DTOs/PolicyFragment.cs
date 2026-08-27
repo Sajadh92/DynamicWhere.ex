@@ -79,6 +79,37 @@ public sealed class PolicyFragment
         Alias = NormalizeAlias(alias);
         Forced = forced;
         RequiredOperators = requiredOperators;
+
+        // Refused at the source rather than ignored at the point of use. Ignoring a nonsensical
+        // fragment is how a misconfigured rule becomes invisible, and both of these are nonsense on
+        // the wildcard: one name cannot stand for every field, and a demand that the caller filter
+        // on every field refuses every query ever written against the type.
+        if (IsWildcard && Alias is not null)
+        {
+            throw new ArgumentException(
+                "An alias cannot be attached to the wildcard path: one name cannot stand for every " +
+                "field.", nameof(alias));
+        }
+
+        if (IsWildcard && RequiredOperators is not null)
+        {
+            throw new ArgumentException(
+                "A filtering requirement cannot be attached to the wildcard path: it would demand a " +
+                "filter on every field of the type.", nameof(requiredOperators));
+        }
+
+        // A forced predicate names its own field, which is what lets a wildcard fragment carry one.
+        // A field-specific fragment carrying a predicate aimed elsewhere is a confusion, and the
+        // wrong reading of it injects a filter on a column nobody named.
+        if (Forced is not null
+            && !IsWildcard
+            && !string.Equals(FieldPath, NormalizePath(Forced.FieldPath), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"The fragment for '{FieldPath}' carries a forced predicate on " +
+                $"'{Forced.FieldPath}'. A field-specific fragment may only force a predicate on its " +
+                "own field.", nameof(forced));
+        }
     }
 
     /// <summary>The field path this fragment addresses, or <see cref="Wildcard"/>.</summary>

@@ -146,11 +146,18 @@ than the winner alone, or state in the explain output that the attribution is on
 ### Phase 8 — Security hardening
 
 Cross-cutting mitigations that need Segment and Summary policy support to already exist:
-`Segment` per-subquery enforcement and the strict-tier deny-where rule, aggregate-on-masked denial,
-`MinGroupSize`, `getQueryString` gating.
+aggregate-on-masked denial and `MinGroupSize`.
 
-Ends with `PolicyInferenceTests` — seven tests that each reproduce an attack and assert the
-mitigation blocks it, written so removing a mitigation turns the test red.
+**Two of the original five landed early, after Phase 3.** `Segment` per-subquery enforcement, the
+strict-tier deny-where rule (section 7.1), and `getQueryString` gating (section 7.5) all became
+reachable the moment injection landed, and none of them needed anything from the mask engine. They
+shipped in `fe5e33b` rather than waiting. What remains here genuinely depends on masking existing:
+"aggregating a masked field is denied" presupposes masks, and `MinGroupSize` without
+`AllowAggregate` to bound is a hole with a lid on it rather than a mitigation.
+
+`PolicyInferenceTests` already exists and holds the two closed channels. This phase completes it to
+seven, each test reproducing an attack and asserting the mitigation blocks it, written so removing a
+mitigation turns the test red.
 
 **Exit:** all seven inference attacks blocked. Earlier phases carry their own security tests
 inline; this phase covers only what spans features.
@@ -478,6 +485,27 @@ Both settled against the design document rather than against the plan.
 - **`ValidatePolicyModel()` still does not exist.** Section 4.8's rules are enforced at query time
   and fail closed. `[DwForceWhere(ContextValue = ...)]` naming a key nothing supplies is listed
   there as a startup check and cannot be one — what a context supplies is per-request.
+
+### Closed after Phase 3 — two inference channels, early
+
+Design sections 7.1 and 7.5, shipped in `fe5e33b` between Phases 3 and 4. Both were live on the
+branch: injection put a real tenant predicate into the text `getQueryString` hands back, and
+`Segment` participation gating refuses a field denied for `Segment` while saying nothing about a
+field denied only for `Select`.
+
+- **7.1** — in the strict tier, a field denied for `Select` is refused in a segment's conditions, at
+  every depth, in every set. Strict only, because the rule refuses a filter that is legitimate
+  outside a set operation and the convenience tier's caller is the project's own front end.
+- **7.5** — the strict tier refuses `getQueryString` on all six methods that can return it, before
+  the sanitizer runs so a refused request does no work. The convenience tier still returns it,
+  documented.
+
+`FieldDeniedForSegment` is reused for 7.1 rather than adding a code: the refusal genuinely is "this
+field is refused inside a set operation", and the `SourceOrigin` carries why. `QueryStringDenied` is
+new, appended at 14.
+
+Verified by mutation — disabling both mitigations turns 6 of the 11 new tests red and leaves green
+exactly those asserting behaviour that is still allowed.
 
 ### What Phase 4 inherits
 

@@ -5,6 +5,7 @@ using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
+using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Source;
 using Microsoft.EntityFrameworkCore;
@@ -69,6 +70,8 @@ public sealed class PolicyQueryable<T> where T : class
     public FilterResult<T> ToList(Filter filter, bool getQueryString = false)
     {
         PolicyTrace trace = NewTrace();
+        GuardQueryString(getQueryString, trace);
+
         Filter sanitized = Sanitize(filter, trace);
 
         using (PolicyScope.Enter(_context))
@@ -89,6 +92,8 @@ public sealed class PolicyQueryable<T> where T : class
     public async Task<FilterResult<T>> ToListAsync(Filter filter, bool getQueryString = false)
     {
         PolicyTrace trace = NewTrace();
+        GuardQueryString(getQueryString, trace);
+
         Filter sanitized = Sanitize(filter, trace);
 
         using (PolicyScope.Enter(_context))
@@ -109,6 +114,8 @@ public sealed class PolicyQueryable<T> where T : class
     public FilterResult<dynamic> ToListDynamic(Filter filter, bool getQueryString = false)
     {
         PolicyTrace trace = NewTrace();
+        GuardQueryString(getQueryString, trace);
+
         Filter sanitized = Sanitize(filter, trace);
 
         using (PolicyScope.Enter(_context))
@@ -129,6 +136,8 @@ public sealed class PolicyQueryable<T> where T : class
     public async Task<FilterResult<dynamic>> ToListAsyncDynamic(Filter filter, bool getQueryString = false)
     {
         PolicyTrace trace = NewTrace();
+        GuardQueryString(getQueryString, trace);
+
         Filter sanitized = Sanitize(filter, trace);
 
         using (PolicyScope.Enter(_context))
@@ -151,6 +160,8 @@ public sealed class PolicyQueryable<T> where T : class
     public SummaryResult ToList(Summary summary, bool getQueryString = false)
     {
         PolicyTrace trace = NewTrace();
+        GuardQueryString(getQueryString, trace);
+
         Summary sanitized = Sanitize(summary, trace);
 
         using (PolicyScope.Enter(_context))
@@ -171,6 +182,8 @@ public sealed class PolicyQueryable<T> where T : class
     public async Task<SummaryResult> ToListAsync(Summary summary, bool getQueryString = false)
     {
         PolicyTrace trace = NewTrace();
+        GuardQueryString(getQueryString, trace);
+
         Summary sanitized = Sanitize(summary, trace);
 
         using (PolicyScope.Enter(_context))
@@ -369,6 +382,55 @@ public sealed class PolicyQueryable<T> where T : class
     /// </para>
     /// </remarks>
     private IQueryable<T> Guarded() => _source.AsNoTracking();
+
+    /// <summary>
+    /// Refuses, in the strict tier, a request to return the generated SQL.
+    /// </summary>
+    /// <remarks>
+    /// Design section 7.5. The query text names the columns of denied fields and spells out every
+    /// injected predicate, so handing it back discloses both the schema and the shape of the scope
+    /// confining the caller. Injection made this sharper rather than milder: before it there was no
+    /// tenant predicate in the text to read.
+    /// <para>
+    /// The convenience tier still returns it, documented. Its caller is the project's own front end,
+    /// for which the query text is a debugging aid rather than a disclosure.
+    /// </para>
+    /// <para>
+    /// Checked before the sanitizer runs, so a refused request does no work, and recorded either
+    /// way. Dry run overrides it as it overrides every other refusal: an operator running a canary
+    /// needs to know the request would have been refused.
+    /// </para>
+    /// </remarks>
+    /// <param name="getQueryString">What the caller asked for.</param>
+    /// <param name="trace">The record for this query.</param>
+    /// <exception cref="PolicyException">Thrown in the strict tier when the SQL was asked for.</exception>
+    private void GuardQueryString(bool getQueryString, PolicyTrace trace)
+    {
+        if (!getQueryString || _options.Tier != DwTier.Strict)
+        {
+            return;
+        }
+
+        const string origin =
+            "the generated SQL names the columns of denied fields and every injected predicate";
+
+        trace.Add(new PolicyDecision(
+            PolicyFragment.Wildcard, PolicyFeature.None, PolicyAction.Denied, origin));
+
+        LastTrace = trace;
+
+        if (_options.DryRun || _context.DryRun)
+        {
+            return;
+        }
+
+        throw new PolicyException(
+            PolicyErrorCode.QueryStringDenied, PolicyFragment.Wildcard, PolicyFeature.None,
+            _options.Tier)
+        {
+            SourceOrigin = origin
+        };
+    }
 
     /// <summary>
     /// The detached query with any forced predicate already applied.

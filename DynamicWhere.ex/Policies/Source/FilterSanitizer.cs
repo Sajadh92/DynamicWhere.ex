@@ -596,6 +596,7 @@ internal static class FilterSanitizer
 
         EnforceCaps(working, gate);
         GateSegmentParticipation(working, gate);
+        GateSegmentInference(working, gate);
 
         if (working.ConditionSets is not null)
         {
@@ -686,6 +687,53 @@ internal static class FilterSanitizer
             if (!policy.Allows(PolicyFeature.Segment))
             {
                 gate.Deny(field, PolicyFeature.Segment, PolicyErrorCode.FieldDeniedForSegment, policy);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Refuses, in the strict tier only, a filter inside a set operation on a field the caller may
+    /// not project.
+    /// </summary>
+    /// <remarks>
+    /// Design section 7.1. <c>Segment</c> composes Union, Intersect and Except across subqueries,
+    /// and where a field is deny-select but allow-where,
+    /// <c>AllStaff EXCEPT (AllStaff WHERE Salary &gt; 100000)</c> returns exactly the people
+    /// earning under 100k — by name, with the salary column never selected. The protected value is
+    /// reconstructed from set membership, so narrowing a projection does not help: whether a row
+    /// survives the Except already answers the question the projection was hiding.
+    /// <para>
+    /// Strict only, and deliberately so. This refuses a filter that is legitimate outside a set
+    /// operation, and the convenience tier's caller is the project's own front end. Which posture
+    /// pays that cost is a threat-model decision, not one the engine should make silently.
+    /// </para>
+    /// <para>
+    /// Distinct from <see cref="GateSegmentParticipation"/>, which refuses a field denied for
+    /// <see cref="PolicyFeature.Segment"/> outright. This one refuses a field nobody denied for
+    /// segments at all, because of what a set operation can be made to disclose about it.
+    /// </para>
+    /// </remarks>
+    private static void GateSegmentInference(Segment segment, Gate gate)
+    {
+        if (!gate.IsStrict || segment.ConditionSets is null)
+        {
+            return;
+        }
+
+        foreach (ConditionSet set in segment.ConditionSets)
+        {
+            // Every condition at every depth. A walk that stopped at the top level would be
+            // bypassed by nesting one group deeper, which is the cheapest evasion there is.
+            foreach (string field in GroupFields(set.ConditionGroup))
+            {
+                FieldPolicy policy = gate.PolicyFor(field);
+
+                if (policy.Allows(PolicyFeature.Select))
+                {
+                    continue;
+                }
+
+                gate.DenySegmentInference(field, policy);
             }
         }
     }
@@ -1828,6 +1876,36 @@ internal static class FilterSanitizer
 
             throw new PolicyException(
                 PolicyErrorCode.RequiredFilterMissing, named, PolicyFeature.Where, _options.Tier)
+            {
+                SourceOrigin = origin
+            };
+        }
+
+        /// <summary>
+        /// Refuses a filter inside a set operation on a field the caller may not project.
+        /// </summary>
+        /// <remarks>
+        /// Carries its own reason rather than going through <see cref="Deny"/>, because the refusal
+        /// is not what the field's policy appears to say: the field is allowed for filtering, and
+        /// the same filter succeeds outside a segment. Without the origin an operator reading a
+        /// trace would go looking for a denial that is not there.
+        /// </remarks>
+        internal void DenySegmentInference(string fieldPath, FieldPolicy policy)
+        {
+            const string origin =
+                "denied for projection, and a set operation reconstructs a field from membership " +
+                "rather than from the columns it returns";
+
+            Record(fieldPath, PolicyFeature.Segment, PolicyAction.Denied, policy);
+
+            if (IsDryRun)
+            {
+                return;
+            }
+
+            throw new PolicyException(
+                PolicyErrorCode.FieldDeniedForSegment, Spoken(fieldPath), PolicyFeature.Segment,
+                _options.Tier)
             {
                 SourceOrigin = origin
             };

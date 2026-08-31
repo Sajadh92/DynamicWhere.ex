@@ -70,5 +70,15 @@ public enum PolicyErrorCode
     /// can be introduced that collides with a real property path, or with another alias. Choosing
     /// either reading silently sends a filter somewhere the caller did not mean.
     /// </remarks>
-    AmbiguousFieldName = 13
+    AmbiguousFieldName = 13,
+
+    /// <summary>
+    /// The caller asked for the generated SQL, which the strict tier does not return.
+    /// </summary>
+    /// <remarks>
+    /// The query text names the columns of denied fields and spells out every injected predicate,
+    /// so handing it to a semi-trusted caller discloses both the schema and the shape of the scope
+    /// confining them.
+    /// </remarks>
+    QueryStringDenied = 14
 }

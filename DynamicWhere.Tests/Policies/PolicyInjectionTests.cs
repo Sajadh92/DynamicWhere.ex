@@ -345,6 +345,7 @@ public class PolicyInjectionTests
     {
         List<ScopedInvoice> rows = Handle()
             .Where(new ConditionGroup { Conditions = { On("Number", Operator.NotEqual, "Z") } })
+            .AsUnguardedQueryable()
             .ToList();
 
         Assert.All(rows, r => Assert.Equal(5, r.TenantId));
@@ -357,7 +358,8 @@ public class PolicyInjectionTests
         // The single-condition overload used to hand the pipeline Conditions[0]. After injection
         // that index is a forced predicate and the caller's own condition sits in a subgroup, so
         // taking the first condition would have silently dropped what the caller asked for.
-        List<ScopedInvoice> rows = Handle().Where(On("Number", Operator.NotEqual, "Z")).ToList();
+        List<ScopedInvoice> rows =
+            Handle().Where(On("Number", Operator.NotEqual, "Z")).AsUnguardedQueryable().ToList();
 
         Assert.All(rows, r => Assert.Equal(5, r.TenantId));
         Assert.Single(rows);
@@ -368,7 +370,8 @@ public class PolicyInjectionTests
     {
         // A scope applied to ToList and not to Select is bypassed by composing instead of
         // terminating.
-        List<ScopedInvoice> rows = Handle().Select(new List<string> { "Id", "TenantId" }).ToList();
+        List<ScopedInvoice> rows =
+            Handle().Select(new List<string> { "Id", "TenantId" }).AsUnguardedQueryable().ToList();
 
         Assert.All(rows, r => Assert.Equal(5, r.TenantId));
         Assert.Single(rows);
@@ -379,6 +382,7 @@ public class PolicyInjectionTests
     {
         List<ScopedInvoice> rows = Handle()
             .Order(new List<OrderBy> { new() { Field = "Amount", Direction = Direction.Ascending } })
+            .AsUnguardedQueryable()
             .ToList();
 
         Assert.All(rows, r => Assert.Equal(5, r.TenantId));
@@ -390,6 +394,7 @@ public class PolicyInjectionTests
     {
         List<ScopedInvoice> rows = Handle()
             .Page(new PageBy { PageNumber = 1, PageSize = 10 })
+            .AsUnguardedQueryable()
             .ToList();
 
         Assert.All(rows, r => Assert.Equal(5, r.TenantId));

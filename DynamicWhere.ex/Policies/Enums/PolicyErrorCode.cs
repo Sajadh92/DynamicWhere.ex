@@ -1,4 +1,4 @@
-namespace DynamicWhere.ex.Policies.Enums;
+﻿namespace DynamicWhere.ex.Policies.Enums;
 
 /// <summary>
 /// The closed set of reasons a policy refuses part of a query.
@@ -80,5 +80,26 @@ public enum PolicyErrorCode
     /// so handing it to a semi-trusted caller discloses both the schema and the shape of the scope
     /// confining them.
     /// </remarks>
-    QueryStringDenied = 14
+    QueryStringDenied = 14,
+
+    /// <summary>
+    /// Two groups of a summary share a key once their key values were transformed.
+    /// </summary>
+    /// <remarks>
+    /// Rounding two salaries into one band, or masking two identifiers into one run of stars, leaves
+    /// rows that look like duplicates and whose aggregates cannot be added together without
+    /// inventing a figure the database never computed. Refused rather than merged.
+    /// </remarks>
+    AmbiguousGroupKey = 15,
+
+    /// <summary>
+    /// A method that returns an unmaterialized query was called on a type whose values are
+    /// transformed on output.
+    /// </summary>
+    /// <remarks>
+    /// Transformation happens on materialized objects, so a query the caller materializes themselves
+    /// is one the library never sees and cannot transform. The terminal methods return transformed
+    /// data; <c>AsUnguardedQueryable</c> is the explicit way out.
+    /// </remarks>
+    TransformRequiresMaterialization = 16
 }

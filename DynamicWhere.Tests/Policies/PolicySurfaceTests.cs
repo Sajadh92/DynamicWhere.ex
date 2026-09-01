@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
@@ -60,7 +60,8 @@ public class PolicySurfaceTests
     [Fact]
     public void Select_drops_a_refused_field()
     {
-        IQueryable<SecuredEmployee> query = Guarded().Select(new List<string> { "Name", "Salary" });
+        IQueryable<SecuredEmployee> query =
+            Guarded().Select(new List<string> { "Name", "Salary" }).AsUnguardedQueryable();
 
         Assert.All(query.ToList(), row => Assert.Equal(0m, row.Salary));
         Assert.All(query.ToList(), row => Assert.NotEqual(string.Empty, row.Name));
@@ -100,7 +101,7 @@ public class PolicySurfaceTests
             Values = { "Ada" }
         };
 
-        Assert.Single(Guarded().Where(condition).ToList());
+        Assert.Single(Guarded().Where(condition).AsUnguardedQueryable().ToList());
     }
 
     [Fact]
@@ -117,7 +118,7 @@ public class PolicySurfaceTests
             Values = { "Ada" }
         };
 
-        IQueryable<SecuredEmployee> query = Guarded().Where(condition);
+        IQueryable<SecuredEmployee> query = Guarded().Where(condition).AsUnguardedQueryable();
 
         Assert.All(query.ToList(), row => Assert.NotEqual(string.Empty, row.NationalId));
     }
@@ -127,7 +128,7 @@ public class PolicySurfaceTests
     {
         OrderBy order = new() { Field = "InternalNotes" };
 
-        Assert.Equal(2, Guarded().Order(order).ToList().Count);
+        Assert.Equal(2, Guarded().Order(order).AsUnguardedQueryable().ToList().Count);
         Assert.Throws<PolicyException>(() => Guarded(DwTier.Strict).Order(order));
     }
 

@@ -34,6 +34,9 @@ public sealed class PolicyQueryable<T> where T : class
     private readonly DwPolicyContext _context;
     private readonly PolicyResolver _resolver;
     private readonly DwPolicyOptions _options;
+    private readonly PolicyTrace? _carried;
+
+    private TypePolicy? _typePolicy;
 
     /// <summary>
     /// Initializes the handle.
@@ -42,13 +45,25 @@ public sealed class PolicyQueryable<T> where T : class
         IQueryable<T> source,
         DwPolicyContext context,
         PolicyResolver resolver,
-        DwPolicyOptions options)
+        DwPolicyOptions options,
+        PolicyTrace? carried = null)
     {
         _source = source;
         _context = context;
         _resolver = resolver;
         _options = options;
+        _carried = carried;
     }
+
+    /// <summary>
+    /// What this type's policy says that no single field can answer, resolved once per handle.
+    /// </summary>
+    /// <remarks>
+    /// A handle is per query, so this is one provider sweep however many methods are chained onto
+    /// it. It cannot be cached per type: a runtime rule may set an alias or a transform, so the
+    /// answer varies by caller.
+    /// </remarks>
+    private TypePolicy TypePolicy => _typePolicy ??= _resolver.ResolveType(typeof(T), _context);
 
     /// <summary>
     /// What the policy did to the most recent call on this handle.
@@ -78,6 +93,9 @@ public sealed class PolicyQueryable<T> where T : class
         {
             FilterResult<T> result = Guarded().ToList(sanitized, getQueryString);
 
+            ResultTransformer.Rows(
+                result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+
             result.Policy = trace;
 
             return result;
@@ -99,6 +117,9 @@ public sealed class PolicyQueryable<T> where T : class
         using (PolicyScope.Enter(_context))
         {
             FilterResult<T> result = await Guarded().ToListAsync(sanitized, getQueryString);
+
+            ResultTransformer.Rows(
+                result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
 
             result.Policy = trace;
 
@@ -122,6 +143,9 @@ public sealed class PolicyQueryable<T> where T : class
         {
             FilterResult<dynamic> result = Guarded().ToListDynamic(sanitized, getQueryString);
 
+            ResultTransformer.Rows(
+                result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+
             result.Policy = trace;
 
             return result;
@@ -143,6 +167,9 @@ public sealed class PolicyQueryable<T> where T : class
         using (PolicyScope.Enter(_context))
         {
             FilterResult<dynamic> result = await Guarded().ToListAsyncDynamic(sanitized, getQueryString);
+
+            ResultTransformer.Rows(
+                result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
 
             result.Policy = trace;
 
@@ -168,6 +195,8 @@ public sealed class PolicyQueryable<T> where T : class
         {
             SummaryResult result = Guarded().ToList(sanitized, getQueryString);
 
+            ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
+
             result.Policy = trace;
 
             return result;
@@ -189,6 +218,8 @@ public sealed class PolicyQueryable<T> where T : class
         using (PolicyScope.Enter(_context))
         {
             SummaryResult result = await Guarded().ToListAsync(sanitized, getQueryString);
+
+            ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
 
             result.Policy = trace;
 
@@ -214,6 +245,9 @@ public sealed class PolicyQueryable<T> where T : class
         {
             SegmentResult<T> result = await Guarded().ToListAsync(sanitized);
 
+            ResultTransformer.Rows(
+                result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+
             result.Policy = trace;
 
             return result;
@@ -225,13 +259,13 @@ public sealed class PolicyQueryable<T> where T : class
     /// <summary>Projects the allowed subset of the requested fields.</summary>
     /// <param name="fields">The fields to project.</param>
     /// <exception cref="PolicyException">Thrown when the policy refuses every requested field.</exception>
-    public IQueryable<T> Select(List<string> fields)
+    public PolicyQueryable<T> Select(List<string> fields)
     {
         Filter sanitized = SanitizeClause(new Filter { Selects = fields });
 
         using (PolicyScope.Enter(_context))
         {
-            return Scoped(sanitized).Select(sanitized.Selects!);
+            return Chain(Scoped(sanitized).Select(sanitized.Selects!));
         }
     }
 
@@ -240,6 +274,8 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses every requested field.</exception>
     public IQueryable SelectDynamic(List<string> fields)
     {
+        RefuseUnmaterialized(nameof(SelectDynamic), nameof(ToListDynamic));
+
         Filter sanitized = SanitizeClause(new Filter { Selects = fields });
 
         using (PolicyScope.Enter(_context))
@@ -251,7 +287,7 @@ public sealed class PolicyQueryable<T> where T : class
     /// <summary>Applies one condition.</summary>
     /// <param name="condition">The condition to apply.</param>
     /// <exception cref="PolicyException">Thrown when the policy refuses the condition.</exception>
-    public IQueryable<T> Where(Condition condition)
+    public PolicyQueryable<T> Where(Condition condition)
     {
         ConditionGroup group = new();
 
@@ -264,51 +300,51 @@ public sealed class PolicyQueryable<T> where T : class
         // first condition would silently drop what the caller actually asked for.
         using (PolicyScope.Enter(_context))
         {
-            return Scoped(sanitized);
+            return Chain(Scoped(sanitized));
         }
     }
 
     /// <summary>Applies a group of conditions.</summary>
     /// <param name="group">The conditions to apply.</param>
     /// <exception cref="PolicyException">Thrown when the policy refuses any condition.</exception>
-    public IQueryable<T> Where(ConditionGroup group)
+    public PolicyQueryable<T> Where(ConditionGroup group)
     {
         Filter sanitized = SanitizeClause(new Filter { ConditionGroup = group });
 
         using (PolicyScope.Enter(_context))
         {
-            return Scoped(sanitized);
+            return Chain(Scoped(sanitized));
         }
     }
 
     /// <summary>Sorts by one field, unless the policy refuses it.</summary>
     /// <param name="order">The sort to apply.</param>
     /// <exception cref="PolicyException">Thrown in the strict tier when the policy refuses the field.</exception>
-    public IQueryable<T> Order(OrderBy order) => Order(new List<OrderBy> { order });
+    public PolicyQueryable<T> Order(OrderBy order) => Order(new List<OrderBy> { order });
 
     /// <summary>Sorts by the allowed subset of the requested fields.</summary>
     /// <param name="orders">The sorts to apply.</param>
     /// <exception cref="PolicyException">Thrown in the strict tier when the policy refuses a field.</exception>
-    public IQueryable<T> Order(List<OrderBy> orders)
+    public PolicyQueryable<T> Order(List<OrderBy> orders)
     {
         Filter sanitized = SanitizeClause(new Filter { Orders = orders });
 
         using (PolicyScope.Enter(_context))
         {
-            return Scoped(sanitized).Order(sanitized.Orders!);
+            return Chain(Scoped(sanitized).Order(sanitized.Orders!));
         }
     }
 
     /// <summary>Takes one page, unless it exceeds the configured cap.</summary>
     /// <param name="page">The page to take.</param>
     /// <exception cref="PolicyException">Thrown when the page exceeds the cap.</exception>
-    public IQueryable<T> Page(PageBy page)
+    public PolicyQueryable<T> Page(PageBy page)
     {
         Filter sanitized = SanitizeClause(new Filter { Page = page });
 
         using (PolicyScope.Enter(_context))
         {
-            return Scoped(sanitized).Page(sanitized.Page!);
+            return Chain(Scoped(sanitized).Page(sanitized.Page!));
         }
     }
 
@@ -317,6 +353,8 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses a key or an aggregated field.</exception>
     public IQueryable Group(GroupBy groupBy)
     {
+        RefuseUnmaterialized(nameof(Group), "ToList(Summary)");
+
         Summary sanitized = Sanitize(new Summary { GroupBy = groupBy }, NewTrace());
 
         using (PolicyScope.Enter(_context))
@@ -328,14 +366,14 @@ public sealed class PolicyQueryable<T> where T : class
     /// <summary>Applies a whole filter and returns the query, without executing it.</summary>
     /// <param name="filter">The caller's filter. Never modified.</param>
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
-    public IQueryable<T> Filter(Filter filter)
+    public PolicyQueryable<T> Filter(Filter filter)
     {
         PolicyTrace trace = NewTrace();
         Filter sanitized = Sanitize(filter, trace);
 
         using (PolicyScope.Enter(_context))
         {
-            return Guarded().Filter(sanitized);
+            return Chain(Guarded().Filter(sanitized));
         }
     }
 
@@ -344,6 +382,8 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
     public IQueryable FilterDynamic(Filter filter)
     {
+        RefuseUnmaterialized(nameof(FilterDynamic), nameof(ToListDynamic));
+
         PolicyTrace trace = NewTrace();
         Filter sanitized = Sanitize(filter, trace);
 
@@ -358,6 +398,8 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the summary.</exception>
     public IQueryable Summary(Summary summary)
     {
+        RefuseUnmaterialized(nameof(Summary), "ToList(Summary)");
+
         Summary sanitized = Sanitize(summary, NewTrace());
 
         using (PolicyScope.Enter(_context))
@@ -382,6 +424,57 @@ public sealed class PolicyQueryable<T> where T : class
     /// </para>
     /// </remarks>
     private IQueryable<T> Guarded() => _source.AsNoTracking();
+
+    /// <summary>
+    /// Returns the query as a plain <see cref="IQueryable{T}"/>, outside the guard.
+    /// </summary>
+    /// <remarks>
+    /// The deliberate way out, for a caller who needs EF composition the handle does not mirror —
+    /// an <c>Include</c>, a join, a projection into their own type. What comes back is gated and
+    /// scoped exactly as the handle left it, and is <em>not</em> transformed: the rows go from EF to
+    /// the caller without passing through here again.
+    /// <para>
+    /// Named rather than implicit so that it is greppable, which is the whole reason the composable
+    /// methods return a handle instead of an <see cref="IQueryable{T}"/>. A reviewer can find every
+    /// place masking was stepped around by searching for this one word.
+    /// </para>
+    /// </remarks>
+    public IQueryable<T> AsUnguardedQueryable() => _source;
+
+    /// <summary>Wraps a composed query back into a handle, carrying the trace so far.</summary>
+    private PolicyQueryable<T> Chain(IQueryable<T> composed) =>
+        new(composed, _context, _resolver, _options, LastTrace);
+
+    /// <summary>
+    /// Refuses a method that hands back a query the caller materializes, when this type's values
+    /// are transformed on the way out.
+    /// </summary>
+    /// <remarks>
+    /// Transformation happens on materialized objects. A query the caller runs themselves is one the
+    /// library never sees, so a mask on it would simply not happen — quietly, and one method call
+    /// away from the terminal method that does mask. The generic composable methods avoid this by
+    /// returning a handle; these four cannot, because what they return is no longer a sequence of
+    /// <typeparamref name="T"/>.
+    /// </remarks>
+    private void RefuseUnmaterialized(string method, string instead)
+    {
+        if (TypePolicy.Transforms.Count == 0)
+        {
+            return;
+        }
+
+        throw new PolicyException(
+            PolicyErrorCode.TransformRequiresMaterialization,
+            string.Join(", ", TypePolicy.Transforms.Keys),
+            PolicyFeature.Select,
+            _options.Tier)
+        {
+            SourceOrigin =
+                $"{method} returns a query for the caller to run, and a transformed value only " +
+                $"exists once the library has materialized it. Use {instead}, or " +
+                "AsUnguardedQueryable() to leave the guarded path deliberately."
+        };
+    }
 
     /// <summary>
     /// Refuses, in the strict tier, a request to return the generated SQL.
@@ -501,5 +594,20 @@ public sealed class PolicyQueryable<T> where T : class
     /// the per-context one turns it off for a single caller, which is what lets one canary subject
     /// run unenforced while everyone else stays enforced.
     /// </remarks>
-    private PolicyTrace NewTrace() => new(_options.Tier, _options.DryRun || _context.DryRun);
+    private PolicyTrace NewTrace()
+    {
+        PolicyTrace trace = new(_options.Tier, _options.DryRun || _context.DryRun);
+
+        // A chained handle starts from what the previous links decided, so the trace on the terminal
+        // result describes the whole chain rather than only its last step.
+        if (_carried is not null)
+        {
+            foreach (PolicyDecision decision in _carried.Decisions)
+            {
+                trace.Add(decision);
+            }
+        }
+
+        return trace;
+    }
 }

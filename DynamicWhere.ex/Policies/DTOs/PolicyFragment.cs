@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Enums;
+﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.DTOs;
@@ -37,6 +37,9 @@ public sealed class PolicyFragment
     /// requires no filter. An empty list is a requirement nothing satisfies, which is not the same
     /// thing as no requirement.
     /// </param>
+    /// <param name="transform">
+    /// One stage of this field's transform chain, or null when this fragment transforms nothing.
+    /// </param>
     /// <exception cref="ArgumentException">
     /// Thrown when <paramref name="fieldPath"/> is blank, or names no segment once normalized, or
     /// when <paramref name="alias"/> is supplied and is blank, dotted, or the wildcard.
@@ -53,7 +56,8 @@ public sealed class PolicyFragment
         IReadOnlyList<Operator>? allowedOperators = null,
         string? alias = null,
         ForcedPredicate? forced = null,
-        IReadOnlyList<Operator>? requiredOperators = null)
+        IReadOnlyList<Operator>? requiredOperators = null,
+        TransformStage? transform = null)
     {
         if (string.IsNullOrWhiteSpace(fieldPath))
         {
@@ -79,6 +83,7 @@ public sealed class PolicyFragment
         Alias = NormalizeAlias(alias);
         Forced = forced;
         RequiredOperators = requiredOperators;
+        Transform = transform;
 
         // Refused at the source rather than ignored at the point of use. Ignoring a nonsensical
         // fragment is how a misconfigured rule becomes invisible, and both of these are nonsense on
@@ -96,6 +101,17 @@ public sealed class PolicyFragment
             throw new ArgumentException(
                 "A filtering requirement cannot be attached to the wildcard path: it would demand a " +
                 "filter on every field of the type.", nameof(requiredOperators));
+        }
+
+        // A blanket "mask everything" cannot be honoured: most stages emit text, and text is not
+        // assignable to a number or a date. Applying it only where it happens to fit would leave
+        // exactly the numeric fields unmasked, and refusing the whole type would make it unusable.
+        // Neither is a policy; per-field transforms are.
+        if (IsWildcard && Transform is not null)
+        {
+            throw new ArgumentException(
+                "A transform cannot be attached to the wildcard path: most stages emit text, which " +
+                "is not assignable to every field of a type.", nameof(transform));
         }
 
         // A forced predicate names its own field, which is what lets a wildcard fragment carry one.
@@ -176,6 +192,17 @@ public sealed class PolicyFragment
     /// which refuses every query on the type rather than quietly permitting one.
     /// </remarks>
     public IReadOnlyList<Operator>? RequiredOperators { get; }
+
+    /// <summary>
+    /// One stage of this field's transform chain, or null when this fragment transforms nothing.
+    /// </summary>
+    /// <remarks>
+    /// Elected per stage rather than per chain, which is what lets a chain compose across sources: a
+    /// runtime rule can add a truncation on top of a sealed mask and cannot replace the mask.
+    /// Electing the whole chain as a unit would let a rule discard a compile-time mask by supplying
+    /// anything at all.
+    /// </remarks>
+    public TransformStage? Transform { get; }
 
     /// <summary>True when this fragment addresses every field.</summary>
     public bool IsWildcard => FieldPath == Wildcard;

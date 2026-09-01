@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Enums;
+﻿using DynamicWhere.ex.Enums;
 
 namespace DynamicWhere.ex.Policies.DTOs;
 
@@ -23,7 +23,8 @@ public sealed class TypePolicy
     internal static TypePolicy Empty { get; } = new(
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase),
         Array.Empty<ForcedPredicate>(),
-        new Dictionary<string, IReadOnlyList<Operator>>(StringComparer.OrdinalIgnoreCase));
+        new Dictionary<string, IReadOnlyList<Operator>>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, ValueTransform>(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
     /// Initializes a type policy. The instance takes ownership of every collection handed to it;
@@ -32,15 +33,18 @@ public sealed class TypePolicy
     /// <param name="aliases">Each public name, mapped to the field paths it could mean.</param>
     /// <param name="forced">Every predicate to add to a query on this type.</param>
     /// <param name="required">Each field the caller must filter on, mapped to the satisfying operators.</param>
+    /// <param name="transforms">Each field whose value changes on its way out, mapped to its chain.</param>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     public TypePolicy(
         IReadOnlyDictionary<string, IReadOnlyList<string>> aliases,
         IReadOnlyList<ForcedPredicate> forced,
-        IReadOnlyDictionary<string, IReadOnlyList<Operator>> required)
+        IReadOnlyDictionary<string, IReadOnlyList<Operator>> required,
+        IReadOnlyDictionary<string, ValueTransform> transforms)
     {
         Aliases = aliases ?? throw new ArgumentNullException(nameof(aliases));
         Forced = forced ?? throw new ArgumentNullException(nameof(forced));
         Required = required ?? throw new ArgumentNullException(nameof(required));
+        Transforms = transforms ?? throw new ArgumentNullException(nameof(transforms));
     }
 
     /// <summary>
@@ -81,5 +85,16 @@ public sealed class TypePolicy
     /// The sanitizer skips three whole passes on this, which is what keeps a type nobody has an
     /// opinion about generating the same work — and the same SQL — as the unguarded path.
     /// </remarks>
-    public bool IsEmpty => Aliases.Count == 0 && Forced.Count == 0 && Required.Count == 0;
+    /// <summary>
+    /// Each field whose value changes on its way out, mapped to its chain.
+    /// </summary>
+    /// <remarks>
+    /// The result transformer needs this before it has looked at any field: it walks a materialized
+    /// graph and has to know which paths to stop at. Asking per field would mean resolving a policy
+    /// for every property of every row.
+    /// </remarks>
+    public IReadOnlyDictionary<string, ValueTransform> Transforms { get; }
+
+    public bool IsEmpty =>
+        Aliases.Count == 0 && Forced.Count == 0 && Required.Count == 0 && Transforms.Count == 0;
 }

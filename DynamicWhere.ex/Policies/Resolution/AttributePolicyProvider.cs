@@ -114,6 +114,11 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
                 fragments.Add(ToFragment(path, property, attribute));
             }
 
+            foreach (TransformStage stage in TransformStagesOn(property))
+            {
+                fragments.Add(ToFragment(path, stage, StageAttributeOn(property, stage.Kind)));
+            }
+
             Type? navigation = NavigationTypeOf(property.PropertyType);
 
             if (navigation is not null)
@@ -364,6 +369,85 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             SourceOf(attribute),
             forced: forced);
     }
+
+    /// <summary>
+    /// Reads every transform attribute on a member and yields the stage each one describes.
+    /// </summary>
+    /// <remarks>
+    /// A member carries at most one of each, so the six are read independently and a member with a
+    /// mask and a truncation yields two stages that the resolver elects separately.
+    /// </remarks>
+    private static IEnumerable<TransformStage> TransformStagesOn(PropertyInfo property)
+    {
+        if (property.GetCustomAttribute<DwMutateAttribute>(inherit: true) is { } mutate)
+        {
+            yield return new MutateStage(mutate.Transformer);
+        }
+
+        if (property.GetCustomAttribute<DwGeneralizeAttribute>(inherit: true) is { } generalize)
+        {
+            yield return new GeneralizeStage(
+                generalize.Mode, generalize.Step, generalize.Part, generalize.Decimals);
+        }
+
+        if (property.GetCustomAttribute<DwFormatAttribute>(inherit: true) is { } format)
+        {
+            yield return new FormatStage(format.Format);
+        }
+
+        if (property.GetCustomAttribute<DwMaskAttribute>(inherit: true) is { } mask)
+        {
+            yield return new MaskStage(
+                mask.Strategy, mask.KeepStart, mask.KeepEnd, mask.MaskChar, mask.PreserveLength,
+                mask.Pattern, mask.Replacement, mask.Text);
+        }
+
+        if (property.GetCustomAttribute<DwTruncateAttribute>(inherit: true) is { } truncate)
+        {
+            yield return new TruncateStage(truncate.Length, truncate.Ellipsis);
+        }
+
+        if (property.GetCustomAttribute<DwDefaultAttribute>(inherit: true) is { } replacement)
+        {
+            yield return new DefaultStage(replacement.Value, replacement.HasValue);
+        }
+    }
+
+    /// <summary>Finds the attribute a stage came from, so its level and source are its own.</summary>
+    private static DwPolicyAttribute StageAttributeOn(PropertyInfo property, TransformKind kind) =>
+        kind switch
+        {
+            TransformKind.Mutate => property.GetCustomAttribute<DwMutateAttribute>(inherit: true)!,
+            TransformKind.Generalize => property.GetCustomAttribute<DwGeneralizeAttribute>(inherit: true)!,
+            TransformKind.Format => property.GetCustomAttribute<DwFormatAttribute>(inherit: true)!,
+            TransformKind.Mask => property.GetCustomAttribute<DwMaskAttribute>(inherit: true)!,
+            TransformKind.Truncate => property.GetCustomAttribute<DwTruncateAttribute>(inherit: true)!,
+            _ => property.GetCustomAttribute<DwDefaultAttribute>(inherit: true)!
+        };
+
+    /// <summary>
+    /// Converts one transform stage into a fragment.
+    /// </summary>
+    /// <remarks>
+    /// The effect is <see cref="PolicyEffect.Mask"/> on <see cref="PolicyFeature.Select"/>, which is
+    /// what that effect has always meant: the feature proceeds and the value is transformed on
+    /// output. It makes <c>FieldPolicy.IsMasked(Select)</c> real for the first time — nothing could
+    /// produce a Mask effect until now — and it keeps a masked field filterable and sortable, since
+    /// <c>Allows</c> refuses only a denial.
+    /// <para>
+    /// Because the effect competes in the per-feature election, a <see cref="DwDenyAttribute"/> on
+    /// the same field and level still wins: Deny outranks Mask. A field both denied and masked is
+    /// dropped from the projection rather than masked in it, which is the stricter reading.
+    /// </para>
+    /// </remarks>
+    private static PolicyFragment ToFragment(
+        string fieldPath, TransformStage stage, DwPolicyAttribute attribute) =>
+        new(fieldPath,
+            PolicyFeature.Select,
+            PolicyEffect.Mask,
+            LevelOf(attribute),
+            SourceOf(attribute),
+            transform: stage);
 
     /// <summary>The level an attribute's <c>Overridable</c> flag places it at.</summary>
     private static PolicyLevel LevelOf(DwPolicyAttribute attribute) =>

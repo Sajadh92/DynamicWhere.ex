@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Enums;
+﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
@@ -146,7 +146,8 @@ public sealed class PolicyResolver
             IntersectOperators(candidates),
             ElectAlias(candidates),
             CollectForced(candidates),
-            ElectRequired(candidates));
+            ElectRequired(candidates),
+            ElectTransform(candidates));
     }
 
     /// <summary>
@@ -194,9 +195,9 @@ public sealed class PolicyResolver
                 forced.Add(fragment.Forced);
             }
 
-            // A wildcard cannot carry either of the elected properties — PolicyFragment refuses it
-            // at construction — so nothing is lost by keying this on the exact path.
-            if (fragment.Alias is null && fragment.RequiredOperators is null)
+            // A wildcard cannot carry any of the elected properties — PolicyFragment refuses it at
+            // construction — so nothing is lost by keying this on the exact path.
+            if (fragment.Alias is null && fragment.RequiredOperators is null && fragment.Transform is null)
             {
                 continue;
             }
@@ -217,6 +218,7 @@ public sealed class PolicyResolver
 
         Dictionary<string, IReadOnlyList<string>> aliases = new(StringComparer.OrdinalIgnoreCase);
         Dictionary<string, IReadOnlyList<Operator>> required = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, ValueTransform> transforms = new(StringComparer.OrdinalIgnoreCase);
 
         foreach (KeyValuePair<string, List<PolicyFragment>> entry in byPath)
         {
@@ -243,9 +245,16 @@ public sealed class PolicyResolver
             {
                 required[entry.Key] = operators;
             }
+
+            ValueTransform? transform = ElectTransform(entry.Value);
+
+            if (transform is not null)
+            {
+                transforms[entry.Key] = transform;
+            }
         }
 
-        return new TypePolicy(aliases, forced, required);
+        return new TypePolicy(aliases, forced, required, transforms);
     }
 
     /// <summary>
@@ -301,6 +310,43 @@ public sealed class PolicyResolver
     /// </remarks>
     private static IReadOnlyList<Operator>? ElectRequired(IReadOnlyList<PolicyFragment> candidates) =>
         Best(candidates, static f => f.RequiredOperators is not null)?.RequiredOperators;
+
+    /// <summary>
+    /// Assembles the transform chain by electing one winner for each stage, or null when nothing
+    /// transforms the field.
+    /// </summary>
+    /// <remarks>
+    /// Per stage, not per chain. A chain elected as a unit would let a runtime rule discard a sealed
+    /// mask by supplying any transform at all; electing stage by stage means a rule can add a
+    /// truncation on top of that mask and cannot take the mask away.
+    /// <para>
+    /// Nothing here refuses a chain that combines a replacement with another stage. That is a
+    /// configuration error rather than a resolution question, and it is reported by the startup scan
+    /// where it can name the type and the member rather than surfacing on a caller's query.
+    /// </para>
+    /// </remarks>
+    private static ValueTransform? ElectTransform(IReadOnlyList<PolicyFragment> candidates)
+    {
+        MutateStage? mutate = Elect<MutateStage>(candidates, TransformKind.Mutate);
+        GeneralizeStage? generalize = Elect<GeneralizeStage>(candidates, TransformKind.Generalize);
+        FormatStage? format = Elect<FormatStage>(candidates, TransformKind.Format);
+        MaskStage? mask = Elect<MaskStage>(candidates, TransformKind.Mask);
+        TruncateStage? truncate = Elect<TruncateStage>(candidates, TransformKind.Truncate);
+        DefaultStage? replacement = Elect<DefaultStage>(candidates, TransformKind.Default);
+
+        if (mutate is null && generalize is null && format is null
+            && mask is null && truncate is null && replacement is null)
+        {
+            return null;
+        }
+
+        return new ValueTransform(mutate, generalize, format, mask, truncate, replacement);
+    }
+
+    /// <summary>Picks the winning fragment for one stage and returns its stage.</summary>
+    private static TStage? Elect<TStage>(IReadOnlyList<PolicyFragment> candidates, TransformKind kind)
+        where TStage : TransformStage =>
+        Best(candidates, f => f.Transform?.Kind == kind)?.Transform as TStage;
 
     /// <summary>
     /// Gathers every forced predicate that matched, in provider order.

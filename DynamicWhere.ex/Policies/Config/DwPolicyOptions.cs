@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Policies.Enums;
+﻿using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.Config;
 
@@ -14,6 +14,8 @@ public sealed class DwPolicyOptions
 {
     private DwTier _tier = DwTier.Convenience;
     private bool _dryRun;
+    private string _hashSalt = string.Empty;
+    private IServiceProvider? _services;
 
     /// <summary>The enforcement tier.</summary>
     public DwTier Tier
@@ -43,6 +45,48 @@ public sealed class DwPolicyOptions
 
     /// <summary>Numeric limits applied to every guarded query.</summary>
     public DwCaps Caps { get; } = new();
+
+    /// <summary>
+    /// The salt mixed into every hashed mask.
+    /// </summary>
+    /// <remarks>
+    /// Lives here rather than on the attribute because an attribute is source code, and a salt
+    /// committed to source control is not a salt. Without one, a hash of a national identifier or a
+    /// postcode is reversed by hashing a dictionary of candidates and comparing.
+    /// <para>
+    /// It must stay stable for the life of a deployment: the same value hashes to the same text, so
+    /// a caller can group and join by it without learning what it is, and rotating the salt changes
+    /// every hashed value at once.
+    /// </para>
+    /// </remarks>
+    public string HashSalt
+    {
+        get => _hashSalt;
+        set
+        {
+            Guard();
+            _hashSalt = value ?? throw new ArgumentNullException(nameof(value));
+        }
+    }
+
+    /// <summary>
+    /// Where <c>[DwMutate]</c> transformers are resolved from, or null to construct them directly.
+    /// </summary>
+    /// <remarks>
+    /// Optional so the core package stays usable without a container. When it is absent a
+    /// transformer is built through <c>Activator.CreateInstance</c>, which needs a parameterless
+    /// constructor; when it is present the container decides, so a transformer can take
+    /// dependencies of its own.
+    /// </remarks>
+    public IServiceProvider? Services
+    {
+        get => _services;
+        set
+        {
+            Guard();
+            _services = value;
+        }
+    }
 
     /// <summary>True once <see cref="Freeze"/> has been called.</summary>
     public bool IsFrozen { get; private set; }

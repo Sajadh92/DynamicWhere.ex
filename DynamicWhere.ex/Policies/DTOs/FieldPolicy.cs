@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Enums;
+﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.DTOs;
@@ -36,6 +36,9 @@ public sealed class FieldPolicy
     /// The operators that satisfy a filtering requirement on this field, or null when the caller is
     /// not required to filter on it.
     /// </param>
+    /// <param name="transform">
+    /// How this field's value is changed on its way out, or null when it is emitted as stored.
+    /// </param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="fieldPath"/> is blank.</exception>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="effects"/> or <paramref name="sources"/> is null.
@@ -48,7 +51,8 @@ public sealed class FieldPolicy
         IReadOnlyList<Operator>? allowedOperators = null,
         string? alias = null,
         IReadOnlyList<ForcedPredicate>? forced = null,
-        IReadOnlyList<Operator>? requiredOperators = null)
+        IReadOnlyList<Operator>? requiredOperators = null,
+        ValueTransform? transform = null)
     {
         if (string.IsNullOrWhiteSpace(fieldPath))
         {
@@ -63,6 +67,7 @@ public sealed class FieldPolicy
         Alias = alias;
         ForcedPredicates = forced ?? Array.Empty<ForcedPredicate>();
         RequiredOperators = requiredOperators;
+        Transform = transform;
     }
 
     /// <summary>The field this policy governs.</summary>
@@ -134,6 +139,18 @@ public sealed class FieldPolicy
     /// Null is "no requirement"; empty is "a requirement nothing satisfies".
     /// </remarks>
     public IReadOnlyList<Operator>? RequiredOperators { get; }
+
+    /// <summary>
+    /// How this field's value is changed on its way out, or null when it is emitted as stored.
+    /// </summary>
+    /// <remarks>
+    /// Applied after materialization, on a detached object, so filtering and sorting still run
+    /// against the real value in SQL while the caller sees the transformed one.
+    /// </remarks>
+    public ValueTransform? Transform { get; }
+
+    /// <summary>True when this field's value is changed on its way out.</summary>
+    public bool IsTransformed => Transform is not null && !Transform.IsEmpty;
 
     /// <summary>True when the caller must filter on this field for the request to proceed.</summary>
     public bool IsRequiredInWhere => RequiredOperators is not null;

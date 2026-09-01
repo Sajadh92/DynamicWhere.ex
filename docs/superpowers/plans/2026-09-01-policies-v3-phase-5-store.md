@@ -203,33 +203,33 @@ abstract base with an InMemory subclass, so Phase 6 inherits the suite by derivi
 
 ## Tasks
 
-- [ ] **1. `StoreFailureMode` and the options** — `StoreFailure`, `MaxSnapshotAge` defaulting to 15
+- [x] **1. `StoreFailureMode` and the options** — `StoreFailure`, `MaxSnapshotAge` defaulting to 15
       minutes and refusing zero or negative, `RefreshInterval` defaulting to 30 seconds.
-- [ ] **2. `PolicyRule`** — every refusal from decision 2, the wildcard refusals the memo carries
+- [x] **2. `PolicyRule`** — every refusal from decision 2, the wildcard refusals the memo carries
       (no alias, no requirement, no transform on `*`), the `FullName` rule, and the exhaustive
       subject → level mapping with no default arm.
-- [ ] **3. `PolicyPayload`** — JSON to typed stage for all six kinds, round-tripped, a parse failure
+- [x] **3. `PolicyPayload`** — JSON to typed stage for all six kinds, round-tripped, a parse failure
       rejecting rather than returning null.
-- [ ] **4. `StoreSnapshot` and `NarrowZone`** — immutable, version, load time, broad rules indexed
+- [x] **4. `StoreSnapshot` and `NarrowZone`** — immutable, version, load time, broad rules indexed
       by entity `FullName`, `Enabled` filtered at load.
-- [ ] **5. The store contracts** — `IDwPolicyStore`, `IDwPolicyWritableStore`, `IDwPolicyRefresher`.
-- [ ] **6. `InMemoryPolicyStore`** — load, version, watch, upsert, delete, version bumped on every
+- [x] **5. The store contracts** — `IDwPolicyStore`, `IDwPolicyWritableStore`, `IDwPolicyRefresher`.
+- [x] **6. `InMemoryPolicyStore`** — load, version, watch, upsert, delete, version bumped on every
       write, optional type resolver for the sealed-field refusal.
-- [ ] **7. `PolicyAttachment` and `DwPolicyContext`** — per-provider attachment, prepared once.
-- [ ] **8. `StorePolicyProvider`** — subject matching case-insensitively as `DwSubject` does,
+- [x] **7. `PolicyAttachment` and `DwPolicyContext`** — per-provider attachment, prepared once.
+- [x] **8. `StorePolicyProvider`** — subject matching case-insensitively as `DwSubject` does,
       validity per query, rules to fragments, unprepared context refused.
-- [ ] **9. `CreateAsync` and `DwPolicy.PrepareAsync`** — startup load failure throws before a
+- [x] **9. `CreateAsync` and `DwPolicy.PrepareAsync`** — startup load failure throws before a
       provider exists.
-- [ ] **10. Failure modes** — `LastKnownGood`, `StaticOnly`, and the `MaxSnapshotAge` escalation
+- [x] **10. Failure modes** — `LastKnownGood`, `StaticOnly`, and the `MaxSnapshotAge` escalation
       throwing `StoreUnavailable`, against the injectable clock.
-- [ ] **11. Refresh** — watch when the store offers one, poll otherwise, atomic swap, manual
+- [x] **11. Refresh** — watch when the store offers one, poll otherwise, atomic swap, manual
       `RefreshAsync`, and a refresh failure that keeps the last known good snapshot.
-- [ ] **12. The conformance suite** — the eight items of design §8.4, as an abstract base.
-- [ ] **13. Replace the Phase 1 fake provider** in the precedence tests that can use a real store,
+- [x] **12. The conformance suite** — the eight items of design §8.4, as an abstract base.
+- [x] **13. Replace the Phase 1 fake provider** in the precedence tests that can use a real store,
       proving the store emits fragments the existing matrix already covers.
-- [ ] **14. End to end** — a store rule masking a field on the SQLite fixture, and the empty-store
+- [x] **14. End to end** — a store rule masking a field on the SQLite fixture, and the empty-store
       case from §8.5 where attributes still enforce.
-- [ ] **15. Phase gate** — release build zero warnings, full suite green, the four named files
+- [x] **15. Phase gate** — release build zero warnings, full suite green, the four named files
       untouched, roadmap updated.
 
 ---

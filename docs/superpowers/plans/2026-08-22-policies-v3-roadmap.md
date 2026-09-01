@@ -107,8 +107,12 @@ CI test proving a mask can never reach `SaveChanges()`.
 
 `IDwPolicyStore`, `IDwPolicyWritableStore`, `InMemoryPolicyStore`, snapshot with broad and narrow
 zones, versioning and atomic swap, `StorePolicyProvider`, failure modes and `MaxSnapshotAge`.
+**Done — see the Phase 5 outcome below.** The store contract needed a fourth member: section 5.3
+splits user rules out of the snapshot and section 5.2 gave them nowhere to be fetched from.
 
-The fake provider from Phase 1 is replaced by the real store provider against the same resolver.
+The fake provider from Phase 1 is not replaced, and cannot be: two of the six precedence levels are
+compile-time attributes and no store can produce one. The dynamic half of the grid is re-run through
+a real store instead.
 
 **Exit:** store conformance suite passes against InMemory. Startup load failure throws, refresh
 failure holds last-known-good, staleness ceiling escalates to FailClosed.
@@ -487,6 +491,140 @@ Both settled against the design document rather than against the plan.
 - **`ValidatePolicyModel()` still does not exist.** Section 4.8's rules are enforced at query time
   and fail closed. `[DwForceWhere(ContextValue = ...)]` naming a key nothing supplies is listed
   there as a startup check and cannot be one — what a context supplies is per-request.
+
+## Phase 5 outcome
+
+Closed 2026-09-01, 12 commits. 1072 tests pass, up from 911. `dotnet build -c Release` across the
+whole solution emits zero warnings, and the four named files are untouched.
+
+Plan: [2026-09-01-policies-v3-phase-5-store.md](2026-09-01-policies-v3-phase-5-store.md).
+
+### Five decisions settled before implementation
+
+1. **A context is prepared asynchronously, and an unprepared one is refused.** Design §3.6 already
+   said to build it through an async factory; what it did not say is what happens to a context that
+   skipped one, and that was the whole security question. Refused unconditionally — no carve-out for
+   a caller holding no user subject, because that carve-out is correct today and is the shape that
+   has failed open on this branch four times. Pinning the snapshot per context also delivers §5.3's
+   atomicity for free.
+2. **Every enum is rejected at the store boundary, not just the level.** See below.
+3. **Transform detail is typed at the boundary, parsed once, never on the query path.** §5.1's JSON
+   payload is read by one shared routine that throws rather than ever returning a null stage.
+4. **`FailClosed` throws.** A wildcard `Deny` is not fail-closed: `[DwOperators]` emits a sealed
+   `Allow` on `Where`, which outranks a `DynamicGlobal` denial, so every field carrying an operator
+   restriction would have stayed filterable in exactly the state the mode exists to refuse.
+5. **Validity is evaluated per query; enablement is baked at load.** A window resolved at load
+   expires only when the next refresh succeeds — under `LastKnownGood` with a dead store, that is
+   the whole `MaxSnapshotAge` window past its own expiry.
+
+All five were Sajjad's, taken as offered.
+
+### Public API added
+
+- `Policies.Storage` — `PolicyRule`, `StoreSnapshot`, `NarrowZone`, `IDwPolicyStore`,
+  `IDwPolicyWritableStore`, `IDwPolicyRefresher`, `InMemoryPolicyStore`, `PolicyPayload`
+- `Policies.Resolution` — `StorePolicyProvider`, with `CreateAsync`, `PrepareAsync`, `RefreshAsync`,
+  `Version` and `IsDegraded`
+- `Policies.Enums` — `StoreFailureMode`; `PolicyErrorCode.StoreUnavailable` and
+  `.PolicyContextNotPrepared`, appended at 17–18
+- `DwPolicyOptions.StoreFailure`, `.MaxSnapshotAge` and `.RefreshInterval`; `DwPolicy.PrepareAsync`
+
+### The zero-default trap was wider than recorded
+
+The roadmap carried one instance, on `PolicyLevel`. Three more were live, and the combination is
+worse than any of them alone:
+
+| Axis | Default | What an absent or unparsed column means |
+|---|---|---|
+| `PolicyLevel` | `0` | Outranks a sealed attribute |
+| `PolicyEffect` | `Allow = 0` | A grant |
+| `DwSubjectKind` | `Global = 0` | Applies to every caller |
+| `PolicyFeature` | `None = 0` | Covers nothing, so the rule is inert |
+
+**A rule row of all zeroes reads as "grant everyone everything, above sealed".** All four are
+refused, and the level is not a column at all: it is derived from the subject through a switch with
+a throwing default arm, so zero is unreachable rather than guarded against. `PolicyFeature` cannot
+use `Enum.IsDefined` — `Where | Select` is `3` and is a member of nothing — so it is masked against
+`All` and `None` is refused outright.
+
+Each guard was mutation-checked alone. Removing the effect check, the unknown-bit mask or the `None`
+refusal turns `PolicyRuleTests` red. The subject-kind check does not, because the switch refuses the
+same case; both were then removed together and the suite went red, so the redundancy is real rather
+than one guard doing nothing.
+
+### Defects and corrections
+
+- **Four fail-open holes were found by reading the code, none by a test.** A user subject added
+  *after* preparation left that user's rules unread; `StoreSnapshot.For` handed out the live
+  `List<PolicyRule>` behind its `IReadOnlyList`, so one cast and one `Clear()` removed a denial
+  process-wide; the watch skipped a version lower than the one held, so a restore from backup kept
+  serving withdrawn rules until a poll noticed; and `PolicyRule` held the caller's operator arrays
+  by reference inside a process-lifetime snapshot. Seventeen of this shape now, across five phases.
+- **The staleness ceiling was measured from the timestamp the *store* reported.** A store clock
+  running behind would only have failed closed, but one running ahead would make every snapshot look
+  fresher than it is and silently extend the ceiling — a database stamping the row with its own
+  server time is enough. The provider stamps its own load time now;
+  `StoreSnapshot.LoadedAt` stays as the store's record and decides nothing.
+- **The refresh watched or polled, never both.** No notification channel is guaranteed to deliver —
+  Redis pub/sub in Phase 6 is fire-and-forget — so an instance missing one message would have served
+  the previous policy until something else happened to change it. It polls behind the watch now,
+  which bounds a dropped notification at one interval instead of forever.
+- **Design §5.2's store contract is incomplete.** It lists three members, and §5.3 splits user rules
+  out of the snapshot so they are fetched per caller — with nowhere to fetch them from.
+  `LoadNarrowAsync` is a fourth member and is not optional.
+- **Design §5.1's `Effect` column is out of date.** It lists `Mutate | Default | Generalize` as
+  effects; `PolicyEffect` has only `Allow`, `Mask` and `Deny`, because Phase 4 settled transforms as
+  typed stages carrying `PolicyEffect.Mask`. Correct the document in Phase 9.
+
+### Decisions worth not re-litigating
+
+- **A stored payload may not name a transformer type**, in either direction. It escalates a store
+  from "can change policy" to "can construct arbitrary types", which is a different thing from the
+  disclosure the sealed ceiling bounds, and §5.1 names only a mask spec, a default value and a
+  bucket step as the payload's purpose. `[DwMutate]` is source code and is reviewed as such.
+- **A rule names its entity by `FullName`, and a name without a namespace is refused.** Matching on
+  the short name collides across namespaces, and over-applying an `Allow` is a grant nobody wrote;
+  matching only on `FullName` would turn a short name into a rule that silently never matches. The
+  refusal converts a silent miss into a rejected upsert.
+- **Upsert cannot always check sealed fields, and resolution is what enforces them.** The
+  configuration-time check needs a `Type` and a store holds a string, so `InMemoryPolicyStore` takes
+  an optional resolver. Without one it accepts, and the rule is inert. Both halves are tested
+  separately so the weaker one cannot be mistaken for the whole.
+- **A purpose-bound rule applies only on a match.** That makes it a way to narrow a grant; a denial
+  that must always hold is written without a purpose.
+
+### Known limitations
+
+- **Fragments are rebuilt per field per query.** `Resolve` calls `GetFragments` once per field, so a
+  wide entity against a large snapshot re-scans that entity's rules each time. Correct, and not yet
+  measured. If Phase 9's benchmarks show it, the fix is to cache the subject-and-purpose-filtered
+  candidates on the attachment — those are time-independent — and keep evaluating `AppliesAt` live.
+- **A context pinned longer than `MaxSnapshotAge` is refused even after the provider refreshed.**
+  Deliberate: the ceiling measures what the caller is being served. It is also the reason a context
+  is built once per request.
+
+### What Phase 6 inherits
+
+- **The conformance suite is an abstract base.** Derive from `PolicyStoreConformanceTests` and
+  supply a factory; Redis and EF inherit all eleven tests, including the failure modes, which drive
+  a decorator rather than a per-store hook.
+- **`PolicyPayload` is the only place a payload is read or written.** Neither store provider should
+  parse JSON of its own, or the three would drift into three standards.
+- **Poll behind the watch.** Redis pub/sub is fire-and-forget and the poll is what bounds a dropped
+  message. Do not implement the Redis store as watch-only.
+- **A store must not return user rules from `LoadAsync`, nor broad rules from `LoadNarrowAsync`.**
+  Both zones refuse the other's rules at construction rather than filtering them out.
+- **Stamp `StoreSnapshot.LoadedAt` however is convenient; it decides nothing.** The provider measures
+  staleness on its own clock, which is what keeps a database's server time out of the ceiling.
+
+### What Phase 7 inherits
+
+- **`/explain` has a real second source now.** Phase 1's tie-attribution note becomes visible the
+  moment two rules tie, and `PolicySource.FromRule` carries the rule id and subject to report.
+- **`/schema` owns friendly entity names.** Rules match on `FullName` by design; the short-name
+  lookup an operator wants belongs where the public vocabulary is the subject.
+- **`GET /dw-policies/health` has its inputs.** `StorePolicyProvider.Version`, `.IsDegraded` and the
+  attachment's load time are what that endpoint reports.
 
 ## Phase 4 outcome
 

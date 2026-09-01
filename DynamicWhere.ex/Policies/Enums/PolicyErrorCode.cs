@@ -101,5 +101,33 @@ public enum PolicyErrorCode
     /// is one the library never sees and cannot transform. The terminal methods return transformed
     /// data; <c>AsUnguardedQueryable</c> is the explicit way out.
     /// </remarks>
-    TransformRequiresMaterialization = 16
+    TransformRequiresMaterialization = 16,
+
+    /// <summary>
+    /// The policy store cannot be trusted to describe the policy in force, so every guarded query
+    /// is refused.
+    /// </summary>
+    /// <remarks>
+    /// Raised when the last successful load is older than <c>MaxSnapshotAge</c>, and immediately on
+    /// a refresh failure under <c>StoreFailureMode.FailClosed</c>.
+    /// <para>
+    /// It is an exception rather than a blanket denial for a specific reason: a denial competes in
+    /// the ordinary election, and a sealed <c>[DwOperators]</c> allowance outranks a dynamic one —
+    /// so every field carrying an operator restriction would have stayed filterable in exactly the
+    /// state this refusal exists to produce. Nothing outranks an exception.
+    /// </para>
+    /// </remarks>
+    StoreUnavailable = 17,
+
+    /// <summary>
+    /// A guarded query used a context that was never prepared against the policy store.
+    /// </summary>
+    /// <remarks>
+    /// A store is read asynchronously and the query path is synchronous, so a caller's user-level
+    /// rules are fetched once when the context is built and pinned to it. A context that skipped
+    /// that step could only be served from the broad zone, where a denial written for one user
+    /// silently does not appear — so it is refused instead. Build the context through
+    /// <c>DwPolicy.PrepareAsync</c>, once per request.
+    /// </remarks>
+    PolicyContextNotPrepared = 18
 }

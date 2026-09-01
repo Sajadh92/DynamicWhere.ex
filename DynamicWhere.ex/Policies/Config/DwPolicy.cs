@@ -1,4 +1,5 @@
-﻿using DynamicWhere.ex.Policies.Resolution;
+﻿using DynamicWhere.ex.Policies.Context;
+using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Policies.Validation;
 
 namespace DynamicWhere.ex.Policies.Config;
@@ -24,6 +25,7 @@ public static class DwPolicy
 
     private static DwPolicyOptions _options = CreateDefaultOptions();
     private static PolicyResolver _resolver = CreateResolver(Array.Empty<IDwPolicyProvider>());
+    private static IReadOnlyList<StorePolicyProvider> _stores = Array.Empty<StorePolicyProvider>();
     private static bool _configured;
 
     /// <summary>
@@ -76,10 +78,60 @@ public static class DwPolicy
 
             options.Freeze();
 
+            IDwPolicyProvider[] supplied = providers ?? Array.Empty<IDwPolicyProvider>();
+
             _options = options;
-            _resolver = CreateResolver(providers ?? Array.Empty<IDwPolicyProvider>());
+            _resolver = CreateResolver(supplied);
+            _stores = supplied.OfType<StorePolicyProvider>().ToList();
             _configured = true;
         }
+    }
+
+    /// <summary>
+    /// Prepares a context for use, once per request, before its first query.
+    /// </summary>
+    /// <param name="context">The caller's context.</param>
+    /// <param name="ct">Cancels the loads.</param>
+    /// <returns>The same context, prepared, for chaining.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="context"/> is null.</exception>
+    /// <remarks>
+    /// Every configured store provider pins its current snapshot to the context and fetches this
+    /// caller's user-level rules. Everything downstream then resolves synchronously against what was
+    /// read here, and every query the context makes sees one coherent version of the policy.
+    /// <para>
+    /// A context that skips this is refused by any store provider that sees it. It could only be
+    /// served from the broad zone, where a denial written for one user does not appear — and a
+    /// denial that silently does not apply is the failure this whole layer exists to prevent.
+    /// </para>
+    /// <para>
+    /// Harmless and cheap when no store is configured: with nothing but attributes in force there is
+    /// nothing to pin, and the call does nothing.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// DwPolicyContext ctx = await DwPolicy.PrepareAsync(
+    ///     new DwPolicyContext()
+    ///         .WithSubject(DwSubjectKind.Tenant, tenantId)
+    ///         .WithSubject(DwSubjectKind.User, userId));
+    /// </code>
+    /// </example>
+    public static async ValueTask<DwPolicyContext> PrepareAsync(
+        DwPolicyContext context, CancellationToken ct = default)
+    {
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        IReadOnlyList<StorePolicyProvider> stores = _stores;
+
+        for (int i = 0; i < stores.Count; i++)
+        {
+            await stores[i].PrepareAsync(context, ct).ConfigureAwait(false);
+        }
+
+        return context;
     }
 
     /// <summary>

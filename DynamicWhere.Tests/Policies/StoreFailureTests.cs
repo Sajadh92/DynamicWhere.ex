@@ -48,7 +48,7 @@ public class StoreFailureTests
         // unknown policy state means the process cannot know whether it is enforcing anything.
         foreach (StoreFailureMode mode in Enum.GetValues<StoreFailureMode>())
         {
-            FlakyStore store = new(new InMemoryPolicyStore()) { Broken = true };
+            UnreachableStore store = new(new InMemoryPolicyStore()) { Broken = true };
 
             await Assert.ThrowsAsync<InvalidOperationException>(
                 async () => await StorePolicyProvider.CreateAsync(store, Options(mode)));
@@ -73,7 +73,7 @@ public class StoreFailureTests
 
         inner.Seed(Rule());
 
-        FlakyStore store = new(inner);
+        UnreachableStore store = new(inner);
 
         using StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(
             store, Options(), autoRefresh: false);
@@ -98,7 +98,7 @@ public class StoreFailureTests
 
         inner.Seed(Rule());
 
-        FlakyStore store = new(inner);
+        UnreachableStore store = new(inner);
 
         using StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(
             store, Options(), autoRefresh: false);
@@ -124,7 +124,7 @@ public class StoreFailureTests
 
         inner.Seed(Rule());
 
-        FlakyStore store = new(inner);
+        UnreachableStore store = new(inner);
 
         using StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(
             store, Options(StoreFailureMode.FailClosed), autoRefresh: false);
@@ -152,7 +152,7 @@ public class StoreFailureTests
         // that field filterable in precisely the state the mode exists to refuse.
         InMemoryPolicyStore inner = new();
 
-        FlakyStore store = new(inner);
+        UnreachableStore store = new(inner);
 
         using StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(
             store, Options(StoreFailureMode.FailClosed), autoRefresh: false);
@@ -182,7 +182,7 @@ public class StoreFailureTests
 
         inner.Seed(Rule());
 
-        FlakyStore store = new(inner);
+        UnreachableStore store = new(inner);
 
         using StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(
             store, Options(StoreFailureMode.StaticOnly), autoRefresh: false);
@@ -368,34 +368,6 @@ public class StoreFailureTests
 
             await Task.Delay(25);
         }
-    }
-
-    /// <summary>A store that can be told to stop working, for the failure modes.</summary>
-    private sealed class FlakyStore : IDwPolicyStore
-    {
-        private readonly IDwPolicyStore _inner;
-
-        internal FlakyStore(IDwPolicyStore inner) => _inner = inner;
-
-        internal bool Broken { get; set; }
-
-        public ValueTask<StoreSnapshot> LoadAsync(CancellationToken ct) =>
-            Broken
-                ? throw new InvalidOperationException("The store is unreachable.")
-                : _inner.LoadAsync(ct);
-
-        public ValueTask<NarrowZone> LoadNarrowAsync(
-            IReadOnlyList<string> userIdentities, CancellationToken ct) =>
-            Broken
-                ? throw new InvalidOperationException("The store is unreachable.")
-                : _inner.LoadNarrowAsync(userIdentities, ct);
-
-        public ValueTask<long> GetVersionAsync(CancellationToken ct) =>
-            Broken
-                ? throw new InvalidOperationException("The store is unreachable.")
-                : _inner.GetVersionAsync(ct);
-
-        public IAsyncEnumerable<long>? WatchAsync(CancellationToken ct) => null;
     }
 
     /// <summary>A store that cannot report changes, so the provider must poll.</summary>

@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Policies.Config;
+﻿using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.Tests.Policies;
@@ -71,5 +71,44 @@ public class PolicyOptionsTests
         Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxConditions = -1);
         Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxOrderFields = 0);
         Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxNavigationDepth = -5);
+    }
+
+    [Fact]
+    public void Store_failure_defaults_to_last_known_good_bounded_by_a_ceiling()
+    {
+        DwPolicyOptions options = new();
+
+        Assert.Equal(StoreFailureMode.LastKnownGood, options.StoreFailure);
+        Assert.Equal(TimeSpan.FromMinutes(15), options.MaxSnapshotAge);
+        Assert.Equal(TimeSpan.FromSeconds(30), options.RefreshInterval);
+    }
+
+    [Fact]
+    public void The_staleness_ceiling_cannot_be_disabled()
+    {
+        DwPolicyOptions options = new();
+
+        // Zero means every snapshot is instantly stale, and a negative value means the comparison
+        // never fires again. The second is the dangerous reading, and neither is a configuration
+        // anyone wants, so both are refused rather than interpreted.
+        Assert.Throws<ArgumentOutOfRangeException>(() => options.MaxSnapshotAge = TimeSpan.Zero);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => options.MaxSnapshotAge = TimeSpan.FromMinutes(-1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => options.RefreshInterval = TimeSpan.Zero);
+    }
+
+    [Fact]
+    public void The_store_posture_is_frozen_with_the_rest()
+    {
+        DwPolicyOptions options = new();
+
+        options.Freeze();
+
+        Assert.Throws<InvalidOperationException>(
+            () => options.StoreFailure = StoreFailureMode.FailClosed);
+        Assert.Throws<InvalidOperationException>(
+            () => options.MaxSnapshotAge = TimeSpan.FromMinutes(1));
+        Assert.Throws<InvalidOperationException>(
+            () => options.RefreshInterval = TimeSpan.FromMinutes(1));
     }
 }

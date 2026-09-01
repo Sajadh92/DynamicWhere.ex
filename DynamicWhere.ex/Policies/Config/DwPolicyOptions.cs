@@ -16,6 +16,9 @@ public sealed class DwPolicyOptions
     private bool _dryRun;
     private string _hashSalt = string.Empty;
     private IServiceProvider? _services;
+    private StoreFailureMode _storeFailure = StoreFailureMode.LastKnownGood;
+    private TimeSpan _maxSnapshotAge = TimeSpan.FromMinutes(15);
+    private TimeSpan _refreshInterval = TimeSpan.FromSeconds(30);
 
     /// <summary>The enforcement tier.</summary>
     public DwTier Tier
@@ -88,6 +91,71 @@ public sealed class DwPolicyOptions
         }
     }
 
+    /// <summary>
+    /// What happens when the policy store cannot be reached after startup.
+    /// </summary>
+    /// <remarks>
+    /// Says nothing about the first load, which throws under every mode. An application that cannot
+    /// read its policy at startup does not know whether it is enforcing anything.
+    /// </remarks>
+    public StoreFailureMode StoreFailure
+    {
+        get => _storeFailure;
+        set
+        {
+            Guard();
+            _storeFailure = value;
+        }
+    }
+
+    /// <summary>
+    /// How old the last successful store load may be before every mode escalates to
+    /// <see cref="StoreFailureMode.FailClosed"/>.
+    /// </summary>
+    /// <remarks>
+    /// There is deliberately no value that disables this. The ceiling is what stops "the store died
+    /// six hours ago" from silently becoming "we have been honouring revoked grants all afternoon",
+    /// and a mode that can be told to trust a snapshot forever is that failure with a setting in
+    /// front of it.
+    /// <para>
+    /// Zero and negative values are both refused. Zero makes every snapshot instantly stale, which
+    /// refuses every query; a negative value makes the comparison never fire, which is the
+    /// dangerous half of the same mistake. Neither is a posture anyone means to configure.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when the value is zero or negative.
+    /// </exception>
+    public TimeSpan MaxSnapshotAge
+    {
+        get => _maxSnapshotAge;
+        set
+        {
+            Guard();
+            _maxSnapshotAge = Positive(value, nameof(MaxSnapshotAge));
+        }
+    }
+
+    /// <summary>
+    /// How often a store with no change notification of its own is polled for a new version.
+    /// </summary>
+    /// <remarks>
+    /// Ignored by a store that supplies a watch. The poll is a read of a single version value, which
+    /// is cheap enough to run indefinitely.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when the value is zero or negative.
+    /// </exception>
+    public TimeSpan RefreshInterval
+    {
+        get => _refreshInterval;
+        set
+        {
+            Guard();
+            _refreshInterval = Positive(value, nameof(RefreshInterval));
+        }
+    }
+
     /// <summary>True once <see cref="Freeze"/> has been called.</summary>
     public bool IsFrozen { get; private set; }
 
@@ -105,6 +173,15 @@ public sealed class DwPolicyOptions
         Caps.Freeze();
         IsFrozen = true;
     }
+
+    /// <summary>
+    /// Refuses a duration that is not a real interval.
+    /// </summary>
+    private static TimeSpan Positive(TimeSpan value, string property) =>
+        value > TimeSpan.Zero
+            ? value
+            : throw new ArgumentOutOfRangeException(
+                property, value, $"{property} must be a positive interval.");
 
     /// <summary>
     /// Rejects a change made after startup.

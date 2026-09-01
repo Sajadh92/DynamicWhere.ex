@@ -1,5 +1,6 @@
-using DynamicWhere.ex.Policies.Context;
+﻿using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.Enums;
+using DynamicWhere.ex.Policies.Storage;
 
 namespace DynamicWhere.Tests.Policies;
 
@@ -96,5 +97,42 @@ public class PolicyContextTests
 
         Assert.Equal(string.Empty, subject.Identity);
         Assert.Equal("Global", subject.ToString());
+    }
+    [Fact]
+    public void An_attachment_is_held_per_provider_and_absent_until_one_prepares()
+    {
+        DwPolicyContext context = new();
+        object first = new();
+        object second = new();
+
+        // Absent, not empty. The difference is what lets a store provider tell "this caller has no
+        // user rules" from "nobody looked", and the second is refused rather than served.
+        Assert.Null(context.AttachmentFor(first));
+
+        PolicyAttachment attachment = new(StoreSnapshot.Empty, NarrowZone.Empty);
+
+        context.Attach(first, attachment);
+
+        Assert.Same(attachment, context.AttachmentFor(first));
+
+        // Keyed on the provider: a second store's absence is not answered by the first's presence.
+        Assert.Null(context.AttachmentFor(second));
+    }
+
+    [Fact]
+    public void Preparing_again_replaces_what_was_pinned()
+    {
+        DwPolicyContext context = new();
+        object provider = new();
+
+        context.Attach(provider, new PolicyAttachment(StoreSnapshot.Empty, NarrowZone.Empty));
+
+        PolicyAttachment second = new(
+            new StoreSnapshot(41, DateTimeOffset.UtcNow, Array.Empty<PolicyRule>()),
+            NarrowZone.Empty);
+
+        context.Attach(provider, second);
+
+        Assert.Equal(41, context.AttachmentFor(provider)!.Snapshot.Version);
     }
 }

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.Context;
@@ -15,6 +16,7 @@ public sealed class DwPolicyContext
 {
     private readonly List<DwSubject> _subjects = new();
     private readonly Dictionary<string, object?> _values = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<object, PolicyAttachment> _attachments = new();
 
     /// <summary>The principal dimensions describing the caller.</summary>
     public IReadOnlyList<DwSubject> Subjects => _subjects;
@@ -72,4 +74,28 @@ public sealed class DwPolicyContext
     /// Looks up an ambient value.
     /// </summary>
     public bool TryGetValue(string key, out object? value) => _values.TryGetValue(key, out value);
+
+    /// <summary>
+    /// Records what a store provider pinned to this context when it was prepared.
+    /// </summary>
+    /// <remarks>
+    /// Keyed on the provider, because two store providers each pin their own snapshot and neither
+    /// may read the other's. Written during preparation, before the context is used, and replaced
+    /// wholesale if the context is prepared again.
+    /// </remarks>
+    /// <param name="provider">The provider doing the pinning.</param>
+    /// <param name="attachment">The snapshot and narrow zone it read.</param>
+    internal void Attach(object provider, PolicyAttachment attachment) =>
+        _attachments[provider] = attachment;
+
+    /// <summary>
+    /// Returns what a provider pinned, or null when it never prepared this context.
+    /// </summary>
+    /// <remarks>
+    /// Null is what a store provider refuses on. It cannot be confused with "this caller has no
+    /// rules", which is an attachment holding empty zones.
+    /// </remarks>
+    /// <param name="provider">The provider asking.</param>
+    internal PolicyAttachment? AttachmentFor(object provider) =>
+        _attachments.TryGetValue(provider, out PolicyAttachment? attachment) ? attachment : null;
 }

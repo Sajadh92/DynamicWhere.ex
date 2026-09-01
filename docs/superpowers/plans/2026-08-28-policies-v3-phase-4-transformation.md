@@ -145,31 +145,31 @@ recorded by EF as a pending modification and written back as the real value on t
 
 ## Tasks
 
-- [ ] **1. Enums** — `MaskStrategy` (8), `GeneralizeMode`, `DatePart`; `PolicyAction` gains
+- [x] **1. Enums** — `MaskStrategy` (8), `GeneralizeMode`, `DatePart`; `PolicyAction` gains
       `Mutated`, `Defaulted`, `Generalized`, added in the change that makes them emittable.
-- [ ] **2. The six transform attributes**, each re-declaring its `AttributeUsage` as single-use.
-- [ ] **3. `IValueTransformer` and `DwTransformContext`** — entity instance, field path, policy
+- [x] **2. The six transform attributes**, each re-declaring its `AttributeUsage` as single-use.
+- [x] **3. `IValueTransformer` and `DwTransformContext`** — entity instance, field path, policy
       context, so a transformer can be role-aware.
-- [ ] **4. `ValueTransform` DTO and the fragment carriers** — typed, elected, following the alias
+- [x] **4. `ValueTransform` DTO and the fragment carriers** — typed, elected, following the alias
       precedent rather than `Payload`.
-- [ ] **5. Provider emits transform fragments**, at the level each attribute's `Overridable` implies.
-- [ ] **6. Resolver elects the chain**, sharing its election helper with alias and required.
-- [ ] **7. `MaskEngine`** — eight strategies as pure functions over a string, with the salt read from
+- [x] **5. Provider emits transform fragments**, at the level each attribute's `Overridable` implies.
+- [x] **6. Resolver elects the chain**, sharing its election helper with alias and required.
+- [x] **7. `MaskEngine`** — eight strategies as pure functions over a string, with the salt read from
       options.
-- [ ] **8. `TransformPipeline`** — the five stages, `[DwDefault]` short-circuiting, and the
+- [x] **8. `TransformPipeline`** — the five stages, `[DwDefault]` short-circuiting, and the
       output-assignability rule enforced at the end of the chain.
-- [ ] **9. `MutatorCache` and `GraphWalker`** — compiled accessors, bounded depth, cycle guard.
-- [ ] **10. `ResultTransformer` on typed results**, direct and nested and collection paths.
-- [ ] **11. `ResultTransformer` on dynamic results**.
-- [ ] **12. Summary keys and aggregates**, with `AmbiguousGroupKey` on collision.
-- [ ] **13. Segment results**.
-- [ ] **14. Composables return the handle**, plus `AsUnguardedQueryable()`.
-- [ ] **15. `ValidatePolicyModel()`** and `DwPolicyOptions.HashSalt` / `ServiceProvider`.
-- [ ] **16. SQLite end to end**, typed and dynamic, both tiers.
-- [ ] **17. The tracking-corruption test** — mask, assert every entity detached, modify an unrelated
+- [x] **9. `MutatorCache` and `GraphWalker`** — compiled accessors, bounded depth, cycle guard.
+- [x] **10. `ResultTransformer` on typed results**, direct and nested and collection paths.
+- [x] **11. `ResultTransformer` on dynamic results**.
+- [x] **12. Summary keys and aggregates**, with `AmbiguousGroupKey` on collision.
+- [x] **13. Segment results**.
+- [x] **14. Composables return the handle**, plus `AsUnguardedQueryable()`.
+- [x] **15. `ValidatePolicyModel()`** and `DwPolicyOptions.HashSalt` / `ServiceProvider`.
+- [x] **16. SQLite end to end**, typed and dynamic, both tiers.
+- [x] **17. The tracking-corruption test** — mask, assert every entity detached, modify an unrelated
       entity in the same context, `SaveChanges`, re-read with raw SQL, assert the original value
       intact. Blocking.
-- [ ] **18. Phase gate** — release build with zero warnings, full suite green, the four named files
+- [x] **18. Phase gate** — release build with zero warnings, full suite green, the four named files
       untouched, roadmap updated.
 
 ---

@@ -94,8 +94,10 @@ injection is ever rewritten as a merge.
 
 ### Phase 4 — Transformation
 
-Mask engine with 8 strategies, compiled mutator cache, graph walker with cycle guard, `DwMutate`,
-`DwDefault`, `DwGeneralize`, `DwTruncate`, `DwFormat`.
+Mask engine with 8 strategies, compiled mutator cache, graph walker, `DwMutate`, `DwDefault`,
+`DwGeneralize`, `DwTruncate`, `DwFormat`. **Done — see the Phase 4 outcome below.** The walk turned
+out to need no cycle guard: it is driven by the policy's finite paths rather than by the object
+graph, and shared objects are handled by reference identity.
 
 **Exit:** masking works on typed and dynamic projections, across direct, nested-reference, and
 collection paths. Includes the SQL Server tracking-corruption test from spec §8.3 — the blocking
@@ -485,6 +487,117 @@ Both settled against the design document rather than against the plan.
 - **`ValidatePolicyModel()` still does not exist.** Section 4.8's rules are enforced at query time
   and fail closed. `[DwForceWhere(ContextValue = ...)]` naming a key nothing supplies is listed
   there as a startup check and cannot be one — what a context supplies is per-request.
+
+## Phase 4 outcome
+
+Closed 2026-08-28, 5 commits. 911 tests pass, up from 816. `dotnet build -c Release` across the
+whole solution emits zero warnings, and the four named files are untouched.
+
+Plan: [2026-08-28-policies-v3-phase-4-transformation.md](2026-08-28-policies-v3-phase-4-transformation.md).
+
+### Six decisions settled before implementation
+
+1. **Transforms compose, in a fixed sequence** — mutate, generalize, format, mask, truncate. Custom
+   logic sees the real value, precision drops before rendering, characters are hidden after
+   rendering, and a length cap has the last word.
+2. **`[DwDefault]` short-circuits.** Masking a value already replaced by `"N/A"` obscures nothing,
+   and composing them would make the output depend on an ordering rule invisible from the entity.
+3. **Applicability is a type rule, not a table.** A chain is valid only when its output is
+   assignable to the member it decorates. The documented matrix is derived from that one check, so
+   there is no second source of truth to drift.
+4. **Composable methods return the handle**, so a chain never leaves the guard and the terminal call
+   transforms. `AsUnguardedQueryable()` is the named, greppable way out.
+5. **Summaries group on real values and transform on the way out**, with a collision refused. This
+   was Sajjad's design and it is better than the three options offered: grouping in SQL keeps the
+   counts correct, and transforming the keys afterwards keeps a masked field groupable at all.
+6. **`ValidatePolicyModel()` ships here**, since most of design section 4.8 is mask-and-type
+   compatibility and nothing was checkable until masks existed.
+
+### Public API added
+
+- `Policies.Enums` — `MaskStrategy` (8; `Tokenize` stays deferred), `GeneralizeMode`, `DatePart`;
+  `PolicyAction.Mutated`, `.Defaulted`, `.Generalized`; `PolicyErrorCode.AmbiguousGroupKey` and
+  `.TransformRequiresMaterialization`, appended at 15–16
+- `Policies.Attributes` — `DwMask`, `DwMutate`, `DwDefault`, `DwGeneralize`, `DwTruncate`, `DwFormat`
+- `Policies.Masking` — `IValueTransformer`, `DwTransformContext`
+- `Policies.DTOs` — `TransformKind`, `TransformStage` and its six derived stages, `ValueTransform`;
+  `TypePolicy.Transforms`; `PolicyFragment.Transform`; `FieldPolicy.Transform` and `.IsTransformed`
+- `Policies.Validation` — `PolicyModelValidator`, `PolicyModelReport`; `DwPolicy.ValidateModel`
+- `DwPolicyOptions.HashSalt` and `.Services`
+- `PolicyQueryable.AsUnguardedQueryable`; the composable methods now return the handle
+
+Transform stages are **elected per stage**, so a runtime rule can add a truncation on top of a
+sealed mask and cannot replace the mask. Electing the whole chain would let a rule discard a
+compile-time mask by supplying anything at all.
+
+Transform fragments carry `PolicyEffect.Mask` on `Select`, which makes `FieldPolicy.IsMasked` real
+for the first time — nothing could produce a `Mask` effect until now — and keeps a masked field
+filterable and sortable, since `Allows` refuses only a denial. A denial on the same field still wins
+the election, so a field both denied and masked is dropped rather than masked.
+
+### Defects and corrections
+
+- **The composable surface would have leaked every masked value.** Nine methods returned an
+  `IQueryable` the *caller* materializes, so `ToList(f)` masked and `Filter(f).ToList()` did not,
+  one word apart. The same shape as the Phase 3 injection hole, one layer down. Closed by returning
+  the handle; the four that yield a non-generic `IQueryable` refuse outright on a transformed type.
+- **`MaskStrategy.Email` disclosed the mailbox and domain lengths**, ignoring `PreserveLength`.
+  Found by a wrong expectation in a test that turned out to be right about the principle.
+- **The design document is wrong about `[DwDefault]` coercion.** Section 4.4 says constants are
+  converted by the existing `Normalizer`, "direct reuse, no new conversion code". `Normalizer`
+  converts a value *to* a string, and nothing else in the library turns a string into a CLR value —
+  the query path hands its literals to the dynamic-LINQ parser. The conversion had to be written.
+- **Reference identity in the walker is load-bearing, and the obvious test did not prove it.** A
+  shared-reference test passes either way, because an ordinary class already has reference equality.
+  A *record* does not: two rows holding the same value are one object to a set keyed on equality, so
+  one keeps its real value. Proven by mutation only after the weaker test was replaced.
+
+### Decisions worth not re-litigating
+
+- **The walk is driven by the policy's paths, not by the object graph.** The paths needing
+  transformation are known before a row is read, so the walker navigates exactly those. It is
+  cheaper on a wide entity and, more importantly, cannot miss a path by failing to recognise a
+  navigation — which is what went wrong five times on the input side. It also makes a cycle guard
+  unnecessary: a path has finite length, and shared objects are handled by reference identity.
+- **A path that should be reachable and is not fails the query.** Skipping would emit the value
+  exactly as stored. A *null navigation* is not that case and is skipped, because there is no value
+  beneath it.
+- **Nothing in the pipeline catches.** A transformer that throws fails the query. Catching it into
+  "return what you were given" hands the caller the real value, which is the one outcome a transform
+  must never produce.
+- **Every mask strategy fails closed on an input that does not fit it** — an address that is not an
+  address, a partial mask whose kept ends cover the value, a phone number too short to keep digits
+  from. All are masked in full rather than returned intact.
+- **Masked-but-orderable is a warning, not an error.** Sorting runs against the real value, so
+  paging ranks the true order; but there are models where the ordering is the point, and the engine
+  does not get to decide.
+
+### Known limitations
+
+- **Outbound alias renaming is still not delivered.** Phase 3 deferred it here on the reasoning that
+  the result transformer would own the materialized shape. It does, but renaming a column is not
+  mutating a value: a generated dynamic type bakes its property names in at query-build time, so
+  renaming means re-projecting into a second generated type. It belongs with `/schema` in Phase 7.
+- **`SelectDynamic`, `FilterDynamic`, `Group` and `Summary` are refused on a transformed type.**
+  They cannot return the handle, because what they yield is no longer a sequence of `T`. The
+  terminal equivalents work, and `AsUnguardedQueryable()` is the deliberate way past.
+- **A chain containing `[DwMutate]` is not statically checked**, because a transformer returns
+  whatever it likes. The run-time assignability check still catches it.
+- **`ValidateModel` takes explicit types** rather than scanning assemblies. An application knows its
+  entity types, and a scan would wander into every referenced package.
+
+### What Phase 5 inherits
+
+- **The `default(PolicyLevel)` gate is now overdue.** `PolicyLevel` has no member with value `0`, so
+  a level read from a column or a JSON payload defaults to `0` and outranks `SealedAttribute = 1`.
+  Unreachable until a store exists. Reject an unmapped level at the store boundary.
+- **Do not cache `TypePolicy` per type.** Aliases and transforms are both per-caller now.
+- **A store may set a transform stage**, and `PolicyFragment` already refuses one on the wildcard
+  path. The store boundary should refuse the same rather than relying on the fragment constructor.
+- **`TransformerCache` holds one instance per type for the process.** A store that can change which
+  transformer a field uses does not invalidate it; the cache is keyed on the type, not the rule, so
+  that stays correct — but a store that could introduce a *new* transformer type at runtime makes
+  `ValidateModel` a startup-only guarantee rather than a total one.
 
 ### Closed after Phase 3 — two inference channels, early
 

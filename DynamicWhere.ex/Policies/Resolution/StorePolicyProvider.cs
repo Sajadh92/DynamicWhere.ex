@@ -37,6 +37,7 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     private readonly object _swap = new();
 
     private StoreSnapshot _snapshot;
+    private DateTimeOffset _loadedAt;
     private bool _degraded;
     private Task? _refreshing;
     private bool _disposed;
@@ -47,6 +48,7 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
         _store = store;
         _options = options;
         _snapshot = first;
+        _loadedAt = Clock();
     }
 
     /// <summary>
@@ -162,7 +164,10 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
                     "LoadNarrowAsync. Return an empty zone instead: a null cannot be told apart " +
                     "from a caller with no user-level rules.");
 
-        context.Attach(this, new PolicyAttachment(Current, narrow));
+        lock (_swap)
+        {
+            context.Attach(this, new PolicyAttachment(_snapshot, _loadedAt, narrow));
+        }
 
         return context;
     }
@@ -217,12 +222,17 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
         // The ceiling, and it binds under every mode including a healthy one. A snapshot older than
         // this is being honoured on trust nobody has renewed — which is how "the store died six
         // hours ago" becomes "we have been honouring revoked grants all afternoon".
-        if (attachment.Snapshot.IsStale(now, _options.MaxSnapshotAge))
+        //
+        // Measured against the load time this provider stamped, not the one the store reported. A
+        // store's clock is not this library's to trust: running behind it would only fail closed,
+        // but running ahead it would make every snapshot look fresh and extend the ceiling without
+        // anybody seeing it happen.
+        if (now - attachment.LoadedAt > _options.MaxSnapshotAge)
         {
             throw Refuse(
                 PolicyErrorCode.StoreUnavailable,
                 entityType,
-                $"the policy snapshot loaded at {attachment.Snapshot.LoadedAt:O} is older than the " +
+                $"the policy snapshot loaded at {attachment.LoadedAt:O} is older than the " +
                 $"{_options.MaxSnapshotAge} ceiling");
         }
 
@@ -250,11 +260,14 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
                 ?? throw new InvalidOperationException(
                     $"Policy store '{_store.GetType().FullName}' returned null from LoadAsync.");
 
+            DateTimeOffset stamp = Clock();
+
             lock (_swap)
             {
                 // One reference assignment. A query holding the previous snapshot finishes on it,
                 // and a query starting now gets the new one; neither observes a half-applied load.
                 _snapshot = loaded;
+                _loadedAt = stamp;
                 _degraded = false;
             }
 
@@ -337,7 +350,16 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
         }
     }
 
-    /// <summary>Watches when the store can say, polls when it cannot.</summary>
+    /// <summary>
+    /// Watches when the store can say, and polls either way.
+    /// </summary>
+    /// <remarks>
+    /// Both, not one or the other. A watch gives the latency — milliseconds rather than a poll
+    /// interval — but no notification channel is guaranteed to deliver: Redis pub/sub is
+    /// fire-and-forget, and an instance that misses one message would otherwise serve the previous
+    /// policy until something else happened to change. The poll bounds that at one interval instead
+    /// of forever, and it costs a read of a single version value.
+    /// </remarks>
     private async Task RefreshLoopAsync(CancellationToken ct)
     {
         IAsyncEnumerable<long>? watch = null;
@@ -352,18 +374,20 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
         }
         catch
         {
-            // A store that cannot open a watch is polled instead. Falling through to the poll is
-            // what keeps a broken notification channel from silently becoming no updates at all.
+            // A store that cannot open a watch is polled alone. Falling through is what keeps a
+            // broken notification channel from silently becoming no updates at all.
         }
+
+        Task polling = PollLoopAsync(ct);
 
         if (watch is not null)
         {
-            await WatchLoopAsync(watch, ct).ConfigureAwait(false);
+            await Task.WhenAll(WatchLoopAsync(watch, ct), polling).ConfigureAwait(false);
 
             return;
         }
 
-        await PollLoopAsync(ct).ConfigureAwait(false);
+        await polling.ConfigureAwait(false);
     }
 
     /// <summary>Reloads whenever the store reports a new version.</summary>

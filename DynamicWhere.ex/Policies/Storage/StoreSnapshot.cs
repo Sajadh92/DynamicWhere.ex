@@ -32,7 +32,7 @@ public sealed class StoreSnapshot
     /// Initializes a snapshot from the rules a store loaded.
     /// </summary>
     /// <param name="version">The store's version at the moment of the load.</param>
-    /// <param name="loadedAt">When the load completed, for the staleness ceiling.</param>
+    /// <param name="loadedAt">When the store read the rules, by the store's own clock.</param>
     /// <param name="rules">The broad-zone rules. Disabled ones are dropped.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="rules"/> is null.</exception>
     /// <exception cref="ArgumentException">
@@ -92,7 +92,16 @@ public sealed class StoreSnapshot
     /// <summary>The store's version this snapshot was loaded at.</summary>
     public long Version { get; }
 
-    /// <summary>When the load completed.</summary>
+    /// <summary>
+    /// When the store read these rules, by the store's own clock.
+    /// </summary>
+    /// <remarks>
+    /// Diagnostic. The staleness ceiling is <em>not</em> measured from here, because this timestamp
+    /// comes from an implementation the library does not control — a database stamping it with its
+    /// own server time, for instance. A store clock running behind would only fail closed, but one
+    /// running ahead would make every snapshot look fresher than it is and silently extend the
+    /// ceiling. <c>StorePolicyProvider</c> stamps its own load time and measures against that.
+    /// </remarks>
     public DateTimeOffset LoadedAt { get; }
 
     /// <summary>How many enabled rules the snapshot holds.</summary>
@@ -100,10 +109,8 @@ public sealed class StoreSnapshot
 
     /// <summary>A snapshot holding nothing, at version zero.</summary>
     /// <remarks>
-    /// Its <see cref="LoadedAt"/> is <see cref="DateTimeOffset.MinValue"/>, so it is stale under
-    /// every ceiling. An empty store is a legitimate state and loads a real snapshot; this one
-    /// stands for "no load has succeeded", which is not the same thing and must not be mistaken
-    /// for it.
+    /// Stands for "no load has succeeded". An empty store is a legitimate state and loads a real
+    /// snapshot at a real version; this one is not that, and must not be mistaken for it.
     /// </remarks>
     public static StoreSnapshot Empty { get; } =
         new(version: 0, DateTimeOffset.MinValue, Array.Empty<PolicyRule>());
@@ -131,13 +138,6 @@ public sealed class StoreSnapshot
             ? rules
             : None;
     }
-
-    /// <summary>
-    /// True when this snapshot is older than the ceiling and every failure mode must escalate.
-    /// </summary>
-    /// <param name="now">The current instant.</param>
-    /// <param name="maxAge">The staleness ceiling.</param>
-    public bool IsStale(DateTimeOffset now, TimeSpan maxAge) => now - LoadedAt > maxAge;
 }
 
 /// <summary>

@@ -23,15 +23,29 @@ internal sealed class PolicyAttachment
 {
     /// <summary>Initializes an attachment.</summary>
     /// <param name="snapshot">The pinned broad zone.</param>
+    /// <param name="loadedAt">
+    /// When the provider's own clock said the snapshot loaded, for the staleness ceiling.
+    /// </param>
     /// <param name="narrow">This caller's user-level rules.</param>
-    internal PolicyAttachment(StoreSnapshot snapshot, NarrowZone narrow)
+    internal PolicyAttachment(StoreSnapshot snapshot, DateTimeOffset loadedAt, NarrowZone narrow)
     {
         Snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
+        LoadedAt = loadedAt;
         Narrow = narrow ?? throw new ArgumentNullException(nameof(narrow));
     }
 
     /// <summary>The broad zone this context reads, fixed for its lifetime.</summary>
     internal StoreSnapshot Snapshot { get; }
+
+    /// <summary>
+    /// When the provider loaded that snapshot, by the provider's own clock.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <c>StoreSnapshot.LoadedAt</c>, which a store stamps with a clock this
+    /// library does not control. A store clock running ahead would make every snapshot look
+    /// fresher than it is and silently extend the ceiling; the provider stamps its own.
+    /// </remarks>
+    internal DateTimeOffset LoadedAt { get; }
 
     /// <summary>The caller's user-level rules, read once.</summary>
     internal NarrowZone Narrow { get; }

@@ -82,22 +82,23 @@ public class StoreSnapshotTests
     }
 
     [Fact]
-    public void The_empty_snapshot_is_stale_under_every_ceiling()
+    public void The_empty_snapshot_stands_for_a_load_that_never_succeeded()
     {
-        // It stands for "no load has succeeded", which is not the same as "the store is empty" —
-        // an empty store loads a real snapshot with a real timestamp.
-        Assert.True(StoreSnapshot.Empty.IsStale(DateTimeOffset.UtcNow, TimeSpan.FromDays(365000)));
+        // Not the same as "the store is empty" — an empty store loads a real snapshot at a real
+        // version.
         Assert.Equal(0, StoreSnapshot.Empty.Version);
+        Assert.Equal(0, StoreSnapshot.Empty.Count);
     }
 
     [Fact]
-    public void Staleness_is_measured_from_the_load()
+    public void The_load_time_a_store_reports_is_kept_but_decides_nothing()
     {
+        // Diagnostic only. The staleness ceiling is measured on the provider's own clock, because
+        // a store clock running ahead would make every snapshot look fresh and quietly extend the
+        // ceiling — see StoreFailureTests.
         DateTimeOffset loaded = new(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
-        StoreSnapshot snapshot = new(1, loaded, Array.Empty<PolicyRule>());
 
-        Assert.False(snapshot.IsStale(loaded.AddMinutes(15), TimeSpan.FromMinutes(15)));
-        Assert.True(snapshot.IsStale(loaded.AddMinutes(16), TimeSpan.FromMinutes(15)));
+        Assert.Equal(loaded, new StoreSnapshot(1, loaded, Array.Empty<PolicyRule>()).LoadedAt);
     }
 
     // ---------------------------------------------------------------- narrow zone

@@ -109,7 +109,7 @@ public class PolicyContextTests
         // user rules" from "nobody looked", and the second is refused rather than served.
         Assert.Null(context.AttachmentFor(first));
 
-        PolicyAttachment attachment = new(StoreSnapshot.Empty, NarrowZone.Empty);
+        PolicyAttachment attachment = new(StoreSnapshot.Empty, DateTimeOffset.UtcNow, NarrowZone.Empty);
 
         context.Attach(first, attachment);
 
@@ -125,10 +125,12 @@ public class PolicyContextTests
         DwPolicyContext context = new();
         object provider = new();
 
-        context.Attach(provider, new PolicyAttachment(StoreSnapshot.Empty, NarrowZone.Empty));
+        context.Attach(
+            provider, new PolicyAttachment(StoreSnapshot.Empty, DateTimeOffset.UtcNow, NarrowZone.Empty));
 
         PolicyAttachment second = new(
             new StoreSnapshot(41, DateTimeOffset.UtcNow, Array.Empty<PolicyRule>()),
+            DateTimeOffset.UtcNow,
             NarrowZone.Empty);
 
         context.Attach(provider, second);

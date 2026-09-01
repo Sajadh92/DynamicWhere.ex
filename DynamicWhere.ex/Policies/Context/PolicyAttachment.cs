@@ -27,11 +27,20 @@ internal sealed class PolicyAttachment
     /// When the provider's own clock said the snapshot loaded, for the staleness ceiling.
     /// </param>
     /// <param name="narrow">This caller's user-level rules.</param>
-    internal PolicyAttachment(StoreSnapshot snapshot, DateTimeOffset loadedAt, NarrowZone narrow)
+    /// <param name="preparedFor">
+    /// The user identities the narrow zone was read for, so a context whose caller changed
+    /// afterwards can be told apart from one that did not.
+    /// </param>
+    internal PolicyAttachment(
+        StoreSnapshot snapshot,
+        DateTimeOffset loadedAt,
+        NarrowZone narrow,
+        IReadOnlyCollection<string> preparedFor)
     {
         Snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
         LoadedAt = loadedAt;
         Narrow = narrow ?? throw new ArgumentNullException(nameof(narrow));
+        PreparedFor = new HashSet<string>(preparedFor, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>The broad zone this context reads, fixed for its lifetime.</summary>
@@ -49,4 +58,36 @@ internal sealed class PolicyAttachment
 
     /// <summary>The caller's user-level rules, read once.</summary>
     internal NarrowZone Narrow { get; }
+
+    /// <summary>
+    /// The user identities the narrow zone was read for.
+    /// </summary>
+    /// <remarks>
+    /// A context is mutable, so a user subject can be added after it was prepared — and that user's
+    /// rules would then never have been read. Identities are compared rather than counted: two
+    /// identities are not the same two identities.
+    /// </remarks>
+    internal HashSet<string> PreparedFor { get; }
+
+    /// <summary>
+    /// True when the narrow zone was read for every user identity the caller now claims.
+    /// </summary>
+    /// <remarks>
+    /// One direction only. A caller who <em>gained</em> an identity has rules nobody read, which is
+    /// a denial that does not apply. A caller who <em>lost</em> one is safe without a second check:
+    /// the zone holds rules for a subject the context no longer claims, and those fail the ordinary
+    /// subject match.
+    /// </remarks>
+    internal bool Covers(IEnumerable<string> userIdentities)
+    {
+        foreach (string identity in userIdentities)
+        {
+            if (!PreparedFor.Contains(identity))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }

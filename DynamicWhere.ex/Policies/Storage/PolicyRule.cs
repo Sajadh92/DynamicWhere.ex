@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
@@ -233,10 +234,15 @@ public sealed class PolicyRule
         ValidTo = validTo;
         Purpose = string.IsNullOrWhiteSpace(purpose) ? null : purpose.Trim();
         Transform = transform;
-        AllowedOperators = allowedOperators;
+        // Copied, not held. A rule lives in a snapshot for as long as that snapshot is current, so
+        // holding the caller's array would let whoever built the rule widen the permitted set
+        // afterwards — from anywhere, with nothing reloaded and nothing logged. Null is preserved as
+        // null: for RequiredOperators, null means "no requirement" and empty means "a requirement
+        // nothing satisfies", and turning one into the other reverses the decision.
+        AllowedOperators = Copy(allowedOperators);
         Alias = alias;
         Forced = forced;
-        RequiredOperators = requiredOperators;
+        RequiredOperators = Copy(requiredOperators);
         CreatedBy = createdBy;
         CreatedAt = createdAt;
         UpdatedBy = updatedBy;
@@ -413,6 +419,10 @@ public sealed class PolicyRule
     /// <inheritdoc />
     public override string ToString() =>
         $"{Describe()} {EntityType}.{FieldPath} {Features} => {Effect}";
+
+    /// <summary>Takes an immutable copy, preserving the difference between null and empty.</summary>
+    private static IReadOnlyList<Operator>? Copy(IReadOnlyList<Operator>? operators) =>
+        operators is null ? null : new ReadOnlyCollection<Operator>(operators.ToArray());
 
     /// <summary>
     /// Maps a subject onto the precedence level it carries.

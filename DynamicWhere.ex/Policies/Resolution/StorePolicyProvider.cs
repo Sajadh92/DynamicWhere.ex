@@ -166,7 +166,7 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
 
         lock (_swap)
         {
-            context.Attach(this, new PolicyAttachment(_snapshot, _loadedAt, narrow));
+            context.Attach(this, new PolicyAttachment(_snapshot, _loadedAt, narrow, users));
         }
 
         return context;
@@ -198,6 +198,18 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
                 PolicyErrorCode.PolicyContextNotPrepared,
                 entityType,
                 "the context was never prepared against the policy store");
+
+        // A context is mutable, so a user subject can be added after it was prepared — and that
+        // user's rules would then never have been read. Serving the query anyway would drop a
+        // denial written for exactly the caller now asking, which is preparation's whole subject.
+        if (!attachment.Covers(context.Identities(DwSubjectKind.User)))
+        {
+            throw Refuse(
+                PolicyErrorCode.PolicyContextNotPrepared,
+                entityType,
+                "the caller gained a user subject after the context was prepared, so that user's " +
+                "rules were never read");
+        }
 
         DateTimeOffset now = Clock();
 
@@ -397,7 +409,11 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
         {
             await foreach (long version in watch.WithCancellation(ct).ConfigureAwait(false))
             {
-                if (version <= Current.Version)
+                // Not "greater than". A notification is a wake-up, not the state — RefreshAsync
+                // loads whatever the store currently holds. A store restored from a backup moves
+                // its version backwards, and skipping that would keep serving rules the restore
+                // withdrew until a poll happened to notice.
+                if (version == Current.Version)
                 {
                     continue;
                 }

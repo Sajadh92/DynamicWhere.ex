@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.Storage;
@@ -26,7 +27,7 @@ public sealed class StoreSnapshot
 {
     private static readonly IReadOnlyList<PolicyRule> None = Array.Empty<PolicyRule>();
 
-    private readonly Dictionary<string, List<PolicyRule>> _byEntity;
+    private readonly Dictionary<string, IReadOnlyList<PolicyRule>> _byEntity;
 
     /// <summary>
     /// Initializes a snapshot from the rules a store loaded.
@@ -47,7 +48,7 @@ public sealed class StoreSnapshot
 
         Version = version;
         LoadedAt = loadedAt;
-        _byEntity = new Dictionary<string, List<PolicyRule>>(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, List<PolicyRule>> buckets = new(StringComparer.OrdinalIgnoreCase);
 
         int count = 0;
 
@@ -76,14 +77,25 @@ public sealed class StoreSnapshot
                 continue;
             }
 
-            if (!_byEntity.TryGetValue(rule.EntityType, out List<PolicyRule>? bucket))
+            if (!buckets.TryGetValue(rule.EntityType, out List<PolicyRule>? bucket))
             {
                 bucket = new List<PolicyRule>();
-                _byEntity[rule.EntityType] = bucket;
+                buckets[rule.EntityType] = bucket;
             }
 
             bucket.Add(rule);
             count++;
+        }
+
+        // Wrapped before the snapshot leaves this constructor. It is shared by every request thread
+        // for as long as it is current, and For() hands its buckets straight out — so a caller who
+        // cast one back to List<T> and cleared it would remove a denial process-wide, for the life
+        // of the snapshot. AttributePolicyProvider guards its own cache the same way.
+        _byEntity = new Dictionary<string, IReadOnlyList<PolicyRule>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (KeyValuePair<string, List<PolicyRule>> bucket in buckets)
+        {
+            _byEntity[bucket.Key] = new ReadOnlyCollection<PolicyRule>(bucket.Value);
         }
 
         Count = count;
@@ -134,7 +146,7 @@ public sealed class StoreSnapshot
 
         string? name = entityType.FullName;
 
-        return name is not null && _byEntity.TryGetValue(name, out List<PolicyRule>? rules)
+        return name is not null && _byEntity.TryGetValue(name, out IReadOnlyList<PolicyRule>? rules)
             ? rules
             : None;
     }
@@ -156,7 +168,7 @@ public sealed class NarrowZone
 {
     private static readonly IReadOnlyList<PolicyRule> None = Array.Empty<PolicyRule>();
 
-    private readonly Dictionary<string, List<PolicyRule>> _byEntity;
+    private readonly Dictionary<string, IReadOnlyList<PolicyRule>> _byEntity;
 
     /// <summary>
     /// Initializes a narrow zone.
@@ -175,7 +187,7 @@ public sealed class NarrowZone
         }
 
         Version = version;
-        _byEntity = new Dictionary<string, List<PolicyRule>>(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, List<PolicyRule>> buckets = new(StringComparer.OrdinalIgnoreCase);
 
         int count = 0;
 
@@ -202,14 +214,22 @@ public sealed class NarrowZone
                 continue;
             }
 
-            if (!_byEntity.TryGetValue(rule.EntityType, out List<PolicyRule>? bucket))
+            if (!buckets.TryGetValue(rule.EntityType, out List<PolicyRule>? bucket))
             {
                 bucket = new List<PolicyRule>();
-                _byEntity[rule.EntityType] = bucket;
+                buckets[rule.EntityType] = bucket;
             }
 
             bucket.Add(rule);
             count++;
+        }
+
+        // Wrapped for the same reason the snapshot's buckets are.
+        _byEntity = new Dictionary<string, IReadOnlyList<PolicyRule>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (KeyValuePair<string, List<PolicyRule>> bucket in buckets)
+        {
+            _byEntity[bucket.Key] = new ReadOnlyCollection<PolicyRule>(bucket.Value);
         }
 
         Count = count;
@@ -240,7 +260,7 @@ public sealed class NarrowZone
 
         string? name = entityType.FullName;
 
-        return name is not null && _byEntity.TryGetValue(name, out List<PolicyRule>? rules)
+        return name is not null && _byEntity.TryGetValue(name, out IReadOnlyList<PolicyRule>? rules)
             ? rules
             : None;
     }

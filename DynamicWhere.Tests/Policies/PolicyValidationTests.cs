@@ -1,0 +1,206 @@
+using DynamicWhere.ex.Enums;
+using DynamicWhere.ex.Policies.Attributes;
+using DynamicWhere.ex.Policies.Enums;
+using DynamicWhere.ex.Policies.Validation;
+
+namespace DynamicWhere.Tests.Policies;
+
+/// <summary>A member whose chain emits text the member cannot hold.</summary>
+internal class MaskedDecimal
+{
+    [DwMask(MaskStrategy.Full)]
+    public decimal Salary { get; set; }
+}
+
+/// <summary>A member the mask would remove, which a non-nullable type cannot express.</summary>
+internal class NulledInt
+{
+    [DwMask(MaskStrategy.Null)]
+    public int Count { get; set; }
+}
+
+/// <summary>Two attributes that contradict each other.</summary>
+internal class ConflictingDefault
+{
+    [DwDefault("N/A")]
+    [DwMask(MaskStrategy.Full)]
+    [DwNoOrder]
+    public string Notes { get; set; } = string.Empty;
+}
+
+/// <summary>A transformer that is not one.</summary>
+internal class BadMutator
+{
+    [DwMutate(typeof(NotATransformer))]
+    [DwNoOrder]
+    public string Value { get; set; } = string.Empty;
+}
+
+/// <summary>Two members answering to the same public name.</summary>
+internal class DuplicateAliases
+{
+    [DwAlias("name")]
+    public string First { get; set; } = string.Empty;
+
+    [DwAlias("NAME")]
+    public string Second { get; set; } = string.Empty;
+}
+
+/// <summary>A constant that cannot be read as the member's type.</summary>
+internal class UnreadableDefault
+{
+    [DwDefault("not a number")]
+    public int Count { get; set; }
+}
+
+/// <summary>Transformed and still sortable, which is a warning rather than an error.</summary>
+internal class MaskedButOrderable
+{
+    [DwMask(MaskStrategy.Full)]
+    public string NationalId { get; set; } = string.Empty;
+}
+
+/// <summary>A model with nothing wrong with it.</summary>
+internal class SoundModel
+{
+    [DwMask(MaskStrategy.Partial, KeepEnd = 4)]
+    [DwNoOrder]
+    public string NationalId { get; set; } = string.Empty;
+
+    [DwGeneralize(GeneralizeMode.Round, Step = 1000)]
+    [DwNoOrder]
+    public decimal Salary { get; set; }
+
+    [DwGeneralize(GeneralizeMode.Bucket, Step = 10)]
+    [DwNoOrder]
+    public string AgeBand { get; set; } = string.Empty;
+
+    [DwDefault]
+    public string Notes { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Covers the startup scan: every rule that turns a misconfiguration into a failed deployment
+/// rather than a failed query at three in the morning.
+/// </summary>
+public class PolicyValidationTests
+{
+    private static PolicyModelReport Inspect<T>() =>
+        PolicyModelValidator.Inspect(new[] { typeof(T) });
+
+    [Fact]
+    public void A_sound_model_reports_nothing()
+    {
+        PolicyModelReport report = Inspect<SoundModel>();
+
+        Assert.True(report.IsValid);
+        Assert.Empty(report.Errors);
+        Assert.Empty(report.Warnings);
+    }
+
+    [Fact]
+    public void A_mask_on_a_numeric_member_is_an_error()
+    {
+        // The whole applicability question. Masking emits text and a decimal cannot hold text, so
+        // the pairing fails every query that touches the member.
+        PolicyModelReport report = Inspect<MaskedDecimal>();
+
+        Assert.False(report.IsValid);
+        Assert.Contains(report.Errors, e => e.Contains("emits text", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Removing_a_value_from_a_non_nullable_member_is_an_error()
+    {
+        PolicyModelReport report = Inspect<NulledInt>();
+
+        Assert.Contains(report.Errors, e => e.Contains("MaskStrategy.Null", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_replacement_beside_another_transform_is_an_error()
+    {
+        // The short-circuit makes the other attribute dead. A member that reads as masked and emits
+        // a constant is worse than either alone.
+        Assert.Contains(
+            Inspect<ConflictingDefault>().Errors,
+            e => e.Contains("short-circuits", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_transformer_that_does_not_implement_the_interface_is_an_error()
+    {
+        Assert.Contains(
+            Inspect<BadMutator>().Errors,
+            e => e.Contains("IValueTransformer", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Two_members_sharing_a_public_name_is_an_error()
+    {
+        // Case-insensitively, because that is how a caller's name is matched. Left unreported, the
+        // name is simply refused at query time and neither member can be filtered on by it.
+        Assert.Contains(
+            Inspect<DuplicateAliases>().Errors,
+            e => e.Contains("already used by", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_constant_that_cannot_be_read_as_the_member_type_is_an_error()
+    {
+        Assert.Contains(
+            Inspect<UnreadableDefault>().Errors,
+            e => e.Contains("cannot be read as Int32", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Transformed_but_still_sortable_is_a_warning_rather_than_an_error()
+    {
+        // Design section 7.4: sorting runs against the real value, so paging through a masked column
+        // ranks the true order. A warning because the engine does not get to decide -- there are
+        // models where the ordering is the point.
+        PolicyModelReport report = Inspect<MaskedButOrderable>();
+
+        Assert.True(report.IsValid);
+        Assert.Contains(report.Warnings, w => w.Contains("ranks the true order", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Every_problem_is_reported_at_once_rather_than_one_per_run()
+    {
+        PolicyModelReport report = PolicyModelValidator.Inspect(
+            new[] { typeof(MaskedDecimal), typeof(NulledInt), typeof(BadMutator) });
+
+        Assert.Equal(3, report.Errors.Count);
+    }
+
+    [Fact]
+    public void Validating_a_broken_model_throws_and_names_everything_wrong()
+    {
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => ex.Policies.Config.DwPolicy.ValidateModel(typeof(MaskedDecimal), typeof(NulledInt)));
+
+        Assert.Contains("Salary", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Count", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validating_a_sound_model_returns_its_warnings_rather_than_throwing()
+    {
+        PolicyModelReport report = ex.Policies.Config.DwPolicy.ValidateModel(typeof(SoundModel));
+
+        Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void The_shipped_fixture_model_is_sound()
+    {
+        // The suite's own entities are held to the rule they document. A fixture that could not pass
+        // its own validator would make every other assertion in this file academic.
+        PolicyModelReport report = PolicyModelValidator.Inspect(
+            new[] { typeof(Person), typeof(Badge), typeof(Staff), typeof(Invoice), typeof(Journal) });
+
+        Assert.True(report.IsValid, string.Join("; ", report.Errors));
+        Assert.Empty(report.Warnings);
+    }
+}

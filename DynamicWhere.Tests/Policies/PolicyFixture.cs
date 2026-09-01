@@ -90,6 +90,62 @@ public class Journal
     public decimal Amount { get; set; }
 }
 
+/// <summary>
+/// A person whose values are changed on the way out: the entity the transformation phase exists
+/// for. Each transformed member is also refused for ordering, because sorting runs against the real
+/// value and paging through a masked column ranks the true order.
+/// </summary>
+public class Person
+{
+    public int Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+
+    public string Department { get; set; } = string.Empty;
+
+    /// <summary>Partly hidden, keeping the last four characters.</summary>
+    [DwMask(MaskStrategy.Partial, KeepEnd = 4)]
+    [DwNoOrder]
+    public string NationalId { get; set; } = string.Empty;
+
+    /// <summary>Reduced to its shape.</summary>
+    [DwMask(MaskStrategy.Email)]
+    [DwNoOrder]
+    public string Email { get; set; } = string.Empty;
+
+    /// <summary>Rounded to a band, staying a number so the member can hold it.</summary>
+    [DwGeneralize(GeneralizeMode.Round, Step = 10000)]
+    [DwNoOrder]
+    public decimal Salary { get; set; }
+
+    /// <summary>
+    /// Rounded to the nearest five. Integer because SQLite refuses to aggregate a decimal, and an
+    /// aggregate of a transformed field is what the summary tests need to exercise.
+    /// </summary>
+    [DwGeneralize(GeneralizeMode.Round, Step = 5)]
+    [DwNoOrder]
+    public int Age { get; set; }
+
+    /// <summary>Replaced outright.</summary>
+    [DwDefault("N/A")]
+    public string Notes { get; set; } = string.Empty;
+
+    public int? BadgeId { get; set; }
+
+    /// <summary>A reference navigation carrying a transform of its own.</summary>
+    public Badge? Badge { get; set; }
+}
+
+/// <summary>The nested type behind <see cref="Person.Badge"/>.</summary>
+public class Badge
+{
+    public int Id { get; set; }
+
+    [DwMask(MaskStrategy.Full)]
+    [DwNoOrder]
+    public string Serial { get; set; } = string.Empty;
+}
+
 /// <summary>The context behind the policy integration tests.</summary>
 public class PolicyContext : DbContext
 {
@@ -104,6 +160,10 @@ public class PolicyContext : DbContext
     public DbSet<Invoice> Invoices => Set<Invoice>();
 
     public DbSet<Journal> Journals => Set<Journal>();
+
+    public DbSet<Person> People => Set<Person>();
+
+    public DbSet<Badge> Badges => Set<Badge>();
 }
 
 /// <summary>
@@ -159,6 +219,28 @@ public sealed class PolicyFixture : IDisposable
         context.Journals.AddRange(
             new Journal { Id = 1, TenantId = 5, Amount = 10m },
             new Journal { Id = 2, TenantId = 9, Amount = 20m });
+
+        context.Badges.AddRange(
+            new Badge { Id = 1, Serial = "SER-0001" },
+            new Badge { Id = 2, Serial = "SER-0002" });
+
+        // Two salaries that round into the same band, so a summary grouped on them collides.
+        context.People.AddRange(
+            new Person
+            {
+                Id = 1, Name = "Ada", Department = "Engineering", NationalId = "AAA-111-2345",
+                Email = "ada@example.com", Salary = 118000m, Age = 41, Notes = "founder", BadgeId = 1
+            },
+            new Person
+            {
+                Id = 2, Name = "Bo", Department = "Engineering", NationalId = "BBB-222-6789",
+                Email = "bo@example.com", Salary = 121000m, Age = 32, Notes = "joined 2024", BadgeId = 2
+            },
+            new Person
+            {
+                Id = 3, Name = "Cy", Department = "Sales", NationalId = "CCC-333-1111",
+                Email = "cy@other.org", Salary = 70000m, Age = 27, Notes = "part time"
+            });
 
         context.SaveChanges();
     }

@@ -1,4 +1,5 @@
-using DynamicWhere.ex.Policies.Resolution;
+﻿using DynamicWhere.ex.Policies.Resolution;
+using DynamicWhere.ex.Policies.Validation;
 
 namespace DynamicWhere.ex.Policies.Config;
 
@@ -79,6 +80,40 @@ public static class DwPolicy
             _resolver = CreateResolver(providers ?? Array.Empty<IDwPolicyProvider>());
             _configured = true;
         }
+    }
+
+    /// <summary>
+    /// Checks a policy model and throws when it cannot work, listing everything wrong at once.
+    /// </summary>
+    /// <param name="types">The entity and DTO types to inspect.</param>
+    /// <returns>
+    /// The report, so a host that would rather log the warnings than ignore them can read them.
+    /// </returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the model contains anything that will fail a query.
+    /// </exception>
+    /// <remarks>
+    /// Call it during startup, beside <see cref="Configure"/>. Attribute misuse then surfaces at a
+    /// deployment rather than on a caller's request at three in the morning, which is the whole
+    /// reason it exists.
+    /// <para>
+    /// Explicit about which types it inspects rather than scanning loaded assemblies: an application
+    /// knows its entity types, and a scan would wander into every referenced package looking for
+    /// attributes that are not there.
+    /// </para>
+    /// </remarks>
+    public static PolicyModelReport ValidateModel(params Type[] types)
+    {
+        PolicyModelReport report = PolicyModelValidator.Inspect(types ?? Array.Empty<Type>());
+
+        if (!report.IsValid)
+        {
+            throw new InvalidOperationException(
+                "The policy model cannot work as declared:" + Environment.NewLine
+                + string.Join(Environment.NewLine, report.Errors.Select(e => "  - " + e)));
+        }
+
+        return report;
     }
 
     /// <summary>

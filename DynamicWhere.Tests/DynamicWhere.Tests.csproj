@@ -17,10 +17,20 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+    <!-- The store conformance suite runs against real infrastructure rather than a fake. A fake
+         Redis proves the fake works, and the one property the suite exists to check is that three
+         real stores behave alike. Both containers are provisioned identically here and on CI.
+         Note that publish.yml runs the tests before it packs, so a Docker daemon is now needed to
+         cut a release, not merely to build. -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.10" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.0.0" />
+    <PackageReference Include="Testcontainers.Redis" Version="4.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\DynamicWhere.ex\DynamicWhere.ex.csproj" />
+    <ProjectReference Include="..\DynamicWhere.ex.Policies.Redis\DynamicWhere.ex.Policies.Redis.csproj" />
+    <ProjectReference Include="..\DynamicWhere.ex.Policies.EntityFrameworkCore\DynamicWhere.ex.Policies.EntityFrameworkCore.csproj" />
   </ItemGroup>
 
   <ItemGroup>

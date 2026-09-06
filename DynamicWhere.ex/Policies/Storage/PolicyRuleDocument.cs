@@ -206,6 +206,89 @@ public static class PolicyRuleDocument
             ? RuleDetail.None
             : ReadDetail(Parse(json!, "rule detail"));
 
+    /// <summary>
+    /// Reads an enumeration member from the name a store holds.
+    /// </summary>
+    /// <typeparam name="TEnum">The enumeration to read.</typeparam>
+    /// <param name="name">The member's name, as stored.</param>
+    /// <param name="what">What is being read, for the message.</param>
+    /// <returns>The member.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the name is blank, is written as digits, or is not a member this library
+    /// defines.
+    /// </exception>
+    /// <remarks>
+    /// Public because a store provider outside this library needs the same reader — design section
+    /// 8.4 expects future providers, and a provider that parses <c>"0"</c> as
+    /// <see cref="PolicyEffect.Allow"/> would be the second standard this type exists to prevent.
+    /// <para>
+    /// Digits are refused as firmly as a blank is. Four of the enumerations a rule carries have a
+    /// member at zero — <see cref="PolicyEffect.Allow"/>, <see cref="DwSubjectKind.Global"/>,
+    /// <see cref="Operator.Equal"/> and <see cref="DataType.Text"/> — so a column that was
+    /// defaulted, added with <c>NOT NULL DEFAULT 0</c>, or written by something that stored the
+    /// underlying number would otherwise read as a grant, a global audience, an equality
+    /// restriction, or the wrong data type to validate against.
+    /// </para>
+    /// </remarks>
+    public static TEnum ToEnum<TEnum>(string? name, string what)
+        where TEnum : struct, Enum
+    {
+        RefuseNonName(name, what, typeof(TEnum));
+
+        return Enum.TryParse(name, ignoreCase: true, out TEnum parsed)
+            && Enum.IsDefined(typeof(TEnum), parsed)
+            ? parsed
+            : throw new ArgumentException(
+                $"'{name}' is not a {typeof(TEnum).Name} this library defines, reading {what}.");
+    }
+
+    /// <summary>
+    /// Reads a feature set from the name a store holds.
+    /// </summary>
+    /// <param name="name">The flags, as stored — for instance <c>"Where, Select"</c>.</param>
+    /// <returns>The features.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the name is blank, is written as digits, or names no combination this library
+    /// defines.
+    /// </exception>
+    /// <remarks>
+    /// Separate from <see cref="ToEnum{TEnum}"/> because <see cref="PolicyFeature"/> is a flags
+    /// enumeration and <c>Enum.IsDefined</c> is false for every combination — <c>Where | Select</c>
+    /// is 3 and is a member of nothing. The unknown-bit mask and the refusal of
+    /// <see cref="PolicyFeature.None"/> stay in <see cref="PolicyRule"/>'s constructor, so the two
+    /// checks remain independent of one another.
+    /// </remarks>
+    public static PolicyFeature ToFeatures(string? name)
+    {
+        RefuseNonName(name, "features", typeof(PolicyFeature));
+
+        return Enum.TryParse(name, ignoreCase: true, out PolicyFeature parsed)
+            ? parsed
+            : throw new ArgumentException(
+                $"'{name}' does not name any combination of PolicyFeature this library defines.");
+    }
+
+    /// <summary>Refuses a stored enumeration that is blank or written as a number.</summary>
+    private static void RefuseNonName(string? name, string what, Type type)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException(
+                $"A {type.Name} is required for {what}, and none was stored. An absent value would " +
+                "be read as zero, which is a real member of this enumeration.");
+        }
+
+        foreach (char character in name!)
+        {
+            if (!char.IsDigit(character) && character != '-' && character != '+')
+            {
+                return;
+            }
+        }
+
+        throw NotAName(what, type);
+    }
+
     /// <summary>True when the rule carries anything a relational schema has no column for.</summary>
     private static bool HasDetail(PolicyRule rule) =>
         rule.Transform is not null
@@ -399,22 +482,9 @@ public static class PolicyRuleDocument
                 $"A {what} must be a JSON object; this one is {root.ValueKind}.", nameof(json));
     }
 
-    /// <summary>Reads the feature flags, which cannot go through <c>Enum.IsDefined</c>.</summary>
-    /// <remarks>
-    /// <c>Where | Select</c> is 3 and is a member of nothing, so the name round-trips as
-    /// <c>"Where, Select"</c> and the unknown-bit mask is left to <see cref="PolicyRule"/>'s
-    /// constructor. The two checks are independent: this one refuses a number, that one refuses a
-    /// bit this version does not define.
-    /// </remarks>
-    private static PolicyFeature ReadFeatures(JsonElement root)
-    {
-        string text = ReadName(root, "features", required: true)!;
-
-        return Enum.TryParse(text, ignoreCase: true, out PolicyFeature parsed)
-            ? parsed
-            : throw new ArgumentException(
-                $"'{text}' does not name any combination of PolicyFeature this library defines.");
-    }
+    /// <summary>Reads the feature flags, through the same parser a store column goes through.</summary>
+    private static PolicyFeature ReadFeatures(JsonElement root) =>
+        ToFeatures(ReadName(root, "features", required: true));
 
     /// <summary>Reads an enumeration member by name.</summary>
     private static TEnum? ReadEnum<TEnum>(JsonElement root, string name, bool required)
@@ -422,46 +492,22 @@ public static class PolicyRuleDocument
     {
         string? text = ReadName(root, name, required);
 
-        if (text is null)
-        {
-            return null;
-        }
-
-        return Enum.TryParse(text, ignoreCase: true, out TEnum parsed)
-            && Enum.IsDefined(typeof(TEnum), parsed)
-            ? parsed
-            : throw new ArgumentException(
-                $"'{text}' is not a {typeof(TEnum).Name} this library defines.");
+        return text is null ? null : ToEnum<TEnum>(text, name);
     }
 
     /// <summary>Parses one array element as an enumeration member.</summary>
     private static TEnum ParseEnum<TEnum>(JsonElement element, string name)
-        where TEnum : struct, Enum
-    {
-        if (element.ValueKind != JsonValueKind.String)
-        {
-            throw NotAName(name, typeof(TEnum));
-        }
-
-        string text = element.GetString() ?? string.Empty;
-
-        RefuseDigits(text, name, typeof(TEnum));
-
-        return Enum.TryParse(text, ignoreCase: true, out TEnum parsed)
-            && Enum.IsDefined(typeof(TEnum), parsed)
-            ? parsed
-            : throw new ArgumentException(
-                $"'{text}' is not a {typeof(TEnum).Name} this library defines.");
-    }
+        where TEnum : struct, Enum =>
+        element.ValueKind == JsonValueKind.String
+            ? ToEnum<TEnum>(element.GetString(), name)
+            : throw NotAName(name, typeof(TEnum));
 
     /// <summary>
     /// Reads the text of a property that must name an enumeration member.
     /// </summary>
     /// <remarks>
-    /// A number is refused, and so is a string of digits. A number is what an absent or defaulted
-    /// column produces, and four of the enumerations a rule carries have a member at zero, so
-    /// accepting one would turn a missing field into a grant, a global audience, an equality
-    /// restriction or the wrong data type.
+    /// A JSON number is refused here; a string of digits is refused by <see cref="ToEnum{TEnum}"/>,
+    /// which is where a store column arrives too, so both paths refuse the same things.
     /// </remarks>
     private static string? ReadName(JsonElement root, string name, bool required)
     {
@@ -470,35 +516,9 @@ public static class PolicyRuleDocument
             return required ? throw Missing(name) : null;
         }
 
-        if (value.ValueKind != JsonValueKind.String)
-        {
-            throw NotAName(name, null);
-        }
-
-        string text = value.GetString() ?? string.Empty;
-
-        RefuseDigits(text, name, null);
-
-        return text;
-    }
-
-    /// <summary>Refuses an enumeration written as digits inside a string.</summary>
-    private static void RefuseDigits(string text, string name, Type? type)
-    {
-        if (text.Length == 0)
-        {
-            throw new ArgumentException($"'{name}' cannot be empty.");
-        }
-
-        foreach (char character in text)
-        {
-            if (!char.IsDigit(character) && character != '-' && character != '+')
-            {
-                return;
-            }
-        }
-
-        throw NotAName(name, type);
+        return value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : throw NotAName(name, null);
     }
 
     /// <summary>Reads an optional string, treating an explicit null as absent.</summary>

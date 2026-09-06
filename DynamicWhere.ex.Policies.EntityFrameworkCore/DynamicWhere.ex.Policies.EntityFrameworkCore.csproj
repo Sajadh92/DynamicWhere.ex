@@ -7,10 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The same floor the core declares. The store uses no raw SQL and no provider-specific API,
-         which is what lets one package serve SQL Server, PostgreSQL and anything else with an EF
-         provider — see design section 5.6. -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="6.0.22" />
+    <!-- The same floor the core declares. Relational rather than the base package because table
+         names and indexes are relational concepts; it brings Microsoft.EntityFrameworkCore with
+         it. The store uses no raw SQL and no provider-specific API, which is what lets one package
+         serve SQL Server, PostgreSQL and anything else with an EF relational provider — see design
+         section 5.6. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="6.0.22" />
   </ItemGroup>
 
   <ItemGroup>

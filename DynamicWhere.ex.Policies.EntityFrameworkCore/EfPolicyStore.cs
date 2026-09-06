@@ -32,12 +32,16 @@ public sealed class EfPolicyStore : IDwPolicyWritableStore
     /// How many times a write retries when another writer moved the version underneath it.
     /// </summary>
     /// <remarks>
-    /// Bounded rather than unbounded: a contended version row should be retried, and a write that
-    /// cannot land after a few attempts is a signal, not something to spin on. Exhausting the
-    /// budget rethrows, which surfaces to the caller as a failed administrative write rather than
-    /// as a policy silently unchanged.
+    /// Bounded rather than unbounded: a write that cannot land after several attempts is a signal,
+    /// not something to spin on. Exhausting the budget rethrows, which surfaces to the caller as a
+    /// failed administrative write rather than as a policy silently unchanged.
+    /// <para>
+    /// Eight rather than a handful because every writer contends for the same single row, so the
+    /// losers of one round are the contenders of the next. Twelve concurrent writers exhausted a
+    /// budget of four against a real PostgreSQL server.
+    /// </para>
     /// </remarks>
-    private const int WriteAttempts = 4;
+    private const int WriteAttempts = 8;
 
     private readonly Func<DbContext> _contexts;
     private readonly Func<string, Type?>? _resolveType;
@@ -305,6 +309,13 @@ public sealed class EfPolicyStore : IDwPolicyWritableStore
                 // Either the token caught a concurrent bump, or two writers raced to create the
                 // single row. Both are the same event — somebody else moved the version — and both
                 // are resolved by reading it again on a fresh context.
+                //
+                // Backed off, and jittered, before that re-read. Retrying immediately puts every
+                // loser of a round back on the row at the same instant, so they collide again and
+                // the contention does not decay: twelve concurrent writers exhausted a budget of
+                // four that way. The jitter is what breaks the lockstep; the growth is what bounds
+                // the total wait.
+                await Task.Delay(Random.Shared.Next(2, 12) * attempt, ct).ConfigureAwait(false);
             }
         }
     }

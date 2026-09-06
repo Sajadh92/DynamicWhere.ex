@@ -181,6 +181,22 @@ public sealed class SqlitePolicyDatabase : IDisposable
     public EfPolicyStore Store(Func<string, Type?>? resolveType = null) =>
         new(() => Create(), resolveType);
 
+    /// <summary>Empties both tables, so a conformance test starts from nothing.</summary>
+    /// <remarks>
+    /// Emptying rather than dropping and recreating: the conformance suite asks for a clean store
+    /// many times per class, and a schema rebuild per call is the slower way to reach the same
+    /// state. Removing the version row returns the database to version zero, which is what an
+    /// untouched one reports.
+    /// </remarks>
+    public void Reset()
+    {
+        using DwPolicyDbContext db = Create();
+
+        db.PolicyRules.RemoveRange(db.PolicyRules.ToList());
+        db.PolicyVersion.RemoveRange(db.PolicyVersion.ToList());
+        db.SaveChanges();
+    }
+
     /// <summary>Closes the database, which is what destroys it.</summary>
     public void Dispose() => _connection.Dispose();
 }

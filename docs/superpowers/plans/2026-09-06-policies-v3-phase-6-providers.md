@@ -228,30 +228,30 @@ SQLite and on Testcontainers PostgreSQL.
 
 ## Tasks
 
-- [ ] **1. `PolicyRuleDocument`** — whole rule to JSON and back, every carrier round-tripped,
+- [x] **1. `PolicyRuleDocument`** — whole rule to JSON and back, every carrier round-tripped,
       operators by name, null distinguished from empty, `ForcedPredicate` through its own factories,
       a document naming both a value and a context value refused, `MutateStage` refused in both
       directions, every malformed shape throwing rather than returning a partial rule.
-- [ ] **2. The two projects, the solution and the release plumbing** — both csprojs at the core's
+- [x] **2. The two projects, the solution and the release plumbing** — both csprojs at the core's
       version, both added to `DynamicWhere.ex.sln`, `publish.yml` packing all three, and
       `check-version.ps1` failing when the three versions disagree. The check is extended and seen
       to fail before the projects exist.
-- [ ] **3. The EF model** — records, configurations, the standalone context, enums as names, the
+- [x] **3. The EF model** — records, configurations, the standalone context, enums as names, the
       `SubjectKeyNormalized` column, and the two indexes from §5.6.
-- [ ] **4. `EfPolicyStore`** — load, narrow, version, upsert, delete, no watch, and the version bump
+- [x] **4. `EfPolicyStore`** — load, narrow, version, upsert, delete, no watch, and the version bump
       as a concurrency token with a bounded retry.
-- [ ] **5. EF conformance** — derived twice, on SQLite and on PostgreSQL, plus the sealed-field
+- [x] **5. EF conformance** — derived twice, on SQLite and on PostgreSQL, plus the sealed-field
       resolver hook the base already supplies.
-- [ ] **6. `RedisPolicyStore`** — the key layout, one transaction per write covering the rule, the
+- [x] **6. `RedisPolicyStore`** — the key layout, one transaction per write covering the rule, the
       owner index, the `INCR` and the `PUBLISH`, and `GetVersionAsync` reading the version key for
       real rather than stubbing it.
-- [ ] **7. The Redis watch** — subscribe to `dw:policy:version`, surface it as `IAsyncEnumerable`,
+- [x] **7. The Redis watch** — subscribe to `dw:policy:version`, surface it as `IAsyncEnumerable`,
       and prove the poll still bounds a dropped message.
-- [ ] **8. Redis conformance** — derived on Testcontainers, with a fresh key prefix per store.
-- [ ] **9. The reading pass** — the fail-open sweep across everything this phase added, before the
+- [x] **8. Redis conformance** — derived on Testcontainers, with a fresh key prefix per store.
+- [x] **9. The reading pass** — the fail-open sweep across everything this phase added, before the
       gate. Seventeen of this shape across five phases, and not one found by a test that already
       existed.
-- [ ] **10. Phase gate** — release build zero warnings across the whole solution, full suite green,
+- [x] **10. Phase gate** — release build zero warnings across the whole solution, full suite green,
       the four named files untouched, roadmap updated.
 
 ---

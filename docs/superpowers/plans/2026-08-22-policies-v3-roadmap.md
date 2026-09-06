@@ -128,7 +128,10 @@ letting it reach the resolver.
 ### Phase 6 — Store providers
 
 `DynamicWhere.ex.Policies.Redis` and `DynamicWhere.ex.Policies.EntityFrameworkCore`, including the
-`DwPolicyRules` and `DwPolicyVersion` schema and migrations.
+`DwPolicyRules` and `DwPolicyVersion` schema and migrations. **Done — see the Phase 6 outcome
+below.** The schema ships and the migrations do not: a migration is generated per provider, and
+§5.6's claim that one package serves SQL Server, Postgres and anything else with an EF provider
+stops being true the moment one is shipped.
 
 **Exit:** the same conformance suite passes against all three implementations. Redis pub/sub
 invalidation and DB version polling both verified.
@@ -491,6 +494,155 @@ Both settled against the design document rather than against the plan.
 - **`ValidatePolicyModel()` still does not exist.** Section 4.8's rules are enforced at query time
   and fail closed. `[DwForceWhere(ContextValue = ...)]` naming a key nothing supplies is listed
   there as a startup check and cannot be one — what a context supplies is per-request.
+
+## Phase 6 outcome
+
+Closed 2026-09-06, 8 commits. 1179 tests pass, up from 1072. `dotnet build -c Release` across the
+whole solution emits zero warnings, and the four named files are untouched — as is the whole of
+`Source/`.
+
+Plan: [2026-09-06-policies-v3-phase-6-providers.md](2026-09-06-policies-v3-phase-6-providers.md).
+
+### Four decisions settled before implementation
+
+1. **One whole-rule serializer, refusing what it cannot carry.** §5.1 gives a rule one payload
+   column, for the transform, and the rule carries four more things. See below.
+2. **The conformance suite runs against real infrastructure**, not a fake: Redis and PostgreSQL in
+   containers, plus a SQLite leg. A fake proves the fake works, and the property the suite exists
+   for is that three real stores behave alike.
+3. **The package ships the model and no migrations.** A migration is per provider, so shipping one
+   contradicts §5.6's own claim. The two entity configurations are public, so the tables can join a
+   migration history the consumer already runs.
+4. **The two new packages version in lockstep with the core**, and the release plumbing was extended
+   in this phase rather than in Phase 9.
+
+The first, third and fourth were taken as offered; the second was taken stronger than proposed —
+a real PostgreSQL server was added to what had been a SQLite-only relational leg, and it earned its
+place twice over within the hour.
+
+### Public API added
+
+- `Policies.Storage` — `PolicyRuleDocument`, `RuleDetail`, `SealedFields`,
+  `PolicyRule.NormalizeSubjectKey`
+- `DynamicWhere.ex.Policies.Redis` — `RedisPolicyStore`
+- `DynamicWhere.ex.Policies.EntityFrameworkCore` — `EfPolicyStore`, `DwPolicyRuleRecord`,
+  `DwPolicyVersionRecord`, `DwPolicyRuleConfiguration`, `DwPolicyVersionConfiguration`,
+  `DwPolicyDbContext`
+
+### Design §5.1 is short by four fields, and three of them fail open
+
+This is the phase's headline finding, and it was in the specification rather than the code. §5.1
+gives a rule one `Payload` column — "mask spec, default value, bucket step" — and `PolicyPayload`
+reads exactly that. The `PolicyRule` Phase 5 shipped also carries `Forced`, `RequiredOperators`,
+`AllowedOperators` and `Alias`.
+
+| Carrier | What dropping it does |
+|---|---|
+| `Forced` | A tenant scope stops being injected — cross-tenant disclosure |
+| `RequiredOperators` | The demand to filter disappears; the field is readable unscoped |
+| `AllowedOperators` | `null` means "says nothing", so the restriction becomes no restriction |
+| `Alias` | Cosmetic, and the only one of the four that is |
+
+`InMemoryPolicyStore` never exposed this because it holds `PolicyRule` objects and never serializes
+one, and **no store test exercised any of the four**. This was the first phase in which a rule left
+the process. `PolicyRuleDocument` now carries all of them, and each of the three is
+mutation-checked separately: dropping it from the writer turns the suite red on its own.
+
+### Zero-defaulting reaches two more enumerations
+
+Phase 5 recorded four axes whose zero member is the permissive one. Serialization adds two more:
+`Operator.Equal` is `0` and `DataType.Text` is `0`, so an unparsed operator restriction reads as a
+plausible-looking equality restriction nobody wrote, and a forced predicate reads as the wrong type
+to validate its value against. Every enumeration is therefore written by name and read by name, in
+JSON and in a database column alike, through one parser both providers share — and a string of
+digits is refused as firmly as a blank.
+
+### Three defects found by reading, none by a test
+
+Twenty of this shape now, across six phases.
+
+- **The relational zones did not partition the table.** Broad asked for `SubjectKind <> 'User'` and
+  narrow asked for `SubjectKind = 'User'` *and* a normalized key in the caller's set — so a user row
+  whose normalized key was null belonged to neither query. It loaded into no zone, threw nothing, and
+  left the snapshot one denial short of what the table held. The test written for it failed with "no
+  exception was thrown", which is what invisible looks like. Broad now asks for everything narrow
+  could never return, so such a row reaches `StoreSnapshot`'s existing refusal. This matters *because*
+  the package ships no migrations: the consumer generates the schema, and can generate one this
+  library did not intend.
+- **The Redis transaction's result was discarded.** `ExecuteAsync` returns false when the transaction
+  was abandoned and the queued commands never ran, so an upsert would return the rule and publish a
+  version with the hash untouched — an operator told a control is in force when nothing was stored.
+  The queued command tasks were dropped too, turning a command that failed inside a committed
+  transaction into an unobserved exception and a silent success.
+- **A rule document whose detail was a JSON scalar** threw `InvalidOperationException` out of
+  `TryGetProperty` rather than the `ArgumentException` the contract names. Fail-closed, but not a
+  refusal a caller could write a catch for.
+
+### Corrections made during execution
+
+- **The version must be read before the rules, in both stores.** Read after, a write landing in
+  between stamps the snapshot with a version *newer* than the rules it holds — and since the poll
+  compares versions, the instance sees no change and serves the previous policy indefinitely. Read
+  first, the same race stamps a version older than the rules and costs one redundant reload.
+- **`dotnet pack` takes one project.** The first attempt at the release plumbing passed three and
+  would have failed the release rather than the build. Found by running it.
+- **A retry budget of four was not enough under contention.** Twelve concurrent writers exhausted it
+  against a real PostgreSQL server: every loser of a round retried at the same instant and collided
+  again, so the contention never decayed. Backed off with jitter and raised to eight. SQLite could
+  not have shown this, which is the whole argument for the container leg.
+
+### Decisions worth not re-litigating
+
+- **A row that cannot be read fails the load; it is never skipped.** A skipped row is a denial that
+  has stopped applying with nothing reporting it. Failing routes into machinery that already exists:
+  fatal at startup, and afterwards a refresh failure bounded by the staleness ceiling.
+- **The relational row is a `DwPolicyRuleRecord` and never a `PolicyRule`.** EF materializes by
+  setting properties, which would walk past every boundary refusal Phase 5 mutation-checked — the
+  guards that exist precisely for a rule arriving from a database.
+- **Subject identities are normalized on write in both stores, through one shared normalizer.**
+  Redis matches keys byte for byte; a relational `=` honours the column's collation, which is
+  case-insensitive on SQL Server's default and case-sensitive on PostgreSQL. Without this the same
+  rule applies on a developer's SQL Server and not on the production Postgres.
+- **Instants are stored as UTC.** Npgsql refuses a `DateTimeOffset` with a non-zero offset for
+  `timestamptz`, so a rule valid from midnight in Baghdad would save on one provider and throw on
+  another. Nothing this library reads is lost: validity is compared as an instant.
+- **The Redis publish is the fast path and the poll is the mechanism.** `GetVersionAsync` reads the
+  counter for real; mutation-checking a stubbed version turns three tests red.
+
+### Known limitations
+
+- **The suite now needs a Docker daemon, and `publish.yml` runs it before packing** — so a daemon is
+  required to cut a release, not merely to build. `ubuntu-latest` supplies one. It fails rather than
+  skipping when none is available, deliberately: a conformance leg that quietly does not run reads
+  as three stores agreeing when only one was checked.
+- **`EntityType` and `FieldPath` are capped at 512 characters.** SQL Server and PostgreSQL both
+  throw on overflow rather than truncating, so the failure is loud on both named providers; a
+  provider that truncates silently would turn a long generic type name into a rule matching nothing.
+- **A user row with no normalized key is refused rather than repaired.** There is no query that
+  could find such a row on behalf of its own caller, so failing the load is the only honest answer.
+
+### What Phase 7 inherits
+
+- **Two more stores to register, and neither is disposable.** `RedisPolicyStore` does not own its
+  multiplexer and `EfPolicyStore` creates a context per operation, so the admin surface wires them
+  as singletons over resources the host already owns.
+- **`POST /rules` gets its configuration-time sealed-field check for free** — `SealedFields.Refuse`
+  is shared, so all three stores refuse identically and the endpoint inherits whichever is
+  registered.
+- **The audit columns are populated by whoever writes the rule, and nothing sets them today.**
+  `CreatedBy` and `UpdatedBy` round-trip through both stores and are always null unless a caller
+  supplies them; the admin surface is where a principal is actually known.
+
+### What Phase 9 inherits
+
+- **The release ships three packages now.** `publish.yml` packs all three and
+  `build/check-version.ps1` fails when their versions disagree, so the version bump is one number in
+  three csproj files. Both were verified by packing: six artifacts, and the providers declare
+  `DynamicWhere.ex` at the matching version from their project reference.
+- **§5.1 and §5.2 both need correcting**, on top of the `Effect` column Phase 5 already recorded:
+  §5.1's rule shape is missing four fields, and §5.2's contract is missing `LoadNarrowAsync`.
+- **The EF Core 6.0.22 leg covers three projects now**, not one. Both new packages target the same
+  floor.
 
 ## Phase 5 outcome
 

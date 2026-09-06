@@ -31,6 +31,10 @@ jobs:
       - name: Build
         run: dotnet build DynamicWhere.ex.sln -c Release --no-restore
 
+      # The store conformance suite runs against a real Redis and a real PostgreSQL, started as
+      # containers by Testcontainers. ubuntu-latest supplies the daemon. The suite fails rather
+      # than skipping when none is available, on purpose: a conformance leg that quietly does not
+      # run reads as three stores agreeing when only one of them was checked.
       - name: Test
         run: dotnet test DynamicWhere.Tests/DynamicWhere.Tests.csproj -c Release --no-build
 

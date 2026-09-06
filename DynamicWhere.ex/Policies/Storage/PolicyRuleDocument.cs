@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.DTOs;
@@ -153,6 +153,7 @@ public static class PolicyRuleDocument
             detail.Alias,
             detail.Forced,
             detail.RequiredOperators,
+            detail.Facts,
             ReadGuid(root, "id"),
             ReadString(root, "createdBy"),
             ReadInstant(root, "createdAt"),
@@ -295,9 +296,10 @@ public static class PolicyRuleDocument
         || rule.AllowedOperators is not null
         || rule.Alias is not null
         || rule.Forced is not null
-        || rule.RequiredOperators is not null;
+        || rule.RequiredOperators is not null
+        || rule.Facts is not null;
 
-    /// <summary>Writes the five carriers as one object.</summary>
+    /// <summary>Writes the six carriers as one object.</summary>
     private static void WriteDetail(Utf8JsonWriter writer, PolicyRule rule)
     {
         writer.WriteStartObject();
@@ -340,6 +342,77 @@ public static class PolicyRuleDocument
             }
 
             writer.WriteEndObject();
+        }
+
+        WriteFacts(writer, rule.Facts);
+
+        writer.WriteEndObject();
+    }
+
+    /// <summary>
+    /// Writes what a rule says about a field beyond its access decisions.
+    /// </summary>
+    /// <remarks>
+    /// Each fact is written only when it is set, so that absent and set-to-a-default stay
+    /// distinguishable on the way back in. Two of them make that distinction matter rather than
+    /// merely tidy: an order of zero is a real position and a cost weight of zero is a field the
+    /// budget does not charge for, and both would otherwise read back as "nobody said".
+    /// <para>
+    /// The audit is written by name, like every other enumeration a rule carries and for the same
+    /// reason — <see cref="PolicyFeature.None"/> is zero, so a numeric value that failed to parse
+    /// would read as an audit of nothing, which is an access happening with nothing written down.
+    /// </para>
+    /// </remarks>
+    private static void WriteFacts(Utf8JsonWriter writer, FieldFacts? facts)
+    {
+        if (facts is null)
+        {
+            return;
+        }
+
+        writer.WritePropertyName("facts");
+        writer.WriteStartObject();
+
+        if (facts.Label is not null)
+        {
+            writer.WriteString("label", facts.Label);
+        }
+
+        if (facts.Description is not null)
+        {
+            writer.WriteString("description", facts.Description);
+        }
+
+        if (facts.Group is not null)
+        {
+            writer.WriteString("group", facts.Group);
+        }
+
+        if (facts.Order is int order)
+        {
+            writer.WriteNumber("order", order);
+        }
+
+        if (facts.AllowedValues is { } values)
+        {
+            writer.WriteStartArray("allowedValues");
+
+            for (int i = 0; i < values.Count; i++)
+            {
+                writer.WriteStringValue(values[i]);
+            }
+
+            writer.WriteEndArray();
+        }
+
+        if (facts.CostWeight is int weight)
+        {
+            writer.WriteNumber("cost", weight);
+        }
+
+        if (facts.AuditedFeatures is PolicyFeature audited)
+        {
+            writer.WriteString("audit", audited.ToString());
         }
 
         writer.WriteEndObject();
@@ -394,7 +467,83 @@ public static class PolicyRuleDocument
             ReadOperators(root, "allowedOperators"),
             ReadString(root, "alias"),
             ReadForced(root),
-            ReadOperators(root, "requiredOperators"));
+            ReadOperators(root, "requiredOperators"),
+            ReadFacts(root));
+    }
+
+    /// <summary>Reads the facts block, or null when the rule states none.</summary>
+    /// <remarks>
+    /// The shape is checked before anything is read from it, for the reason the detail's own shape
+    /// is: <c>TryGetProperty</c> throws <see cref="InvalidOperationException"/> on a scalar rather
+    /// than reporting it, and a store's load would surface an exception type the contract never
+    /// mentions.
+    /// </remarks>
+    private static FieldFacts? ReadFacts(JsonElement root)
+    {
+        if (!root.TryGetProperty("facts", out JsonElement facts)
+            || facts.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        if (facts.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException(
+                $"A rule's facts must be a JSON object; this one is {facts.ValueKind}.");
+        }
+
+        return new FieldFacts(
+            ReadString(facts, "label"),
+            ReadString(facts, "description"),
+            ReadString(facts, "group"),
+            ReadInt(facts, "order"),
+            ReadValues(facts),
+            ReadInt(facts, "cost"),
+            ReadAudited(facts));
+    }
+
+    /// <summary>Reads the audited features, or null when the rule audits nothing.</summary>
+    /// <remarks>
+    /// Through <see cref="ToFeatures"/> rather than the single-member reader, because this is a
+    /// flags enumeration and an audit of two features is stored as "Where, Select" — a name no
+    /// single member carries. Reading it the other way refuses a rule that is perfectly valid,
+    /// which fails the load and is loud; the reverse mistake would have been silent.
+    /// </remarks>
+    private static PolicyFeature? ReadAudited(JsonElement facts)
+    {
+        string? name = ReadName(facts, "audit", required: false);
+
+        return name is null ? null : ToFeatures(name);
+    }
+
+    /// <summary>Reads an allowed-value list, or null when the property is absent.</summary>
+    private static IReadOnlyList<string>? ReadValues(JsonElement facts)
+    {
+        if (!facts.TryGetProperty("allowedValues", out JsonElement value)
+            || value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            throw new ArgumentException("'allowedValues' must be an array of strings.");
+        }
+
+        List<string> values = new();
+
+        foreach (JsonElement element in value.EnumerateArray())
+        {
+            if (element.ValueKind != JsonValueKind.String)
+            {
+                throw new ArgumentException(
+                    $"An allowed value must be a string; this one is {element.ValueKind}.");
+            }
+
+            values.Add(element.GetString()!);
+        }
+
+        return values;
     }
 
     /// <summary>Reads an operator list, or null when the property is absent.</summary>
@@ -632,7 +781,7 @@ public static class PolicyRuleDocument
 /// </summary>
 /// <remarks>
 /// Kept together so the store that holds them in one column and the store that holds the whole rule
-/// in one document are reading the same five things through the same routine.
+/// in one document are reading the same six things through the same routine.
 /// </remarks>
 public sealed class RuleDetail
 {
@@ -644,18 +793,23 @@ public sealed class RuleDetail
     /// <param name="requiredOperators">
     /// The operators satisfying a filtering requirement, or null to require none.
     /// </param>
+    /// <param name="facts">
+    /// What the rule says about the field that is not an access decision, or null.
+    /// </param>
     public RuleDetail(
         TransformStage? transform,
         IReadOnlyList<Operator>? allowedOperators,
         string? alias,
         ForcedPredicate? forced,
-        IReadOnlyList<Operator>? requiredOperators)
+        IReadOnlyList<Operator>? requiredOperators,
+        FieldFacts? facts = null)
     {
         Transform = transform;
         AllowedOperators = allowedOperators;
         Alias = alias;
         Forced = forced;
         RequiredOperators = requiredOperators;
+        Facts = facts;
     }
 
     /// <summary>One stage of the field's transform chain, or null.</summary>
@@ -673,6 +827,11 @@ public sealed class RuleDetail
     /// <summary>The operators satisfying a filtering requirement, or null.</summary>
     public IReadOnlyList<Operator>? RequiredOperators { get; }
 
+    /// <summary>
+    /// What the rule says about the field that is not an access decision, or null.
+    /// </summary>
+    public FieldFacts? Facts { get; }
+
     /// <summary>A rule carrying none of them, which is the common case.</summary>
-    public static RuleDetail None { get; } = new(null, null, null, null, null);
+    public static RuleDetail None { get; } = new(null, null, null, null, null, null);
 }

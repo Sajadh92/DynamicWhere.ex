@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
@@ -53,6 +53,10 @@ public sealed class PolicyRule
     /// <param name="transform">One stage of the field's transform chain, or null.</param>
     /// <param name="allowedOperators">The operators this rule permits, or null to say nothing.</param>
     /// <param name="alias">The public name this rule gives the field, or null.</param>
+    /// <param name="facts">
+    /// What this rule says about the field that is not an access decision — how to describe it,
+    /// what querying it costs, whether touching it is recorded — or null when it says none of that.
+    /// </param>
     /// <param name="forced">A predicate to add to every query on the type, or null.</param>
     /// <param name="requiredOperators">
     /// The operators satisfying a filtering requirement, or null to require none.
@@ -89,6 +93,7 @@ public sealed class PolicyRule
         string? alias = null,
         ForcedPredicate? forced = null,
         IReadOnlyList<Operator>? requiredOperators = null,
+        FieldFacts? facts = null,
         Guid? id = null,
         string? createdBy = null,
         DateTimeOffset? createdAt = null,
@@ -132,13 +137,40 @@ public sealed class PolicyRule
                 nameof(features));
         }
 
-        // None covers no feature, so such a rule loses every election in silence. A denial that
-        // does nothing is indistinguishable from a denial nobody wrote.
-        if (features == PolicyFeature.None)
+        // None covers no feature, so such a rule wins no election. That is exactly right for a rule
+        // that decides nothing and only carries something — a name for the field, a restriction on
+        // its operators, a description, a weight — and exactly wrong for one that meant to decide
+        // and did not say what. So the refusal is split in two.
+        //
+        // First: a rule stating nothing at all. Stored, it applies to no query and reads to an
+        // auditor as a control that is in force.
+        bool carries = alias is not null
+            || allowedOperators is not null
+            || requiredOperators is not null
+            || forced is not null
+            || transform is not null
+            || facts is not null;
+
+        if (features == PolicyFeature.None && !carries)
         {
             throw new ArgumentException(
-                "A rule must speak to at least one feature. PolicyFeature.None covers nothing, so " +
-                "the rule would be stored, would apply to no query, and would read as enforced.",
+                "A rule must speak to at least one feature, or carry something that decides nothing " +
+                "— an alias, an operator restriction, a forced predicate, a filtering requirement, " +
+                "a transform, or a field's description, cost or audit. PolicyFeature.None with no " +
+                "carrier would be stored, would apply to no query, and would read as enforced.",
+                nameof(features));
+        }
+
+        // Second, and the more dangerous half: a rule that names an effect and no feature to apply
+        // it to. Without this, an operator who means to deny a field, mistypes the features, and
+        // happens to attach an alias gets a rule that is accepted, stored, and does nothing — while
+        // the admin surface lists it as a denial.
+        if (features == PolicyFeature.None && effect != PolicyEffect.Allow)
+        {
+            throw new ArgumentException(
+                $"A rule with effect '{effect}' names no feature to apply it to, so the {effect} " +
+                "would be stored and would refuse nothing. Name the features, or drop the effect to " +
+                "Allow if the rule only carries a description, a weight or an audit.",
                 nameof(features));
         }
 
@@ -211,6 +243,16 @@ public sealed class PolicyRule
                 "is not assignable to every field of a type.", nameof(transform));
         }
 
+        // A label on the wildcard is refused for the reason an alias is. A cost weight and an audit
+        // flag are not: "every field of this type is expensive" and "record every access to this
+        // type" are both budgets an operator reasonably sets across a whole entity.
+        if (isWildcard && facts is not null && facts.Describes)
+        {
+            throw new ArgumentException(
+                "A label, description, group, order or allowed-value list cannot be attached to the " +
+                "wildcard path: one description cannot stand for every field.", nameof(facts));
+        }
+
         // Such a rule can never apply at any instant. Stored, it reads to an operator as a grant
         // that was configured and to an auditor as a control that is in force, and it is neither.
         if (validFrom is not null && validTo is not null && validTo <= validFrom)
@@ -243,6 +285,7 @@ public sealed class PolicyRule
         Alias = alias;
         Forced = forced;
         RequiredOperators = Copy(requiredOperators);
+        Facts = facts;
         CreatedBy = createdBy;
         CreatedAt = createdAt;
         UpdatedBy = updatedBy;
@@ -309,6 +352,16 @@ public sealed class PolicyRule
 
     /// <summary>The operators satisfying a filtering requirement, or null.</summary>
     public IReadOnlyList<Operator>? RequiredOperators { get; }
+
+    /// <summary>
+    /// What this rule says about the field that is not an access decision, or null when it says
+    /// none of that.
+    /// </summary>
+    /// <remarks>
+    /// Held whole rather than as seven columns, because it rides inside the detail document both
+    /// stores already carry — so a consumer's schema grows nothing to hold it.
+    /// </remarks>
+    public FieldFacts? Facts { get; }
 
     /// <summary>Who granted this.</summary>
     public string? CreatedBy { get; }
@@ -432,7 +485,8 @@ public sealed class PolicyRule
             Alias,
             Forced,
             RequiredOperators,
-            Transform);
+            Transform,
+            Facts);
 
     /// <summary>The subject in the form <see cref="DwSubject.ToString"/> writes it.</summary>
     public string Describe() =>

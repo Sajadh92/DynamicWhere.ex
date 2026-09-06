@@ -1,7 +1,8 @@
-using System.Reflection;
+﻿using System.Reflection;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
+using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Policies.Storage;
@@ -54,6 +55,77 @@ public abstract class PolicyStoreConformanceTests
         options.Freeze();
 
         return options;
+    }
+
+    /// <summary>
+    /// Every fact a rule can state about a field, through the store and back.
+    /// </summary>
+    /// <remarks>
+    /// One assertion per fact rather than one comparing whole objects, so a store that loses
+    /// exactly one of them names which. Two of the seven are enforcement: a lost cost weight
+    /// under-charges the query, and a lost audit means the access happened with nothing written
+    /// down.
+    /// </remarks>
+    [Fact]
+    public async Task Every_fact_a_rule_states_survives_the_store()
+    {
+        IDwPolicyWritableStore store = CreateStore();
+
+        PolicyRule written = new(
+            DwSubjectKind.Role, "Manager", StaffType, "Department",
+            PolicyFeature.None, PolicyEffect.Allow,
+            facts: new FieldFacts(
+                label: "Department",
+                description: "Where they work",
+                group: "Organisation",
+                order: 0,
+                allowedValues: new[] { "Sales", "Support" },
+                costWeight: 0,
+                auditedFeatures: PolicyFeature.Select | PolicyFeature.Where));
+
+        await store.UpsertAsync(written, default);
+
+        PolicyRule read = (await store.LoadAsync(default)).For(typeof(Staff))[0];
+
+        Assert.Equal("Department", read.Facts?.Label);
+        Assert.Equal("Where they work", read.Facts?.Description);
+        Assert.Equal("Organisation", read.Facts?.Group);
+        Assert.Equal(0, read.Facts?.Order);
+        Assert.Equal(new[] { "Sales", "Support" }, read.Facts?.AllowedValues);
+        Assert.Equal(0, read.Facts?.CostWeight);
+        Assert.Equal(PolicyFeature.Select | PolicyFeature.Where, read.Facts?.AuditedFeatures);
+    }
+
+    /// <summary>
+    /// A rule that decides nothing and only states facts speaks to no feature, so
+    /// <c>PolicyFeature.None</c> has to survive a store rather than being read as a defaulted zero.
+    /// </summary>
+    [Fact]
+    public async Task A_rule_speaking_to_no_feature_survives_the_store()
+    {
+        IDwPolicyWritableStore store = CreateStore();
+
+        await store.UpsertAsync(
+            new PolicyRule(
+                DwSubjectKind.Global, null, StaffType, "Department",
+                PolicyFeature.None, PolicyEffect.Allow, facts: FieldFacts.ForCost(6)),
+            default);
+
+        PolicyRule read = (await store.LoadAsync(default)).For(typeof(Staff))[0];
+
+        Assert.Equal(PolicyFeature.None, read.Features);
+        Assert.Equal(6, read.Facts?.CostWeight);
+    }
+
+    /// <summary>A rule stating no facts must not grow an empty facts block on the way through.</summary>
+    [Fact]
+    public async Task A_rule_stating_no_facts_reads_back_with_none()
+    {
+        IDwPolicyWritableStore store = CreateStore();
+
+        await store.UpsertAsync(Rule(), default);
+
+        Assert.Null((await store.LoadAsync(default)).For(typeof(Staff))[0].Facts);
     }
 
     // ---------------------------------------------------------------- load, version, watch, poll

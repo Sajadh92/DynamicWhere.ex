@@ -197,6 +197,7 @@ public class DwPolicyRuleRecord
             detail.Alias,
             detail.Forced,
             detail.RequiredOperators,
+            detail.Facts,
             Id,
             CreatedBy,
             CreatedAt,

@@ -122,7 +122,7 @@ public sealed class DwPolicyVersionConfiguration : IEntityTypeConfiguration<DwPo
 /// their own.
 /// </summary>
 /// <remarks>
-/// Optional. <c>EfPolicyStore</c> is written against <see cref="DbContext"/> and reaches its
+/// Optional. <see cref="EfPolicyStore"/> is written against <see cref="DbContext"/> and reaches its
 /// tables through <c>Set&lt;T&gt;</c>, so it serves this context and a consumer's own equally —
 /// which is what makes applying <see cref="DwPolicyRuleConfiguration"/> to an existing context a
 /// real option rather than a documented one.

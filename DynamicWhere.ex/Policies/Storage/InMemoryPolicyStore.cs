@@ -1,9 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
-using DynamicWhere.ex.Policies.Context;
-using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
-using DynamicWhere.ex.Policies.Resolution;
 
 namespace DynamicWhere.ex.Policies.Storage;
 
@@ -269,34 +266,10 @@ public sealed class InMemoryPolicyStore : IDwPolicyWritableStore, IDisposable
     /// Refuses a rule aimed at a field a sealed attribute already speaks to.
     /// </summary>
     /// <remarks>
-    /// Only possible when a type resolver was supplied. The rule would lose at resolution either
-    /// way; refusing it here is what stops an operator from believing they granted something.
+    /// Delegated to <see cref="SealedFields"/> so the relational and Redis stores perform the
+    /// identical check rather than three approximations of it — the conformance suite's
+    /// sealed-field test is worth what it looks like only if all three run the same code.
     /// </remarks>
-    private void RefuseSealed(PolicyRule rule)
-    {
-        Type? type = _resolveType?.Invoke(rule.EntityType);
-
-        if (type is null)
-        {
-            return;
-        }
-
-        DwPolicyContext probe = new();
-
-        foreach (PolicyFragment fragment in new AttributePolicyProvider().GetFragments(type, probe))
-        {
-            if (fragment.Level != PolicyLevel.SealedAttribute
-                || !fragment.Matches(rule.FieldPath)
-                || (fragment.Features & rule.Features) == 0)
-            {
-                continue;
-            }
-
-            throw new ArgumentException(
-                $"'{rule.EntityType}.{rule.FieldPath}' is sealed by {fragment.Source.Origin} for " +
-                $"{fragment.Features & rule.Features}. A rule cannot loosen it, so storing one " +
-                "would record a grant that never takes effect.",
-                nameof(rule));
-        }
-    }
+    private void RefuseSealed(PolicyRule rule) =>
+        SealedFields.Refuse(rule, _resolveType, nameof(rule));
 }

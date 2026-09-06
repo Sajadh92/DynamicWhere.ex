@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Reflection;
 using DynamicWhere.ex.Enums;
@@ -117,6 +117,15 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             foreach (TransformStage stage in TransformStagesOn(property))
             {
                 fragments.Add(ToFragment(path, stage, StageAttributeOn(property, stage.Kind)));
+            }
+
+            // One fragment per attribute rather than one merged fragment for the member, because
+            // each attribute carries its own Overridable flag: [DwCost(10)] can be sealed while the
+            // [DwDescribe] beside it is replaceable, and merging them would force one ceiling on
+            // both.
+            foreach (PolicyFragment fragment in FactFragmentsOn(path, property))
+            {
+                fragments.Add(fragment);
             }
 
             Type? navigation = NavigationTypeOf(property.PropertyType);
@@ -267,11 +276,16 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// Converts an operator restriction into a fragment.
     /// </summary>
     /// <remarks>
-    /// The effect is <see cref="PolicyEffect.Allow"/> and the features are
-    /// <see cref="PolicyFeature.Where"/>, because a restriction refuses nothing on its own — it
-    /// only narrows what a permitted filter may do. The restriction itself rides on the fragment's
-    /// typed operator list, which the resolver intersects rather than elects, so this fragment
-    /// losing the election for <c>Where</c> does not discard it.
+    /// The fragment speaks to <see cref="PolicyFeature.None"/>, because a restriction refuses
+    /// nothing on its own — it only narrows what an already-permitted filter may do. The restriction
+    /// rides on the fragment's typed operator list, which the resolver intersects rather than
+    /// elects, so covering no feature costs it nothing.
+    /// <para>
+    /// Claiming <c>Where</c> with <see cref="PolicyEffect.Allow"/> would be worse than pointless:
+    /// an attribute is sealed unless its author says otherwise, and a sealed allowance outranks
+    /// every runtime denial — so decorating a field with an operator restriction would have made
+    /// that field impossible for any rule to deny.
+    /// </para>
     /// </remarks>
     private static PolicyFragment ToFragment(string fieldPath, DwOperatorsAttribute attribute)
     {
@@ -285,7 +299,7 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
 
         return new PolicyFragment(
             fieldPath,
-            PolicyFeature.Where,
+            PolicyFeature.None,
             PolicyEffect.Allow,
             level,
             source,
@@ -296,14 +310,15 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// Converts a public name into a fragment.
     /// </summary>
     /// <remarks>
-    /// The effect is <see cref="PolicyEffect.Allow"/> and the feature is
-    /// <see cref="PolicyFeature.Where"/> because naming a field refuses nothing. The alias rides on
-    /// the fragment's typed field and is elected outside the per-feature contest, so this fragment
-    /// losing the contest for <c>Where</c> does not discard the name.
+    /// The fragment speaks to <see cref="PolicyFeature.None"/> because naming a field neither
+    /// refuses nor permits anything. The alias rides on the fragment's typed field and is elected
+    /// outside the per-feature contest, so covering no feature costs it nothing — and entering that
+    /// contest would cost a great deal, since a sealed allowance outranks every runtime denial and
+    /// an aliased field would become impossible for a rule to deny.
     /// </remarks>
     private static PolicyFragment ToFragment(string fieldPath, DwAliasAttribute attribute) =>
         new(fieldPath,
-            PolicyFeature.Where,
+            PolicyFeature.None,
             PolicyEffect.Allow,
             LevelOf(attribute),
             SourceOf(attribute),
@@ -312,9 +327,15 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// <summary>
     /// Converts a filtering requirement into a fragment.
     /// </summary>
+    /// <remarks>
+    /// <see cref="PolicyFeature.None"/> for the reason the alias and the operator restriction use
+    /// it: the requirement rides on the fragment's typed operator list and is elected outside the
+    /// per-feature contest. Demanding that a caller filter on a field says nothing about whether
+    /// they may, and a sealed allowance saying they may would outrank every runtime denial.
+    /// </remarks>
     private static PolicyFragment ToFragment(string fieldPath, DwRequireWhereAttribute attribute) =>
         new(fieldPath,
-            PolicyFeature.Where,
+            PolicyFeature.None,
             PolicyEffect.Allow,
             LevelOf(attribute),
             SourceOf(attribute),
@@ -361,9 +382,15 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
                 ? ForcedPredicate.FromContext(fieldPath, attribute.Operator, dataType, attribute.ContextValue!)
                 : ForcedPredicate.FromConstant(fieldPath, attribute.Operator, dataType, attribute.Value!);
 
+        // PolicyFeature.None: a forced predicate is the library filtering on the caller's behalf,
+        // which says nothing about whether the caller may filter on the field themselves — the two
+        // are routinely opposite, and that pairing is the usual shape of a tenant boundary. The
+        // predicate is accumulated outside the per-feature contest, so covering no feature costs it
+        // nothing, where claiming Where with Allow at the sealed level would make every scoped
+        // field impossible for a rule to deny.
         return new PolicyFragment(
             fieldPath,
-            PolicyFeature.Where,
+            PolicyFeature.None,
             PolicyEffect.Allow,
             LevelOf(attribute),
             SourceOf(attribute),
@@ -448,6 +475,63 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             LevelOf(attribute),
             SourceOf(attribute),
             transform: stage);
+
+    /// <summary>
+    /// Yields a fragment for each of the four attributes that describe or budget a member rather
+    /// than deciding access to it.
+    /// </summary>
+    /// <remarks>
+    /// All four speak to <see cref="PolicyFeature.None"/>. They decide nothing, and a sealed
+    /// allowance would outrank every runtime denial — so weighing a field with <c>[DwCost]</c>
+    /// would otherwise make that field impossible to deny, which is the opposite of what an
+    /// expensive field wants.
+    /// </remarks>
+    private static IEnumerable<PolicyFragment> FactFragmentsOn(string fieldPath, PropertyInfo property)
+    {
+        DwDescribeAttribute? describe = property.GetCustomAttribute<DwDescribeAttribute>(inherit: true);
+
+        if (describe is not null)
+        {
+            yield return ToFactFragment(
+                fieldPath,
+                describe,
+                new FieldFacts(
+                    describe.Label, describe.Description, describe.Group, describe.DeclaredOrder));
+        }
+
+        DwAllowedValuesAttribute? values =
+            property.GetCustomAttribute<DwAllowedValuesAttribute>(inherit: true);
+
+        if (values is not null)
+        {
+            yield return ToFactFragment(
+                fieldPath, values, new FieldFacts(allowedValues: values.Values));
+        }
+
+        DwCostAttribute? cost = property.GetCustomAttribute<DwCostAttribute>(inherit: true);
+
+        if (cost is not null)
+        {
+            yield return ToFactFragment(fieldPath, cost, FieldFacts.ForCost(cost.Weight));
+        }
+
+        DwAuditAttribute? audit = property.GetCustomAttribute<DwAuditAttribute>(inherit: true);
+
+        if (audit is not null)
+        {
+            yield return ToFactFragment(fieldPath, audit, FieldFacts.ForAudit(audit.Features));
+        }
+    }
+
+    /// <summary>Wraps a set of facts in a fragment that decides nothing.</summary>
+    private static PolicyFragment ToFactFragment(
+        string fieldPath, DwPolicyAttribute attribute, FieldFacts facts) =>
+        new(fieldPath,
+            PolicyFeature.None,
+            PolicyEffect.Allow,
+            LevelOf(attribute),
+            SourceOf(attribute),
+            facts: facts);
 
     /// <summary>The level an attribute's <c>Overridable</c> flag places it at.</summary>
     private static PolicyLevel LevelOf(DwPolicyAttribute attribute) =>

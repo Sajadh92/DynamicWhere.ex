@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
@@ -56,6 +56,7 @@ public static class PolicyModelValidator
             string member = $"{type.Name}.{property.Name}";
 
             CheckAlias(property, member, aliases, errors);
+            CheckFacts(property, member, errors);
 
             ValueTransform chain = ChainOn(property);
 
@@ -91,6 +92,62 @@ public static class PolicyModelValidator
         }
 
         aliases[alias.Name] = member;
+    }
+
+    /// <summary>
+    /// Refuses the four descriptive and budgetary attributes when they state something the fragment
+    /// they become would reject.
+    /// </summary>
+    /// <remarks>
+    /// Every refusal here also exists at fragment construction, which is where the same rule has to
+    /// hold for a runtime rule that never passes through this scan. The point of repeating it is
+    /// <em>when</em>: fragments are built lazily on the first query that touches the type, so
+    /// without this a bare <c>[DwDescribe]</c> surfaces as an exception on a caller's request rather
+    /// than on the deployment that introduced it, and names neither the type nor the member.
+    /// </remarks>
+    private static void CheckFacts(PropertyInfo property, string member, List<string> errors)
+    {
+        if (property.GetCustomAttribute<DwDescribeAttribute>(inherit: true) is { } describe
+            && describe.Label is null
+            && describe.Description is null
+            && describe.Group is null
+            && describe.DeclaredOrder is null)
+        {
+            errors.Add(
+                $"{member}: [DwDescribe] sets nothing. Give it a Label, Description, Group or Order, " +
+                "or remove it.");
+        }
+
+        if (property.GetCustomAttribute<DwAllowedValuesAttribute>(inherit: true) is { } values
+            && values.Values.Length == 0)
+        {
+            errors.Add(
+                $"{member}: [DwAllowedValues] lists no values, which advertises a field with nothing " +
+                "to choose from. List the values, or remove the attribute.");
+        }
+
+        if (property.GetCustomAttribute<DwCostAttribute>(inherit: true) is { Weight: < 0 } cost)
+        {
+            errors.Add(
+                $"{member}: [DwCost({cost.Weight})] is negative, so a query naming this field would " +
+                "buy budget back. Use zero for a field the budget should not charge for.");
+        }
+
+        if (property.GetCustomAttribute<DwAuditAttribute>(inherit: true) is { } audit)
+        {
+            if (audit.Features == PolicyFeature.None)
+            {
+                errors.Add(
+                    $"{member}: [DwAudit(PolicyFeature.None)] records nothing, which cannot be told " +
+                    "apart from no audit at all. Name the features to record, or remove it.");
+            }
+            else if ((audit.Features & ~PolicyFeature.All) != 0)
+            {
+                errors.Add(
+                    $"{member}: [DwAudit({audit.Features})] names a feature this library does not " +
+                    "define.");
+            }
+        }
     }
 
     /// <summary>Refuses a replacement declared alongside a stage it would silently discard.</summary>

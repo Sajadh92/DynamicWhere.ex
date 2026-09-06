@@ -39,6 +39,10 @@ public sealed class FieldPolicy
     /// <param name="transform">
     /// How this field's value is changed on its way out, or null when it is emitted as stored.
     /// </param>
+    /// <param name="facts">
+    /// What is known about this field that is not an access decision, or null when nothing is.
+    /// Elected fact by fact, so this is an assembled view rather than any one fragment's.
+    /// </param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="fieldPath"/> is blank.</exception>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="effects"/> or <paramref name="sources"/> is null.
@@ -52,7 +56,8 @@ public sealed class FieldPolicy
         string? alias = null,
         IReadOnlyList<ForcedPredicate>? forced = null,
         IReadOnlyList<Operator>? requiredOperators = null,
-        ValueTransform? transform = null)
+        ValueTransform? transform = null,
+        FieldFacts? facts = null)
     {
         if (string.IsNullOrWhiteSpace(fieldPath))
         {
@@ -68,6 +73,7 @@ public sealed class FieldPolicy
         ForcedPredicates = forced ?? Array.Empty<ForcedPredicate>();
         RequiredOperators = requiredOperators;
         Transform = transform;
+        Facts = facts;
     }
 
     /// <summary>The field this policy governs.</summary>
@@ -165,4 +171,54 @@ public sealed class FieldPolicy
     /// </remarks>
     public bool SatisfiesRequirement(Operator op) =>
         RequiredOperators is not null && RequiredOperators.Contains(op);
+
+    /// <summary>
+    /// What is known about this field that is not an access decision, or null when nothing is.
+    /// </summary>
+    /// <remarks>
+    /// Assembled fact by fact from every fragment that matched, so a rule that renamed the field
+    /// and an attribute that listed its values both contribute. The individual facts are surfaced
+    /// as properties below; this is here for a caller who wants them as one object.
+    /// </remarks>
+    public FieldFacts? Facts { get; }
+
+    /// <summary>A short human name for this field, or null when nothing names it.</summary>
+    public string? Label => Facts?.Label;
+
+    /// <summary>A longer explanation of what this field holds, or null when nothing explains it.</summary>
+    public string? Description => Facts?.Description;
+
+    /// <summary>The section a schema endpoint lists this field under, or null.</summary>
+    public string? Group => Facts?.Group;
+
+    /// <summary>Where this field sorts within its group, or null when nothing orders it.</summary>
+    public int? Order => Facts?.Order;
+
+    /// <summary>
+    /// The values a caller may usefully filter this field for, or null when it is not enumerable.
+    /// </summary>
+    /// <remarks>
+    /// Advisory. A filter naming a value outside this list is not refused — the list says what is
+    /// worth offering, not what is permitted.
+    /// </remarks>
+    public IReadOnlyList<string>? AllowedValues => Facts?.AllowedValues;
+
+    /// <summary>
+    /// What one reference to this field spends against the query budget, or null when nothing
+    /// weighed it and the standing default applies.
+    /// </summary>
+    public int? CostWeight => Facts?.CostWeight;
+
+    /// <summary>The features whose use of this field is recorded, or null when none is.</summary>
+    public PolicyFeature? AuditedFeatures => Facts?.AuditedFeatures;
+
+    /// <summary>True when this field is audited for anything at all.</summary>
+    public bool IsAudited() => AuditedFeatures is not null;
+
+    /// <summary>
+    /// True when using this field for the given feature is recorded.
+    /// </summary>
+    /// <param name="feature">The feature being used.</param>
+    public bool IsAudited(PolicyFeature feature) =>
+        AuditedFeatures is PolicyFeature audited && (audited & feature) != 0;
 }

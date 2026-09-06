@@ -450,3 +450,62 @@ internal class AliasRequiredLedger
 
     public decimal Amount { get; set; }
 }
+
+/// <summary>
+/// A type carrying the four descriptive and budgetary attributes Phase 7 adds. Kept apart from
+/// <see cref="SecuredEmployee"/> so the attribute-provider tests written against that type keep
+/// counting the fragments they were written to count.
+/// </summary>
+internal class DescribedEmployee
+{
+    public int Id { get; set; }
+
+    [DwDescribe(Label = "Full name", Description = "As printed on the contract",
+                Group = "Identity", Order = 10)]
+    public string Name { get; set; } = string.Empty;
+
+    [DwDescribe(Label = "Status", Group = "Identity", Order = 20)]
+    [DwAllowedValues("Active", "Suspended", "Closed")]
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>Expensive to filter on, and every access is recorded.</summary>
+    [DwCost(10)]
+    [DwAudit]
+    public decimal Salary { get; set; }
+
+    /// <summary>Audited only when projected, not when filtered on.</summary>
+    [DwAudit(PolicyFeature.Select)]
+    public string Email { get; set; } = string.Empty;
+
+    /// <summary>A cost an operator is allowed to retune from the store.</summary>
+    [DwCost(5, Overridable = true)]
+    public string Notes { get; set; } = string.Empty;
+}
+
+/// <summary>A description that describes nothing — refused by the startup scan.</summary>
+internal class BareDescribe
+{
+    [DwDescribe]
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>A value list with no values — refused by the startup scan.</summary>
+internal class EmptyValues
+{
+    [DwAllowedValues]
+    public string Status { get; set; } = string.Empty;
+}
+
+/// <summary>A weight a query would earn budget from — refused by the startup scan.</summary>
+internal class NegativeCost
+{
+    [DwCost(-1)]
+    public string Body { get; set; } = string.Empty;
+}
+
+/// <summary>An audit that records nothing — refused by the startup scan.</summary>
+internal class AuditOfNothing
+{
+    [DwAudit(PolicyFeature.None)]
+    public string Secret { get; set; } = string.Empty;
+}

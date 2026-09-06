@@ -40,6 +40,10 @@ public sealed class PolicyFragment
     /// <param name="transform">
     /// One stage of this field's transform chain, or null when this fragment transforms nothing.
     /// </param>
+    /// <param name="facts">
+    /// What this fragment says about the field that is not an access decision — how to describe it,
+    /// what querying it costs, whether touching it is recorded — or null when it says none of that.
+    /// </param>
     /// <exception cref="ArgumentException">
     /// Thrown when <paramref name="fieldPath"/> is blank, or names no segment once normalized, or
     /// when <paramref name="alias"/> is supplied and is blank, dotted, or the wildcard.
@@ -57,7 +61,8 @@ public sealed class PolicyFragment
         string? alias = null,
         ForcedPredicate? forced = null,
         IReadOnlyList<Operator>? requiredOperators = null,
-        TransformStage? transform = null)
+        TransformStage? transform = null,
+        FieldFacts? facts = null)
     {
         if (string.IsNullOrWhiteSpace(fieldPath))
         {
@@ -84,6 +89,7 @@ public sealed class PolicyFragment
         Forced = forced;
         RequiredOperators = requiredOperators;
         Transform = transform;
+        Facts = facts;
 
         // Refused at the source rather than ignored at the point of use. Ignoring a nonsensical
         // fragment is how a misconfigured rule becomes invisible, and both of these are nonsense on
@@ -94,6 +100,17 @@ public sealed class PolicyFragment
             throw new ArgumentException(
                 "An alias cannot be attached to the wildcard path: one name cannot stand for every " +
                 "field.", nameof(alias));
+        }
+
+        // A description on the wildcard is refused for the reason an alias is: one label cannot
+        // stand for every field of a type. A cost weight and an audit flag are not refused, because
+        // "every field of this type is expensive" and "record every access to this type" are both
+        // budgets an operator reasonably sets.
+        if (IsWildcard && Facts is not null && Facts.Describes)
+        {
+            throw new ArgumentException(
+                "A label, description, group, order or allowed-value list cannot be attached to the " +
+                "wildcard path: one description cannot stand for every field.", nameof(facts));
         }
 
         if (IsWildcard && RequiredOperators is not null)
@@ -203,6 +220,17 @@ public sealed class PolicyFragment
     /// anything at all.
     /// </remarks>
     public TransformStage? Transform { get; }
+
+    /// <summary>
+    /// What this fragment says about the field that is not an access decision, or null when it says
+    /// none of that.
+    /// </summary>
+    /// <remarks>
+    /// Every fact inside elects on its own rather than as a block, so a rule that renames a field
+    /// keeps the allowed values an attribute declared and does not switch off an audit it never
+    /// mentioned.
+    /// </remarks>
+    public FieldFacts? Facts { get; }
 
     /// <summary>True when this fragment addresses every field.</summary>
     public bool IsWildcard => FieldPath == Wildcard;

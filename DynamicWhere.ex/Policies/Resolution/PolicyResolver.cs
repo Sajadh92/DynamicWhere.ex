@@ -147,7 +147,8 @@ public sealed class PolicyResolver
             ElectAlias(candidates),
             CollectForced(candidates),
             ElectRequired(candidates),
-            ElectTransform(candidates));
+            ElectTransform(candidates),
+            ElectFacts(candidates));
     }
 
     /// <summary>
@@ -310,6 +311,116 @@ public sealed class PolicyResolver
     /// </remarks>
     private static IReadOnlyList<Operator>? ElectRequired(IReadOnlyList<PolicyFragment> candidates) =>
         Best(candidates, static f => f.RequiredOperators is not null)?.RequiredOperators;
+
+    /// <summary>
+    /// Assembles what is known about a field beyond its access decisions, electing each fact on its
+    /// own, or null when no fragment states any of them.
+    /// </summary>
+    /// <remarks>
+    /// Fact by fact rather than as a block, for the reason the transform chain is elected stage by
+    /// stage: two attributes decorate one property — <c>[DwDescribe]</c> and
+    /// <c>[DwAllowedValues]</c> — and a single winner-takes-all election between them would let
+    /// whichever won erase the other. It also means a rule that renames a field for one role keeps
+    /// the values the attribute declared instead of silently dropping them.
+    /// <para>
+    /// The ranking is the one the effects use, so a sealed attribute is a ceiling here as
+    /// everywhere else. That is what stops a store from cheapening a field the source code called
+    /// expensive, or switching off an audit it declared.
+    /// </para>
+    /// </remarks>
+    private static FieldFacts? ElectFacts(IReadOnlyList<PolicyFragment> candidates)
+    {
+        string? label = Best(candidates, static f => f.Facts?.Label is not null)?.Facts!.Label;
+        string? description =
+            Best(candidates, static f => f.Facts?.Description is not null)?.Facts!.Description;
+        string? group = Best(candidates, static f => f.Facts?.Group is not null)?.Facts!.Group;
+        int? order = Best(candidates, static f => f.Facts?.Order is not null)?.Facts!.Order;
+        IReadOnlyList<string>? values =
+            Best(candidates, static f => f.Facts?.AllowedValues is not null)?.Facts!.AllowedValues;
+
+        int? cost = ElectCost(candidates);
+        PolicyFeature? audited = ElectAudited(candidates);
+
+        if (label is null && description is null && group is null && order is null
+            && values is null && cost is null && audited is null)
+        {
+            return null;
+        }
+
+        return new FieldFacts(label, description, group, order, values, cost, audited);
+    }
+
+    /// <summary>
+    /// Elects a cost weight, taking the dearest of any that tie, or null when nothing weighs the
+    /// field.
+    /// </summary>
+    /// <remarks>
+    /// Rank decides first, so a sealed weight cannot be undercut. What rank cannot separate is two
+    /// rules at one level disagreeing, and there the ordinary tiebreak is the effect — which means
+    /// nothing on a fragment carrying only a weight, and would attribute the answer to whichever
+    /// fragment happened to be swept first. The dearer weight wins instead: a caller holding two
+    /// entitlements that disagree about cost is charged the higher, which is the same direction
+    /// every other tie in this resolver breaks.
+    /// </remarks>
+    private static int? ElectCost(IReadOnlyList<PolicyFragment> candidates)
+    {
+        PolicyFragment? best = Best(candidates, static f => f.Facts?.CostWeight is not null);
+
+        if (best is null)
+        {
+            return null;
+        }
+
+        int weight = best.Facts!.CostWeight!.Value;
+
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            PolicyFragment candidate = candidates[i];
+
+            // Nothing outranks the winner, so a candidate the winner does not outrank is tied with
+            // it. Anything the winner does outrank is a level that was discarded, not merged.
+            if (candidate.Facts?.CostWeight is int other
+                && !Outranks(best, candidate)
+                && other > weight)
+            {
+                weight = other;
+            }
+        }
+
+        return weight;
+    }
+
+    /// <summary>
+    /// Elects the audited features, uniting any that tie, or null when nothing audits the field.
+    /// </summary>
+    /// <remarks>
+    /// United rather than picked among ties, for the reason the cost takes the dearest: two
+    /// entitlements that each record a different feature both meant that feature recorded, and
+    /// dropping one because it was swept second loses a security record with nothing reporting it.
+    /// </remarks>
+    private static PolicyFeature? ElectAudited(IReadOnlyList<PolicyFragment> candidates)
+    {
+        PolicyFragment? best = Best(candidates, static f => f.Facts?.AuditedFeatures is not null);
+
+        if (best is null)
+        {
+            return null;
+        }
+
+        PolicyFeature audited = best.Facts!.AuditedFeatures!.Value;
+
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            PolicyFragment candidate = candidates[i];
+
+            if (candidate.Facts?.AuditedFeatures is PolicyFeature other && !Outranks(best, candidate))
+            {
+                audited |= other;
+            }
+        }
+
+        return audited;
+    }
 
     /// <summary>
     /// Assembles the transform chain by electing one winner for each stage, or null when nothing

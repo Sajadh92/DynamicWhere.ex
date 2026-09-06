@@ -17,6 +17,18 @@ internal sealed class FakePolicyProvider : IDwPolicyProvider
 
     private string? _onlyForUser;
 
+    /// <summary>A provider holding nothing until a test adds to it.</summary>
+    public FakePolicyProvider()
+    {
+    }
+
+    /// <summary>
+    /// A provider returning exactly these fragments, for a test that builds them itself rather than
+    /// through the <c>Add</c> helpers.
+    /// </summary>
+    /// <param name="fragments">The fragments to return.</param>
+    public FakePolicyProvider(IEnumerable<PolicyFragment> fragments) => _fragments.AddRange(fragments);
+
     /// <summary>
     /// Adds a fragment.
     /// </summary>
@@ -53,9 +65,11 @@ internal sealed class FakePolicyProvider : IDwPolicyProvider
     {
         PolicySource source = PolicySource.FromAttribute($"FakeOperators{_fragments.Count}", isSealed: false);
 
+        // PolicyFeature.None, as the real provider emits: a carrier decides nothing and must not
+        // win an effect election, or a sealed one would outrank every runtime denial.
         _fragments.Add(new PolicyFragment(
             fieldPath,
-            PolicyFeature.Where,
+            PolicyFeature.None,
             PolicyEffect.Allow,
             level,
             source,
@@ -96,7 +110,7 @@ internal sealed class FakePolicyProvider : IDwPolicyProvider
         string fieldPath, string alias, PolicyLevel level, int priority = 0)
     {
         _fragments.Add(new PolicyFragment(
-            fieldPath, PolicyFeature.Where, PolicyEffect.Allow, level, SourceFor(level), priority,
+            fieldPath, PolicyFeature.None, PolicyEffect.Allow, level, SourceFor(level), priority,
             alias: alias));
 
         return this;
@@ -111,7 +125,7 @@ internal sealed class FakePolicyProvider : IDwPolicyProvider
     public FakePolicyProvider AddForced(ForcedPredicate forced, PolicyLevel level)
     {
         _fragments.Add(new PolicyFragment(
-            forced.FieldPath, PolicyFeature.Where, PolicyEffect.Allow, level, SourceFor(level),
+            forced.FieldPath, PolicyFeature.None, PolicyEffect.Allow, level, SourceFor(level),
             forced: forced));
 
         return this;
@@ -128,7 +142,7 @@ internal sealed class FakePolicyProvider : IDwPolicyProvider
         string fieldPath, PolicyLevel level, params Operator[] operators)
     {
         _fragments.Add(new PolicyFragment(
-            fieldPath, PolicyFeature.Where, PolicyEffect.Allow, level, SourceFor(level),
+            fieldPath, PolicyFeature.None, PolicyEffect.Allow, level, SourceFor(level),
             requiredOperators: operators));
 
         return this;

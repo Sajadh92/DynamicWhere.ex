@@ -494,10 +494,10 @@ Both settled against the design document rather than against the plan.
 
 ## Phase 5 outcome
 
-Closed 2026-09-01, 12 commits. 1072 tests pass, up from 911. `dotnet build -c Release` across the
+Closed 2026-09-06, 14 commits. 1072 tests pass, up from 911. `dotnet build -c Release` across the
 whole solution emits zero warnings, and the four named files are untouched.
 
-Plan: [2026-09-01-policies-v3-phase-5-store.md](2026-09-01-policies-v3-phase-5-store.md).
+Plan: [2026-09-06-policies-v3-phase-5-store.md](2026-09-06-policies-v3-phase-5-store.md).
 
 ### Five decisions settled before implementation
 

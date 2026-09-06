@@ -115,13 +115,12 @@ public class DwPolicyRuleRecord
     /// <param name="key">The identity as it was written, or null.</param>
     /// <returns>The identity in the form the column holds, or null.</returns>
     /// <remarks>
-    /// Invariant, never the current culture. Under <c>tr-TR</c>, <c>"I".ToLower()</c> is <c>"ı"</c>,
-    /// so a culture-sensitive normalizer would write a key on one host that a caller on another
-    /// never matches — the same denial-that-does-nothing, arriving through the locale instead of
-    /// the collation.
+    /// Delegates to <see cref="PolicyRule.NormalizeSubjectKey"/>, which the Redis store uses to
+    /// build its per-user key. Two stores normalizing an identity two ways would disagree about
+    /// whose rule a row is, and the disagreement would look like a caller who simply has no user
+    /// rules.
     /// </remarks>
-    public static string? Normalize(string? key) =>
-        string.IsNullOrWhiteSpace(key) ? null : key!.Trim().ToLowerInvariant();
+    public static string? Normalize(string? key) => PolicyRule.NormalizeSubjectKey(key);
 
     /// <summary>
     /// Builds the row that holds a rule.

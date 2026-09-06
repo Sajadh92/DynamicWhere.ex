@@ -333,6 +333,28 @@ public sealed class PolicyRule
     public bool IsBroad => SubjectKind != DwSubjectKind.User;
 
     /// <summary>
+    /// Reduces a subject identity to the form a store matches on.
+    /// </summary>
+    /// <param name="key">The identity as it was written, or null.</param>
+    /// <returns>The identity in matching form, or null when there is none.</returns>
+    /// <remarks>
+    /// <see cref="MatchesSubject"/> compares with <see cref="StringComparison.OrdinalIgnoreCase"/>,
+    /// and a store outside this process cannot borrow that comparer: a Redis key is matched byte
+    /// for byte, and a relational <c>=</c> honours the column's collation — case-insensitive under
+    /// SQL Server's default and case-sensitive under PostgreSQL. Each store therefore normalizes on
+    /// write and matches on the result, and they do it through this one method so a rule stored by
+    /// one and read by another cannot disagree about whose it is.
+    /// <para>
+    /// Invariant, never the current culture. Under <c>tr-TR</c>, <c>"I".ToLower()</c> is
+    /// <c>"ı"</c>, so a culture-sensitive normalizer would write a key on one host that a caller on
+    /// another never matches — a user-level denial that does nothing, arriving through the locale
+    /// instead of the collation.
+    /// </para>
+    /// </remarks>
+    public static string? NormalizeSubjectKey(string? key) =>
+        string.IsNullOrWhiteSpace(key) ? null : key!.Trim().ToLowerInvariant();
+
+    /// <summary>
     /// True when the rule's validity window contains the given instant.
     /// </summary>
     /// <remarks>

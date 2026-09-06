@@ -351,6 +351,22 @@ public class PolicyRuleDocumentTests
         Assert.Throws<ArgumentNullException>(() => PolicyRuleDocument.ToJson(null!));
     }
 
+    [Fact]
+    public void A_detail_that_is_not_an_object_is_refused()
+    {
+        // Found by reading. TryGetProperty throws InvalidOperationException on a JSON scalar rather
+        // than reporting it, so this arrived at a store's LoadAsync as the wrong exception type
+        // entirely. Still a refusal and still fail-closed, but a contract that says ArgumentException
+        // and throws something else is one a caller cannot write a catch for.
+        Assert.ThrowsAny<ArgumentException>(
+            () => PolicyRuleDocument.ToRule(Document(""" "detail":5 """)));
+
+        Assert.ThrowsAny<ArgumentException>(
+            () => PolicyRuleDocument.ToRule(Document(""" "detail":"a string" """)));
+
+        Assert.ThrowsAny<ArgumentException>(() => PolicyRuleDocument.ReadDetail("[]"));
+    }
+
     // ---------------------------------------------------------------- the detail half, for EF
 
     [Fact]

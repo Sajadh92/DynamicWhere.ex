@@ -372,8 +372,22 @@ public static class PolicyRuleDocument
     }
 
     /// <summary>Reads the five carriers from an object.</summary>
-    private static RuleDetail ReadDetail(JsonElement root) =>
-        new(root.TryGetProperty("transform", out JsonElement transform)
+    /// <remarks>
+    /// The shape is checked before anything is read from it. <c>TryGetProperty</c> throws
+    /// <see cref="InvalidOperationException"/> on a JSON scalar rather than reporting it, so a
+    /// document whose detail was a number reached a store's load as an exception type the contract
+    /// never mentions and no caller could catch for.
+    /// </remarks>
+    private static RuleDetail ReadDetail(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException(
+                $"A rule's detail must be a JSON object; this one is {root.ValueKind}.");
+        }
+
+        return new RuleDetail(
+            root.TryGetProperty("transform", out JsonElement transform)
                 && transform.ValueKind != JsonValueKind.Null
                 ? PolicyPayload.ToStage(transform.GetRawText())
                 : null,
@@ -381,6 +395,7 @@ public static class PolicyRuleDocument
             ReadString(root, "alias"),
             ReadForced(root),
             ReadOperators(root, "requiredOperators"));
+    }
 
     /// <summary>Reads an operator list, or null when the property is absent.</summary>
     private static IReadOnlyList<Operator>? ReadOperators(JsonElement root, string name)

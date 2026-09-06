@@ -118,6 +118,41 @@ public class EfPolicyStoreTests
     }
 
     [Fact]
+    public async Task A_user_row_with_no_matchable_identity_is_not_silently_invisible()
+    {
+        // Found by reading, and it is the branch's own shape one level out. The broad load asked
+        // for SubjectKind <> 'User' and the narrow load asked for SubjectKind = 'User' AND a
+        // normalized key in the caller's set — so a user row whose normalized key is null belonged
+        // to neither query. It loaded into no zone, threw nothing, and left the snapshot counting
+        // one rule fewer than the table holds. A denial that is invisible is a denial that does
+        // nothing.
+        //
+        // This package ships no migrations, so the consumer generates the schema and can generate
+        // one this library did not intend. The two zones must partition the table, not merely
+        // cover the rows a correct writer produces.
+        using SqlitePolicyDatabase database = new();
+
+        await database.Store().UpsertAsync(Rule(), default);
+
+        using (DwPolicyDbContext db = database.Create())
+        {
+            DwPolicyRuleRecord row = await db.PolicyRules.FirstAsync();
+
+            row.SubjectKind = nameof(DwSubjectKind.User);
+            row.SubjectKey = "alice";
+            row.SubjectKeyNormalized = null;
+
+            await db.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAnyAsync<ArgumentException>(
+            async () => await database.Store().LoadAsync(default));
+
+        Assert.Equal(
+            0, (await database.Store().LoadNarrowAsync(new[] { "alice" }, default)).Count);
+    }
+
+    [Fact]
     public async Task A_row_whose_detail_cannot_be_read_fails_the_load()
     {
         using SqlitePolicyDatabase database = new();

@@ -168,20 +168,24 @@ public sealed class RedisPolicyStore : IDwPolicyWritableStore
 
         ITransaction write = db.CreateTransaction();
 
+        List<Task> queued = new();
+
         if (previous.HasValue && previous != target)
         {
-            _ = write.HashDeleteAsync(previous.ToString(), field);
+            queued.Add(write.HashDeleteAsync(previous.ToString(), field));
         }
 
-        _ = write.HashSetAsync(target, field, PolicyRuleDocument.ToJson(rule));
-        _ = write.HashSetAsync(_keys.Owner, field, target);
+        queued.Add(write.HashSetAsync(target, field, PolicyRuleDocument.ToJson(rule)));
+        queued.Add(write.HashSetAsync(_keys.Owner, field, target));
 
         // Inside the transaction with the rule, so the two cannot come apart. The publish below is
         // deliberately outside it: a process that dies after the commit and before the publish has
         // still moved the counter, and the poll is what turns that into a reload.
         Task<long> bumped = write.StringIncrementAsync(_keys.Version);
 
-        await write.ExecuteAsync().ConfigureAwait(false);
+        queued.Add(bumped);
+
+        await CommitAsync(write, queued).ConfigureAwait(false);
 
         await AnnounceAsync(await bumped.ConfigureAwait(false)).ConfigureAwait(false);
 
@@ -205,17 +209,47 @@ public sealed class RedisPolicyStore : IDwPolicyWritableStore
 
         ITransaction write = db.CreateTransaction();
 
+        List<Task> queued = new();
+
         if (owner.HasValue)
         {
-            _ = write.HashDeleteAsync(owner.ToString(), field);
-            _ = write.HashDeleteAsync(_keys.Owner, field);
+            queued.Add(write.HashDeleteAsync(owner.ToString(), field));
+            queued.Add(write.HashDeleteAsync(_keys.Owner, field));
         }
 
         Task<long> bumped = write.StringIncrementAsync(_keys.Version);
 
-        await write.ExecuteAsync().ConfigureAwait(false);
+        queued.Add(bumped);
+
+        await CommitAsync(write, queued).ConfigureAwait(false);
 
         await AnnounceAsync(await bumped.ConfigureAwait(false)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs a transaction, refusing to report success for commands that did not run.
+    /// </summary>
+    /// <remarks>
+    /// <c>ExecuteAsync</c> returns false when the transaction was abandoned, and the queued commands
+    /// then never ran. Discarding that answer would have an upsert return the rule it was given and
+    /// publish a version, telling an operator their rule was stored when the hash is untouched —
+    /// which is a control they will believe is in force.
+    /// <para>
+    /// The queued tasks are awaited rather than discarded for the same reason one level down: a
+    /// command that failed inside a committed transaction faults its own task and nothing else, so
+    /// dropping them turns a failed write into an unobserved exception and a silent success.
+    /// </para>
+    /// </remarks>
+    private static async Task CommitAsync(ITransaction write, List<Task> queued)
+    {
+        if (!await write.ExecuteAsync().ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(
+                "The Redis transaction holding this policy write was not committed, so nothing was " +
+                "stored. Reporting success here would record a rule that is not there.");
+        }
+
+        await Task.WhenAll(queued).ConfigureAwait(false);
     }
 
     /// <summary>Reads the counter, or zero when nothing has been written yet.</summary>

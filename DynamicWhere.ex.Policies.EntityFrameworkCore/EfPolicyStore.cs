@@ -82,9 +82,21 @@ public sealed class EfPolicyStore : IDwPolicyWritableStore
         // which costs one redundant reload and nothing else.
         long version = await ReadVersionAsync(db, ct).ConfigureAwait(false);
 
+        // Everything the narrow load could never return, rather than everything that is not a user
+        // rule. The two zones have to *partition* the table: a user row whose normalized key is
+        // null belongs to neither query written the obvious way, so it would load into no zone,
+        // throw nothing, and leave the snapshot one denial short of what the table holds. This
+        // package ships no migrations, so the consumer generates the schema and can generate one
+        // this library did not intend — the null checks guard exactly that.
+        //
+        // Such a row reaches StoreSnapshot's constructor, which refuses a rule that is not broad,
+        // so a mistake in the schema is a failed load rather than a control that quietly stopped
+        // applying.
         List<DwPolicyRuleRecord> rows = await db.Set<DwPolicyRuleRecord>()
             .AsNoTracking()
-            .Where(row => row.SubjectKind != UserKind)
+            .Where(row => row.SubjectKind != UserKind
+                || row.SubjectKind == null
+                || row.SubjectKeyNormalized == null)
             .ToListAsync(ct)
             .ConfigureAwait(false);
 

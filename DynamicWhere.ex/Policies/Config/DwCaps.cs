@@ -1,4 +1,4 @@
-namespace DynamicWhere.ex.Policies.Config;
+﻿namespace DynamicWhere.ex.Policies.Config;
 
 /// <summary>
 /// Numeric limits applied to every guarded query.
@@ -16,6 +16,8 @@ public sealed class DwCaps
     private int _maxConditions = 50;
     private int _maxOrderFields = 10;
     private int _maxNavigationDepth = 4;
+    private int _maxQueryCost = 1000;
+    private int _defaultFieldCost = 1;
 
     /// <summary>The largest page a caller may request.</summary>
     public int MaxPageSize
@@ -43,6 +45,55 @@ public sealed class DwCaps
     {
         get => _maxNavigationDepth;
         set => _maxNavigationDepth = Set(value);
+    }
+
+    /// <summary>
+    /// The most a single query may spend, summed over every field reference the caller wrote.
+    /// </summary>
+    /// <remarks>
+    /// A reference costs the field's <c>[DwCost]</c> weight, or <see cref="DefaultFieldCost"/> when
+    /// nothing weighs it. Every reference is charged, not every distinct field: charging per field
+    /// would let a caller generate the same work by naming one field a thousand times, which is the
+    /// case this cap exists for.
+    /// <para>
+    /// The default is deliberately generous, as every other cap here is. A control that refuses
+    /// working queries the day a library is upgraded is a control that gets switched off.
+    /// </para>
+    /// </remarks>
+    public int MaxQueryCost
+    {
+        get => _maxQueryCost;
+        set => _maxQueryCost = Set(value);
+    }
+
+    /// <summary>
+    /// What one reference to an unweighted field spends against <see cref="MaxQueryCost"/>.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the cap so a host can decide what "ordinary" costs. Zero is accepted and means
+    /// only fields carrying an explicit <c>[DwCost]</c> are charged at all, which is the posture for
+    /// a model that weighs its few expensive fields and wants the rest free.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the value is negative.</exception>
+    public int DefaultFieldCost
+    {
+        get => _defaultFieldCost;
+        set
+        {
+            if (_frozen)
+            {
+                throw new InvalidOperationException("Policy caps cannot be changed after startup.");
+            }
+
+            if (value < 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value), value,
+                    "A field cost cannot be negative: a query would buy budget back by naming a field.");
+            }
+
+            _defaultFieldCost = value;
+        }
     }
 
     /// <summary>Prevents any further change.</summary>

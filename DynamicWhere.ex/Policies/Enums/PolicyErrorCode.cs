@@ -129,5 +129,16 @@ public enum PolicyErrorCode
     /// silently does not appear — so it is refused instead. Build the context through
     /// <c>DwPolicy.PrepareAsync</c>, once per request.
     /// </remarks>
-    PolicyContextNotPrepared = 18
+    PolicyContextNotPrepared = 18,
+
+    /// <summary>
+    /// The query referenced more expensive fields than the budget allows.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="CapExceeded"/>, which counts clauses. This one counts what those
+    /// clauses cost: a filter well inside every structural limit can still name one expensive field
+    /// enough times to generate work nothing else bounds. An operator reading a log needs to know
+    /// which of the two refused the query, because raising the wrong one changes nothing.
+    /// </remarks>
+    QueryCostExceeded = 19
 }

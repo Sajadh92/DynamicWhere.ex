@@ -104,6 +104,7 @@ internal static class FilterSanitizer
         Canonicalize<T>(working, gate);
 
         EnforceCaps(working, gate);
+        EnforceCost(working, gate);
 
         GateConditions(working.ConditionGroup, gate);
         GateOrders(working, gate);
@@ -184,6 +185,7 @@ internal static class FilterSanitizer
         CanonicalizeGrouping<T>(working.GroupBy, gate);
 
         EnforceCaps(working, gate);
+        EnforceCost(working, gate);
 
         GateConditions(working.ConditionGroup, gate);
         GateGrouping(working.GroupBy, gate);
@@ -595,6 +597,7 @@ internal static class FilterSanitizer
         }
 
         EnforceCaps(working, gate);
+        EnforceCost(working, gate);
         GateSegmentParticipation(working, gate);
         GateSegmentInference(working, gate);
 
@@ -961,6 +964,159 @@ internal static class FilterSanitizer
             {
                 gate.CheckDepth(aggregate.Field);
             }
+        }
+    }
+
+    /// <summary>
+    /// Refuses a filter that spends more than the budget allows.
+    /// </summary>
+    /// <remarks>
+    /// After <see cref="EnforceCaps(Filter, Gate)"/> rather than beside it, and for the opposite
+    /// reason to the one that puts the structural caps first: this one has to resolve a policy for
+    /// every field the caller named, which is exactly the unbounded work the structural caps exist
+    /// to stop. They run first and bound how many fields this pass will ever look at.
+    /// <para>
+    /// Before gating, so a field is charged for being named rather than for surviving. Charging
+    /// only what survives would let a caller measure the policy by watching the budget: a name that
+    /// costs nothing is a name that was dropped.
+    /// </para>
+    /// <para>
+    /// Selects and orders the caller wrote are charged; a projection this library synthesizes for a
+    /// caller who named none is not, because charging for every field of a type would refuse a
+    /// query nobody made expensive.
+    /// </para>
+    /// </remarks>
+    private static void EnforceCost(Filter filter, Gate gate)
+    {
+        Budget budget = new();
+
+        Spend(filter.ConditionGroup, gate, budget);
+
+        if (filter.Orders is not null)
+        {
+            foreach (OrderBy order in filter.Orders)
+            {
+                budget.Charge(order.Field, gate);
+            }
+        }
+
+        if (filter.Selects is not null)
+        {
+            foreach (string field in filter.Selects)
+            {
+                budget.Charge(field, gate);
+            }
+        }
+
+        gate.CheckCost(budget.Total);
+    }
+
+    /// <summary>
+    /// Refuses a summary that spends more than the budget allows.
+    /// </summary>
+    /// <remarks>
+    /// <c>Having</c> and <c>Orders</c> name aggregate aliases and dot-stripped group-by keys rather
+    /// than property paths, so they are not charged here — the fields they stand for are charged
+    /// through <c>GroupBy</c>, and charging both would bill the caller twice for one column.
+    /// </remarks>
+    private static void EnforceCost(Summary summary, Gate gate)
+    {
+        Budget budget = new();
+
+        Spend(summary.ConditionGroup, gate, budget);
+
+        if (summary.GroupBy?.Fields is not null)
+        {
+            foreach (string field in summary.GroupBy.Fields)
+            {
+                budget.Charge(field, gate);
+            }
+        }
+
+        if (summary.GroupBy?.AggregateBy is not null)
+        {
+            foreach (AggregateBy aggregate in summary.GroupBy.AggregateBy)
+            {
+                budget.Charge(aggregate.Field, gate);
+            }
+        }
+
+        gate.CheckCost(budget.Total);
+    }
+
+    /// <summary>
+    /// Refuses a set operation that spends more than the budget allows.
+    /// </summary>
+    /// <remarks>
+    /// One budget across every set rather than one per set. A per-set budget would be spent as many
+    /// times as the caller cares to add sets, which is the same unbounded work with more typing.
+    /// </remarks>
+    private static void EnforceCost(Segment segment, Gate gate)
+    {
+        Budget budget = new();
+
+        foreach (string field in SegmentFields(segment))
+        {
+            budget.Charge(field, gate);
+        }
+
+        gate.CheckCost(budget.Total);
+    }
+
+    /// <summary>Charges every condition in a group tree.</summary>
+    private static void Spend(ConditionGroup? group, Gate gate, Budget budget)
+    {
+        if (group is null)
+        {
+            return;
+        }
+
+        if (group.Conditions is not null)
+        {
+            foreach (Condition condition in group.Conditions)
+            {
+                budget.Charge(condition.Field, budget: gate);
+            }
+        }
+
+        if (group.SubConditionGroups is not null)
+        {
+            foreach (ConditionGroup sub in group.SubConditionGroups)
+            {
+                Spend(sub, gate, budget);
+            }
+        }
+    }
+
+    /// <summary>
+    /// What one query has spent so far.
+    /// </summary>
+    /// <remarks>
+    /// A running total rather than a sum over a collected list, because the list would be the same
+    /// unbounded thing the budget exists to bound.
+    /// </remarks>
+    private sealed class Budget
+    {
+        /// <summary>What has been charged so far.</summary>
+        internal long Total { get; private set; }
+
+        /// <summary>
+        /// Charges one reference to a field.
+        /// </summary>
+        /// <param name="fieldPath">The field, canonical by the time this runs.</param>
+        /// <param name="budget">The gate, which knows the weights and the standing default.</param>
+        internal void Charge(string? fieldPath, Gate budget)
+        {
+            if (string.IsNullOrWhiteSpace(fieldPath))
+            {
+                return;
+            }
+
+            // A long, because the total is a product of two caller-controlled numbers: the number of
+            // references the structural caps allow and the weight an operator set. Both are ints,
+            // and int arithmetic would wrap a large enough product back into a total under budget —
+            // which is a refusal turning into a grant on overflow.
+            Total += budget.CostOf(fieldPath!);
         }
     }
 
@@ -1675,6 +1831,49 @@ internal static class FilterSanitizer
                     yield return property.Name;
                 }
             }
+        }
+
+        /// <summary>
+        /// What one reference to a field spends.
+        /// </summary>
+        /// <remarks>
+        /// The field's own weight when something weighs it, and the standing default otherwise.
+        /// Null and zero are different answers here: null is "nobody weighed this field", which the
+        /// host's default decides, and zero is "this field is free", which the host's default must
+        /// not override.
+        /// </remarks>
+        internal int CostOf(string fieldPath) =>
+            PolicyFor(fieldPath).CostWeight ?? _options.Caps.DefaultFieldCost;
+
+        /// <summary>Refuses a query that spends more than the budget allows.</summary>
+        /// <remarks>
+        /// Its own error code rather than <c>CapExceeded</c>. A filter well inside every structural
+        /// limit can still name one expensive field enough times to generate work nothing else
+        /// bounds, and an operator reading a log has to know which cap to raise.
+        /// </remarks>
+        internal void CheckCost(long total)
+        {
+            if (total <= _options.Caps.MaxQueryCost)
+            {
+                return;
+            }
+
+            string origin =
+                $"MaxQueryCost cap ({_options.Caps.MaxQueryCost}), request cost {total}";
+
+            _trace.Add(new PolicyDecision(
+                WholeClause, PolicyFeature.None, PolicyAction.Denied, origin));
+
+            if (IsDryRun)
+            {
+                return;
+            }
+
+            throw new PolicyException(
+                PolicyErrorCode.QueryCostExceeded, WholeClause, PolicyFeature.None, _options.Tier)
+            {
+                SourceOrigin = origin
+            };
         }
 
         /// <summary>Refuses a filter holding more conditions than the budget allows.</summary>

@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The same floor the core declares. The store uses no raw SQL and no provider-specific API,
+         which is what lets one package serve SQL Server, PostgreSQL and anything else with an EF
+         provider — see design section 5.6. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="6.0.22" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DynamicWhere.ex\DynamicWhere.ex.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DynamicWhere.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+      <PackageId>DynamicWhere.ex.Policies.EntityFrameworkCore</PackageId>
+      <Title>DynamicWhere.ex Policies — Entity Framework Core store</Title>
+      <Description>A database-backed policy store for DynamicWhere.ex field-level policies, built on Entity Framework Core with no raw SQL — so one package serves SQL Server, PostgreSQL, and any other EF Core provider. Implements IDwPolicyStore and IDwPolicyWritableStore, and passes the same store conformance suite the in-memory and Redis stores do. Ships the model rather than the migrations: apply the entity configurations to your own DbContext and generate migrations for your own provider, or use the standalone DwPolicyDbContext. Version changes are polled from a single-row table, guarded by a concurrency token so two writers cannot lose an update. Requires DynamicWhere.ex. Full reference at https://doc.dynamicwhere.com.</Description>
+      <Summary>Database-backed policy store for DynamicWhere.ex — SQL Server, PostgreSQL, any EF Core provider.</Summary>
+      <PackageTags>DynamicWhere DynamicWhere.ex EFCore EntityFrameworkCore EF-Core SqlServer PostgreSQL Policy PolicyStore FieldLevelSecurity DataMasking Authorization RBAC ABAC Multitenancy Migrations DotNet NET6 CSharp</PackageTags>
+      <Authors>Sajjad H. Al-Khafaji</Authors>
+      <Company>Sajjad H. Al-Khafaji</Company>
+      <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
+      <PackageLicenseExpression>MIT</PackageLicenseExpression>
+      <!-- Locked to the core's version; see the note in the Redis package. -->
+      <Version>2.1.5</Version>
+      <PackageProjectUrl>https://doc.dynamicwhere.com</PackageProjectUrl>
+      <RepositoryType>git</RepositoryType>
+      <RepositoryBranch>master</RepositoryBranch>
+      <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
+      <PackageIcon>icon.png</PackageIcon>
+      <PackageReadmeFile>README.md</PackageReadmeFile>
+      <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+      <PublishRepositoryUrl>true</PublishRepositoryUrl>
+      <IncludeSymbols>true</IncludeSymbols>
+      <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+      <GenerateDocumentationFile>true</GenerateDocumentationFile>
+      <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+      <None Include="..\DynamicWhere.ex\icon.png" Pack="true" PackagePath="\" />
+      <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

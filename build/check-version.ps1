@@ -62,6 +62,16 @@ $targets = [ordered]@{
         'Version <strong>([^<]+)</strong>',
         "DynamicWhere\.ex --version ($semver)"
     )
+    # The two policy store providers ship as packages of their own and version in lockstep with
+    # the core. They are listed here because publish.yml packs all three from one push: a bump
+    # that missed one would ship a provider declaring a dependency on a core version it was never
+    # built or tested against, and nothing else in the build would notice.
+    'DynamicWhere.ex.Policies.Redis/DynamicWhere.ex.Policies.Redis.csproj' = @(
+        '<Version>([^<]+)</Version>'
+    )
+    'DynamicWhere.ex.Policies.EntityFrameworkCore/DynamicWhere.ex.Policies.EntityFrameworkCore.csproj' = @(
+        '<Version>([^<]+)</Version>'
+    )
 }
 
 $problems = @()

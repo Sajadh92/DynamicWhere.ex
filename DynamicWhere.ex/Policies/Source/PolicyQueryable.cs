@@ -146,6 +146,11 @@ public sealed class PolicyQueryable<T> where T : class
             ResultTransformer.Rows(
                 result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
 
+            // After transformation, not before: the transform pipeline reads the generated columns
+            // by the names the projection baked in, and renaming first would leave it looking for
+            // columns that no longer exist.
+            ResultTransformer.Rename(result.Data, TypePolicy, trace);
+
             result.Policy = trace;
 
             return result;
@@ -170,6 +175,11 @@ public sealed class PolicyQueryable<T> where T : class
 
             ResultTransformer.Rows(
                 result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+
+            // After transformation, not before: the transform pipeline reads the generated columns
+            // by the names the projection baked in, and renaming first would leave it looking for
+            // columns that no longer exist.
+            ResultTransformer.Rename(result.Data, TypePolicy, trace);
 
             result.Policy = trace;
 
@@ -197,6 +207,11 @@ public sealed class PolicyQueryable<T> where T : class
 
             ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
 
+            // After the collision check, which reads the real column names. A summary key is a
+            // generated column like any other, so it follows the same vocabulary the schema
+            // advertises.
+            ResultTransformer.Rename(result.Data, TypePolicy, trace);
+
             result.Policy = trace;
 
             return result;
@@ -220,6 +235,11 @@ public sealed class PolicyQueryable<T> where T : class
             SummaryResult result = await Guarded().ToListAsync(sanitized, getQueryString);
 
             ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
+
+            // After the collision check, which reads the real column names. A summary key is a
+            // generated column like any other, so it follows the same vocabulary the schema
+            // advertises.
+            ResultTransformer.Rename(result.Data, TypePolicy, trace);
 
             result.Policy = trace;
 

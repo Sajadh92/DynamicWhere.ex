@@ -171,6 +171,40 @@ public sealed class DwPolicyContext
     }
 
     /// <summary>
+    /// A copy carrying the same caller and the same pinned snapshots, with an audit buffer of its
+    /// own.
+    /// </summary>
+    /// <remarks>
+    /// For a simulation. Sanitizing a filter to show an operator what would happen consults the
+    /// policy exactly as a real query does, and would therefore record the caller as having touched
+    /// every audited field the filter names — an access that did not happen, in the log kept
+    /// precisely to establish which accesses did.
+    /// <para>
+    /// The attachments are shared rather than re-read: a simulation must answer against the same
+    /// snapshot the caller's real queries are being served from, or it answers about a policy
+    /// nobody is enforcing. They are immutable once pinned, so sharing them is safe.
+    /// </para>
+    /// </remarks>
+    internal DwPolicyContext ForSimulation()
+    {
+        DwPolicyContext copy = new() { DryRun = DryRun, Purpose = Purpose };
+
+        copy._subjects.AddRange(_subjects);
+
+        foreach (KeyValuePair<string, object?> value in _values)
+        {
+            copy._values[value.Key] = value.Value;
+        }
+
+        foreach (KeyValuePair<object, PolicyAttachment> attachment in _attachments)
+        {
+            copy._attachments[attachment.Key] = attachment.Value;
+        }
+
+        return copy;
+    }
+
+    /// <summary>
     /// Records what a store provider pinned to this context when it was prepared.
     /// </summary>
     /// <remarks>

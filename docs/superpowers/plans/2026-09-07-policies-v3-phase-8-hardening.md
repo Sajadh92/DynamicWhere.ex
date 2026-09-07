@@ -119,20 +119,20 @@ floor into the generated SQL, which is the pipeline this phase must not touch.
 
 Each ends with a commit. TDD throughout: the failing test is written and seen to fail first.
 
-- [ ] **1. Plan.** This document.
-- [ ] **2. Aggregation is denied on a transformed field.** `AllowAggregate` and `MinGroupSize` on
+- [x] **1. Plan.** This document.
+- [x] **2. Aggregation is denied on a transformed field.** `AllowAggregate` and `MinGroupSize` on
       the six transform attributes; carried on `TransformStage`; composed onto `ValueTransform`
       (`AllowsAggregate` as AND, `MinGroupSize` as MAX); `PolicyResolver` denies `Aggregate` when
       the elected chain does not permit it. Mutation-checked.
-- [ ] **3. The group-size floor.** `DwCaps.MinGroupSize`; `PolicyErrorCode.GroupTooSmall`; the
+- [x] **3. The group-size floor.** `DwCaps.MinGroupSize`; `PolicyErrorCode.GroupTooSmall`; the
       injected count and its reserved alias; suppression in `ResultTransformer`; every drop in the
       trace; the per-field override composed with the global setting.
-- [ ] **4. The security regression suite reaches seven.** `PolicyInferenceTests` gains §7.2's two
+- [x] **4. The security regression suite reaches seven.** `PolicyInferenceTests` gains §7.2's two
       attacks, §7.3's cardinality attack against `[DwOperators]`, and §7.4's binary search against
       the startup warning — each reproducing the attack, each red when its mitigation is removed.
-- [ ] **5. The reading pass.** Twenty-four fail-open defects across seven phases, none found by a
+- [x] **5. The reading pass.** Twenty-four fail-open defects across seven phases, none found by a
       test that already existed. Read the diff for the twenty-fifth.
-- [ ] **6. Close.** Roadmap outcome, memory.
+- [x] **6. Close.** Roadmap outcome, memory.
 
 ---
 

@@ -152,7 +152,7 @@ attributed is arbitrary. That has no security consequence, but the explain endpo
 rule when another, identical in force, contributed equally. Either report every tied source rather
 than the winner alone, or state in the explain output that the attribution is one of several.
 
-### Phase 8 — Security hardening
+### Phase 8 — Security hardening — **Done**
 
 Cross-cutting mitigations that need Segment and Summary policy support to already exist:
 aggregate-on-masked denial and `MinGroupSize`.
@@ -494,6 +494,135 @@ Both settled against the design document rather than against the plan.
 - **`ValidatePolicyModel()` still does not exist.** Section 4.8's rules are enforced at query time
   and fail closed. `[DwForceWhere(ContextValue = ...)]` naming a key nothing supplies is listed
   there as a startup check and cannot be one — what a context supplies is per-request.
+
+## Phase 8 outcome
+
+Closed 2026-09-07, 7 commits. 1428 tests pass, up from 1375. `dotnet build -c Release` across the
+whole solution emits zero warnings, and the four named files are untouched — as is the whole of
+`Source/`.
+
+Plan: [2026-09-07-policies-v3-phase-8-hardening.md](2026-09-07-policies-v3-phase-8-hardening.md).
+
+### Four decisions settled before implementation
+
+1. **The bar is seven mitigations across five channels.** §7.1 delivered two and §7.2 needs two,
+   which is where the roadmap's seven and the spec's five reconcile.
+2. **Every transform blocks aggregation, not only `[DwMask]`.**
+3. **The floor injects the count it needs and strips it again.**
+4. **A group under the floor is dropped, and the drop is recorded.**
+
+All four taken as offered.
+
+### The seven, and where each one lives
+
+| # | Channel | Mitigation | Shipped |
+|---|---|---|---|
+| 1 | §7.1 | Policy applies to every segment independently | `fe5e33b` |
+| 2 | §7.1 | Strict tier: deny-select ⇒ deny-where inside a `Segment` | `fe5e33b` |
+| 3 | §7.5 | Strict tier refuses `getQueryString` | `fe5e33b` |
+| 4 | §7.2 | Aggregating a transformed field is denied by default | Phase 8 |
+| 5 | §7.2 | `MinGroupSize` suppresses a group too small to hide anyone | Phase 8 |
+| 6 | §7.3 | `[DwOperators]` restricts the field; `TotalCount` is a documented consequence | Phase 1 |
+| 7 | §7.4 | The startup scan warns on masked-but-orderable; `[DwNoOrder]` is the fix | Phase 4 |
+
+Six and seven needed no code. What they lacked was a test that reproduces the attack and shows the
+control stopping it — a mitigation nobody has attacked is a claim rather than a control. Both are
+now mutation-checked: removing the operator intersection turns one red, removing the startup
+warning turns one red.
+
+### Public API added
+
+- `TransformStage.AllowAggregate`, `.MinGroupSize`; `ValueTransform.AllowsAggregate`, `.MinGroupSize`
+- `AllowAggregate` and `MinGroupSize` on all six transform attributes
+- `DwCaps.MinGroupSize`; `PolicyErrorCode.GroupTooSmall`
+
+### §7.2's wording is short by five attributes
+
+The spec says "aggregating a masked field is denied by default". Aggregation runs in SQL against
+the stored values, before any stage of a transform chain applies — which is just as true of
+`[DwGeneralize]`, and `[DwGeneralize]` is what §4.4 recommends for numeric members, which is to say
+exactly the fields anybody aggregates. Covering only `[DwMask]` would have left five attributes that
+look protective and are not.
+
+Enforced in `PolicyResolver`, where the chain is elected, rather than at each surface that
+aggregates: one place covers attributes and runtime rules alike, and the standing lesson of Phases 3
+and 4 is that a list of surfaces is never finished.
+
+### One existing test was the attack, written as a feature
+
+Phase 4 shipped `A_summary_transforms_its_aggregates`, asserting that `MAX` over a generalized
+`Age` returns the real maximum rounded on the way out. That is §7.2 verbatim. The field now opts in
+deliberately, with a comment saying why, so it keeps proving the half that matters — the transform
+runs after the grouping, so the aggregate picks the right row — while `PolicyInferenceTests` owns
+the un-opted case.
+
+### Three defects found by reading, none by a test
+
+Twenty-six of this shape now, across eight phases.
+
+- **The reshaping pass returned early whenever a type had no aliases**, which is most types — so the
+  group-size column the floor added stayed in the result of every summary that was floored. Found
+  while wiring, before the tests ran.
+- **`PolicyPayload` dropped both new stage fields.** It was written a phase before either existed
+  and a rule may set a transform, so both were lost whenever a rule's transform went through a
+  store. Losing the permission is fail-closed and merely wrong; losing the floor is fail-open — the
+  smallest group an operator was willing to have a field aggregated over silently became no floor,
+  while the rule they read back still said otherwise. Phase 6's finding exactly, one phase later.
+- **The floor ran after the summary transform**, so two groups that both fall below it and whose
+  keys collide once rounded refused the entire summary — denying a result because of rows the caller
+  was never going to be shown. Suppression now runs first of the three passes.
+
+### A mutation check found a gap rather than confirming one
+
+Of the four mutations aimed at the floor, three turned tests red and one turned nothing red: keeping
+a row whose size column could not be read. That fail-closed choice was documented in a remark and
+asserted nowhere, which is the shape this branch has learned to distrust — a comment is not a test,
+and a test that passes either way proves nothing. Four tests now drive the suppressor directly, and
+the same mutation turns two red.
+
+### Decisions worth not re-litigating
+
+- **The floor is off by default and applies to every grouped summary once on.** A group of one is a
+  re-identification risk whatever is in it, and making the floor conditional on a transform would
+  leave an unmasked-but-sensitive field with none.
+- **The injected count goes in after gating and after the cost pass**, exactly as a forced predicate
+  does. It is the library counting on its own behalf, so it is neither checked against the caller's
+  policy nor billed to their budget.
+- **A caller who has taken the reserved alias is refused, not overwritten.** Overwriting loses
+  whatever they were counting and hands back the library's number as theirs.
+- **A row whose size column cannot be read is dropped.** The column is one this library added, so
+  failing to find it means the floor has no idea how large the group is — and answering anyway is
+  the disclosure the floor exists to prevent.
+- **An absent `allowAggregate` or `minGroupSize` in a payload reads as the strictest meaning**, so a
+  document written before they existed permits no aggregation and sets no floor of its own.
+- **§7.3 is a documented consequence and is now on the record as one.** A test asserts that a range
+  filter on an unrestricted field really does count the matches while the column comes back zeroed,
+  counted against the unguarded query so the assertion stays about the channel rather than the
+  fixture.
+
+### Known limitations
+
+- **The floor cannot see past the current page.** The database pages and computes `TotalCount`
+  before suppression runs, so a page can come back short and the total will have counted groups that
+  were dropped. Nothing protected leaks; the numbers do not reconcile. Fixing it means moving the
+  floor into the generated SQL, which is the pipeline this phase must not touch.
+- **A summary always groups.** The pipeline requires at least one grouping field, so "one group over
+  everything" is a shape that cannot be asked for — which is why the floor says nothing about it.
+- **`RuleRequest` still cannot express a transform**, so an operator setting a floor through the
+  admin API is not possible over HTTP. A store client can.
+- **The aggregate denial overrides an explicit allowance, including a sealed one.** The opt-in is on
+  the attribute that transforms the field, which is where the author who chose to obscure it can
+  weigh that against being able to count it.
+
+### What Phase 9 inherits
+
+- **Design §7 needs two corrections**: §7.2's mitigation covers every transform rather than masks
+  alone, and the five channels are seven mitigations. This joins §5.1's four missing fields, §5.2's
+  missing `LoadNarrowAsync`, §5.7's sealed-field sentence and §3.4's claims-adapter shape.
+- **`PolicyInferenceTests` is the security regression suite and is complete.** Twenty-four tests,
+  every one of the seven mutation-checked.
+- **Three new options to document**: `MinGroupSize`, and `AllowAggregate`/`MinGroupSize` on the six
+  transform attributes. The k-anonymity story is the one a reader will not guess from the API.
 
 ## Phase 7 outcome
 

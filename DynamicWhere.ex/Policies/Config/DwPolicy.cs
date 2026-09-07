@@ -38,7 +38,17 @@ public static class DwPolicy
     public static bool IsConfigured => _configured;
 
     /// <summary>The resolver every guarded query consults.</summary>
-    internal static PolicyResolver Resolver => _resolver;
+    public static PolicyResolver Resolver => _resolver;
+
+    /// <summary>
+    /// The store-backed providers configured, in the order they were supplied.
+    /// </summary>
+    /// <remarks>
+    /// Exposed for a health endpoint, which reports each one's version, age and last error. There is
+    /// nothing to enforce with here: a provider hands out fragments and the resolver decides, so
+    /// reading this cannot change what any query is permitted to do.
+    /// </remarks>
+    public static IReadOnlyList<StorePolicyProvider> StoreProviders => _stores;
 
     /// <summary>
     /// Sets the posture and the runtime policy sources, once, during startup.

@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 
 <#
 .SYNOPSIS
@@ -70,6 +70,9 @@ $targets = [ordered]@{
         '<Version>([^<]+)</Version>'
     )
     'DynamicWhere.ex.Policies.EntityFrameworkCore/DynamicWhere.ex.Policies.EntityFrameworkCore.csproj' = @(
+        '<Version>([^<]+)</Version>'
+    )
+    'DynamicWhere.ex.Policies.AspNetCore/DynamicWhere.ex.Policies.AspNetCore.csproj' = @(
         '<Version>([^<]+)</Version>'
     )
 }

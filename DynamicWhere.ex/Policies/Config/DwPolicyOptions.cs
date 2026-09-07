@@ -1,4 +1,5 @@
-﻿using DynamicWhere.ex.Policies.Enums;
+﻿using DynamicWhere.ex.Policies.Discovery;
+using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.Config;
 
@@ -48,6 +49,16 @@ public sealed class DwPolicyOptions
 
     /// <summary>Numeric limits applied to every guarded query.</summary>
     public DwCaps Caps { get; } = new();
+
+    /// <summary>
+    /// The types an administrative surface may be asked about, and the names it may ask by.
+    /// </summary>
+    /// <remarks>
+    /// Empty by default, which means nothing can be described. That is the safe default rather than
+    /// an inconvenient one: an endpoint that resolved a name straight to a type would let whoever
+    /// reaches it enumerate every type the process has loaded.
+    /// </remarks>
+    public DwEntityCatalog Entities { get; } = new();
 
     /// <summary>
     /// The salt mixed into every hashed mask.
@@ -171,6 +182,7 @@ public sealed class DwPolicyOptions
     public void Freeze()
     {
         Caps.Freeze();
+        Entities.Freeze();
         IsFrozen = true;
     }
 

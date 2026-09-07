@@ -48,11 +48,11 @@ jobs:
       - name: Test
         run: dotnet test DynamicWhere.Tests/DynamicWhere.Tests.csproj -c Release --no-build
 
-      # All three packages, from one push, at one version. The two policy store providers are
-      # packed here rather than left to a later phase because a package that builds, tests, and
-      # is never packed fails silently: CI is green, the release looks complete, and consumers
-      # find a dependency that does not exist. build/check-version.ps1 above refuses to let the
-      # three versions drift apart.
+      # All four packages, from one push, at one version. Each store provider and the ASP.NET Core
+      # surface are packed here rather than left to a later phase because a package that builds,
+      # tests, and is never packed fails silently: CI is green, the release looks complete, and
+      # consumers find a dependency that does not exist. build/check-version.ps1 above refuses to
+      # let the four versions drift apart.
       # One invocation each: dotnet pack takes a single project, and packing the solution would
       # sweep in DynamicWhere.API as well.
       - name: Pack
@@ -60,6 +60,7 @@ jobs:
           dotnet pack DynamicWhere.ex/DynamicWhere.ex.csproj -c Release --no-build -o artifacts
           dotnet pack DynamicWhere.ex.Policies.Redis/DynamicWhere.ex.Policies.Redis.csproj -c Release --no-build -o artifacts
           dotnet pack DynamicWhere.ex.Policies.EntityFrameworkCore/DynamicWhere.ex.Policies.EntityFrameworkCore.csproj -c Release --no-build -o artifacts
+          dotnet pack DynamicWhere.ex.Policies.AspNetCore/DynamicWhere.ex.Policies.AspNetCore.csproj -c Release --no-build -o artifacts
 
       # Short-lived key, requested immediately before the push because it expires in one hour.
       - name: NuGet login

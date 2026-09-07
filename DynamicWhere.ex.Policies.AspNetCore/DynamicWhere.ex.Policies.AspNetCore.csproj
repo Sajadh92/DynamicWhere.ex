@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- A framework reference rather than package references: the shared framework is what an
+         ASP.NET Core host already has, and pinning individual Microsoft.AspNetCore.* packages
+         would drag a second copy of it into consumers on newer runtimes. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DynamicWhere.ex\DynamicWhere.ex.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DynamicWhere.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <PackageId>DynamicWhere.ex.Policies.AspNetCore</PackageId>
+    <Title>DynamicWhere.ex Policies — ASP.NET Core</Title>
+    <Description>The administrative surface for the DynamicWhere.ex field-level policy layer: schema discovery, rule management, explain, simulate and health endpoints, a ClaimsPrincipal adapter, and per-request audit draining. Endpoints refuse to map without a named authorization policy. Targets .NET 6+.</Description>
+    <Summary>Admin API, explain, simulate, health and a ClaimsPrincipal adapter for DynamicWhere.ex policies.</Summary>
+    <PackageTags>DynamicWhere DynamicWhere.ex Policies AspNetCore Authorization Admin Schema Explain Simulate Audit ClaimsPrincipal EFCore LINQ Security FieldLevelSecurity DotNet NET6 CSharp</PackageTags>
+    <Authors>Sajjad H. Al-Khafaji</Authors>
+    <Company>Sajjad H. Al-Khafaji</Company>
+    <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Version>2.1.5</Version>
+    <PackageProjectUrl>https://doc.dynamicwhere.com</PackageProjectUrl>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryBranch>master</RepositoryBranch>
+    <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\DynamicWhere.ex\icon.png" Pack="true" PackagePath="\" />
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

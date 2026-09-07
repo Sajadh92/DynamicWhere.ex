@@ -21,6 +21,7 @@ namespace DynamicWhere.ex.Policies.Discovery;
 public sealed class DwEntityCatalog
 {
     private readonly Dictionary<string, Type> _byName = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Type> _byFullName = new(StringComparer.Ordinal);
     private readonly Dictionary<Type, string> _names = new();
 
     private bool _frozen;
@@ -80,6 +81,16 @@ public sealed class DwEntityCatalog
         _byName[public_] = type;
         _names[type] = public_;
 
+        // Also under the name a rule is written against. A rule carries Type.FullName by design, and
+        // a caller holding one — the sealed-field check on POST /rules is exactly that — has no
+        // public name to look it up by. Without this the check resolves nothing and accepts
+        // silently, which is a rule aimed at a sealed field being stored and read back as a control
+        // that is in force.
+        if (type.FullName is { } full)
+        {
+            _byFullName[full] = type;
+        }
+
         return this;
     }
 
@@ -93,10 +104,23 @@ public sealed class DwEntityCatalog
     /// exposed. The difference between those two is exactly what an enumeration attempt is looking
     /// for.
     /// </remarks>
-    public Type? Resolve(string? name) =>
-        !string.IsNullOrWhiteSpace(name) && _byName.TryGetValue(name!.Trim(), out Type? type)
-            ? type
-            : null;
+    public Type? Resolve(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+
+        string wanted = name!.Trim();
+
+        // The public name first, then the full name a rule is matched on. Both only ever answer
+        // with a type this host exposed, so neither widens what can be reached.
+        return _byName.TryGetValue(wanted, out Type? byName)
+            ? byName
+            : _byFullName.TryGetValue(wanted, out Type? byFullName)
+                ? byFullName
+                : null;
+    }
 
     /// <summary>The public name of an exposed type, or null when it was never exposed.</summary>
     /// <param name="type">The type to name.</param>

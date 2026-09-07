@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -25,12 +25,17 @@
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.10" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.0.0" />
     <PackageReference Include="Testcontainers.Redis" Version="4.0.0" />
+    <!-- Drives the administrative endpoints through a real request pipeline: routing,
+         authorization and model binding all take part, and a test that mounted the handlers
+         directly would prove none of them. -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.10" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\DynamicWhere.ex\DynamicWhere.ex.csproj" />
     <ProjectReference Include="..\DynamicWhere.ex.Policies.Redis\DynamicWhere.ex.Policies.Redis.csproj" />
     <ProjectReference Include="..\DynamicWhere.ex.Policies.EntityFrameworkCore\DynamicWhere.ex.Policies.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="..\DynamicWhere.ex.Policies.AspNetCore\DynamicWhere.ex.Policies.AspNetCore.csproj" />
   </ItemGroup>
 
   <ItemGroup>

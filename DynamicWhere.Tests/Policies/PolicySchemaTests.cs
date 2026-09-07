@@ -333,3 +333,50 @@ public class PolicySchemaTests
             p => p.Name.Contains("Audit", StringComparison.OrdinalIgnoreCase));
     }
 }
+
+/// <summary>
+/// The catalogue is asked for a type by two different names by two different callers, and both have
+/// to be answered or one of them fails open.
+/// </summary>
+public class DwEntityCatalogNameTests
+{
+    private static DwEntityCatalog Exposed()
+    {
+        DwEntityCatalog catalog = new();
+
+        catalog.Expose<DescribedEmployee>("staff");
+        catalog.Freeze();
+
+        return catalog;
+    }
+
+    /// <summary>
+    /// A rule carries <c>Type.FullName</c> by design, so the sealed-field check on a write has no
+    /// public name to look the type up by. Resolving only public names left that check resolving
+    /// nothing and accepting silently.
+    /// </summary>
+    [Fact]
+    public void An_exposed_type_resolves_by_its_full_name()
+    {
+        Assert.Equal(
+            typeof(DescribedEmployee),
+            Exposed().Resolve(typeof(DescribedEmployee).FullName));
+    }
+
+    [Fact]
+    public void The_public_name_still_resolves()
+    {
+        Assert.Equal(typeof(DescribedEmployee), Exposed().Resolve("staff"));
+    }
+
+    /// <summary>
+    /// Resolving a full name must not become a way to reach a type nobody exposed, which would undo
+    /// the boundary the catalogue exists to be.
+    /// </summary>
+    [Fact]
+    public void A_full_name_nobody_exposed_still_resolves_to_nothing()
+    {
+        Assert.Null(Exposed().Resolve(typeof(PlainProduct).FullName));
+        Assert.Null(Exposed().Resolve("System.String"));
+    }
+}

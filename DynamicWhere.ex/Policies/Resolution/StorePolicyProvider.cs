@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Exceptions;
+﻿using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
@@ -39,6 +39,7 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     private StoreSnapshot _snapshot;
     private DateTimeOffset _loadedAt;
     private bool _degraded;
+    private Exception? _lastError;
     private Task? _refreshing;
     private bool _disposed;
 
@@ -74,6 +75,48 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
             lock (_swap)
             {
                 return _degraded;
+            }
+        }
+    }
+
+    /// <summary>
+    /// When this provider last loaded the store successfully, by its own clock.
+    /// </summary>
+    /// <remarks>
+    /// The provider's clock, not the store's. A store clock running ahead would make every snapshot
+    /// look fresher than it is and silently extend the staleness ceiling, so what is reported here
+    /// is what the ceiling is actually measured against.
+    /// </remarks>
+    public DateTimeOffset LoadedAt
+    {
+        get
+        {
+            lock (_swap)
+            {
+                return _loadedAt;
+            }
+        }
+    }
+
+    /// <summary>
+    /// How long ago that was, which is what a health check compares against the staleness ceiling.
+    /// </summary>
+    public TimeSpan Age => Clock() - LoadedAt;
+
+    /// <summary>
+    /// The failure from the last refresh that did not succeed, or null when the last one did.
+    /// </summary>
+    /// <remarks>
+    /// Kept so a health endpoint can say why an instance is degraded rather than only that it is.
+    /// Cleared by a refresh that succeeds, so it never outlives the condition it describes.
+    /// </remarks>
+    public Exception? LastError
+    {
+        get
+        {
+            lock (_swap)
+            {
+                return _lastError;
             }
         }
     }
@@ -281,6 +324,7 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
                 _snapshot = loaded;
                 _loadedAt = stamp;
                 _degraded = false;
+                _lastError = null;
             }
 
             return loaded.Version;
@@ -289,11 +333,12 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
         {
             throw;
         }
-        catch
+        catch (Exception failure)
         {
             lock (_swap)
             {
                 _degraded = true;
+                _lastError = failure;
             }
 
             throw;

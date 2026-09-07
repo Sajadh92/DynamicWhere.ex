@@ -205,6 +205,26 @@ internal static class FilterSanitizer
 
         VerifyRequired(working.ConditionGroup, gate);
 
+        // Last, and after gating, exactly as a forced predicate is. This is the library counting on
+        // its own behalf: the floor needs each group's size and a caller asking for a maximum has
+        // not supplied one. Running it through the gate would check the caller's policy against a
+        // column they did not write, and charging it to the budget would bill them for a control
+        // that exists to protect the data from them.
+        try
+        {
+            GroupFloor.Inject(working, GroupFloor.For(working, gate.TypePolicy, gate.Options));
+        }
+        catch (ArgumentException taken)
+        {
+            throw new PolicyException(
+                PolicyErrorCode.GroupTooSmall, WholeClause, PolicyFeature.Aggregate, options.Tier)
+            {
+                SourceOrigin =
+                    $"the alias '{taken.Message}' is reserved for the group-size floor this summary "
+                    + "needs, and the summary already uses it"
+            };
+        }
+
         return working;
     }
 

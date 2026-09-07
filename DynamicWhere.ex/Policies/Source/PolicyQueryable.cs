@@ -207,10 +207,19 @@ public sealed class PolicyQueryable<T> where T : class
 
             ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
 
+            // Before renaming, because the floor reads a column this library named and renaming
+            // rebuilds the rows. Suppressing first also means a group that never leaves the process
+            // is never transformed on the way out, which is work saved on the rows that matter least.
+            int floor = GroupFloor.For(sanitized, TypePolicy, _options);
+
+            ResultTransformer.Suppress(
+                result, floor, _options.DryRun || _context.DryRun, trace);
+
             // After the collision check, which reads the real column names. A summary key is a
             // generated column like any other, so it follows the same vocabulary the schema
-            // advertises.
-            ResultTransformer.Rename(result.Data, TypePolicy, trace);
+            // advertises — and the same pass drops the group-size count the floor added for itself.
+            ResultTransformer.Rename(
+                result.Data, TypePolicy, trace, floor > 1 ? GroupFloor.SizeAlias : null);
 
             result.Policy = trace;
 
@@ -236,10 +245,19 @@ public sealed class PolicyQueryable<T> where T : class
 
             ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
 
+            // Before renaming, because the floor reads a column this library named and renaming
+            // rebuilds the rows. Suppressing first also means a group that never leaves the process
+            // is never transformed on the way out, which is work saved on the rows that matter least.
+            int floor = GroupFloor.For(sanitized, TypePolicy, _options);
+
+            ResultTransformer.Suppress(
+                result, floor, _options.DryRun || _context.DryRun, trace);
+
             // After the collision check, which reads the real column names. A summary key is a
             // generated column like any other, so it follows the same vocabulary the schema
-            // advertises.
-            ResultTransformer.Rename(result.Data, TypePolicy, trace);
+            // advertises — and the same pass drops the group-size count the floor added for itself.
+            ResultTransformer.Rename(
+                result.Data, TypePolicy, trace, floor > 1 ? GroupFloor.SizeAlias : null);
 
             result.Policy = trace;
 

@@ -19,6 +19,7 @@ public sealed class DwCaps
     private int _maxQueryCost = 1000;
     private int _defaultFieldCost = 1;
     private int _maxAuditEvents = 10_000;
+    private int _minGroupSize = 1;
 
     /// <summary>The largest page a caller may request.</summary>
     public int MaxPageSize
@@ -114,6 +115,31 @@ public sealed class DwCaps
     {
         get => _maxAuditEvents;
         set => _maxAuditEvents = Set(value);
+    }
+
+    /// <summary>
+    /// The smallest group a summary may report, below which the group is suppressed.
+    /// </summary>
+    /// <remarks>
+    /// The k-anonymity floor of design section 7.2, and the half that keeps
+    /// <c>AllowAggregate</c> from being an opening rather than a permission: aggregation over a
+    /// group of one returns that row's exact value under any function, so permitting a masked field
+    /// to be aggregated without a floor hands back precisely what the mask was there to hide.
+    /// <para>
+    /// One by default, which is no floor at all, so no existing caller changes behaviour. Above one
+    /// it applies to every grouped summary rather than only to those touching a transformed field —
+    /// a group of one is a re-identification risk whatever is in it, and making the floor
+    /// conditional on a transform would leave an unmasked-but-sensitive field with none.
+    /// </para>
+    /// <para>
+    /// A field may raise it for itself through <c>MinGroupSize</c> on the attribute that transforms
+    /// it. The effective floor is the largest in play.
+    /// </para>
+    /// </remarks>
+    public int MinGroupSize
+    {
+        get => _minGroupSize;
+        set => _minGroupSize = Set(value);
     }
 
     /// <summary>Prevents any further change.</summary>

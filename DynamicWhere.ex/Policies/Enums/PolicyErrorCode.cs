@@ -140,5 +140,17 @@ public enum PolicyErrorCode
     /// enough times to generate work nothing else bounds. An operator reading a log needs to know
     /// which of the two refused the query, because raising the wrong one changes nothing.
     /// </remarks>
-    QueryCostExceeded = 19
+    QueryCostExceeded = 19,
+
+    /// <summary>
+    /// The summary could not be answered without the library's own group-size column, and the
+    /// caller had already taken its name.
+    /// </summary>
+    /// <remarks>
+    /// The floor needs each group's size, and a caller asking for a maximum has not supplied one —
+    /// so one is added under a reserved alias and removed again before the result is returned.
+    /// Silently overwriting a column the caller already named would lose whatever they were
+    /// counting and hand back the library's number as theirs.
+    /// </remarks>
+    GroupTooSmall = 20
 }

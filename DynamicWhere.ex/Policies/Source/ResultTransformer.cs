@@ -41,6 +41,11 @@ internal static class ResultTransformer
     /// <param name="rows">The materialized rows. Replaced in place when anything is renamed.</param>
     /// <param name="policy">The type's policy, whose alias map is the vocabulary.</param>
     /// <param name="trace">Collects what was renamed.</param>
+    /// <param name="drop">
+    /// A column to omit from the rebuilt rows, or null to keep every column. The group-size count
+    /// the floor adds for itself is removed this way — one re-projection does both jobs rather than
+    /// two rebuilding the same rows twice.
+    /// </param>
     /// <remarks>
     /// The outbound half of <c>[DwAlias]</c>. Renaming a column is not mutating a value: a generated
     /// projection bakes its property names in when the query is built, so the only way to change one
@@ -57,9 +62,10 @@ internal static class ResultTransformer
     /// otherwise get two different shapes from one query.
     /// </para>
     /// </remarks>
-    internal static void Rename(List<dynamic>? rows, TypePolicy policy, PolicyTrace trace)
+    internal static void Rename(
+        List<dynamic>? rows, TypePolicy policy, PolicyTrace trace, string? drop = null)
     {
-        if (rows is null || rows.Count == 0 || policy.Aliases.Count == 0)
+        if (rows is null || rows.Count == 0 || (policy.Aliases.Count == 0 && drop is null))
         {
             return;
         }
@@ -82,7 +88,11 @@ internal static class ResultTransformer
             byColumn[entry.Value[0].Replace(".", string.Empty)] = entry.Key;
         }
 
-        if (byColumn.Count == 0)
+        // Not "no aliases, nothing to do" any more. There is a second reason to rebuild a row —
+        // removing the group-size count the floor added for itself — and returning here on an empty
+        // alias map left that column in the caller's result on every type that happens not to use
+        // aliases, which is most of them.
+        if (byColumn.Count == 0 && drop is null)
         {
             return;
         }
@@ -98,7 +108,7 @@ internal static class ResultTransformer
                 continue;
             }
 
-            ExpandoObject? rebuilt = Rebuild(row, byColumn, renamed);
+            ExpandoObject? rebuilt = Rebuild(row, byColumn, renamed, drop);
 
             if (rebuilt is not null)
             {
@@ -124,7 +134,7 @@ internal static class ResultTransformer
     /// object, and a test can read a column by name without reflection.
     /// </remarks>
     private static ExpandoObject? Rebuild(
-        object row, Dictionary<string, string> byColumn, List<string> renamed)
+        object row, Dictionary<string, string> byColumn, List<string> renamed, string? drop)
     {
         Dictionary<string, PropertyInfo> properties = CacheReflection.GetTypeProperties(row.GetType());
 
@@ -132,7 +142,8 @@ internal static class ResultTransformer
 
         foreach (KeyValuePair<string, PropertyInfo> property in properties)
         {
-            if (byColumn.ContainsKey(property.Key))
+            if (byColumn.ContainsKey(property.Key)
+                || string.Equals(property.Key, drop, StringComparison.OrdinalIgnoreCase))
             {
                 any = true;
                 break;
@@ -149,7 +160,8 @@ internal static class ResultTransformer
 
         foreach (KeyValuePair<string, PropertyInfo> property in properties)
         {
-            if (property.Value.GetIndexParameters().Length != 0)
+            if (property.Value.GetIndexParameters().Length != 0
+                || string.Equals(property.Key, drop, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -165,6 +177,95 @@ internal static class ResultTransformer
         }
 
         return rebuilt;
+    }
+
+    /// <summary>
+    /// Drops every group smaller than the floor, recording each one.
+    /// </summary>
+    /// <param name="result">The materialized summary, modified in place.</param>
+    /// <param name="floor">The effective floor. One or less suppresses nothing.</param>
+    /// <param name="dryRun">True to record what would have been dropped and drop nothing.</param>
+    /// <param name="trace">Collects what was suppressed.</param>
+    /// <returns>How many groups were dropped.</returns>
+    /// <remarks>
+    /// Design section 7.2's k-anonymity floor. Aggregation over a group of one returns that row's
+    /// exact value under any function, so permitting a transformed field to be aggregated without a
+    /// floor hands back precisely what the transform was there to hide.
+    /// <para>
+    /// Every drop is recorded. A group that is simply absent cannot be told from a group that never
+    /// existed, and an operator asking why a department is missing from a report needs an answer
+    /// that is not "look at the data".
+    /// </para>
+    /// <para>
+    /// A row whose size column cannot be read is dropped rather than kept. The column is one this
+    /// library added for itself, so failing to find it means the floor has no idea how large the
+    /// group is — and answering anyway is exactly the disclosure the floor exists to prevent.
+    /// </para>
+    /// </remarks>
+    internal static int Suppress(
+        SummaryResult result, int floor, bool dryRun, PolicyTrace trace)
+    {
+        if (floor <= 1 || result.Data.Count == 0)
+        {
+            return 0;
+        }
+
+        List<dynamic> kept = new(result.Data.Count);
+        int dropped = 0;
+
+        foreach (object row in result.Data)
+        {
+            int? size = SizeOf(row);
+
+            if (size is not null && size >= floor)
+            {
+                kept.Add(row);
+
+                continue;
+            }
+
+            dropped++;
+
+            trace.Add(new PolicyDecision(
+                GroupFloor.SizeAlias,
+                PolicyFeature.Aggregate,
+                PolicyAction.Dropped,
+                size is null
+                    ? $"a group whose size could not be read, below the group floor of {floor}"
+                    : $"a group of {size}, below the group floor of {floor}"));
+        }
+
+        // A dry run records what it would have done and does not do it, as every other decision
+        // under that posture does. The evidence is the point of the posture.
+        if (!dryRun)
+        {
+            result.Data = kept;
+        }
+
+        return dropped;
+    }
+
+    /// <summary>Reads the size column this library added, or null when it cannot be read.</summary>
+    private static int? SizeOf(object row)
+    {
+        PropertyInfo? column = CacheReflection.FindProperty(row.GetType(), GroupFloor.SizeAlias);
+
+        if (column is null)
+        {
+            return null;
+        }
+
+        object? value = MutatorCache.Read(column, row);
+
+        try
+        {
+            return value is null ? null : Convert.ToInt32(value);
+        }
+        catch (Exception conversion)
+            when (conversion is FormatException or InvalidCastException or OverflowException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

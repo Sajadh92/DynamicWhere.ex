@@ -152,6 +152,103 @@ public sealed class PolicyResolver
     }
 
     /// <summary>
+    /// Resolves one field and reports the chain behind every feature of the decision.
+    /// </summary>
+    /// <param name="entityType">The type being queried.</param>
+    /// <param name="fieldPath">The field path, as it appears after alias resolution.</param>
+    /// <param name="context">The caller.</param>
+    /// <returns>The decision, and why.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="fieldPath"/> is blank.</exception>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="entityType"/> or <paramref name="context"/> is null.
+    /// </exception>
+    /// <remarks>
+    /// Here rather than in whatever displays it, so the chain and the decision come from one
+    /// implementation of the four precedence rules. Two implementations would eventually disagree,
+    /// and an explanation that contradicts the decision is worse than no explanation.
+    /// <para>
+    /// It resolves the field a second time rather than threading the candidate list out of
+    /// <see cref="Resolve"/>. This is an administrative call, made once per field by an operator
+    /// reading a screen, and the alternative is a resolution path that carries diagnostic state on
+    /// every query for the benefit of the few that ask.
+    /// </para>
+    /// </remarks>
+    public PolicyExplanation Explain(Type entityType, string fieldPath, DwPolicyContext context)
+    {
+        FieldPolicy policy = Resolve(entityType, fieldPath, context);
+
+        string path = PolicyFragment.NormalizePath(fieldPath);
+
+        List<PolicyFragment> candidates = new();
+
+        foreach (PolicyFragment fragment in Sweep(entityType, context))
+        {
+            if (fragment.Matches(path))
+            {
+                candidates.Add(fragment);
+            }
+        }
+
+        List<FeatureExplanation> features = new(Features.Length);
+
+        foreach (PolicyFeature feature in Features)
+        {
+            features.Add(ExplainFeature(candidates, feature, policy));
+        }
+
+        return new PolicyExplanation(
+            entityType.FullName ?? entityType.Name, policy.FieldPath, policy, features);
+    }
+
+    /// <summary>
+    /// Sorts every fragment covering one feature into the winner, its equals, and what it outranked.
+    /// </summary>
+    /// <remarks>
+    /// Nothing outranks the winner, so a covering fragment the winner does not outrank is equal to
+    /// it on all four passes — the tie Phase 1 recorded as making attribution arbitrary. Fragments
+    /// covering another feature appear in neither list: they never entered this contest, and
+    /// reporting them would tell an operator a rule lost something it never ran in.
+    /// </remarks>
+    private static FeatureExplanation ExplainFeature(
+        IReadOnlyList<PolicyFragment> candidates, PolicyFeature feature, FieldPolicy policy)
+    {
+        PolicyFragment? winner = Decide(candidates, feature);
+
+        List<PolicySource> tied = new();
+        List<PolicySource> overrode = new();
+
+        if (winner is not null)
+        {
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                PolicyFragment candidate = candidates[i];
+
+                if (ReferenceEquals(candidate, winner) || !candidate.Covers(feature))
+                {
+                    continue;
+                }
+
+                if (Outranks(winner, candidate))
+                {
+                    overrode.Add(candidate.Source);
+                }
+                else
+                {
+                    tied.Add(candidate.Source);
+                }
+            }
+        }
+
+        return new FeatureExplanation(
+            feature,
+            policy.EffectFor(feature),
+            winner?.Source,
+            winner?.Level,
+            tied,
+            overrode);
+    }
+
+    /// <summary>
     /// Resolves everything about a type that cannot be answered one field at a time: the names this
     /// caller may use, the predicates to inject, and the fields this caller must filter on.
     /// </summary>

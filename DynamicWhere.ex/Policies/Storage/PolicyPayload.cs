@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
@@ -69,16 +69,26 @@ public static class PolicyPayload
 
         TransformKind kind = ReadEnum<TransformKind>(root, "kind", required: true)!.Value;
 
+        // Absent means the strictest reading of each: a payload written before these existed
+        // permits no aggregation and sets no floor of its own, which leaves the global setting to
+        // decide rather than quietly lowering it.
+        bool allowAggregate = ReadBool(root, "allowAggregate") ?? false;
+        int minGroupSize = ReadInt(root, "minGroupSize") ?? 0;
+
         return kind switch
         {
-            TransformKind.Mask => ReadMask(root),
-            TransformKind.Generalize => ReadGeneralize(root),
-            TransformKind.Format => new FormatStage(ReadString(root, "format") ?? string.Empty),
+            TransformKind.Mask => ReadMask(root, allowAggregate, minGroupSize),
+            TransformKind.Generalize => ReadGeneralize(root, allowAggregate, minGroupSize),
+            TransformKind.Format => new FormatStage(
+                ReadString(root, "format") ?? string.Empty, allowAggregate, minGroupSize),
             TransformKind.Truncate => new TruncateStage(
                 ReadInt(root, "length") ?? throw Missing("length", "a truncation"),
-                ReadString(root, "ellipsis")),
+                ReadString(root, "ellipsis"),
+                allowAggregate,
+                minGroupSize),
             TransformKind.Default => new DefaultStage(
-                ReadString(root, "value"), root.TryGetProperty("value", out _)),
+                ReadString(root, "value"), root.TryGetProperty("value", out _),
+                allowAggregate, minGroupSize),
 
             // Refused in both directions. See ToJson.
             TransformKind.Mutate => throw MutateRefused(),
@@ -109,6 +119,13 @@ public static class PolicyPayload
         {
             writer.WriteStartObject();
             writer.WriteString("kind", stage.Kind.ToString());
+
+            // Written for every kind, beside the kind itself, because they belong to the stage
+            // rather than to any one of them. Dropping the permission is fail-closed and merely
+            // wrong; dropping the floor is fail-open — the smallest group an operator was willing
+            // to have this field aggregated over silently becomes no floor at all.
+            writer.WriteBoolean("allowAggregate", stage.AllowAggregate);
+            writer.WriteNumber("minGroupSize", stage.MinGroupSize);
 
             switch (stage)
             {
@@ -188,7 +205,7 @@ public static class PolicyPayload
     }
 
     /// <summary>Builds a mask stage, letting the stage itself refuse an unworkable combination.</summary>
-    private static MaskStage ReadMask(JsonElement root) =>
+    private static MaskStage ReadMask(JsonElement root, bool allowAggregate, int minGroupSize) =>
         new(ReadEnum<MaskStrategy>(root, "strategy", required: true)!.Value,
             ReadInt(root, "keepStart") ?? 0,
             ReadInt(root, "keepEnd") ?? 0,
@@ -196,14 +213,19 @@ public static class PolicyPayload
             ReadBool(root, "preserveLength") ?? true,
             ReadString(root, "pattern"),
             ReadString(root, "replacement"),
-            ReadString(root, "text"));
+            ReadString(root, "text"),
+            allowAggregate,
+            minGroupSize);
 
     /// <summary>Builds a generalization stage.</summary>
-    private static GeneralizeStage ReadGeneralize(JsonElement root) =>
+    private static GeneralizeStage ReadGeneralize(
+        JsonElement root, bool allowAggregate, int minGroupSize) =>
         new(ReadEnum<GeneralizeMode>(root, "mode", required: true)!.Value,
             ReadInt(root, "step") ?? 0,
             ReadEnum<DatePart>(root, "part", required: false) ?? DatePart.Year,
-            ReadInt(root, "decimals") ?? 0);
+            ReadInt(root, "decimals") ?? 0,
+            allowAggregate,
+            minGroupSize);
 
     /// <summary>
     /// Reads an enumeration member by name.

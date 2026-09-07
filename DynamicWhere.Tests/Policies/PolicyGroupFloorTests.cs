@@ -10,6 +10,7 @@ using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Source;
+using DynamicWhere.ex.Policies.Storage;
 
 namespace DynamicWhere.Tests.Policies;
 
@@ -380,4 +381,106 @@ internal class Staffer
 
     /// <summary>Nothing transforms it, so it carries no floor of its own.</summary>
     public int Headcount { get; set; }
+}
+
+/// <summary>
+/// The two fields Phase 8 added to every transform stage, through the serializer a rule's transform
+/// travels in.
+/// </summary>
+/// <remarks>
+/// Found by the reading pass rather than by a test. A rule may set a transform, so a rule may set an
+/// aggregation permission and a group floor — and <c>PolicyPayload</c> was written a phase before
+/// either existed. Losing <c>AllowAggregate</c> is fail-closed and merely wrong; losing
+/// <c>MinGroupSize</c> is fail-open, because the floor an operator set for that field silently
+/// becomes no floor at all.
+/// </remarks>
+public class PolicyPayloadFloorTests
+{
+    private static TransformStage RoundTrip(TransformStage stage) =>
+        PolicyPayload.ToStage(PolicyPayload.ToJson(stage));
+
+    [Fact]
+    public void A_masks_aggregation_permission_survives()
+    {
+        Assert.True(RoundTrip(new MaskStage(MaskStrategy.Full, allowAggregate: true)).AllowAggregate);
+    }
+
+    [Fact]
+    public void A_masks_group_floor_survives()
+    {
+        Assert.Equal(
+            7,
+            RoundTrip(new MaskStage(MaskStrategy.Full, allowAggregate: true, minGroupSize: 7))
+                .MinGroupSize);
+    }
+
+    [Fact]
+    public void A_generalizations_floor_survives()
+    {
+        TransformStage read = RoundTrip(
+            new GeneralizeStage(GeneralizeMode.Round, step: 10, allowAggregate: true, minGroupSize: 4));
+
+        Assert.True(read.AllowAggregate);
+        Assert.Equal(4, read.MinGroupSize);
+    }
+
+    [Fact]
+    public void A_truncations_floor_survives()
+    {
+        TransformStage read = RoundTrip(new TruncateStage(8, null, allowAggregate: true, minGroupSize: 3));
+
+        Assert.True(read.AllowAggregate);
+        Assert.Equal(3, read.MinGroupSize);
+    }
+
+    [Fact]
+    public void A_formats_floor_survives()
+    {
+        TransformStage read = RoundTrip(new FormatStage("N2", allowAggregate: true, minGroupSize: 2));
+
+        Assert.True(read.AllowAggregate);
+        Assert.Equal(2, read.MinGroupSize);
+    }
+
+    [Fact]
+    public void A_replacements_floor_survives()
+    {
+        TransformStage read = RoundTrip(new DefaultStage("0", true, allowAggregate: true, minGroupSize: 6));
+
+        Assert.True(read.AllowAggregate);
+        Assert.Equal(6, read.MinGroupSize);
+    }
+
+    /// <summary>
+    /// A stage that said nothing about either reads back saying nothing about either — denied for
+    /// aggregation, and setting no floor of its own.
+    /// </summary>
+    [Fact]
+    public void A_stage_that_sets_neither_reads_back_with_neither()
+    {
+        TransformStage read = RoundTrip(new MaskStage(MaskStrategy.Full));
+
+        Assert.False(read.AllowAggregate);
+        Assert.Equal(0, read.MinGroupSize);
+    }
+
+    /// <summary>
+    /// End to end: a rule that permits aggregation with a floor of its own, through the document
+    /// both stores hold, into the resolved policy.
+    /// </summary>
+    [Fact]
+    public void A_rule_can_permit_aggregation_with_a_floor()
+    {
+        PolicyRule rule = new(
+            DwSubjectKind.Role, "Analyst",
+            "DynamicWhere.Tests.Policies.Staffer", "Headcount",
+            PolicyFeature.Select, PolicyEffect.Mask,
+            transform: new GeneralizeStage(
+                GeneralizeMode.Round, step: 10, allowAggregate: true, minGroupSize: 5));
+
+        PolicyRule read = PolicyRuleDocument.ToRule(PolicyRuleDocument.ToJson(rule));
+
+        Assert.True(read.Transform!.AllowAggregate);
+        Assert.Equal(5, read.Transform.MinGroupSize);
+    }
 }

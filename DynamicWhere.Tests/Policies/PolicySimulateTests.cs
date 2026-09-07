@@ -240,3 +240,55 @@ public class PolicySimulateTests
         Assert.Equal(DwTier.Strict, result.Trace.Tier);
     }
 }
+
+/// <summary>
+/// The reading pass over the simulator's runtime dispatch.
+/// </summary>
+public class PolicySimulatorDispatchTests
+{
+    /// <summary>
+    /// <c>MethodInfo.Invoke</c> wraps whatever the target threw, so a caller catching a specific
+    /// type — a host turning a malformed clause into a bad request rather than a five-hundred —
+    /// would never match. The dispatch rethrows the original.
+    /// </summary>
+    [Fact]
+    public void An_exception_from_the_runtime_overload_arrives_unwrapped()
+    {
+        DwPolicyOptions options = new();
+
+        options.Freeze();
+
+        Filter filter = new() { Selects = new List<string> { "NoSuchColumn" } };
+
+        Assert.Throws<ex.Exceptions.LogicException>(() => PolicySimulator.Simulate(
+            typeof(SecuredEmployee),
+            filter,
+            new DwPolicyContext(),
+            options,
+            new PolicyResolver(new[] { new AttributePolicyProvider() })));
+    }
+
+    /// <summary>
+    /// A policy refusal still comes back inside the result rather than as an exception, which is
+    /// the distinction the unwrapping must not blur.
+    /// </summary>
+    [Fact]
+    public void A_policy_refusal_from_the_runtime_overload_is_still_an_answer()
+    {
+        DwPolicyOptions options = new();
+
+        options.Freeze();
+
+        Filter filter = new() { Selects = new List<string> { "NationalId" } };
+
+        PolicySimulation<Filter> result = PolicySimulator.Simulate(
+            typeof(SecuredEmployee),
+            filter,
+            new DwPolicyContext(),
+            options,
+            new PolicyResolver(new[] { new AttributePolicyProvider() }));
+
+        Assert.False(result.WouldRun);
+        Assert.NotNull(result.Refusal);
+    }
+}

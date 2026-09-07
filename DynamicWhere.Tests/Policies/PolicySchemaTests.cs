@@ -380,3 +380,47 @@ public class DwEntityCatalogNameTests
         Assert.Null(Exposed().Resolve("System.String"));
     }
 }
+
+/// <summary>
+/// The reading pass on this phase's own work. Twenty defects of the fail-open shape across six
+/// phases, and not one of them found by a test that already existed.
+/// </summary>
+public class PolicySchemaReadingTests
+{
+    private static PolicySchema Describe<T>()
+    {
+        DwEntityCatalog catalog = new();
+
+        catalog.Expose(typeof(T));
+        catalog.Freeze();
+
+        DwPolicyOptions options = new();
+
+        options.Freeze();
+
+        return PolicySchemaBuilder.Describe(
+            typeof(T),
+            catalog,
+            new DwPolicyContext(),
+            options,
+            new PolicyResolver(new[] { new AttributePolicyProvider() }));
+    }
+
+    /// <summary>
+    /// A nested field's policy has to be resolved against the entity the walk started from, because
+    /// that is what the path is rooted in. Resolving it against the type that declares the member
+    /// finds no fragment for <c>Contact.Email</c> — the fragments for that path belong to the root —
+    /// and a field with no fragment is permitted. The schema would then advertise a denied field as
+    /// filterable, which is the advertisement an operator builds a UI from.
+    /// </summary>
+    [Fact]
+    public void A_nested_field_reports_the_denial_written_against_the_root()
+    {
+        PolicySchema schema = Describe<SecuredEmployee>();
+
+        PolicySchemaField email = Assert.Single(schema.Fields, f => f.Path == "Contact.Email");
+
+        Assert.False(email.CanWhere);
+        Assert.True(email.CanSelect);
+    }
+}

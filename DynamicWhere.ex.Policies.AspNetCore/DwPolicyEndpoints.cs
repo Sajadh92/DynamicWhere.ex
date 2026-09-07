@@ -244,13 +244,31 @@ public static class DwPolicyEndpoints
 
         DwPolicyContext context = await CallerAsync(http, options).ConfigureAwait(false);
 
-        if (!string.IsNullOrWhiteSpace(request!.Field))
-        {
-            return Results.Ok(new[] { Describe(DwPolicy.Resolver.Explain(type, request.Field!, context)) });
-        }
-
         PolicySchema schema = PolicySchemaBuilder.Describe(
             type, DwPolicy.Options.Entities, context, DwPolicy.Options, DwPolicy.Resolver);
+
+        if (!string.IsNullOrWhiteSpace(request!.Field))
+        {
+            // Resolved against the entity's real fields rather than passed straight through. A path
+            // nothing defines carries no fragment, and a field with no fragment is permitted — so a
+            // typo would be explained as "allowed for everything", which is a confident answer about
+            // a field that does not exist. Aliases are accepted here for the same reason they are
+            // accepted in a filter: it is the name the caller was told to use.
+            PolicySchemaField? named = schema.Fields.FirstOrDefault(field =>
+                string.Equals(field.Path, request.Field, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(field.Name, request.Field, StringComparison.OrdinalIgnoreCase));
+
+            if (named is null)
+            {
+                return Results.NotFound(new
+                {
+                    error = $"'{request.Field}' is not a field of '{request.Entity}' that this "
+                        + "caller can use."
+                });
+            }
+
+            return Results.Ok(new[] { Describe(DwPolicy.Resolver.Explain(type, named.Path, context)) });
+        }
 
         return Results.Ok(schema.Fields
             .Select(field => Describe(DwPolicy.Resolver.Explain(type, field.Path, context)))
@@ -276,8 +294,21 @@ public static class DwPolicyEndpoints
 
         DwPolicyContext context = await CallerAsync(http, options).ConfigureAwait(false);
 
-        PolicySimulation<Filter> simulation = PolicySimulator.Simulate(
-            type, request.Filter, context, DwPolicy.Options, DwPolicy.Resolver);
+        PolicySimulation<Filter> simulation;
+
+        // A policy refusal is an answer and comes back inside the result. A filter the pipeline
+        // itself cannot parse is not — it is a malformed request, and without this it would leave
+        // as a five-hundred, which reads to an operator as the endpoint being broken rather than
+        // their filter.
+        try
+        {
+            simulation = PolicySimulator.Simulate(
+                type, request.Filter, context, DwPolicy.Options, DwPolicy.Resolver);
+        }
+        catch (LogicException malformed)
+        {
+            return Results.BadRequest(new { error = malformed.Message });
+        }
 
         return Results.Ok(new
         {

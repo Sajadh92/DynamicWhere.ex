@@ -30,9 +30,18 @@ namespace DynamicWhere.Tests.Policies;
 /// are supposed to be, that they refuse the callers they are supposed to refuse, and that mounting
 /// them without deciding who may reach them is impossible.
 /// </remarks>
-public class PolicyEndpointTests
+/// <summary>
+/// One test pipeline, shared by every class that drives the administrative surface, so the two do
+/// not drift into testing two different applications.
+/// </summary>
+[CollectionDefinition("PolicyEndpoints", DisableParallelization = true)]
+public sealed class PolicyEndpointCollection
 {
-    private const string Entity = "staff";
+}
+
+internal static class PolicyEndpointHost
+{
+    internal const string Entity = "staff";
 
     private static readonly object Bootstrap = new();
 
@@ -59,7 +68,7 @@ public class PolicyEndpointTests
     }
 
     /// <summary>Signs every request in as whoever the test asked for.</summary>
-    private sealed class StubAuth : AuthenticationHandler<AuthenticationSchemeOptions>
+    internal sealed class StubAuth : AuthenticationHandler<AuthenticationSchemeOptions>
     {
         internal static string? Role { get; set; }
 
@@ -89,7 +98,7 @@ public class PolicyEndpointTests
         }
     }
 
-    private static async Task<IHost> HostAsync(
+    internal static async Task<IHost> StartAsync(
         IDwPolicyWritableStore? store = null,
         Action<DwPolicyAdminOptions>? configure = null,
         string? asRole = "PolicyAdmin")
@@ -135,6 +144,22 @@ public class PolicyEndpointTests
 
         return host;
     }
+}
+
+/// <summary>
+/// The administrative surface, driven through a real request pipeline so that routing,
+/// authorization and model binding all take part.
+/// </summary>
+[Collection("PolicyEndpoints")]
+public class PolicyEndpointTests
+{
+    private const string Entity = PolicyEndpointHost.Entity;
+
+    private static Task<IHost> HostAsync(
+        IDwPolicyWritableStore? store = null,
+        Action<DwPolicyAdminOptions>? configure = null,
+        string? asRole = "PolicyAdmin") =>
+        PolicyEndpointHost.StartAsync(store, configure, asRole);
 
     private static async Task<JsonElement> JsonAsync(HttpResponseMessage response)
     {
@@ -568,5 +593,78 @@ public class PolicyEndpointTests
 
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/admin/policy/health")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/dw-policies/health")).StatusCode);
+    }
+}
+
+/// <summary>
+/// The reading pass over the endpoints themselves.
+/// </summary>
+[Collection("PolicyEndpoints")]
+public class PolicyEndpointReadingTests
+{
+    /// <summary>
+    /// A path nothing defines carries no fragment, and a field with no fragment is permitted — so
+    /// explaining a typo answered "allowed for everything", confidently, about a field that does
+    /// not exist.
+    /// </summary>
+    [Fact]
+    public async Task Explaining_a_field_that_does_not_exist_is_not_found()
+    {
+        using IHost host = await PolicyEndpointHost.StartAsync();
+
+        HttpResponseMessage response = await host.GetTestClient().PostAsJsonAsync(
+            "/dw-policies/explain", new { entity = "staff", field = "Departmnet" });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    /// <summary>
+    /// A field the caller genuinely cannot use is also not explained by name, for the same reason
+    /// the schema omits it: the endpoint must not confirm the existence of what it will not show.
+    /// </summary>
+    [Fact]
+    public async Task Explaining_a_field_the_caller_cannot_use_is_not_found()
+    {
+        using IHost host = await PolicyEndpointHost.StartAsync();
+
+        HttpResponseMessage response = await host.GetTestClient().PostAsJsonAsync(
+            "/dw-policies/explain", new { entity = "staff", field = "NationalId" });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    /// <summary>An alias is a name the caller was told to use, so explaining by it works.</summary>
+    [Fact]
+    public async Task Explaining_by_a_field_name_that_exists_works()
+    {
+        using IHost host = await PolicyEndpointHost.StartAsync();
+
+        HttpResponseMessage response = await host.GetTestClient().PostAsJsonAsync(
+            "/dw-policies/explain", new { entity = "staff", field = "department" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>
+    /// A refusal by policy is an answer inside the body; a clause the pipeline's own validation
+    /// rejects is a malformed request, and leaving as a five-hundred would read as the endpoint
+    /// being broken rather than the filter.
+    /// </summary>
+    /// <remarks>
+    /// A value the converter cannot parse is deliberately not this case: simulation never executes,
+    /// so nothing ever tries to parse it. What is reachable is a clause the validation refuses
+    /// before any query is built — a projection naming a field the type does not have.
+    /// </remarks>
+    [Fact]
+    public async Task Simulating_a_clause_the_pipeline_rejects_is_a_bad_request()
+    {
+        using IHost host = await PolicyEndpointHost.StartAsync();
+
+        Filter filter = new() { Selects = new List<string> { "NoSuchColumn" } };
+
+        HttpResponseMessage response = await host.GetTestClient().PostAsJsonAsync(
+            "/dw-policies/simulate", new SimulateRequest("staff", filter));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 }

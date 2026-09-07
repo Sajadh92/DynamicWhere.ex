@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Config;
@@ -123,8 +124,21 @@ public static class PolicySimulator
             (entityType, typeof(TClause)),
             static key => Bind(key.Entity, key.Clause));
 
-        return (PolicySimulation<TClause>)bound.Invoke(
-            null, new object?[] { clause, context, options, resolver })!;
+        try
+        {
+            return (PolicySimulation<TClause>)bound.Invoke(
+                null, new object?[] { clause, context, options, resolver })!;
+        }
+        catch (TargetInvocationException wrapped) when (wrapped.InnerException is not null)
+        {
+            // Rethrown as itself, with its stack. Invoke wraps whatever the target threw, and a
+            // caller catching a specific type — a host turning a malformed clause into a bad request
+            // rather than a five-hundred — would never match against the wrapper. A dispatch
+            // mechanism must not change the exception a caller sees.
+            ExceptionDispatchInfo.Capture(wrapped.InnerException).Throw();
+
+            throw;
+        }
     }
 
     /// <summary>Finds the generic overload for one clause type and closes it over the entity.</summary>

@@ -92,7 +92,7 @@ public static class PolicySchemaBuilder
 
         List<PolicySchemaField> fields = new();
 
-        Walk(entityType, prefix: string.Empty, depth: 1, options, context, resolver, fields);
+        Walk(entityType, entityType, prefix: string.Empty, depth: 1, options, context, resolver, fields);
 
         // Grouped and ordered as declared, so a front end can render the schema without knowing the
         // model. An undeclared order sorts last rather than first: zero is a position an author
@@ -112,6 +112,7 @@ public static class PolicySchemaBuilder
     /// makes the walk terminate at all: a self-referencing type has no bottom to reach.
     /// </remarks>
     private static void Walk(
+        Type root,
         Type type,
         string prefix,
         int depth,
@@ -133,7 +134,7 @@ public static class PolicySchemaBuilder
 
             if (CacheReflection.IsSimpleType(property.PropertyType))
             {
-                PolicySchemaField? field = Describe(path, property, options, context, resolver);
+                PolicySchemaField? field = Describe(root, path, property, options, context, resolver);
 
                 if (field is not null)
                 {
@@ -147,7 +148,7 @@ public static class PolicySchemaBuilder
 
             if (navigation is not null && depth < options.Caps.MaxNavigationDepth)
             {
-                Walk(navigation, path, depth + 1, options, context, resolver, fields);
+                Walk(root, navigation, path, depth + 1, options, context, resolver, fields);
             }
         }
     }
@@ -169,6 +170,7 @@ public static class PolicySchemaBuilder
     /// </para>
     /// </remarks>
     private static PolicySchemaField? Describe(
+        Type root,
         string path,
         PropertyInfo property,
         DwPolicyOptions options,
@@ -182,7 +184,12 @@ public static class PolicySchemaBuilder
             return null;
         }
 
-        FieldPolicy policy = resolver.Resolve(property.DeclaringType ?? property.PropertyType, path, context);
+        // Against the root, never the declaring type. The path is rooted in the entity the walk
+        // started from — 'Contact.Email' is a path on the employee, not on the contact — and the
+        // fragments for it belong to that root. Resolving against the type that happens to declare
+        // the member finds no fragment at all, and a field with no fragment is permitted: the schema
+        // would advertise a denied field as usable, to the front end that builds its UI from it.
+        FieldPolicy policy = resolver.Resolve(root, path, context);
 
         Dictionary<PolicyFeature, bool> effects = new();
         bool anything = false;

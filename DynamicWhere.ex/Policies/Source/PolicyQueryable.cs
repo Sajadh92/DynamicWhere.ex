@@ -205,15 +205,19 @@ public sealed class PolicyQueryable<T> where T : class
         {
             SummaryResult result = Guarded().ToList(sanitized, getQueryString);
 
-            ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
-
-            // Before renaming, because the floor reads a column this library named and renaming
-            // rebuilds the rows. Suppressing first also means a group that never leaves the process
-            // is never transformed on the way out, which is work saved on the rows that matter least.
+            // First of the three, and the order matters. A group below the floor is one the caller
+            // may not see at all, so nothing downstream should form an opinion about it: transformed
+            // second, two suppressed groups whose keys collided once rounded refused the whole
+            // summary, denying a result because of rows that were never going to be returned.
+            //
+            // It reads a column this library added and nothing has transformed, so running first
+            // costs it nothing.
             int floor = GroupFloor.For(sanitized, TypePolicy, _options);
 
             ResultTransformer.Suppress(
                 result, floor, _options.DryRun || _context.DryRun, trace);
+
+            ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
 
             // After the collision check, which reads the real column names. A summary key is a
             // generated column like any other, so it follows the same vocabulary the schema
@@ -243,15 +247,19 @@ public sealed class PolicyQueryable<T> where T : class
         {
             SummaryResult result = await Guarded().ToListAsync(sanitized, getQueryString);
 
-            ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
-
-            // Before renaming, because the floor reads a column this library named and renaming
-            // rebuilds the rows. Suppressing first also means a group that never leaves the process
-            // is never transformed on the way out, which is work saved on the rows that matter least.
+            // First of the three, and the order matters. A group below the floor is one the caller
+            // may not see at all, so nothing downstream should form an opinion about it: transformed
+            // second, two suppressed groups whose keys collided once rounded refused the whole
+            // summary, denying a result because of rows that were never going to be returned.
+            //
+            // It reads a column this library added and nothing has transformed, so running first
+            // costs it nothing.
             int floor = GroupFloor.For(sanitized, TypePolicy, _options);
 
             ResultTransformer.Suppress(
                 result, floor, _options.DryRun || _context.DryRun, trace);
+
+            ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
 
             // After the collision check, which reads the real column names. A summary key is a
             // generated column like any other, so it follows the same vocabulary the schema

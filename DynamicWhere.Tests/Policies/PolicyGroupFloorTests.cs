@@ -484,3 +484,77 @@ public class PolicyPayloadFloorTests
         Assert.Equal(5, read.Transform.MinGroupSize);
     }
 }
+
+/// <summary>
+/// The order the two summary passes run in, which the reading pass found mattered.
+/// </summary>
+public class PolicyGroupFloorOrderTests
+{
+    /// <summary>Two bands that collide once rounded, each holding one row.</summary>
+    private static Banded[] Rows() => new[]
+    {
+        new Banded { Id = 1, Band = 100m },
+        new Banded { Id = 2, Band = 149m }
+    };
+
+    private static Summary ByBand() => new()
+    {
+        GroupBy = new GroupBy
+        {
+            Fields = new List<string> { "Band" },
+            AggregateBy = new List<AggregateBy>
+            {
+                new() { Field = "Id", Aggregator = Aggregator.Maximum, Alias = "top" }
+            }
+        }
+    };
+
+    private static PolicyQueryable<Banded> Query(int floor)
+    {
+        DwPolicyOptions options = new();
+
+        options.Caps.MinGroupSize = floor;
+        options.Freeze();
+
+        return Rows().AsQueryable().ApplyPolicy(
+            new DwPolicyContext(),
+            options,
+            new PolicyResolver(new[] { new AttributePolicyProvider() }));
+    }
+
+    /// <summary>
+    /// Without a floor the collision is real and refusing is right: two rounded keys are the same
+    /// key, and their aggregates cannot be added together without inventing a figure.
+    /// </summary>
+    [Fact]
+    public void Colliding_keys_still_refuse_when_no_floor_applies()
+    {
+        PolicyException error = Assert.Throws<PolicyException>(() => Query(1).ToList(ByBand()));
+
+        Assert.Equal(PolicyErrorCode.AmbiguousGroupKey, error.ErrorCode);
+    }
+
+    /// <summary>
+    /// With a floor that removes both groups there is nothing left to collide. Refusing here would
+    /// deny the caller a result because of groups they were never allowed to see — the suppression
+    /// has to happen before anything else has an opinion about those rows.
+    /// </summary>
+    [Fact]
+    public void A_collision_between_groups_the_floor_removes_does_not_refuse()
+    {
+        SummaryResult result = Query(2).ToList(ByBand());
+
+        Assert.Empty(result.Data);
+    }
+}
+
+/// <summary>A type grouped by a value that is rounded on its way out.</summary>
+internal class Banded
+{
+    public int Id { get; set; }
+
+    /// <summary>Rounded to the nearest hundred, so 100 and 149 become one key.</summary>
+    [DwGeneralize(GeneralizeMode.Round, Step = 100)]
+    public decimal Band { get; set; }
+}
+

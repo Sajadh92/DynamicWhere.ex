@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Classes.Complex;
+﻿using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Enums;
@@ -9,6 +9,7 @@ using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Policies.Source;
+using DynamicWhere.ex.Policies.Validation;
 
 namespace DynamicWhere.Tests.Policies;
 
@@ -18,13 +19,15 @@ namespace DynamicWhere.Tests.Policies;
 /// red rather than quietly reopening an attack.
 /// </summary>
 /// <remarks>
-/// Started early. Two of the seven channels were reachable on this branch as soon as injection
-/// landed, and both are closed by rules that need nothing from the mask engine — so they were
-/// brought forward rather than left until the phase that owns the rest.
+/// Seven mitigations across the five sections of §7, counted the way the roadmap counts them: §7.1
+/// delivered two and §7.2 needs two. Three were brought forward to Phase 3, because they were
+/// reachable as soon as injection landed and needed nothing from the mask engine. The rest arrive
+/// with the masking and Summary support they depend on.
 /// <para>
-/// The remaining five arrive with their mitigations: the singleton-group aggregate and the
-/// order-plus-page binary search both need masking to exist first, and <c>MinGroupSize</c> is only
-/// half a mitigation without <c>AllowAggregate</c> to bound.
+/// Two of the seven needed no code in this phase at all. §7.3's control is <c>[DwOperators]</c>,
+/// shipped in Phase 1, and §7.4's is a warning the startup scan has emitted since Phase 4 — what
+/// they lacked was a test that reproduces the attack and shows the control stopping it. A
+/// mitigation nobody has attacked is a claim rather than a control.
 /// </para>
 /// </remarks>
 [Collection(PolicyCollection.Name)]
@@ -237,5 +240,226 @@ public class PolicyInferenceTests : IDisposable
         Assert.Contains(
             guarded.LastTrace!.Decisions,
             d => d.Action == PolicyAction.Denied && d.Feature == PolicyFeature.None);
+    }
+
+    // ------------------------------------------- 7.2 aggregates over singleton groups (denial)
+
+    private PolicyQueryable<Person> People(DwPolicyOptions options) =>
+        _db.People.ApplyPolicy(Caller(), options, Attributes());
+
+    private static DwPolicyOptions Floor(int minGroupSize)
+    {
+        DwPolicyOptions options = new();
+
+        options.Caps.MinGroupSize = minGroupSize;
+
+        return options;
+    }
+
+    private static Summary Oldest(string field = "Age", string alias = "Oldest") => new()
+    {
+        GroupBy = new GroupBy
+        {
+            Fields = new List<string> { "Department" },
+            AggregateBy = new List<AggregateBy>
+            {
+                new() { Field = field, Aggregator = Aggregator.Maximum, Alias = alias }
+            }
+        }
+    };
+
+    [Fact]
+    public void A_transformed_field_cannot_be_aggregated()
+    {
+        // MAX runs in SQL against the stored values, before the rounding that hides them. Without
+        // this the caller reads the real maximum of a column the policy transforms on the way out.
+        PolicyException error = Assert.Throws<PolicyException>(
+            () => People(Options(DwTier.Convenience)).ToList(Oldest("Salary", "Top")));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForAggregate, error.ErrorCode);
+    }
+
+    [Fact]
+    public void The_denial_holds_in_both_tiers()
+    {
+        // Unlike §7.1's rule, this one is not a tier judgement. The value leaks identically to a
+        // trusted caller and an untrusted one, because it is SQL doing the leaking.
+        Assert.Throws<PolicyException>(
+            () => People(Options(DwTier.Strict)).ToList(Oldest("Salary", "Top")));
+
+        Assert.Throws<PolicyException>(
+            () => People(Options(DwTier.Convenience)).ToList(Oldest("Salary", "Top")));
+    }
+
+    [Fact]
+    public void A_field_that_opted_in_is_still_aggregatable()
+    {
+        // The mitigation is a default, not a prohibition. Age opts in deliberately, which is what
+        // makes the singleton-group attack below reachable at all.
+        SummaryResult result = People(Options(DwTier.Convenience)).ToList(Oldest());
+
+        Assert.Equal(2, result.Data.Count);
+    }
+
+    [Fact]
+    public void An_untransformed_field_is_unaffected()
+    {
+        SummaryResult result = People(Options(DwTier.Convenience))
+            .ToList(Oldest("Id", "Highest"));
+
+        Assert.Equal(2, result.Data.Count);
+    }
+
+    // -------------------------------------------- 7.2 aggregates over singleton groups (floor)
+
+    [Fact]
+    public void A_group_of_one_discloses_that_person_without_a_floor()
+    {
+        // The attack, run. Sales is Cy and nobody else, so the maximum age of Sales is Cy's age —
+        // reached without ever selecting Age, and through a field that opted into aggregation.
+        SummaryResult result = People(Floor(1)).ToList(Oldest());
+
+        dynamic sales = result.Data.Single(row => (string)((dynamic)row).Department == "Sales");
+
+        Assert.Equal(25, (int)sales.Oldest);
+    }
+
+    [Fact]
+    public void The_floor_removes_the_group_that_would_have_disclosed_it()
+    {
+        SummaryResult result = People(Floor(2)).ToList(Oldest());
+
+        Assert.DoesNotContain(
+            result.Data,
+            row => (string)((dynamic)row).Department == "Sales");
+
+        Assert.Contains(
+            result.Data,
+            row => (string)((dynamic)row).Department == "Engineering");
+    }
+
+    [Fact]
+    public void The_removal_is_recorded_rather_than_silent()
+    {
+        PolicyQueryable<Person> guarded = People(Floor(2));
+
+        guarded.ToList(Oldest());
+
+        Assert.Contains(
+            guarded.LastTrace!.Decisions,
+            d => d.Action == PolicyAction.Dropped && d.Feature == PolicyFeature.Aggregate);
+    }
+
+    // ------------------------------------------------- 7.3 TotalCount cardinality disclosure
+
+    private static Filter Where(string field, Operator op, object value) => new()
+    {
+        ConditionGroup = new ConditionGroup
+        {
+            Sort = 1,
+            Conditions =
+            {
+                new Condition
+                {
+                    Sort = 1,
+                    Field = field,
+                    DataType = value is string ? DataType.Text : DataType.Number,
+                    Operator = op,
+                    Values = { value }
+                }
+            }
+        }
+    };
+
+    [Fact]
+    public void An_operator_restriction_stops_the_cardinality_probe_before_it_starts()
+    {
+        // §7.3 is inherent to permitting WHERE on a protected field: TotalCount counts the matches
+        // of a range filter without selecting anything, so a caller who may range-filter may count.
+        // The control is the operator restriction, which leaves a field confirmable by someone who
+        // already holds the value and undiscoverable by someone who does not.
+        PolicyException error = Assert.Throws<PolicyException>(
+            () => Guarded(DwTier.Convenience).ToList(Where("Badge", Operator.GreaterThan, "E-2")));
+
+        Assert.Equal(PolicyErrorCode.OperatorNotAllowed, error.ErrorCode);
+    }
+
+    [Fact]
+    public void The_operators_the_restriction_permits_still_work()
+    {
+        // Confirmation is the point of the permitted set. Refusing everything would be a denial,
+        // and this field is not denied.
+        FilterResult<Staff> result =
+            Guarded(DwTier.Convenience).ToList(Where("Badge", Operator.Equal, "E-1"));
+
+        Assert.Single(result.Data);
+    }
+
+    [Fact]
+    public void Without_the_restriction_the_count_really_does_disclose()
+    {
+        // The documented consequence, asserted so that it is a decision on record rather than an
+        // oversight. Salary carries no operator restriction, so a range filter counts the high
+        // earners while selecting nothing — which is why §7.3 names [DwOperators] as the control
+        // and not something the engine applies on its own.
+        //
+        // Counted against the unguarded query rather than a number written here, so the assertion
+        // stays about the disclosure rather than about what the fixture happens to hold.
+        int reallyOver = _db.Staff.Count(s => s.Salary > 100000m);
+
+        FilterResult<Staff> result = Guarded(DwTier.Convenience)
+            .ToList(Where("Salary", Operator.GreaterThan, 100000));
+
+        Assert.Equal(reallyOver, result.TotalCount);
+
+        // And the field itself never left the database. The count is the whole disclosure: at this
+        // threshold it names one person as earning over a hundred thousand, through a column the
+        // policy refuses to project.
+        Assert.All(result.Data, row => Assert.Equal(0m, row.Salary));
+    }
+
+    // ------------------------------------------------- 7.4 order plus paging is a binary search
+
+    [Fact]
+    public void The_startup_scan_warns_when_a_masked_field_can_still_be_sorted()
+    {
+        // Sorting runs against the real value, so paging a masked column ranks the true order and,
+        // with range filters, converges on it. The engine does not decide this silently: it warns,
+        // and [DwNoOrder] remains the explicit fix.
+        PolicyModelReport report = PolicyModelValidator.Inspect(new[] { typeof(Guarded) });
+
+        Assert.True(report.IsValid);
+        Assert.Contains(
+            report.Warnings,
+            w => w.Contains("Guarded.Salary") && w.Contains("ranks the true order"));
+    }
+
+    [Fact]
+    public void A_masked_field_that_took_the_fix_is_refused_for_sorting()
+    {
+        // Person.NationalId is masked and carries [DwNoOrder], which is the shape the warning asks
+        // for. The refusal is what closes the channel; the warning only points at it.
+        Filter filter = new()
+        {
+            Orders = new List<OrderBy>
+            {
+                new() { Sort = 1, Field = "NationalId", Direction = Direction.Ascending }
+            }
+        };
+
+        PolicyException error = Assert.Throws<PolicyException>(
+            () => People(Options(DwTier.Strict)).ToList(filter));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForOrder, error.ErrorCode);
+    }
+
+    [Fact]
+    public void A_field_that_took_the_fix_draws_no_warning()
+    {
+        // The warning has to go quiet once the fix is applied, or it is noise nobody reads and the
+        // one that matters is lost in it.
+        PolicyModelReport report = PolicyModelValidator.Inspect(new[] { typeof(Person) });
+
+        Assert.DoesNotContain(report.Warnings, w => w.Contains("Person.NationalId"));
     }
 }

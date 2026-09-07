@@ -122,7 +122,14 @@ public class Person
     /// Rounded to the nearest five. Integer because SQLite refuses to aggregate a decimal, and an
     /// aggregate of a transformed field is what the summary tests need to exercise.
     /// </summary>
-    [DwGeneralize(GeneralizeMode.Round, Step = 5)]
+    /// <remarks>
+    /// Deliberately opted in to aggregation. Phase 8 denies it by default — MAX over a generalized
+    /// column reads the real values, which is design section 7.2's attack — and this field exists to
+    /// prove the other half: that the transform runs *after* the grouping, so the aggregate picks
+    /// the right row and is rounded on the way out. The un-opted case is
+    /// <c>PolicyInferenceTests</c>'s.
+    /// </remarks>
+    [DwGeneralize(GeneralizeMode.Round, Step = 5, AllowAggregate = true)]
     [DwNoOrder]
     public int Age { get; set; }
 

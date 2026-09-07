@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Policies.Enums;
+﻿using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.DTOs;
 
@@ -43,10 +43,43 @@ public abstract class TransformStage
 {
     /// <summary>Initializes the stage.</summary>
     /// <param name="kind">Which stage this is.</param>
-    private protected TransformStage(TransformKind kind) => Kind = kind;
+    /// <param name="allowAggregate">
+    /// True to permit aggregating the field this stage transforms.
+    /// </param>
+    /// <param name="minGroupSize">
+    /// The smallest group this stage's field may be aggregated over, or zero to set no floor of its
+    /// own.
+    /// </param>
+    private protected TransformStage(
+        TransformKind kind, bool allowAggregate = false, int minGroupSize = 0)
+    {
+        Kind = kind;
+        AllowAggregate = allowAggregate;
+        MinGroupSize = minGroupSize;
+    }
 
     /// <summary>Which stage this is.</summary>
     public TransformKind Kind { get; }
+
+    /// <summary>
+    /// True when the field this stage transforms may still be aggregated.
+    /// </summary>
+    /// <remarks>
+    /// False by default, which is the whole mitigation. Aggregation runs in SQL against the stored
+    /// values, long before any stage applies — so <c>MAX</c> over a masked salary returns the real
+    /// maximum and the transform obscured a column nobody asked to see. Design section 7.2.
+    /// </remarks>
+    public bool AllowAggregate { get; }
+
+    /// <summary>
+    /// The smallest group this stage's field may be aggregated over, or zero when it sets no floor.
+    /// </summary>
+    /// <remarks>
+    /// The per-field half of the k-anonymity floor. Without a floor, <see cref="AllowAggregate"/> is
+    /// an opening rather than a permission: a group of one returns that row's exact value under any
+    /// aggregate function.
+    /// </remarks>
+    public int MinGroupSize { get; }
 }
 
 /// <summary>Hands the value to a transformer the application supplied.</summary>
@@ -55,7 +88,10 @@ public sealed class MutateStage : TransformStage
     /// <summary>Initializes the stage.</summary>
     /// <param name="transformer">A type implementing <c>IValueTransformer</c>.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="transformer"/> is null.</exception>
-    public MutateStage(Type transformer) : base(TransformKind.Mutate) =>
+    /// <param name="allowAggregate">True to permit aggregating the field this stage transforms.</param>
+    /// <param name="minGroupSize">The smallest group it may be aggregated over, or zero for none.</param>
+    public MutateStage(Type transformer, bool allowAggregate = false, int minGroupSize = 0)
+        : base(TransformKind.Mutate, allowAggregate, minGroupSize) =>
         Transformer = transformer ?? throw new ArgumentNullException(nameof(transformer));
 
     /// <summary>The transformer to run.</summary>
@@ -74,8 +110,16 @@ public sealed class GeneralizeStage : TransformStage
     /// Thrown when <paramref name="mode"/> needs a positive step and does not have one. A step of
     /// zero would divide by zero at the moment of masking, on a caller's query.
     /// </exception>
-    public GeneralizeStage(GeneralizeMode mode, int step = 0, DatePart part = DatePart.Year, int decimals = 0)
-        : base(TransformKind.Generalize)
+    /// <param name="allowAggregate">True to permit aggregating the field this stage transforms.</param>
+    /// <param name="minGroupSize">The smallest group it may be aggregated over, or zero for none.</param>
+    public GeneralizeStage(
+        GeneralizeMode mode,
+        int step = 0,
+        DatePart part = DatePart.Year,
+        int decimals = 0,
+        bool allowAggregate = false,
+        int minGroupSize = 0)
+        : base(TransformKind.Generalize, allowAggregate, minGroupSize)
     {
         if (mode is GeneralizeMode.Round or GeneralizeMode.Bucket && step <= 0)
         {
@@ -114,7 +158,10 @@ public sealed class FormatStage : TransformStage
     /// <summary>Initializes the stage.</summary>
     /// <param name="format">A standard or custom .NET format string.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="format"/> is blank.</exception>
-    public FormatStage(string format) : base(TransformKind.Format)
+    /// <param name="allowAggregate">True to permit aggregating the field this stage transforms.</param>
+    /// <param name="minGroupSize">The smallest group it may be aggregated over, or zero for none.</param>
+    public FormatStage(string format, bool allowAggregate = false, int minGroupSize = 0)
+        : base(TransformKind.Format, allowAggregate, minGroupSize)
     {
         if (string.IsNullOrWhiteSpace(format))
         {
@@ -145,6 +192,8 @@ public sealed class MaskStage : TransformStage
     /// is negative. Refused here rather than at the moment of masking, so a misconfiguration is a
     /// startup failure rather than a query failure.
     /// </exception>
+    /// <param name="allowAggregate">True to permit aggregating the field this stage transforms.</param>
+    /// <param name="minGroupSize">The smallest group it may be aggregated over, or zero for none.</param>
     public MaskStage(
         MaskStrategy strategy,
         int keepStart = 0,
@@ -153,8 +202,10 @@ public sealed class MaskStage : TransformStage
         bool preserveLength = true,
         string? pattern = null,
         string? replacement = null,
-        string? text = null)
-        : base(TransformKind.Mask)
+        string? text = null,
+        bool allowAggregate = false,
+        int minGroupSize = 0)
+        : base(TransformKind.Mask, allowAggregate, minGroupSize)
     {
         if (keepStart < 0 || keepEnd < 0)
         {
@@ -219,7 +270,11 @@ public sealed class TruncateStage : TransformStage
     /// <param name="length">The greatest number of characters kept, before any ellipsis.</param>
     /// <param name="ellipsis">Appended when the value was shortened, or null to append nothing.</param>
     /// <exception cref="ArgumentException">Thrown when <paramref name="length"/> is negative.</exception>
-    public TruncateStage(int length, string? ellipsis = null) : base(TransformKind.Truncate)
+    /// <param name="allowAggregate">True to permit aggregating the field this stage transforms.</param>
+    /// <param name="minGroupSize">The smallest group it may be aggregated over, or zero for none.</param>
+    public TruncateStage(
+        int length, string? ellipsis = null, bool allowAggregate = false, int minGroupSize = 0)
+        : base(TransformKind.Truncate, allowAggregate, minGroupSize)
     {
         if (length < 0)
         {
@@ -248,7 +303,11 @@ public sealed class DefaultStage : TransformStage
     /// True when a constant was supplied. Distinguishes <c>[DwDefault]</c> from
     /// <c>[DwDefault(null)]</c>, which <paramref name="value"/> alone cannot.
     /// </param>
-    public DefaultStage(string? value, bool hasValue) : base(TransformKind.Default)
+    /// <param name="allowAggregate">True to permit aggregating the field this stage transforms.</param>
+    /// <param name="minGroupSize">The smallest group it may be aggregated over, or zero for none.</param>
+    public DefaultStage(
+        string? value, bool hasValue, bool allowAggregate = false, int minGroupSize = 0)
+        : base(TransformKind.Default, allowAggregate, minGroupSize)
     {
         Value = value;
         HasValue = hasValue;

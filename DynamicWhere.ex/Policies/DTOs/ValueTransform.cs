@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Policies.Enums;
+﻿using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.DTOs;
 
@@ -53,6 +53,56 @@ public sealed class ValueTransform
 
     /// <summary>Replaces the value outright, in place of every other stage.</summary>
     public DefaultStage? Default { get; }
+
+    /// <summary>
+    /// True when the field may still be aggregated.
+    /// </summary>
+    /// <remarks>
+    /// Every stage must permit it. A chain is only as permissive as its strictest link, so adding a
+    /// truncation on top of a mask that opted in takes the permission away again — which is the
+    /// direction that is safe to get wrong. An empty chain permits it, because an untransformed
+    /// field has nothing to disclose that the caller could not already read.
+    /// </remarks>
+    public bool AllowsAggregate
+    {
+        get
+        {
+            foreach (TransformStage stage in Stages)
+            {
+                if (!stage.AllowAggregate)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The smallest group this field may be aggregated over, or zero when no stage sets a floor.
+    /// </summary>
+    /// <remarks>
+    /// The largest of them, not the last: two stages each naming a floor both mean it, and honouring
+    /// the smaller would answer for a group one of them was written to protect.
+    /// </remarks>
+    public int MinGroupSize
+    {
+        get
+        {
+            int floor = 0;
+
+            foreach (TransformStage stage in Stages)
+            {
+                if (stage.MinGroupSize > floor)
+                {
+                    floor = stage.MinGroupSize;
+                }
+            }
+
+            return floor;
+        }
+    }
 
     /// <summary>True when nothing transforms this field.</summary>
     public bool IsEmpty =>

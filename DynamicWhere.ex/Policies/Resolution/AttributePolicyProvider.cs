@@ -408,35 +408,42 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     {
         if (property.GetCustomAttribute<DwMutateAttribute>(inherit: true) is { } mutate)
         {
-            yield return new MutateStage(mutate.Transformer);
+            yield return new MutateStage(
+                mutate.Transformer, mutate.AllowAggregate, mutate.MinGroupSize);
         }
 
         if (property.GetCustomAttribute<DwGeneralizeAttribute>(inherit: true) is { } generalize)
         {
             yield return new GeneralizeStage(
-                generalize.Mode, generalize.Step, generalize.Part, generalize.Decimals);
+                generalize.Mode, generalize.Step, generalize.Part, generalize.Decimals,
+                generalize.AllowAggregate, generalize.MinGroupSize);
         }
 
         if (property.GetCustomAttribute<DwFormatAttribute>(inherit: true) is { } format)
         {
-            yield return new FormatStage(format.Format);
+            yield return new FormatStage(
+                format.Format, format.AllowAggregate, format.MinGroupSize);
         }
 
         if (property.GetCustomAttribute<DwMaskAttribute>(inherit: true) is { } mask)
         {
             yield return new MaskStage(
                 mask.Strategy, mask.KeepStart, mask.KeepEnd, mask.MaskChar, mask.PreserveLength,
-                mask.Pattern, mask.Replacement, mask.Text);
+                mask.Pattern, mask.Replacement, mask.Text,
+                mask.AllowAggregate, mask.MinGroupSize);
         }
 
         if (property.GetCustomAttribute<DwTruncateAttribute>(inherit: true) is { } truncate)
         {
-            yield return new TruncateStage(truncate.Length, truncate.Ellipsis);
+            yield return new TruncateStage(
+                truncate.Length, truncate.Ellipsis, truncate.AllowAggregate, truncate.MinGroupSize);
         }
 
         if (property.GetCustomAttribute<DwDefaultAttribute>(inherit: true) is { } replacement)
         {
-            yield return new DefaultStage(replacement.Value, replacement.HasValue);
+            yield return new DefaultStage(
+                replacement.Value, replacement.HasValue,
+                replacement.AllowAggregate, replacement.MinGroupSize);
         }
     }
 

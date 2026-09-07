@@ -138,6 +138,24 @@ public sealed class PolicyResolver
             isSealed |= winner.Level == PolicyLevel.SealedAttribute;
         }
 
+        ValueTransform? transform = ElectTransform(candidates);
+
+        // Design section 7.2. Aggregation runs in SQL against the stored values, before any stage of
+        // this chain applies — so MAX over a masked salary returns the real maximum, and a group of
+        // one returns that row's exact value. The transform obscured a column nobody asked to see.
+        //
+        // Here rather than in the sanitizer, because this is the one place a transform is elected.
+        // A sanitizer-side check would have to be repeated at every surface that aggregates, and the
+        // standing lesson of Phases 3 and 4 is that such a list is never finished.
+        //
+        // It overrides whatever the election decided for Aggregate, including a sealed allowance:
+        // the opt-in is AllowAggregate on the attribute that transforms the field, which is where
+        // the author who chose to obscure it can weigh that against being able to count it.
+        if (transform is not null && !transform.IsEmpty && !transform.AllowsAggregate)
+        {
+            effects[PolicyFeature.Aggregate] = PolicyEffect.Deny;
+        }
+
         return new FieldPolicy(
             path,
             effects,
@@ -147,7 +165,7 @@ public sealed class PolicyResolver
             ElectAlias(candidates),
             CollectForced(candidates),
             ElectRequired(candidates),
-            ElectTransform(candidates),
+            transform,
             ElectFacts(candidates));
     }
 

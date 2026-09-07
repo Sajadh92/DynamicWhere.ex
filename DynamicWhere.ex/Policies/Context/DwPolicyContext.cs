@@ -1,4 +1,5 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
+using DynamicWhere.ex.Policies.Audit;
 using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.Context;
@@ -17,6 +18,13 @@ public sealed class DwPolicyContext
     private readonly List<DwSubject> _subjects = new();
     private readonly Dictionary<string, object?> _values = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<object, PolicyAttachment> _attachments = new();
+
+    // Guarded, unlike the subjects and values above. Those are written while the context is being
+    // built and only read afterwards; this one is written from the query path, and one context can
+    // legitimately serve two queries at once — a plain List appended from two threads corrupts
+    // rather than merely races.
+    private readonly object _auditLock = new();
+    private readonly List<DwAuditEvent> _audit = new();
 
     /// <summary>The principal dimensions describing the caller.</summary>
     public IReadOnlyList<DwSubject> Subjects => _subjects;
@@ -74,6 +82,93 @@ public sealed class DwPolicyContext
     /// Looks up an ambient value.
     /// </summary>
     public bool TryGetValue(string key, out object? value) => _values.TryGetValue(key, out value);
+
+    /// <summary>
+    /// The audit events recorded so far and not yet written to a sink.
+    /// </summary>
+    /// <remarks>
+    /// A copy. The subject of an audit is the same caller whose access it records, and handing back
+    /// the live list would let them delete the evidence before it reached a sink.
+    /// <para>
+    /// Drain it once per request through <c>DwPolicy.DrainAuditAsync</c>. A context is built per
+    /// request and discarded with it, so events left here when it is collected are simply lost —
+    /// which is why the buffer is bounded and the bound refuses the query rather than dropping the
+    /// record.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<DwAuditEvent> PendingAuditEvents
+    {
+        get
+        {
+            lock (_auditLock)
+            {
+                return _audit.ToArray();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records an access, refusing once the buffer is full.
+    /// </summary>
+    /// <param name="auditEvent">What happened.</param>
+    /// <param name="capacity">The most events this context may hold undrained.</param>
+    /// <returns>False when the buffer is full and nothing was recorded.</returns>
+    /// <remarks>
+    /// Reports the overflow rather than throwing, so the caller decides what a full buffer means.
+    /// It means the query is refused: an audited field whose log has quietly stopped being written
+    /// is the one outcome the attribute exists to make impossible.
+    /// </remarks>
+    internal bool TryRecordAudit(DwAuditEvent auditEvent, int capacity)
+    {
+        lock (_auditLock)
+        {
+            if (_audit.Count >= capacity)
+            {
+                return false;
+            }
+
+            _audit.Add(auditEvent);
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Removes and returns everything recorded so far.
+    /// </summary>
+    /// <remarks>
+    /// Taken rather than copied-then-cleared, so two concurrent drains cannot each write the same
+    /// event to the sink.
+    /// </remarks>
+    internal DwAuditEvent[] TakeAuditEvents()
+    {
+        lock (_auditLock)
+        {
+            DwAuditEvent[] taken = _audit.ToArray();
+
+            _audit.Clear();
+
+            return taken;
+        }
+    }
+
+    /// <summary>
+    /// Puts events back on the buffer, at the front, after a sink failed to accept them.
+    /// </summary>
+    /// <param name="unwritten">What the sink never saw, in order.</param>
+    /// <remarks>
+    /// At the front, so a retry writes them before anything recorded since — an audit log is read
+    /// in order, and reordering it around a transient failure makes it harder to follow for no
+    /// gain. The capacity bound is not applied here: these were already counted once, and refusing
+    /// to take back what this library just removed would be losing them itself.
+    /// </remarks>
+    internal void ReturnAuditEvents(IReadOnlyList<DwAuditEvent> unwritten)
+    {
+        lock (_auditLock)
+        {
+            _audit.InsertRange(0, unwritten);
+        }
+    }
 
     /// <summary>
     /// Records what a store provider pinned to this context when it was prepared.

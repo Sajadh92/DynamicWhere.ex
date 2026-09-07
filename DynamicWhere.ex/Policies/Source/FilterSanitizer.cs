@@ -4,6 +4,7 @@ using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Optimization.Cache.Source;
+using DynamicWhere.ex.Policies.Audit;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
@@ -258,7 +259,7 @@ internal static class FilterSanitizer
         {
             foreach (string field in groupBy.Fields)
             {
-                FieldPolicy policy = gate.PolicyFor(field);
+                FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.Group);
 
                 if (!policy.Allows(PolicyFeature.Group))
                 {
@@ -277,7 +278,7 @@ internal static class FilterSanitizer
                 }
 
                 string field = aggregate.Field!;
-                FieldPolicy policy = gate.PolicyFor(field);
+                FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.Aggregate);
 
                 if (!policy.Allows(PolicyFeature.Aggregate))
                 {
@@ -426,7 +427,7 @@ internal static class FilterSanitizer
 
                 foreach (string path in paths)
                 {
-                    FieldPolicy policy = gate.PolicyFor(path);
+                    FieldPolicy policy = gate.PolicyFor(path, PolicyFeature.Where);
 
                     if (!policy.Allows(PolicyFeature.Where))
                     {
@@ -490,7 +491,7 @@ internal static class FilterSanitizer
 
             foreach (string path in paths)
             {
-                FieldPolicy policy = gate.PolicyFor(path);
+                FieldPolicy policy = gate.PolicyFor(path, PolicyFeature.Order);
 
                 if (policy.Allows(PolicyFeature.Order))
                 {
@@ -685,7 +686,7 @@ internal static class FilterSanitizer
     {
         foreach (string field in SegmentFields(segment))
         {
-            FieldPolicy policy = gate.PolicyFor(field);
+            FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.Segment);
 
             if (!policy.Allows(PolicyFeature.Segment))
             {
@@ -729,7 +730,7 @@ internal static class FilterSanitizer
             // bypassed by nesting one group deeper, which is the cheapest evasion there is.
             foreach (string field in GroupFields(set.ConditionGroup))
             {
-                FieldPolicy policy = gate.PolicyFor(field);
+                FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.Select);
 
                 if (policy.Allows(PolicyFeature.Select))
                 {
@@ -819,7 +820,7 @@ internal static class FilterSanitizer
         foreach (OrderBy order in segment.Orders)
         {
             string field = order.Field!;
-            FieldPolicy policy = gate.PolicyFor(field);
+            FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.Order);
 
             if (policy.Allows(PolicyFeature.Order)
                 || !gate.Refuse(field, PolicyFeature.Order, PolicyErrorCode.FieldDeniedForOrder, policy))
@@ -850,7 +851,7 @@ internal static class FilterSanitizer
 
         foreach (string field in segment.Selects)
         {
-            FieldPolicy policy = gate.PolicyFor(field);
+            FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.Select);
 
             if (policy.Allows(PolicyFeature.Select)
                 || !gate.Refuse(field, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy))
@@ -1199,7 +1200,7 @@ internal static class FilterSanitizer
             foreach (Condition condition in group.Conditions)
             {
                 string field = condition.Field!;
-                FieldPolicy policy = gate.PolicyFor(field);
+                FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.Where);
 
                 if (!policy.Allows(PolicyFeature.Where))
                 {
@@ -1248,7 +1249,7 @@ internal static class FilterSanitizer
         foreach (OrderBy order in filter.Orders)
         {
             string field = order.Field!;
-            FieldPolicy policy = gate.PolicyFor(field);
+            FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.Order);
 
             if (policy.Allows(PolicyFeature.Order)
                 || !gate.Refuse(field, PolicyFeature.Order, PolicyErrorCode.FieldDeniedForOrder, policy))
@@ -1292,7 +1293,7 @@ internal static class FilterSanitizer
 
         foreach (string field in filter.Selects)
         {
-            FieldPolicy policy = gate.PolicyFor(field);
+            FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.Select);
 
             if (policy.Allows(PolicyFeature.Select)
                 || !gate.Refuse(field, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy))
@@ -1342,7 +1343,7 @@ internal static class FilterSanitizer
 
         foreach (string field in gate.ProjectableFields())
         {
-            FieldPolicy policy = gate.PolicyFor(field);
+            FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.None);
 
             if (policy.Allows(PolicyFeature.Select))
             {
@@ -1843,7 +1844,7 @@ internal static class FilterSanitizer
         /// not override.
         /// </remarks>
         internal int CostOf(string fieldPath) =>
-            PolicyFor(fieldPath).CostWeight ?? _options.Caps.DefaultFieldCost;
+            PolicyFor(fieldPath, PolicyFeature.None).CostWeight ?? _options.Caps.DefaultFieldCost;
 
         /// <summary>Refuses a query that spends more than the budget allows.</summary>
         /// <remarks>
@@ -2061,7 +2062,7 @@ internal static class FilterSanitizer
         /// </remarks>
         internal void RequireMissing(string fieldPath)
         {
-            string named = PolicyFor(fieldPath).Alias ?? fieldPath;
+            string named = PolicyFor(fieldPath, PolicyFeature.None).Alias ?? fieldPath;
 
             string origin =
                 $"required filter on '{named}' was not supplied by a condition that narrows the result";
@@ -2116,7 +2117,7 @@ internal static class FilterSanitizer
                 fieldPath, PolicyFeature.Where, PolicyAction.Injected, $"forced predicate ({op})"));
 
         /// <summary>Resolves one field's policy, once per query.</summary>
-        internal FieldPolicy PolicyFor(string fieldPath)
+        internal FieldPolicy PolicyFor(string fieldPath, PolicyFeature feature)
         {
             if (!_resolved.TryGetValue(fieldPath, out FieldPolicy? policy))
             {
@@ -2124,7 +2125,59 @@ internal static class FilterSanitizer
                 _resolved[fieldPath] = policy;
             }
 
+            // Outside the memo on purpose. The policy is resolved once per field per query, but an
+            // audit records uses, and a field named in a condition and again in an order was used
+            // twice.
+            if (feature != PolicyFeature.None && policy.IsAudited(feature))
+            {
+                Audit(fieldPath, feature, policy);
+            }
+
             return policy;
+        }
+
+        /// <summary>
+        /// Records one use of an audited field on the caller's context, refusing the query when
+        /// there is no room left to record it.
+        /// </summary>
+        /// <remarks>
+        /// Fail closed. Dropping the record instead would leave the access happening with nothing
+        /// written down, which is the single outcome <c>[DwAudit]</c> exists to make impossible —
+        /// and it would leave no trace of having dropped anything either.
+        /// <para>
+        /// A dry run still records. It changes what the policy does, not what it saw, and a canary
+        /// rollout with no evidence of what it was about to refuse is one nobody can evaluate.
+        /// </para>
+        /// </remarks>
+        private void Audit(string fieldPath, PolicyFeature feature, FieldPolicy policy)
+        {
+            DwAuditEvent recorded = new(
+                DateTimeOffset.UtcNow,
+                _entityType.FullName ?? _entityType.Name,
+                fieldPath,
+                feature,
+                policy.EffectFor(feature),
+                _context.Subjects,
+                _context.Purpose,
+                _options.Tier,
+                IsDryRun);
+
+            if (_context.TryRecordAudit(recorded, _options.Caps.MaxAuditEvents))
+            {
+                return;
+            }
+
+            string origin =
+                $"MaxAuditEvents cap ({_options.Caps.MaxAuditEvents}) reached with the buffer "
+                + "undrained";
+
+            _trace.Add(new PolicyDecision(fieldPath, feature, PolicyAction.Denied, origin));
+
+            throw new PolicyException(
+                PolicyErrorCode.CapExceeded, fieldPath, feature, _options.Tier)
+            {
+                SourceOrigin = origin
+            };
         }
 
         /// <summary>

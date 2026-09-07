@@ -18,6 +18,7 @@ public sealed class DwCaps
     private int _maxNavigationDepth = 4;
     private int _maxQueryCost = 1000;
     private int _defaultFieldCost = 1;
+    private int _maxAuditEvents = 10_000;
 
     /// <summary>The largest page a caller may request.</summary>
     public int MaxPageSize
@@ -94,6 +95,25 @@ public sealed class DwCaps
 
             _defaultFieldCost = value;
         }
+    }
+
+    /// <summary>
+    /// The most audit events one context may hold before being drained.
+    /// </summary>
+    /// <remarks>
+    /// Reaching it refuses the query rather than dropping the record. That is the fail-closed
+    /// reading and the only defensible one: an audited field whose log has quietly stopped being
+    /// written is exactly the outcome <c>[DwAudit]</c> exists to make impossible.
+    /// <para>
+    /// The default is far above what one request can produce — a context is built per request and
+    /// drained with it — so reaching it means a context is being reused across many requests
+    /// without ever being drained, which is a leak worth failing on.
+    /// </para>
+    /// </remarks>
+    public int MaxAuditEvents
+    {
+        get => _maxAuditEvents;
+        set => _maxAuditEvents = Set(value);
     }
 
     /// <summary>Prevents any further change.</summary>

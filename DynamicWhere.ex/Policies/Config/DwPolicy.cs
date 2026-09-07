@@ -1,4 +1,5 @@
-﻿using DynamicWhere.ex.Policies.Context;
+﻿using DynamicWhere.ex.Policies.Audit;
+using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Policies.Validation;
 
@@ -132,6 +133,74 @@ public static class DwPolicy
         }
 
         return context;
+    }
+
+    /// <summary>
+    /// Writes everything a context recorded to a sink, and empties its buffer.
+    /// </summary>
+    /// <param name="context">The caller's context, after its queries have run.</param>
+    /// <param name="sink">Where the events go.</param>
+    /// <param name="ct">Cancels the writes.</param>
+    /// <returns>How many events were written.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="context"/> or <paramref name="sink"/> is null.
+    /// </exception>
+    /// <remarks>
+    /// Call it once per request, after the response. The query path is synchronous and a sink is
+    /// not, so events accumulate on the context while queries run and are written here — the only
+    /// arrangement that neither loses records to a fire-and-forget call nor blocks a request thread
+    /// on I/O.
+    /// <para>
+    /// A sink that throws part way leaves everything it never saw on the buffer and the failure is
+    /// rethrown, so a host can retry or log without the events having been silently consumed. It
+    /// does not retry on the caller's behalf: how many times to try writing an audit record, and
+    /// how long to hold a request open doing it, are the host's decisions.
+    /// </para>
+    /// <para>
+    /// The sink is passed rather than read from configuration so that a scoped one works — an audit
+    /// sink writing through a per-request database context is the ordinary case, and a singleton
+    /// held in options could not be one.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// await DwPolicy.DrainAuditAsync(ctx, sink);
+    /// </code>
+    /// </example>
+    public static async ValueTask<int> DrainAuditAsync(
+        DwPolicyContext context, IDwAuditSink sink, CancellationToken ct = default)
+    {
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        if (sink is null)
+        {
+            throw new ArgumentNullException(nameof(sink));
+        }
+
+        DwAuditEvent[] events = context.TakeAuditEvents();
+
+        for (int i = 0; i < events.Length; i++)
+        {
+            try
+            {
+                await sink.WriteAsync(events[i], ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Everything from the one that failed onward, in order. The events already written
+                // are not returned: a sink that accepted one and is asked for it again would record
+                // the same access twice, and a duplicated audit entry is its own kind of wrong
+                // answer.
+                context.ReturnAuditEvents(events[i..]);
+
+                throw;
+            }
+        }
+
+        return events.Length;
     }
 
     /// <summary>

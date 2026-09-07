@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Json;
@@ -21,24 +21,22 @@ using Microsoft.Extensions.Options;
 namespace DynamicWhere.Tests.Policies;
 
 /// <summary>
-/// The administrative surface, driven through a real request pipeline so that routing,
-/// authorization and model binding all take part.
+/// Runs every class that drives the administrative surface one at a time.
 /// </summary>
 /// <remarks>
-/// The endpoints are thin — everything they answer with is computed in the core package and tested
-/// there. What is tested here is the part only a pipeline can show: that the routes are where they
-/// are supposed to be, that they refuse the callers they are supposed to refuse, and that mounting
-/// them without deciding who may reach them is impossible.
+/// The stub authentication handler signs requests in through a static, so two classes running in
+/// parallel each sign the other's requests in as the wrong role. It showed up once as a single
+/// intermittent authorization failure, which is the least useful way to learn about a shared static.
 /// </remarks>
-/// <summary>
-/// One test pipeline, shared by every class that drives the administrative surface, so the two do
-/// not drift into testing two different applications.
-/// </summary>
 [CollectionDefinition("PolicyEndpoints", DisableParallelization = true)]
 public sealed class PolicyEndpointCollection
 {
 }
 
+/// <summary>
+/// One test pipeline, shared by every class that drives the administrative surface, so the two do
+/// not drift into testing two different applications.
+/// </summary>
 internal static class PolicyEndpointHost
 {
     internal const string Entity = "staff";
@@ -150,6 +148,12 @@ internal static class PolicyEndpointHost
 /// The administrative surface, driven through a real request pipeline so that routing,
 /// authorization and model binding all take part.
 /// </summary>
+/// <remarks>
+/// The endpoints are thin — everything they answer with is computed in the core package and tested
+/// there. What is tested here is the part only a pipeline can show: that the routes are where they
+/// are supposed to be, that they refuse the callers they are supposed to refuse, and that mounting
+/// them without deciding who may reach them is impossible.
+/// </remarks>
 [Collection("PolicyEndpoints")]
 public class PolicyEndpointTests
 {

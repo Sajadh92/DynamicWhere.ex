@@ -52,6 +52,9 @@ policy is not the population who may *change* one.
 
 ### 2. Rules may set all four new facts, and `Overridable` is the ceiling
 
+*Settled by Sajjad, stronger than either option offered: rules carry all four, and the existing
+sealed/overridable flag is the ceiling rather than a new mechanism.*
+
 Rules can set label, description, group, order, allowed values, cost weight and audited features,
 exactly as they can already set an alias or a transform. The existing sealed/overridable ceiling
 does the work: an attribute is sealed by default, so `[DwCost(10)]` cannot be undercut by a rule
@@ -129,40 +132,40 @@ are declared at startup.
 
 Each ends with a commit. TDD throughout: the failing test is written and seen to fail first.
 
-- [ ] **1. Plan.** This document.
-- [ ] **2. The four facts, from attributes.** `[DwDescribe]`, `[DwAllowedValues]`, `[DwCost]`,
+- [x] **1. Plan.** This document.
+- [x] **2. The four facts, from attributes.** `[DwDescribe]`, `[DwAllowedValues]`, `[DwCost]`,
       `[DwAudit]`; `FieldFacts` carried on `PolicyFragment`; the seven flattened onto `FieldPolicy`;
       `AttributePolicyProvider` emits them; per-fact election in `PolicyResolver`, ties to the
       stricter value; `PolicyModelValidator` additions.
-- [ ] **3. The four facts, from rules.** `PolicyRule` carries them; `PolicyRuleDocument` round-trips
+- [x] **3. The four facts, from rules.** `PolicyRule` carries them; `PolicyRuleDocument` round-trips
       them inside the existing `detail` document; all three stores exercise them in the conformance
       suite; each fact mutation-checked separately.
-- [ ] **4. `[DwCost]` enforcement.** `DwCaps.MaxQueryCost`; the sanitizer charges every field
+- [x] **4. `[DwCost]` enforcement.** `DwCaps.MaxQueryCost`; the sanitizer charges every field
       reference across Where, Order, Select, Group, Aggregate, Segment and Summary; new
       `PolicyErrorCode.QueryCostExceeded`; the refusal names the budget and the total, and the trace
       records it.
-- [ ] **5. `[DwAudit]` and `IDwAuditSink`.** `DwAuditEvent`; the buffer on `DwPolicyContext`;
+- [x] **5. `[DwAudit]` and `IDwAuditSink`.** `DwAuditEvent`; the buffer on `DwPolicyContext`;
       `DwPolicy.DrainAuditAsync`; emission wherever an audited field is touched, on the allowed path
       as well as the refused one.
-- [ ] **6. Schema, in core.** `PolicySchema` / `PolicySchemaField`; the entity registry and its
+- [x] **6. Schema, in core.** `PolicySchema` / `PolicySchemaField`; the entity registry and its
       friendly names; the field walk through `CacheReflection`, bounded by `MaxNavigationDepth`;
       sealed fields omitted; per-caller, so a denied field is reported as denied and a masked one as
       masked.
-- [ ] **7. Explain, in core.** `PolicyResolver.Explain`; per feature the winner, what it outranked,
+- [x] **7. Explain, in core.** `PolicyResolver.Explain`; per feature the winner, what it outranked,
       and whether anything tied it — the Phase 1 Task 11 attribution note, closed by reporting every
       tied source rather than the arbitrary winner.
-- [ ] **8. Simulate, in core.** A public entry point that sanitizes a `Filter`, `Summary` or
+- [x] **8. Simulate, in core.** A public entry point that sanitizes a `Filter`, `Summary` or
       `Segment` against a caller and returns the sanitized clause and the trace, executing nothing.
-- [ ] **9. Outbound alias renaming** on the four dynamic-shaped methods.
-- [ ] **10. The package.** `DynamicWhere.ex.Policies.AspNetCore`; `DwPolicyContext.FromClaims`;
+- [x] **9. Outbound alias renaming** on the four dynamic-shaped methods.
+- [x] **10. The package.** `DynamicWhere.ex.Policies.AspNetCore`; `DwPolicyContext.FromClaims`;
       the async context factory; DI registration for all three stores.
-- [ ] **11. The endpoints.** All seven of §5.7, the two authorization policies, and the audit-drain
+- [x] **11. The endpoints.** All seven of §5.7, the two authorization policies, and the audit-drain
       middleware.
-- [ ] **12. Release plumbing.** Solution, `publish.yml` pack step, `build/check-version.ps1` — in
+- [x] **12. Release plumbing.** Solution, `publish.yml` pack step, `build/check-version.ps1` — in
       this phase, because a package that builds and is never packed fails silently.
-- [ ] **13. The reading pass.** Twenty fail-open defects across six phases, none of them found by a
+- [x] **13. The reading pass.** Twenty fail-open defects across six phases, none of them found by a
       test that already existed. Read the diff for the twenty-first.
-- [ ] **14. Close.** Roadmap outcome, memory.
+- [x] **14. Close.** Roadmap outcome, memory.
 
 ---
 

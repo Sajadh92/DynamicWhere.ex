@@ -136,7 +136,7 @@ stops being true the moment one is shipped.
 **Exit:** the same conformance suite passes against all three implementations. Redis pub/sub
 invalidation and DB version polling both verified.
 
-### Phase 7 — Platform
+### Phase 7 — Platform — **Done**
 
 `DynamicWhere.ex.Policies.AspNetCore`: admin API, explain, simulate, health, the
 `ClaimsPrincipal` adapter. Plus `/schema` discovery with `[DwDescribe]` and `[DwAllowedValues]`,
@@ -494,6 +494,156 @@ Both settled against the design document rather than against the plan.
 - **`ValidatePolicyModel()` still does not exist.** Section 4.8's rules are enforced at query time
   and fail closed. `[DwForceWhere(ContextValue = ...)]` naming a key nothing supplies is listed
   there as a startup check and cannot be one — what a context supplies is per-request.
+
+## Phase 7 outcome
+
+Closed 2026-09-06, 11 commits. 1375 tests pass, up from 1179. `dotnet build -c Release` across the
+whole solution emits zero warnings, and the four named files are untouched — as is the whole of
+`Source/`.
+
+Plan: [2026-09-06-policies-v3-phase-7-platform.md](2026-09-06-policies-v3-phase-7-platform.md).
+
+### Four decisions settled before implementation
+
+1. **The admin API refuses to map without a named authorization policy**, and refuses at startup
+   rather than at request time. Read and write take separate policies.
+2. **Rules may set all four new facts, with `Overridable` as the ceiling.** Taken stronger than
+   either option offered: rather than choosing which facts a rule may carry, the existing
+   sealed/overridable flag decides — so a sealed `[DwCost(10)]` cannot be undercut and an
+   overridable one can.
+3. **Audit events buffer on the context and drain once per request**, so nothing is fire-and-forget
+   and nothing blocks the query path.
+4. **Outbound alias renaming ships**, on the surfaces whose rows this library generates.
+
+### Public API added
+
+- `Policies.Attributes` — `DwDescribeAttribute`, `DwAllowedValuesAttribute`, `DwCostAttribute`,
+  `DwAuditAttribute`
+- `Policies.DTOs` — `FieldFacts`, `PolicyExplanation`, `FeatureExplanation`;
+  `FieldPolicy.Label/.Description/.Group/.Order/.AllowedValues/.CostWeight/.AuditedFeatures/.IsAudited`
+- `Policies.Audit` — `DwAuditEvent`, `IDwAuditSink`; `DwPolicy.DrainAuditAsync`
+- `Policies.Discovery` — `DwEntityCatalog`, `PolicySchema`, `PolicySchemaField`,
+  `PolicySchemaBuilder`, `PolicySimulator`, `PolicySimulation<T>`
+- `PolicyResolver.Explain`; `DwPolicy.Resolver`, `DwPolicy.StoreProviders`;
+  `StorePolicyProvider.LoadedAt/.Age/.LastError`; `DwPolicyOptions.Entities`;
+  `DwCaps.MaxQueryCost/.DefaultFieldCost/.MaxAuditEvents`; `PolicyErrorCode.QueryCostExceeded`
+- `DynamicWhere.ex.Policies.AspNetCore` — `MapDwPolicyAdmin`, `DwPolicyAdminOptions`,
+  `DwClaimsOptions`, `DwClaimsAdapter`, `RuleRequest`, `DwPolicyAuditMiddleware`,
+  `UseDwPolicyAudit`, `GetPolicyContextAsync`
+
+### A carrier fragment was winning elections it never entered
+
+The phase's headline finding, and it predates the phase. `[DwAlias]`, `[DwOperators]`,
+`[DwRequireWhere]` and `[DwForceWhere]` each emitted a fragment claiming `PolicyFeature.Where` with
+`PolicyEffect.Allow`. An attribute is sealed unless its author says otherwise, and a sealed
+allowance outranks every runtime denial — so **decorating a field with an alias made that field
+impossible for any rule to deny**. The same held for an operator restriction, a filtering
+requirement, and a tenant scope.
+
+Both attributes' own doc comments describe the intended behaviour — *"this fragment losing the
+contest for `Where` does not discard the name"* — so the code and its documentation disagreed, and
+the documentation was right. The fragments assumed they would lose a contest they always won.
+
+All four now speak to `PolicyFeature.None`, which covers nothing and wins nothing, while their
+typed carriers are elected, intersected and accumulated exactly as before. `PolicyFeature.None` is
+therefore a legal value on a fragment now, and `PolicyRule`'s blanket refusal of it splits in two:
+a rule stating nothing at all is still refused, and a rule naming an effect with no feature to apply
+it to is refused separately — that being the shape where an operator means to deny a field,
+mistypes the features, and gets a stored rule that does nothing while the admin surface lists it as
+a denial.
+
+### Four more found by reading the platform
+
+Twenty-four of this shape now, across seven phases.
+
+- **The schema resolved a nested field against the wrong type.** `Contact.Email` is a path on the
+  employee and its fragments belong to that root, so resolving it against the contact found nothing
+  — and a field with no fragment is permitted. A denied field was advertised as filterable to the
+  front end that builds its UI from exactly that advertisement.
+- **`POST /rules` let a client choose who wrote a rule.** Binding `PolicyRule` from the body meant a
+  request could carry its own `createdBy`, forging the attribution of the rule it was writing. An
+  audit column a client can set is not an audit column. `RuleRequest` carries none of the four.
+- **The sealed-field check on that endpoint resolved nothing.** `SealedFields.Refuse` takes a type
+  resolver; the endpoint handed it the catalogue's, and the catalogue answered only to public names
+  while a rule carries `Type.FullName` by design. The resolver returned null, the check accepted
+  silently, and a rule aimed at a sealed field was stored and read back as a control in force.
+- **The simulator's runtime dispatch wrapped every escaping exception.** `MethodInfo.Invoke` raises
+  a `TargetInvocationException`, so a host catching a specific type never matched and a malformed
+  clause left as a five-hundred. A dispatch mechanism must not change the exception a caller sees.
+
+### Decisions worth not re-litigating
+
+- **Everything an endpoint answers with is computed in the core package.** The schema walk needs
+  `CacheReflection`, which is internal, and the explanation needs the four precedence rules — a
+  second copy of either is how the two drift, and the drift here is a schema that advertises what
+  the query refuses, or an explanation that contradicts the decision.
+- **`Gate.PolicyFor` takes the feature it is resolving for.** That is the structural half of the
+  audit: a new queryable surface cannot resolve a policy without naming a feature, so it cannot
+  forget to record one. Phase 3 found injection missing from three surfaces and Phase 4 found
+  masking missing from nine, both because a new surface did not call something it should have.
+- **The audit buffer is bounded and the bound refuses the query.** An audited field whose log has
+  quietly stopped being written is the outcome the attribute exists to prevent, and a dropped
+  record leaves no trace of having been dropped. This cap is a resource guard rather than a policy
+  decision, so a dry run does not suspend it.
+- **A simulation records no audit events.** It consults the policy exactly as a real query does and
+  would otherwise write the caller into the log kept to establish which accesses happened, for a
+  read that never occurred. It runs on a copy of the context that shares the pinned snapshots, so
+  the answer is about the policy actually being served.
+- **The entity catalogue is a security boundary.** An endpoint resolving a name straight to a type
+  would let whoever reaches it enumerate every type the process has loaded. An unknown name and an
+  unexposed one answer identically.
+- **Every reference is charged, not every distinct field.** Charging per field leaves a caller free
+  to generate the same work by naming one column a thousand times, which is the case the cap exists
+  for. The running total is a `long`, because two caller-influenced numbers multiplied in `int`
+  arithmetic wrap back under budget — a refusal turning into a grant at exactly the size the cap is
+  for.
+- **`/explain` reports every tied source.** This closes Phase 1 Task 11: fragments equal on all four
+  passes are equal in force, and crediting one would name a rule that contributed no more than its
+  twin.
+
+### Known limitations
+
+- **§5.7 says sealed fields never appear in `/schema`; the rule implemented is narrower.** Taken at
+  its word it also hides a masked field — sealed, and still filterable, sortable and readable —
+  leaving a front end unable to offer a field whose queries succeed. A field appears when the caller
+  can do at least one thing with it, so `[DwDenied]`, the section's own example, appears nowhere.
+- **Outbound renaming covers four methods.** `ToListDynamic`, `ToListAsyncDynamic` and the two
+  summary terminals materialize rows of a generated type. `FilterResult<T>` holds the caller's own
+  type and cannot be renamed at all.
+- **`/explain` without a field covers only fields the caller can use**, because it walks the schema.
+  A fully denied field is explained by naming it — which is refused, on the same reasoning that
+  keeps it out of the schema. An operator needing that answer reads the rule listing.
+- **`RuleRequest` cannot express a transform, an operator restriction, a forced predicate or a
+  set of facts.** Those carriers have shapes of their own and the wire contract for them is not
+  designed. A store client can still write them; the endpoint writes the rest.
+- **`DwPolicy.Configure` is process-wide and single-shot**, so a host cannot reconfigure the
+  administrative surface without a restart. That is the posture `DwPolicy` was built for and is
+  unchanged here.
+
+### What Phase 8 inherits
+
+- **`MinGroupSize` has a budget to live beside now.** `DwCaps` gained three members this phase and
+  the pattern for a cap — frozen at startup, refused below one, reported through the trace — is
+  settled.
+- **The audit sink is where an inference attempt should be recorded.** `PolicyInferenceTests` holds
+  two closed channels and completes to seven here; an attack that is blocked is exactly the access
+  a log should carry.
+- **`PolicySimulator` is how an inference test asks "what would this do"** without building a
+  database fixture for it.
+
+### What Phase 9 inherits
+
+- **The release ships four packages now.** `publish.yml` packs all four, `build/check-version.ps1`
+  fails when their versions disagree, and the solution holds them. Verified by packing: eight
+  artifacts, and the AspNetCore package declares `DynamicWhere.ex` at the matching version with a
+  framework reference rather than pinned ASP.NET Core packages.
+- **§5.7's endpoint list is right and its sealed-field sentence needs a footnote**, on top of §5.1's
+  four missing fields and §5.2's missing `LoadNarrowAsync` that Phase 6 recorded.
+- **§3.4 writes the claims adapter as `DwPolicyContext.FromClaims(principal)`.** It ships as
+  `DwClaimsAdapter.CreateContextAsync` plus an extension method, because C# has no way to add a
+  static to a type in another assembly.
+- **The EF Core 6.0.22 leg covers four projects now.** The AspNetCore package targets the same
+  floor and takes a framework reference rather than package references.
 
 ## Phase 6 outcome
 

@@ -174,7 +174,7 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// followed as well as classes, because these attributes are supported on DTOs, where an
     /// <c>IContact</c> reference or a record struct is ordinary.
     /// </remarks>
-    private static Type? NavigationTypeOf(Type propertyType)
+    internal static Type? NavigationTypeOf(Type propertyType)
     {
         Type current = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
 
@@ -555,7 +555,24 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentException">Thrown when the CLR type has no counterpart.</exception>
-    private static DataType DataTypeOf(PropertyInfo property, string fieldPath)
+    private static DataType DataTypeOf(PropertyInfo property, string fieldPath) =>
+        TryDataTypeOf(property)
+        ?? throw new ArgumentException(
+            $"[DwForceWhere] on '{fieldPath}' decorates a "
+            + $"{(Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType).Name}, "
+            + "which has no DataType counterpart, so the injected value has no form the pipeline "
+            + "could parse it into.");
+
+    /// <summary>
+    /// The <see cref="DataType"/> a filter would use for a member, or null when the member's type
+    /// has no counterpart.
+    /// </summary>
+    /// <remarks>
+    /// Internal so the schema builder advertises the same answer this provider injects with. Two
+    /// mappings from a CLR type to a <see cref="DataType"/> would eventually disagree, and the
+    /// schema would then tell a front end to send a value the pipeline refuses to parse.
+    /// </remarks>
+    internal static DataType? TryDataTypeOf(PropertyInfo property)
     {
         Type type = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
 
@@ -597,8 +614,6 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             return DataType.Number;
         }
 
-        throw new ArgumentException(
-            $"[DwForceWhere] on '{fieldPath}' decorates a {type.Name}, which has no DataType " +
-            "counterpart, so the injected value has no form the pipeline could parse it into.");
+        return null;
     }
 }

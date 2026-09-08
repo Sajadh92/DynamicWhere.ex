@@ -171,7 +171,7 @@ mitigation turns the test red.
 **Exit:** all seven inference attacks blocked. Earlier phases carry their own security tests
 inline; this phase covers only what spans features.
 
-### Phase 9 — Release preparation
+### Phase 9 — Release preparation — **Done**
 
 Version bump across the six tracked files, README, `DOC.md`, website pages, release notes in the
 csproj, EF Core 6.0.22 CI leg, full suite green, benchmarks within the 5 percent budget.
@@ -494,6 +494,131 @@ Both settled against the design document rather than against the plan.
 - **`ValidatePolicyModel()` still does not exist.** Section 4.8's rules are enforced at query time
   and fail closed. `[DwForceWhere(ContextValue = ...)]` naming a key nothing supplies is listed
   there as a startup check and cannot be one — what a context supplies is per-request.
+
+## Phase 9 outcome
+
+Release preparation, 2026-09-08. Everything below is on the branch; **nothing is merged**, and the
+branch is open as a pull request for review rather than going straight to master.
+
+**Gates, all green.** `check-version.ps1` passes at 3.0.0 · solution builds with **0 warnings, 0
+errors** · **1441 tests** on EF Core 8 · **1040** on the 6.0.22 floor · docs site builds · the four
+protected query files untouched.
+
+### Public API added
+
+- `AttributePolicyProvider` walks with a cycle guard; `FilterSanitizer` prefers the root path when
+  one member is reached many ways. No new public types — this phase changed behaviour, not surface.
+
+### Three carriers were replicating around a cycle, and one failed silently
+
+The phase's headline finding, and it came from running the demo API against a real PostgreSQL
+rather than from a test. A type reachable from itself — `Employee.Manager`, `Category.Parent` —
+had one declaration turned into fifteen paths by the depth cap, and three attributes that describe
+*the entity being queried* were replicated onto every one.
+
+| Carrier | What it did | How it failed |
+|---|---|---|
+| `[DwAlias]` | One name matched fifteen paths | `AmbiguousFieldName` on every use — loud |
+| `[DwRequireWhere]` | The demand reappeared as `Manager.Division` | `RequiredFilterMissing`, unsatisfiable — loud |
+| `[DwForceWhere]` | `IsActive = true` ANDed with `Manager.Manager.Manager.IsActive` | **Returned zero rows — silent** |
+
+All three fail closed, which is exactly why 1428 tests stayed green: two refuse and one returns
+fewer rows. Any bidirectional navigation triggers it, which is most models.
+
+The fix is a **cycle check, not a depth-0 check**: forcing `Buyer.TenantId` while querying `Order`
+is a real thing to declare, and only a type reflected back onto itself is meaningless. Everything
+that *decides* still propagates — a caller can name `Manager.Salary`, so the denial and the mask
+have to be there. That is why the walk still has no visited-type guard, and why this is three
+attributes rather than a change to how the walk terminates.
+
+Same family as Phase 7's "a fragment that carries something must decide nothing", one layer up.
+Phase 7 fixed carriers winning elections; nobody had asked whether the walk should be replicating
+them at all.
+
+### A mutation check found a gap, again
+
+Four mutations against the carrier fix, then three against the cycle guard. The third — never
+unwinding the guard — **left the suite green**. The diamond case had no test, and without one the
+guard could suppress a carrier on a sibling branch and reintroduce the same empty result it was
+added to remove. `A_type_seen_on_one_branch_still_carries_on_another` now covers it, and the
+mutation goes red. Second phase running where a green mutation was the finding.
+
+### The performance budget was never measured, and is not met
+
+Design §6.5 claimed under 5 percent. BenchmarkDotNet, medium job, 10,000 in-memory rows:
+
+| | Unguarded | Gating only | Gating + transforms |
+|---|---|---|---|
+| Time | 741 µs | 857 µs (1.16×) | 1,933 µs (**2.61×**) |
+| Allocated | 210 KB | 409 KB (1.94×) | 3,397 KB (**16.2×**) |
+
+The per-operation targets pass with room to spare — a cached resolve is **239–250 ns** against 1 µs,
+sanitizing five conditions is **2.8 µs** against 50 µs. What the 5 percent missed is that those are
+paid once per query while the transform walk is paid per row and clones what it touches. No database
+round trip in these numbers, so the layer's share looks as large as it ever can. §6.5 is restated
+rather than defended.
+
+`DynamicWhere.Benchmarks` is **not wired into CI**, deliberately: a benchmark gate on a shared runner
+fails for noise, and the workflow it would gate publishes to NuGet.
+
+### The floor leg had never run
+
+`ci.yml` had no EF Core 6.0.22 leg at all — the roadmap's wording implied a three-project leg
+existed. Four packable projects declare 6.0.22 and nothing had ever *executed* there. It now runs
+1040 tests on the floor and gates `publish.yml` as well as `ci.yml`, placed ahead of the release
+build because it resolves a different package graph and `Pack` runs `--no-build`.
+
+Dropping Npgsql, Testcontainers and Mvc.Testing on that leg is not tidiness: all three depend on EF
+Core 8, and leaving them referenced lets NuGet resolve the graph back up to 8, at which point the leg
+passes while proving nothing.
+
+Running it found `TransformQueryTests` reading the stored value through `Database.SqlQuery<T>`, which
+arrived after EF Core 6 — the three assertions proving a transform never reached the database. They
+are now provider-neutral ADO and run on both legs rather than being skipped on the one that matters.
+
+### Design §8.3 shipped whole
+
+`9_PolicyTestController.cs` (16 endpoints) and `__PolicyAdminController.cs` (8), against a real
+PostgreSQL, with `Employee` carrying the full attribute range and `RequirePolicy`. All 24 pass.
+
+The blocking no-write-back test is `GET /api/PolicyTest/tracking/no-writeback`: 7 rows read, **0
+tracked entities**, email masked on output, and the stored email and salary intact after an unrelated
+`SaveChanges` on the same `DbContext`.
+
+The controller asserts the **error code**, not just the throw. Half of what a policy does is refuse,
+so the house catch-reports-failure shape would mark a working denial as broken and a removed control
+as a pass — exactly inverted. That choice is what caught four wrong expectations of my own, each one
+the library being right: a denied field in `Convenience` is **dropped** not refused (§2.5); the group
+floor **suppresses** rather than refusing; the cost test tripped `MaxConditions` first.
+
+### Eight spec corrections
+
+§3.4 claims adapter · §5.1 four missing carriers · §5.2 `LoadNarrowAsync` · §5.7 sealed-per-feature ·
+§7 five channels are seven mitigations · §7.2 every transform not masks alone · §8.3 PostgreSQL not
+SQL Server · §6.5 the performance budget. Footnoted inline rather than edited into the prose.
+
+### Documentation, from nothing
+
+`README.md` and `DOC.md` contained **zero** occurrences of "policy" before this phase. Both now carry
+it, plus nine site pages matching the depth the cache feature sets. Security has its own page because
+`MinGroupSize` is the one control a reader cannot infer from the API.
+
+### Known limitations carried into the release
+
+- **`/schema` returns 335 fields for a 33-property self-referencing entity.** The depth-4 walk
+  enumerates every `Manager.Subordinates.Manager.…` combination. Correct — those paths really are
+  filterable — but unusable as a filter UI without collapsing cycles for presentation. The carrier
+  fix did **not** change this, and an early note in this phase wrongly said it would.
+- **Overhead is ~15 percent gating, ~2.6× transforming**, not 5 percent. Documented, not fixed.
+- **`MinGroupSize` ships at 1 — off.** The compatible default, not the safe one.
+- **Fragments are still rebuilt per field per query.** Now measured: it is not the dominant cost.
+- **`MaskStrategy.Tokenize` deferred.**
+
+### What a merge does
+
+`publish.yml` packs and pushes four packages to NuGet on every push to master, and the same push
+rebuilds the docs site. Neither has a manual gate; a published version can be unlisted, never
+replaced. The suite runs before the pack and needs a Docker daemon.
 
 ## Phase 8 outcome
 

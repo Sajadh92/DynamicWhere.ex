@@ -157,8 +157,10 @@ public class PolicySelfReferenceTests
         Filter sanitized = Sanitize<SelfReferencingStaff>(Where(On("Division", "Eng")));
 
         List<string> forced = Flatten(sanitized.ConditionGroup!)
-            .Where(c => c.Field.EndsWith(nameof(SelfReferencingStaff.IsActive), StringComparison.Ordinal))
             .Select(c => c.Field)
+            .Where(f => f is not null
+                        && f.EndsWith(nameof(SelfReferencingStaff.IsActive), StringComparison.Ordinal))
+            .Select(f => f!)
             .ToList();
 
         Assert.Equal(new[] { nameof(SelfReferencingStaff.IsActive) }, forced);
@@ -172,7 +174,8 @@ public class PolicySelfReferenceTests
         // came back empty instead of refused — fewer rows, which is why nothing caught it.
         List<string> forced = Flatten(Sanitize<SelfReferencingStaff>(Where(On("Division", "Eng"))).ConditionGroup!)
             .Select(c => c.Field)
-            .Where(f => f.Contains('.'))
+            .Where(f => f is not null && f.Contains('.'))
+            .Select(f => f!)
             .ToList();
 
         Assert.Empty(forced);
@@ -211,7 +214,8 @@ public class PolicySelfReferenceTests
 
         List<string> scoped = Flatten(sanitized.ConditionGroup!)
             .Select(c => c.Field)
-            .Where(f => f.EndsWith("TenantId", StringComparison.Ordinal))
+            .Where(f => f is not null && f.EndsWith("TenantId", StringComparison.Ordinal))
+            .Select(f => f!)
             .OrderBy(f => f, StringComparer.Ordinal)
             .ToList();
 

@@ -5,6 +5,12 @@
 **Target:** DynamicWhere.ex v3.0
 **Current version:** 2.1.5
 
+> **Seven corrections, recorded 2026-09-08 during Phase 9.** This document is the record of what was
+> decided on 2026-08-22, not a description of what shipped. Where building against it proved it
+> wrong, the correction is footnoted inline at the section it belongs to rather than edited into the
+> prose — rewriting a spec to match its own implementation loses the fact that the code moved.
+> The seven are in §3.4, §5.1, §5.2, §5.7, §7 (heading), §7.2 and §8.3.
+
 ---
 
 ## 1. Problem
@@ -166,6 +172,12 @@ DryRun   : bool                       per-context canary
 ```
 
 `DwPolicyContext.FromClaims(principal)` ships in the AspNetCore package.
+
+> **Correction (2026-09-08, Phase 7).** It cannot be a static on `DwPolicyContext`: C# has no way to
+> add a static member to a type declared in another assembly. It ships as
+> `DwClaimsAdapter.CreateContextAsync(principal, options, ct)` plus an
+> `HttpContext.GetPolicyContextAsync()` extension method. The context is built asynchronously because
+> the narrow zone is loaded while it is built.
 
 **`FieldPolicy`** — immutable, resolved per `(Type, FieldPath)`. The only type enforcement code ever sees.
 
@@ -410,6 +422,18 @@ Four additions beyond the original sketch, each earning its place:
 
 **Audit columns on the rule itself.** Who granted this access and when. Every compliance review asks; retrofitting it later means the history is already lost.
 
+> **Correction (2026-09-08, Phases 5–7).** The sketch above is short by four carriers, and three of
+> them fail open when dropped. The shipped `PolicyRule` also holds `Forced` (a missing tenant scope
+> stops being injected — cross-tenant disclosure), `RequiredOperators` (the demand to filter
+> disappears and the field is readable unscoped), `AllowedOperators` (`null` means "says nothing", so
+> the restriction becomes no restriction) and `Alias` (cosmetic, and the only harmless one of the
+> four). Three further differences: the single `Payload` column became the typed `Transform`
+> (`TransformStage?`) parsed by `PolicyPayload`; `Level` is carried explicitly; and Phase 7 added
+> `Facts` (`FieldFacts?`) for `[DwDescribe]`, `[DwCost]` and `[DwAudit]`. `Feature` is spelled
+> `Features`. Finally, `Effect` is **`Allow | Mask | Deny` only** — `Mutate`, `Default` and
+> `Generalize` are transform *stages*, not effects, because a rule that carries a transform must not
+> also decide an allowance. See the roadmap's "Design §5.1 is short by four fields".
+
 ### 5.2 Store contract
 
 ```csharp
@@ -428,6 +452,12 @@ public interface IDwPolicyWritableStore : IDwPolicyStore
 ```
 
 Read-only replica deployments register only the read interface, making writes impossible by construction rather than by convention.
+
+> **Correction (2026-09-08, Phase 5).** `IDwPolicyStore` also declares
+> `ValueTask<NarrowZone> LoadNarrowAsync(IReadOnlyList<string> userIdentities, CancellationToken ct)`.
+> The snapshot splits into a cached broad zone and a per-request narrow zone (§5.3), and without a
+> separate narrow load a store would have to return every user's rules to serve one. A third
+> interface, `IDwPolicyRefresher`, declares `ValueTask<long> RefreshAsync(CancellationToken ct)`.
 
 ### 5.3 Snapshot and zones
 
@@ -498,6 +528,13 @@ Salary
 ```
 
 Sealed fields never appear: `/schema` omits them and `POST /rules` rejects them. An operator cannot even attempt to grant `NationalId`, enforced both at configuration time and at resolution time.
+
+> **Correction (2026-09-08, Phase 7).** The endpoint list above is right as shipped. The sealed-field
+> sentence needs one qualification: "sealed" is decided per *feature*, not per field. A field whose
+> `[DwMask]` is sealed but whose `[DwDeny(Where)]` is `Overridable = true` is absent from `/schema`
+> for the masked feature and still writable for the overridable one, so a rule targeting it is
+> accepted rather than rejected. `SealedFields` is consulted per `(field, feature)` pair. A field
+> sealed on every feature behaves exactly as the sentence describes.
 
 Dry-run is per-context as well as global, so a single canary role can run in dry-run while everyone else is enforced. Global-only dry-run would force an all-or-nothing rollout.
 
@@ -579,6 +616,13 @@ Guarded query overhead target is under 5 percent versus unguarded, dominated by 
 
 Five disclosure channels exist that no per-field attribute closes on its own. Three are specific to this library because of features it has that comparable libraries do not.
 
+> **Correction (2026-09-08, Phase 8).** The five channels below are closed by **seven** mitigations,
+> and `PolicyInferenceTests` attacks all seven. Two of them are not channels in the list: an
+> unguarded call on `[DwEntity(RequirePolicy = true)]` must throw, and an empty policy store must
+> leave attributes enforcing rather than resolving to Allow. Their controls shipped in Phases 1 and 4
+> and were not attacked until Phase 8 attacked them. See design §8.5, whose table already had seven
+> rows.
+
 ### 7.1 Set operations reconstruct denied fields
 
 `Segment` composes Union, Intersect, and Except across subqueries. Where a field is deny-select but allow-where, `AllEmployees EXCEPT (AllEmployees WHERE Salary > 100000)` returns exactly the set of people earning under 100k — by name, with the salary column never selected. The protected value is reconstructed from set membership.
@@ -590,6 +634,15 @@ Mitigation: policy applies to every segment independently, and in the strict tie
 `SUM`, `MAX`, and `MIN` execute in SQL against real values, before any mask can apply. `GROUP BY Department` with `MAX(Salary)` over a department of one returns that person's exact salary.
 
 Mitigation: aggregating a masked field is denied by default and opted into with `[DwMask(AllowAggregate = true)]`. A k-anonymity guard, `options.MinGroupSize`, suppresses groups smaller than k. Without the group-size floor, `AllowAggregate` is a hole rather than a feature.
+
+> **Correction (2026-09-08, Phase 8).** The mitigation covers **every transform, not masks alone**.
+> `[DwMutate]`, `[DwDefault]`, `[DwGeneralize]`, `[DwTruncate]` and `[DwFormat]` all leave the real
+> value readable through `SUM`, `MAX` or `MIN`, so all six attributes carry `AllowAggregate` and
+> `MinGroupSize`, and the denial lives in `PolicyResolver` where the transform chain is elected —
+> one place that covers attributes and runtime rules alike. `DwCaps.MinGroupSize` defaults to **1**,
+> i.e. off: any other default would silently change the result of an existing grouping query for
+> anyone upgrading. It is a deliberate opt-in, and the one control in this document that a reader
+> cannot infer from the API.
 
 ### 7.3 TotalCount cardinality disclosure
 
@@ -664,6 +717,12 @@ The most important test in the entire suite:
 If `AsNoTracking` ever regresses, this fails. Nothing else catches it, and the production failure mode is silent permanent data destruction. It is a blocking CI test.
 
 Also SQL-Server-only: the injected `[DwForceWhere]` predicate appears in the real generated SQL; `getQueryString` is gated in the strict tier; masked values never enter the query plan cache; the `DwPolicyRules` and `DwPolicyVersion` migrations apply cleanly.
+
+> **Correction (2026-09-08, Phase 9).** `DynamicWhere.API` runs on **PostgreSQL** (Npgsql 8.0.11),
+> not SQL Server. Everything in this section applies unchanged — the checks are about real generated
+> SQL against a real relational database, not about a particular vendor. Both controllers shipped as
+> named: `9_PolicyTestController.cs` and `__PolicyAdminController.cs`. The blocking `AsNoTracking`
+> test is `GET /api/PolicyTest/tracking/no-writeback`.
 
 ### 8.4 Store conformance
 

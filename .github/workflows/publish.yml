@@ -36,6 +36,18 @@ jobs:
         shell: pwsh
         run: ./build/check-version.ps1
 
+
+      # The four packages about to ship declare EF Core 6.0.22 as their floor, and nothing else in
+      # this workflow runs at that version — the suite below runs EF Core 8. This leg resolves a
+      # different package graph and therefore rebuilds, so it goes BEFORE the release build: the
+      # canonical Build must be the last thing to write bin/, because Pack runs --no-build and packs
+      # whatever it finds there.
+      - name: Test against the declared floor
+        run: >
+          dotnet test DynamicWhere.Tests/DynamicWhere.Tests.csproj
+          -c Release
+          -p:DwEfCoreVersion=6.0.22
+
       - name: Restore
         run: dotnet restore DynamicWhere.ex.sln
 

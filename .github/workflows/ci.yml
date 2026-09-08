@@ -44,3 +44,30 @@ jobs:
         run: |
           npm ci
           npm run build
+
+  # Design §8.8. The suite above runs EF Core 8 on SQLite while all four packable projects declare
+  # 6.0.22 as their floor, so the expression-tree APIs the compiled mutator and predicate injection
+  # depend on are never exercised at the version the packages claim to support. This leg pins the
+  # suite to 6.0.22 and runs the 1027 policy tests that need nothing but SQLite — the resolver, the
+  # sanitizer, the transform pipeline and the seven inference attacks.
+  #
+  # It is a separate job rather than a matrix entry because the floor leg drops Npgsql, Testcontainers
+  # and Mvc.Testing: all three depend on EF Core 8, and leaving them referenced would let NuGet
+  # resolve the graph back up to 8 and the leg would silently prove nothing. No Docker needed here,
+  # since the container-backed conformance suites are exactly what gets dropped.
+  floor:
+    name: EF Core 6.0.22 floor
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Test against the declared floor
+        run: >
+          dotnet test DynamicWhere.Tests/DynamicWhere.Tests.csproj
+          -c Release
+          -p:DwEfCoreVersion=6.0.22

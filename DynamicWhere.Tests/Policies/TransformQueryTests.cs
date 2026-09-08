@@ -36,6 +36,31 @@ public class TransformQueryTests : IDisposable
     private static DwPolicyContext Caller() =>
         new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
 
+    /// <summary>
+    /// Reads one scalar straight out of the database, bypassing EF entirely.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately ADO rather than the EF helper for the same job: that API arrived after EF Core
+    /// 6, and these are the assertions that prove a transform never reached the stored value.
+    /// Skipping them on the 6.0.22 floor leg would drop exactly the checks the leg exists to run.
+    /// </remarks>
+    private T Stored<T>(string sql)
+    {
+        var connection = _db.Database.GetDbConnection();
+
+        if (connection.State != System.Data.ConnectionState.Open)
+        {
+            connection.Open();
+        }
+
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+
+        object? value = command.ExecuteScalar();
+
+        return (T)Convert.ChangeType(value!, typeof(T), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     private static DwPolicyOptions Options(DwTier tier = DwTier.Convenience) =>
         new() { Tier = tier, HashSalt = "pepper" };
 
@@ -107,9 +132,7 @@ public class TransformQueryTests : IDisposable
     {
         Guarded().ToList(new Filter());
 
-        string stored = _db.Database
-            .SqlQuery<string>($"SELECT NationalId AS Value FROM People WHERE Id = 1")
-            .Single();
+        string stored = Stored<string>("SELECT NationalId FROM People WHERE Id = 1");
 
         Assert.Equal("AAA-111-2345", stored);
     }
@@ -273,13 +296,9 @@ public class TransformQueryTests : IDisposable
 
         _db.SaveChanges();
 
-        string stored = _db.Database
-            .SqlQuery<string>($"SELECT NationalId AS Value FROM People WHERE Id = 1")
-            .Single();
+        string stored = Stored<string>("SELECT NationalId FROM People WHERE Id = 1");
 
-        decimal salary = _db.Database
-            .SqlQuery<decimal>($"SELECT Salary AS Value FROM People WHERE Id = 1")
-            .Single();
+        decimal salary = Stored<decimal>("SELECT Salary FROM People WHERE Id = 1");
 
         Assert.Equal("AAA-111-2345", stored);
         Assert.Equal(118000m, salary);

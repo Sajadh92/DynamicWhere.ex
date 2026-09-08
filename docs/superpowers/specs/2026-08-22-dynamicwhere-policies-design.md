@@ -610,6 +610,28 @@ Attached to `FilterResult<T>` and `SummaryResult`, and null when unguarded, so e
 
 Guarded query overhead target is under 5 percent versus unguarded, dominated by the graph walk on large result sets.
 
+> **Correction (2026-09-08, Phase 9).** Measured for the first time, and **the 5 percent target is
+> not met**. `DynamicWhere.Benchmarks`, BenchmarkDotNet medium job, in-memory LINQ over 10,000 rows:
+>
+> | | Unguarded | Gating only | Gating + transforms |
+> |---|---|---|---|
+> | Time | 741 us | 857 us (**1.16x**) | 1,933 us (**2.61x**) |
+> | Allocated | 210 KB | 409 KB (1.94x) | 3,397 KB (**16.2x**) |
+>
+> The per-operation targets in the table above are comfortably met: a cached field resolve is
+> **239-250 ns** against a 1 us target, and sanitizing the five-condition filter is **2.8 us**
+> against 50 us. What the 5 percent figure missed is that those are paid once per query while the
+> transform walk is paid per row, and it must clone what it touches because values are changed after
+> materialization rather than in SQL (section 2.3). Gating alone costs a flat ~15 percent;
+> transformation is what turns that into 2.6x.
+>
+> Two caveats on the numbers. They are in-memory LINQ with no database round trip, so the policy
+> layer's share is as large as it can possibly look - against a real query the I/O dominates and the
+> relative overhead is much smaller. And the 5 percent was never measured before this phase; it was a
+> target written at design time, not an observation. It is restated rather than defended: **budget
+> roughly 15 percent for a guarded query, and roughly 2.6x for one that transforms every row of a
+> large result.**
+
 ---
 
 ## 7. Security analysis

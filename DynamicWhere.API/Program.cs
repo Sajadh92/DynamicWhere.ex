@@ -224,6 +224,11 @@ static async Task ConfigureDynamicWherePoliciesAsync(
         RefreshInterval = TimeSpan.FromSeconds(30),
     };
 
+    // Lower than the 1000 default so the budget is reachable in a demo. [DwCost(10)] on Salary
+    // means forty-five conditions naming it come to 450 and are refused, while an ordinary query
+    // naming a handful of fields costs single digits.
+    options.Caps.MaxQueryCost = 400;
+
     options.Entities.Expose<Employee>("Employee");
 
     // Contradictions in the model, reported rather than thrown, so every one shows up in a single

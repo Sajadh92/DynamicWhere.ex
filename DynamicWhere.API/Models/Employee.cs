@@ -54,8 +54,16 @@ public class Employee
     [DwDescribe(Label = "Employee code", Group = "Identity", Order = 4)]
     public string EmployeeCode { get; set; } = string.Empty;
 
-    /// <summary>Reduced to the year it falls in.</summary>
+    /// <summary>Reduced to the year it falls in, and unsortable for the same reason as Email.</summary>
+    /// <remarks>
+    /// [DwNoOrder] is here because startup validation asked for it. Reducing a date to its year and
+    /// then letting a caller sort by it ranks the true dates inside each year, which is design 7.4
+    /// with a coarser mask. The warning fired on the first run of this model and is worth keeping in
+    /// mind: the validator names the fix rather than applying it, because there are models where the
+    /// ordering is the point.
+    /// </remarks>
     [DwGeneralize(GeneralizeMode.DatePart, Part = DatePart.Year)]
+    [DwNoOrder]
     [DwDescribe(Label = "Hire date", Group = "Employment", Order = 5)]
     public DateTime HireDate { get; set; }
 

@@ -224,20 +224,35 @@ public class PolicyTestController : ControllerBase
     {
         DwPolicyContext caller = await CallerAsync();
 
-        return await Refuses(
+        return await Allows(
             "Gating - project a [DwDenied] field",
-            PolicyErrorCode.FieldDeniedForSelect,
-            "WorkSchedule is denied for all six features. It is absent from /schema and rejected by "
-            + "POST /rules as well, so an operator cannot grant it either.",
+            "In the Convenience tier a denied field is DROPPED from the projection, not refused. "
+            + "Strict throws instead. Design 2.5: the tier decides whether a blocked action fails "
+            + "the request or quietly narrows it, which is why the trace is the only way to tell a "
+            + "policy drop from a null value.",
             async () =>
             {
-                await _context.Employees
+                FilterResult<dynamic> result = await _context.Employees
                     .ApplyPolicy(caller)
-                    .ToListAsync(new Filter
+                    .ToListAsyncDynamic(new Filter
                     {
                         ConditionGroup = InDepartment(),
-                        Selects = ["Id", "WorkSchedule"]
+                        Selects = ["Id", "WorkSchedule"],
+                        Page = new PageBy { PageNumber = 1, PageSize = 3 }
                     });
+
+                List<PolicyDecision> dropped = result.Policy?.Decisions
+                    .Where(d => d.Action == PolicyAction.Dropped)
+                    .ToList() ?? [];
+
+                if (dropped.TrueForAll(d => !d.FieldPath.Contains("WorkSchedule", StringComparison.Ordinal)))
+                {
+                    throw new InvalidOperationException(
+                        "FAILED OPEN. WorkSchedule is [DwDenied] and the trace does not record it "
+                        + "as dropped.");
+                }
+
+                return new { Rows = result.Data, Dropped = dropped };
             });
     }
 
@@ -290,21 +305,39 @@ public class PolicyTestController : ControllerBase
     {
         DwPolicyContext caller = await CallerAsync();
 
-        return await Refuses(
+        return await Allows(
             "Gating - order by a masked field",
-            PolicyErrorCode.FieldDeniedForOrder,
             "Design 7.4. Ordering runs in SQL against the stored value, so paging a masked column "
             + "ranks the true order and, with range filters, converges on the values the mask hides. "
-            + "Startup validation warns; [DwNoOrder] is the fix, and Email carries it.",
+            + "Email carries [DwNoOrder], so the sort is dropped here and the rows come back in the "
+            + "database's own order rather than ranked by the hidden value.",
             async () =>
             {
-                await _context.Employees
+                FilterResult<Employee> result = await _context.Employees
                     .ApplyPolicy(caller)
                     .ToListAsync(new Filter
                     {
                         ConditionGroup = InDepartment(),
-                        Orders = [new OrderBy { Sort = 1, Field = "Email", Direction = Direction.Ascending }]
+                        Selects = ["Id", "Email"],
+                        Orders = [new OrderBy { Sort = 1, Field = "Email", Direction = Direction.Ascending }],
+                        Page = new PageBy { PageNumber = 1, PageSize = 5 }
                     });
+
+                List<PolicyDecision> dropped = result.Policy?.Decisions
+                    .Where(d => d.Action == PolicyAction.Dropped && d.Feature == PolicyFeature.Order)
+                    .ToList() ?? [];
+
+                if (dropped.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        "FAILED OPEN. The sort on a masked field was not dropped.");
+                }
+
+                return new
+                {
+                    Rows = result.Data?.ConvertAll(e => new { e.Id, e.Email }),
+                    DroppedSorts = dropped
+                };
             });
     }
 
@@ -516,19 +549,23 @@ public class PolicyTestController : ControllerBase
     {
         DwPolicyContext caller = await CallerAsync();
 
-        return await Refuses(
-            "k-anonymity - aggregate over a group below MinGroupSize",
-            PolicyErrorCode.GroupTooSmall,
+        return await Allows(
+            "k-anonymity - aggregate over groups below MinGroupSize",
             "Design 7.2, the control a reader cannot guess from the API. SUM, MAX and MIN run in SQL "
             + "against the stored value before any transform applies, so MAX(Salary) over a "
-            + "department of one returns that person's exact pay. Salary sets MinGroupSize = 5, and "
-            + "grouping by EmployeeCode makes every group a singleton.",
+            + "department of one returns that person's exact pay. Salary sets MinGroupSize = 5 and "
+            + "grouping by employee code makes every group a singleton, so every group is SUPPRESSED "
+            + "\u2014 the floor removes rows rather than refusing the query, and GroupTooSmall is "
+            + "reserved for a summary that already uses the reserved size alias.",
             async () =>
             {
-                await _context.Employees
+                SummaryResult result = await _context.Employees
                     .ApplyPolicy(caller)
                     .ToListAsync(new Summary
                     {
+                        // A summary is a queryable surface like any other, so the required filter
+                        // applies here too.
+                        ConditionGroup = InDepartment(),
                         GroupBy = new GroupBy
                         {
                             Fields = ["Code"],
@@ -541,6 +578,25 @@ public class PolicyTestController : ControllerBase
                             ]
                         }
                     });
+
+                int returned = result.Data?.Count ?? 0;
+
+                int engineers = await _context.Employees
+                    .CountAsync(e => e.Department == "Engineering" && e.IsActive);
+
+                if (returned > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"FAILED OPEN. {engineers} singleton groups existed and {returned} came "
+                        + "back. Each one is one person's exact salary.");
+                }
+
+                return new
+                {
+                    SingletonGroupsInTheData = engineers,
+                    GroupsReturned = returned,
+                    Trace = result.Policy?.Decisions
+                };
             });
     }
 
@@ -562,6 +618,7 @@ public class PolicyTestController : ControllerBase
                     .ApplyPolicy(caller)
                     .ToListAsync(new Summary
                     {
+                        ConditionGroup = InDepartment(),
                         GroupBy = new GroupBy
                         {
                             Fields = ["Department"],
@@ -608,8 +665,11 @@ public class PolicyTestController : ControllerBase
                     }
                 };
 
-                // Charged at ten a time until the default budget of 1000 is gone.
-                for (int i = 0; i < 200; i++)
+                // Forty-five, not two hundred: MaxConditions is 50, and exceeding it first would
+                // refuse with CapExceeded and prove nothing about the cost budget. At [DwCost(10)]
+                // each, forty-five Salary conditions come to 450 against the demo's MaxQueryCost of
+                // 400.
+                for (int i = 0; i < 45; i++)
                 {
                     conditions.Add(new Condition
                     {

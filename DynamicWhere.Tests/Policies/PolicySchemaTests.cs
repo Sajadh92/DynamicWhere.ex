@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Enums;
+﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.Discovery;
@@ -422,5 +422,19 @@ public class PolicySchemaReadingTests
 
         Assert.False(email.CanWhere);
         Assert.True(email.CanSelect);
+    }
+
+    [Fact]
+    public void The_entity_catalogue_cannot_be_cast_back_and_mutated()
+    {
+        // Freezing the catalogue is pointless if the dictionary behind it is reachable: a caller
+        // could expose a type after Freeze and past the duplicate-name check, and the surface an
+        // administrative endpoint answers about would move while the application was serving.
+        var catalogue = new DwEntityCatalog();
+
+        catalogue.Expose<SecuredEmployee>("Employee");
+        catalogue.Freeze();
+
+        Assert.Throws<InvalidCastException>(() => (Dictionary<Type, string>)catalogue.Entities);
     }
 }

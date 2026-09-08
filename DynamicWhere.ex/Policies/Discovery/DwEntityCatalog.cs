@@ -1,3 +1,5 @@
+﻿using System.Collections.ObjectModel;
+
 namespace DynamicWhere.ex.Policies.Discovery;
 
 /// <summary>
@@ -24,10 +26,22 @@ public sealed class DwEntityCatalog
     private readonly Dictionary<string, Type> _byFullName = new(StringComparer.Ordinal);
     private readonly Dictionary<Type, string> _names = new();
 
+    private readonly ReadOnlyDictionary<Type, string> _namesView;
+
+    /// <summary>Initializes an empty catalogue.</summary>
+    public DwEntityCatalog() => _namesView = new ReadOnlyDictionary<Type, string>(_names);
+
     private bool _frozen;
 
     /// <summary>Every type exposed, with the name it answers to.</summary>
-    public IReadOnlyDictionary<Type, string> Entities => _names;
+    /// <remarks>
+    /// Wrapped rather than returned directly. Declaring the return as
+    /// <see cref="IReadOnlyDictionary{TKey,TValue}"/> stops nothing on its own — a caller can cast
+    /// the reference back to <see cref="Dictionary{TKey,TValue}"/> and add an entry, which would
+    /// expose a type after <see cref="Freeze"/> and past the duplicate-name check. The whole point
+    /// of freezing is that the surface cannot move once the application is serving.
+    /// </remarks>
+    public IReadOnlyDictionary<Type, string> Entities => _namesView;
 
     /// <summary>True when nothing has been exposed.</summary>
     public bool IsEmpty => _names.Count == 0;

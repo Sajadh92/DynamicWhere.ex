@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Collections.ObjectModel;
 using DynamicWhere.ex.Policies.Audit;
 using DynamicWhere.ex.Policies.Enums;
 
@@ -16,6 +17,11 @@ namespace DynamicWhere.ex.Policies.Context;
 public sealed class DwPolicyContext
 {
     private readonly List<DwSubject> _subjects = new();
+
+    private readonly ReadOnlyCollection<DwSubject> _subjectsView;
+
+    /// <summary>Initializes an empty context.</summary>
+    public DwPolicyContext() => _subjectsView = new ReadOnlyCollection<DwSubject>(_subjects);
     private readonly Dictionary<string, object?> _values = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<object, PolicyAttachment> _attachments = new();
 
@@ -27,7 +33,15 @@ public sealed class DwPolicyContext
     private readonly List<DwAuditEvent> _audit = new();
 
     /// <summary>The principal dimensions describing the caller.</summary>
-    public IReadOnlyList<DwSubject> Subjects => _subjects;
+    /// <remarks>
+    /// Wrapped rather than returned directly, for the reason
+    /// <see cref="DynamicWhere.ex.Policies.Discovery.DwEntityCatalog.Entities"/> is: the interface
+    /// alone stops nothing, and a caller who casts back to <see cref="List{T}"/> could add a subject
+    /// to a context that has already been prepared — after the narrow zone was loaded for the
+    /// identities it had at the time, so the new subject would carry authority nothing fetched rules
+    /// for.
+    /// </remarks>
+    public IReadOnlyList<DwSubject> Subjects => _subjectsView;
 
     /// <summary>
     /// When true, no policy decision throws or drops anything. Every decision is still recorded,

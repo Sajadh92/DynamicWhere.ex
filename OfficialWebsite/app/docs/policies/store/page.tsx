@@ -40,7 +40,7 @@ export default function Page() {
         expiry that does not happen.
       </p>
       <Callout tone="warn" title="Bad rules are refused at the boundary">
-        Validation lives in <code>PolicyRule</code> own constructor, so every
+        Validation lives in the <code>PolicyRule</code> constructor itself, so every
         store and the admin API get the same refusals. A rule naming a sealed
         field is rejected on write, not ignored on read.
       </Callout>

@@ -141,4 +141,32 @@ public class PolicyContextTests
 
         Assert.Equal(41, context.AttachmentFor(provider)!.Snapshot.Version);
     }
+
+    // ---------------------------------------------------------------- the read-only surface
+
+    [Fact]
+    public void The_subject_list_cannot_be_cast_back_and_mutated()
+    {
+        // Declaring the property as IReadOnlyList stops nothing on its own. Returning the backing
+        // List meant a caller could cast the reference back and add a subject to a context that had
+        // already been prepared — after the narrow zone was loaded for the identities it had at the
+        // time, so the new subject would carry authority nothing had fetched rules for.
+        var context = new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
+
+        Assert.Throws<InvalidCastException>(() => (List<DwSubject>)context.Subjects);
+    }
+
+    [Fact]
+    public void The_subject_list_still_reflects_later_additions()
+    {
+        // The wrapper is a view, not a copy: a subject added after the property was first read has
+        // to be visible, or resolution would run against a stale set.
+        var context = new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
+
+        IReadOnlyList<DwSubject> view = context.Subjects;
+
+        context.WithSubject(DwSubjectKind.Role, "Support");
+
+        Assert.Equal(2, view.Count);
+    }
 }

@@ -95,6 +95,7 @@ public sealed class TypePolicy
     /// </remarks>
     public IReadOnlyDictionary<string, ValueTransform> Transforms { get; }
 
+    /// <summary>True when the type says nothing at all, so the sanitizer can skip its passes.</summary>
     public bool IsEmpty =>
         Aliases.Count == 0 && Forced.Count == 0 && Required.Count == 0 && Transforms.Count == 0;
 }

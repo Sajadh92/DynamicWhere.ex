@@ -150,6 +150,20 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    title: "Field-Level Policies",
+    links: [
+      { title: "Overview", href: "/docs/policies" },
+      { title: "Attributes", href: "/docs/policies/attributes" },
+      { title: "Precedence", href: "/docs/policies/precedence" },
+      { title: "Transforms & Masking", href: "/docs/policies/transforms" },
+      { title: "Dynamic Store", href: "/docs/policies/store" },
+      { title: "Store Providers", href: "/docs/policies/providers" },
+      { title: "Admin API", href: "/docs/policies/admin" },
+      { title: "Security & k-anonymity", href: "/docs/policies/security" },
+      { title: "Configuration", href: "/docs/policies/configuration" },
+    ],
+  },
+  {
     title: "Cache & Optimization",
     links: [
       { title: "Overview", href: "/docs/cache" },

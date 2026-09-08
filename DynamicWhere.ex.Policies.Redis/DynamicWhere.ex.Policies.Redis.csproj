@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
@@ -34,7 +34,8 @@
       <!-- Locked to the core's version. build/check-version.ps1 fails the build when the three
            disagree, because publish.yml packs all three from one push and a provider shipped at a
            version its core was never built against is a dependency nobody tested. -->
-      <Version>2.1.5</Version>
+      <Version>3.0.0</Version>
+      <PackageReleaseNotes>v3.0.0 — First release. A Redis-backed policy store for the DynamicWhere.ex field-level policy layer, introduced in DynamicWhere.ex 3.0.0. Holds runtime rules in Redis and invalidates through pub/sub with a poll behind it, because pub/sub is fire-and-forget and the poll is what bounds a dropped message. Passes the same store conformance suite as the in-memory and Entity Framework Core stores. Requires DynamicWhere.ex 3.0.0.</PackageReleaseNotes>
       <PackageProjectUrl>https://doc.dynamicwhere.com</PackageProjectUrl>
       <RepositoryType>git</RepositoryType>
       <RepositoryBranch>master</RepositoryBranch>

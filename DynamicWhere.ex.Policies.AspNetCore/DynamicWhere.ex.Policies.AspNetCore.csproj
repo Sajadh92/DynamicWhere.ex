@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
@@ -31,7 +31,8 @@
     <Company>Sajjad H. Al-Khafaji</Company>
     <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <Version>2.1.5</Version>
+    <Version>3.0.0</Version>
+    <PackageReleaseNotes>v3.0.0 — First release. The administrative surface for the DynamicWhere.ex field-level policy layer, introduced in DynamicWhere.ex 3.0.0. MapDwPolicyAdmin mounts schema discovery, rule management, explain, simulate and health, and refuses to map at all without a named authorization policy — there is deliberately no default, and it fails at startup rather than on the first request. Also ships a ClaimsPrincipal to DwPolicyContext adapter and audit-draining middleware. Requires DynamicWhere.ex 3.0.0.</PackageReleaseNotes>
     <PackageProjectUrl>https://doc.dynamicwhere.com</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
     <RepositoryBranch>master</RepositoryBranch>

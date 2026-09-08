@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
@@ -34,7 +34,8 @@
       <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
       <PackageLicenseExpression>MIT</PackageLicenseExpression>
       <!-- Locked to the core's version; see the note in the Redis package. -->
-      <Version>2.1.5</Version>
+      <Version>3.0.0</Version>
+      <PackageReleaseNotes>v3.0.0 — First release. A database-backed policy store for the DynamicWhere.ex field-level policy layer, introduced in DynamicWhere.ex 3.0.0. Works with any EF Core provider; ships DwPolicyDbContext, the rule and version records, and their EF configurations. Passes the same store conformance suite as the in-memory and Redis stores, verified against PostgreSQL. Requires DynamicWhere.ex 3.0.0.</PackageReleaseNotes>
       <PackageProjectUrl>https://doc.dynamicwhere.com</PackageProjectUrl>
       <RepositoryType>git</RepositoryType>
       <RepositoryBranch>master</RepositoryBranch>

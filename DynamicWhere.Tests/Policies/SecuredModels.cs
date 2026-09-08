@@ -509,3 +509,117 @@ internal class AuditOfNothing
     [DwAudit(PolicyFeature.None)]
     public string Secret { get; set; } = string.Empty;
 }
+
+/// <summary>
+/// A type reachable from itself through both a reference and a collection, carrying the two
+/// carriers the walk used to replicate down every path it generated.
+/// </summary>
+/// <remarks>
+/// The shape of an Employee with a Manager and Subordinates, an Order with a parent Order, a
+/// Category with a Parent — a bidirectional navigation, which is most models. Before the fix, the
+/// depth cap turned one <c>[DwAlias]</c> into fifteen and one <c>[DwRequireWhere]</c> into fifteen,
+/// so the alias was refused as ambiguous and the requirement could never be satisfied.
+/// </remarks>
+internal class SelfReferencingStaff
+{
+    public int Id { get; set; }
+
+    [DwAlias("code")]
+    public string StaffCode { get; set; } = string.Empty;
+
+    [DwRequireWhere]
+    public string Division { get; set; } = string.Empty;
+
+    /// <summary>The row-level scope, and the carrier that failed silently rather than loudly.</summary>
+    [DwForceWhere(Operator.Equal, Value = "true")]
+    public bool IsActive { get; set; }
+
+    public decimal Salary { get; set; }
+
+    public SelfReferencingStaff? Manager { get; set; }
+
+    public ICollection<SelfReferencingStaff> Reports { get; set; } = [];
+}
+
+/// <summary>
+/// Two different members sharing one alias, which must still collide.
+/// </summary>
+/// <remarks>
+/// The other side of the root-preference rule. Here the candidates are genuinely different
+/// declarations rather than one declaration reached twice, so preferring either would silently
+/// discard a spelling somebody wrote, and the refusal is correct.
+/// </remarks>
+internal class TwiceAliasedLedger
+{
+    public int Id { get; set; }
+
+    [DwAlias("reference")]
+    public string InvoiceNumber { get; set; } = string.Empty;
+
+    public TwiceAliasedNested? Nested { get; set; }
+}
+
+/// <summary>The second home of the colliding alias.</summary>
+internal class TwiceAliasedNested
+{
+    [DwAlias("reference")]
+    public string PurchaseOrder { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// A scope declared one navigation away, on a type that is not the one being queried.
+/// </summary>
+/// <remarks>
+/// The case the cycle guard must NOT break. Querying orders while the tenant column lives on the
+/// customer is ordinary, and the forced predicate has to reach <c>Buyer.TenantId</c> for the scope
+/// to mean anything. Only a type reflected back onto itself is meaningless.
+/// </remarks>
+internal class ScopedOrder
+{
+    public int Id { get; set; }
+
+    public decimal Total { get; set; }
+
+    public ScopedBuyer? Buyer { get; set; }
+}
+
+/// <summary>The type carrying the scope one navigation from the root.</summary>
+internal class ScopedBuyer
+{
+    [DwForceWhere(Operator.Equal, ContextValue = "TenantId")]
+    public int TenantId { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Two paths to one carrier-bearing type: one through a branch, one direct.
+/// </summary>
+/// <remarks>
+/// The shape that proves the cycle guard is unwound rather than merely set. Walking
+/// <c>Branch.Scope</c> marks <see cref="DiamondScope"/>; if that mark is never cleared, the direct
+/// <c>Scope</c> beside it looks like a reflection of a type already seen and its forced predicate is
+/// silently dropped — the same empty-result failure the guard exists to remove, reintroduced by the
+/// guard itself. A mutation that never unwinds must turn this red.
+/// </remarks>
+internal class DiamondRoot
+{
+    public int Id { get; set; }
+
+    public DiamondBranch? Branch { get; set; }
+
+    public DiamondScope? Scope { get; set; }
+}
+
+/// <summary>The indirect route to the scope.</summary>
+internal class DiamondBranch
+{
+    public DiamondScope? Scope { get; set; }
+}
+
+/// <summary>The carrier both routes arrive at.</summary>
+internal class DiamondScope
+{
+    [DwForceWhere(Operator.Equal, ContextValue = "TenantId")]
+    public int TenantId { get; set; }
+}

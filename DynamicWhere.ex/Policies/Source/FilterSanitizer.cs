@@ -1626,6 +1626,21 @@ internal static class FilterSanitizer
             Add(candidates, asPath);
         }
 
+        if (candidates.Count > 1 && OneMemberReachedManyWays(candidates) is { } declared)
+        {
+            // One declaration, several paths to it — not two declarations competing. A type that
+            // appears inside its own navigation graph yields EmployeeCode, Manager.EmployeeCode and
+            // Subordinates.EmployeeCode from the single [DwAlias] on the root member, and refusing
+            // that made the alias unusable on any entity with a bidirectional navigation, which is
+            // most of them. The root is the declaration site and the only path the author named, so
+            // it is what the alias means.
+            //
+            // Narrow on purpose. Two different members sharing one alias still collide, because
+            // there the refusal is right: preferring either one silently discards a spelling
+            // somebody wrote.
+            candidates = new List<string> { declared };
+        }
+
         if (candidates.Count > 1)
         {
             throw gate.Exception(spoken, PolicyFeature.None, PolicyErrorCode.AmbiguousFieldName, null);
@@ -1642,6 +1657,56 @@ internal static class FilterSanitizer
         gate.RecordSpelling(canonical, spoken);
 
         return canonical;
+    }
+
+    /// <summary>
+    /// The root path when every candidate is the same member reached through navigations, otherwise
+    /// null.
+    /// </summary>
+    /// <remarks>
+    /// True only when exactly one candidate is a bare root path and every other candidate is that
+    /// same path behind a navigation prefix. <c>EmployeeCode</c> with <c>Manager.EmployeeCode</c>
+    /// qualifies; <c>EmployeeCode</c> with <c>Address.PostCode</c> does not, and stays ambiguous.
+    /// </remarks>
+    /// <param name="candidates">The paths a spoken name matched.</param>
+    /// <returns>The root path, or null when the candidates are genuinely different members.</returns>
+    private static string? OneMemberReachedManyWays(List<string> candidates)
+    {
+        string? root = null;
+
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            if (candidates[i].IndexOf('.') >= 0)
+            {
+                continue;
+            }
+
+            if (root is not null)
+            {
+                // Two bare roots cannot both be the declaration site.
+                return null;
+            }
+
+            root = candidates[i];
+        }
+
+        if (root is null)
+        {
+            return null;
+        }
+
+        string suffix = "." + root;
+
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            if (!ReferenceEquals(candidates[i], root)
+                && !candidates[i].EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+        }
+
+        return root;
     }
 
     /// <summary>Adds a path to the candidate set, ignoring one already present in another casing.</summary>

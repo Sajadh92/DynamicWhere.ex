@@ -55,7 +55,7 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     {
         List<PolicyFragment> fragments = new();
 
-        Walk(entityType, prefix: string.Empty, depth: 0, fragments);
+        Walk(entityType, prefix: string.Empty, depth: 0, new HashSet<Type>(), fragments);
 
         return new ReadOnlyCollection<PolicyFragment>(fragments);
     }
@@ -66,6 +66,7 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// <param name="type">The type being walked.</param>
     /// <param name="prefix">The dotted path leading to this type, empty at the root.</param>
     /// <param name="depth">How many navigations deep the walk currently is.</param>
+    /// <param name="ancestors">The types already on this path, for the cycle check below.</param>
     /// <param name="fragments">The accumulator.</param>
     /// <remarks>
     /// Depth alone terminates the walk. A visited-type guard would be cheaper on a graph with many
@@ -74,8 +75,24 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// navigations are cyclic by nature, so the depth cap is doing the real work either way, and the
     /// whole walk is computed once per type and cached.
     /// </remarks>
-    private static void Walk(Type type, string prefix, int depth, List<PolicyFragment> fragments)
+    private static void Walk(
+        Type type, string prefix, int depth, HashSet<Type> ancestors, List<PolicyFragment> fragments)
     {
+        // True once this type is reachable from itself: Employee.Manager, Category.Parent,
+        // Order.PreviousOrder. Three attributes below are declarations about the entity being
+        // queried rather than facts about every path that reaches one, and replicating them around
+        // a cycle is what made them unusable. Everything else still propagates, because a caller
+        // really can name Manager.Salary and it must be masked there.
+        //
+        // A cycle check rather than a depth-0 check on purpose: forcing Customer.TenantId while
+        // querying Order is a real and useful thing to declare, and only the reflections of a type
+        // back onto itself are meaningless.
+        bool reflected = ancestors.Contains(type);
+
+        // Added once for this frame rather than per navigation, and removed only when this frame is
+        // the one that added it — otherwise a diamond (two properties of the same type) would clear
+        // a marker an outer frame is still standing on.
+        bool marked = ancestors.Add(type);
         if (depth >= MaxDepth)
         {
             return;
@@ -95,23 +112,44 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
                 fragments.Add(ToFragment(path, attribute));
             }
 
-            DwAliasAttribute? alias = property.GetCustomAttribute<DwAliasAttribute>(inherit: true);
+            // An alias is a public *name*. Emitting "code" for StaffCode, Manager.StaffCode and
+            // Reports.StaffCode alike makes one declaration match many paths, and the sanitizer
+            // refuses the name as AmbiguousFieldName — so decorating a member of a self-referencing
+            // type made the alias unusable rather than convenient.
+            DwAliasAttribute? alias = reflected
+                ? null
+                : property.GetCustomAttribute<DwAliasAttribute>(inherit: true);
 
             if (alias is not null)
             {
                 fragments.Add(ToFragment(path, alias));
             }
 
-            DwRequireWhereAttribute? required = property.GetCustomAttribute<DwRequireWhereAttribute>(inherit: true);
+            // A demand on the caller. "You must filter on Division" is a sentence about the
+            // query's subject; "you must also filter on Manager.Division" is not one anyone meant,
+            // and once the depth cap has produced Manager.Division, Reports.Division and
+            // Manager.Reports.Division, no caller can satisfy every copy.
+            DwRequireWhereAttribute? required = reflected
+                ? null
+                : property.GetCustomAttribute<DwRequireWhereAttribute>(inherit: true);
 
             if (required is not null)
             {
                 fragments.Add(ToFragment(path, required));
             }
 
-            foreach (DwForceWhereAttribute attribute in property.GetCustomAttributes<DwForceWhereAttribute>(inherit: true))
+            // A row-level scope on the entity being queried. This is the one that did not fail
+            // loudly: "only active employees" replicated into "and whose manager is active, and
+            // whose manager's manager is active" — a conjunction almost no row satisfies — so a
+            // perfectly good query came back EMPTY rather than refused. Fewer rows is technically
+            // fail-closed, which is why nothing caught it; silently returning nothing is still the
+            // worst way to be wrong.
+            if (!reflected)
             {
-                fragments.Add(ToFragment(path, property, attribute));
+                foreach (DwForceWhereAttribute attribute in property.GetCustomAttributes<DwForceWhereAttribute>(inherit: true))
+                {
+                    fragments.Add(ToFragment(path, property, attribute));
+                }
             }
 
             foreach (TransformStage stage in TransformStagesOn(property))
@@ -132,8 +170,13 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
 
             if (navigation is not null)
             {
-                Walk(navigation, path, depth + 1, fragments);
+                Walk(navigation, path, depth + 1, ancestors, fragments);
             }
+        }
+
+        if (marked)
+        {
+            ancestors.Remove(type);
         }
     }
 

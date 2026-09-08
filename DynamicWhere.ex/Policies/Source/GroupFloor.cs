@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Classes.Complex;
+﻿using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Config;
@@ -96,6 +96,13 @@ internal static class GroupFloor
         {
             return false;
         }
+
+        // A grouped summary with no aggregates is legal, and the list can genuinely be null despite
+        // its property initializer: JSON carrying "aggregateBy": null overwrites the initializer,
+        // which is why GroupBy.Clone already handles it and why all six readers in FilterSanitizer
+        // null-check it. This routine has to as well, and then needs somewhere to put the size
+        // column. Assigning here is safe because Inject only ever sees the sanitizer's deep clone.
+        summary.GroupBy.AggregateBy ??= new List<AggregateBy>();
 
         foreach (AggregateBy existing in summary.GroupBy.AggregateBy)
         {

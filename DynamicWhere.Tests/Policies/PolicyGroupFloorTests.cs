@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Classes.Complex;
+﻿using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Enums;
@@ -293,6 +293,49 @@ public class PolicyGroupFloorTests
 
         Assert.Throws<LogicException>(() => Query(Options(floor: 20)).ToList(summary));
     }
+
+    // ---- a grouping with no aggregates ---------------------------------------------------------
+
+    [Fact]
+    public void A_group_by_with_no_aggregates_does_not_throw_when_the_floor_is_set()
+    {
+        // GroupBy.AggregateBy is declared non-nullable with a default, but JSON carrying
+        // "aggregateBy": null overwrites the initializer — which GroupBy.Clone already accounts for,
+        // and which every one of the six AggregateBy dereferences in FilterSanitizer null-checks.
+        // GroupFloor.Inject was the one that did not, so a grouped summary with no aggregates threw
+        // NullReferenceException the moment MinGroupSize was raised above one.
+        Summary summary = new()
+        {
+            GroupBy = new GroupBy
+            {
+                Fields = new List<string> { "Department" },
+                AggregateBy = null!
+            }
+        };
+
+        SummaryResult result = Query(Options(floor: 3)).ToList(summary);
+
+        // Support has three and survives; Engineering has two and Legal one, so both are suppressed.
+        Assert.Equal(new[] { "Support" }, Departments(result));
+    }
+
+    [Fact]
+    public void A_group_by_with_an_empty_aggregate_list_is_still_floored()
+    {
+        Summary summary = new()
+        {
+            GroupBy = new GroupBy
+            {
+                Fields = new List<string> { "Department" },
+                AggregateBy = new List<AggregateBy>()
+            }
+        };
+
+        SummaryResult result = Query(Options(floor: 3)).ToList(summary);
+
+        Assert.Equal(new[] { "Support" }, Departments(result));
+    }
+
 }
 
 

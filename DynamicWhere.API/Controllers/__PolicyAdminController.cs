@@ -56,10 +56,17 @@ public class PolicyAdminController : ControllerBase
                 .WithSubject(DwSubjectKind.Tenant, "acme"));
 
     private static IDwPolicyWritableStore Writable() =>
-        new EfPolicyStore(() => new DwPolicyDbContext(
-            new DbContextOptionsBuilder<DwPolicyDbContext>()
-                .UseNpgsql(DemoConnection)
-                .Options));
+        new EfPolicyStore(
+            () => new DwPolicyDbContext(
+                new DbContextOptionsBuilder<DwPolicyDbContext>()
+                    .UseNpgsql(DemoConnection)
+                    .Options),
+
+            // Not optional. SealedFields.Refuse holds a rule's entity name as a string and needs a
+            // Type to check it against, so a store that is handed no resolver cannot perform the
+            // check and accepts — which would make SealedFieldIsRefused below report FAILED OPEN
+            // against a store that had merely never been told how to resolve a name.
+            DwPolicy.Options.Entities.Resolve);
 
     private static string DemoConnection { get; set; } = string.Empty;
 

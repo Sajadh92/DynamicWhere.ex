@@ -1,4 +1,4 @@
-# DynamicWhere.ex
+﻿# DynamicWhere.ex
 
 **Version:** 3.0.0 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** MIT (Free Forever)
 
@@ -1563,7 +1563,7 @@ public decimal Salary { get; set; }
 | `MaxAuditEvents` | 10000 | Audit buffer before draining |
 | `MinGroupSize` | 1 (off) | k-anonymity group floor |
 
-Options are frozen at startup. Every cap refuses a value below one.
+Options are frozen at startup. Every cap refuses a value below one, except `DefaultFieldCost`, which accepts zero: that is the posture for a model weighing only its few expensive fields and leaving the rest free.
 
 ### Administration
 

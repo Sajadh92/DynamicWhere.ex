@@ -106,7 +106,13 @@ project into a type whose member is a string.`}</Code>
       </p>
       <Code lang="csharp">{`[DwGeneralize(GeneralizeMode.Round, Step = 1000)]
 [DwFormat("C0")]
-public decimal Salary { get; set; }`}</Code>
+public string SalaryBand { get; set; } = string.Empty;`}</Code>
+      <p>
+        The member is a <code>string</code> because <code>[DwFormat]</code> ends
+        the chain in text, and startup validation refuses a chain that emits text
+        into a member that cannot hold it. Reduce a number while keeping its type
+        with <code>[DwGeneralize]</code> alone.
+      </p>
 
       <h2 id="graph">Through the graph</h2>
       <p>

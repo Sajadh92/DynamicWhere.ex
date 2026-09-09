@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 
 <#
 .SYNOPSIS
@@ -74,6 +74,17 @@ $targets = [ordered]@{
     )
     'DynamicWhere.ex.Policies.AspNetCore/DynamicWhere.ex.Policies.AspNetCore.csproj' = @(
         '<Version>([^<]+)</Version>'
+    )
+    # The install command for each companion package, on the docs pages that teach it. The core's
+    # own pattern above cannot match these: 'DynamicWhere\.ex --version' does not match
+    # 'DynamicWhere.ex.Policies.Redis --version', so all three sat outside the guard and a bump
+    # would have left the site telling people to install the version before it.
+    'OfficialWebsite/app/docs/policies/providers/page.tsx' = @(
+        "DynamicWhere\.ex\.Policies\.Redis --version ($semver)",
+        "DynamicWhere\.ex\.Policies\.EntityFrameworkCore --version ($semver)"
+    )
+    'OfficialWebsite/app/docs/policies/admin/page.tsx' = @(
+        "DynamicWhere\.ex\.Policies\.AspNetCore --version ($semver)"
     )
 }
 

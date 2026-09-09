@@ -93,7 +93,7 @@ export default function Page() {
       </p>
 
       <h2 id="claims">From a ClaimsPrincipal</h2>
-      <Code lang="csharp">{`var caller = await httpContext.GetPolicyContextAsync();
+      <Code lang="csharp">{`var caller = await httpContext.GetPolicyContextAsync(claimsOptions);
 
 // or explicitly
 var caller = await DwClaimsAdapter.CreateContextAsync(User, claimsOptions, ct);`}</Code>

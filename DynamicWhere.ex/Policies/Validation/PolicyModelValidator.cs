@@ -58,7 +58,22 @@ public static class PolicyModelValidator
             CheckAlias(property, member, aliases, errors);
             CheckFacts(property, member, errors);
 
-            ValueTransform chain = ChainOn(property);
+            ValueTransform chain;
+
+            // The stage constructors refuse exactly the misconfigurations this scan exists to
+            // report ahead of a query. Letting one escape aborts the whole scan, so the operator
+            // learns about their model one restart at a time — and the exception names the
+            // parameter rather than the member, which is the one thing they need.
+            try
+            {
+                chain = ChainOn(property);
+            }
+            catch (ArgumentException malformed)
+            {
+                errors.Add($"{member}: {malformed.Message}");
+
+                continue;
+            }
 
             if (chain.IsEmpty)
             {
@@ -250,9 +265,14 @@ public static class PolicyModelValidator
     }
 
     /// <summary>True when the last stage that changes the value's kind produces text.</summary>
+    /// <remarks>
+    /// <see cref="MaskStrategy.Null"/> is the exception among the masks: it removes the value
+    /// rather than describing it, so it emits null and not text. Counting it here refused the one
+    /// configuration the check immediately above recommends — a nullable member masked to null.
+    /// </remarks>
     private static bool EmitsText(ValueTransform chain) =>
         chain.Truncate is not null
-        || chain.Mask is not null
+        || chain.Mask is { Strategy: not MaskStrategy.Null }
         || chain.Format is not null
         || chain.Generalize?.Mode == GeneralizeMode.Bucket;
 
@@ -261,7 +281,8 @@ public static class PolicyModelValidator
         string.Join(
             " and ",
             chain.Stages
-                .Where(s => s.Kind is TransformKind.Mask or TransformKind.Format or TransformKind.Truncate
+                .Where(s => s.Kind is TransformKind.Format or TransformKind.Truncate
+                            || (s is MaskStage m && m.Strategy != MaskStrategy.Null)
                             || (s is GeneralizeStage g && g.Mode == GeneralizeMode.Bucket))
                 .Select(s => $"[Dw{s.Kind}]"));
 

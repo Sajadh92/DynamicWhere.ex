@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Enums;
+﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Validation;
@@ -17,6 +17,30 @@ internal class NulledInt
 {
     [DwMask(MaskStrategy.Null)]
     public int Count { get; set; }
+}
+
+/// <summary>The nullable form of <see cref="NulledInt"/>, which the scan should accept.</summary>
+internal class NulledNullableInt
+{
+    [DwMask(MaskStrategy.Null)]
+    public int? Count { get; set; }
+}
+
+/// <summary>
+/// A member whose attribute the stage constructors refuse, beside one with an ordinary error.
+/// </summary>
+/// <remarks>
+/// Round with no Step is refused by <c>GeneralizeStage</c> itself. The scan built the chain outside
+/// a try, so the exception escaped the routine whose contract is to return a list — naming the
+/// parameter rather than the member, and hiding every other problem in the model behind it.
+/// </remarks>
+internal class MalformedStage
+{
+    [DwGeneralize(GeneralizeMode.Round)]
+    public decimal Salary { get; set; }
+
+    [DwMask(MaskStrategy.Full)]
+    public decimal Bonus { get; set; }
 }
 
 /// <summary>Two attributes that contradict each other.</summary>
@@ -203,4 +227,39 @@ public class PolicyValidationTests
         Assert.True(report.IsValid, string.Join("; ", report.Errors));
         Assert.Empty(report.Warnings);
     }
+    /// <summary>
+    /// MaskStrategy.Null removes the value rather than describing it, so it emits null and not
+    /// text. Counting it as text refused the very configuration the non-nullable check recommends.
+    /// </summary>
+    [Fact]
+    public void A_nullable_member_may_be_masked_to_null()
+    {
+        PolicyModelReport report = PolicyModelValidator.Inspect(new[] { typeof(NulledNullableInt) });
+
+        Assert.Empty(report.Errors);
+    }
+
+    /// <summary>
+    /// The non-nullable form is still refused, so the fix above did not open the case it was
+    /// written beside.
+    /// </summary>
+    [Fact]
+    public void A_non_nullable_member_still_may_not_be()
+    {
+        Assert.NotEmpty(PolicyModelValidator.Inspect(new[] { typeof(NulledInt) }).Errors);
+    }
+
+    /// <summary>
+    /// An attribute the stage constructors refuse is reported as an error naming its member, and
+    /// does not stop the scan finding the rest.
+    /// </summary>
+    [Fact]
+    public void A_malformed_attribute_is_reported_rather_than_thrown()
+    {
+        PolicyModelReport report = PolicyModelValidator.Inspect(new[] { typeof(MalformedStage) });
+
+        Assert.Contains(report.Errors, e => e.Contains("MalformedStage.Salary", StringComparison.Ordinal));
+        Assert.Contains(report.Errors, e => e.Contains("MalformedStage.Bonus", StringComparison.Ordinal));
+    }
+
 }

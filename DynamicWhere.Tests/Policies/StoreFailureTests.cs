@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Exceptions;
+﻿using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.Enums;
@@ -336,15 +336,36 @@ public class StoreFailureTests
         Assert.True(provider.Version >= 2);
     }
 
+    /// <summary>
+    /// A disposed provider stops following the store.
+    /// </summary>
+    /// <remarks>
+    /// Asserted by changing the store and watching the provider not notice. The test used to call
+    /// Dispose twice and assert nothing, so a refresh loop that polled forever after disposal
+    /// passed it — which is the property the name promises.
+    /// </remarks>
     [Fact]
     public async Task Disposing_stops_the_refresh()
     {
         using InMemoryPolicyStore store = new();
 
-        StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(
-            store, Options(maxAge: TimeSpan.FromHours(1)));
+        DwPolicyOptions options = new() { RefreshInterval = TimeSpan.FromMilliseconds(50) };
+
+        options.Freeze();
+
+        StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(store, options);
+
+        long version = provider.Version;
 
         provider.Dispose();
+
+        await store.UpsertAsync(Rule("Notes"), default);
+
+        // Comfortably longer than the interval the loop would have woken on.
+        await Task.Delay(500);
+
+        Assert.True(store.Version > version, "the store did not change, so nothing was proved");
+        Assert.Equal(version, provider.Version);
 
         // Disposing twice is harmless; a provider held in a container may be disposed by more than
         // one path.

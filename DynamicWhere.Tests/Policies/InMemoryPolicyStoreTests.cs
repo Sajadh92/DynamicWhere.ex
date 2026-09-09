@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Policies.Enums;
+﻿using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Storage;
 
 namespace DynamicWhere.Tests.Policies;
@@ -202,13 +202,63 @@ public class InMemoryPolicyStoreTests
         Assert.True(seen[1] > seen[0]);
     }
 
+    /// <summary>
+    /// A watch opened on a disposed store ends at once rather than waiting for a change that can
+    /// no longer come.
+    /// </summary>
+    /// <remarks>
+    /// Enumerated rather than null-checked. <c>WatchAsync</c> hands back a compiler-generated
+    /// iterator, which is never null whether the store is disposed or not, so asserting on the
+    /// handle alone passed with the guard inside the iterator deleted.
+    /// </remarks>
     [Fact]
-    public void Disposing_ends_every_watch()
+    public async Task A_watch_opened_after_disposal_ends_at_once()
     {
         InMemoryPolicyStore store = new();
 
         store.Dispose();
 
-        Assert.NotNull(store.WatchAsync(default));
+        List<long> seen = new();
+
+        Task drain = Drain(store, seen);
+
+        // Bounded, because the failure this guards against is a sequence that never ends. Left
+        // unbounded the regression hangs the run instead of reporting, which is worse than the
+        // NotNull check it replaced.
+        Assert.True(await Ended(drain), "the watch did not end on a disposed store");
+        Assert.Empty(seen);
     }
+
+    /// <summary>
+    /// And a watch already running ends when the store it is watching goes away, rather than
+    /// holding its reader open forever.
+    /// </summary>
+    [Fact]
+    public async Task Disposing_ends_a_watch_that_is_already_running()
+    {
+        InMemoryPolicyStore store = new();
+
+        Task reader = Drain(store, new List<long>());
+
+        // The watcher registers on its first move, so publish one change to be sure it has.
+        await store.UpsertAsync(Rule(field: "Notes"), default);
+
+        store.Dispose();
+
+        Assert.True(await Ended(reader), "the watch outlived the store that opened it");
+    }
+    /// <summary>Reads a watch to its end, on a thread of its own.</summary>
+    private static Task Drain(InMemoryPolicyStore store, List<long> seen) =>
+        Task.Run(async () =>
+        {
+            await foreach (long version in store.WatchAsync(default)!)
+            {
+                seen.Add(version);
+            }
+        });
+
+    /// <summary>True when the watch ended, false when it was still running after a fair wait.</summary>
+    private static async Task<bool> Ended(Task drain) =>
+        ReferenceEquals(drain, await Task.WhenAny(drain, Task.Delay(TimeSpan.FromSeconds(5))));
+
 }

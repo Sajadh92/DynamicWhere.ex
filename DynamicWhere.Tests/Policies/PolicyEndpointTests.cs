@@ -48,7 +48,7 @@ internal static class PolicyEndpointHost
     /// than taking a posture per call — which is the whole point of that type: a posture a caller
     /// can forget to pass at one call site is not a posture.
     /// </summary>
-    private static void Configure()
+    internal static void Configure()
     {
         lock (Bootstrap)
         {
@@ -59,7 +59,14 @@ internal static class PolicyEndpointHost
 
             DwPolicyOptions options = new();
 
-            options.Entities.Expose<Staff>(Entity).Expose<Person>();
+            // Employee belongs to the demo API rather than to this suite, and is exposed here
+            // because DwPolicy.Configure is refused after the first call: a second bootstrap for
+            // PolicyAdminControllerTests could not exist, and whichever suite ran first would
+            // decide what the other could resolve.
+            options.Entities
+                .Expose<Staff>(Entity)
+                .Expose<Person>()
+                .Expose<DynamicWhere.API.Models.Employee>("Employee");
 
             DwPolicy.Configure(options);
         }

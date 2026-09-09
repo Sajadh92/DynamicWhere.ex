@@ -41,13 +41,24 @@
          real stores behave alike. Both containers are provisioned identically here and on CI.
          Note that publish.yml runs the tests before it packs, so a Docker daemon is now needed to
          cut a release, not merely to build. -->
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.10" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+
+    <!-- Not used directly. It pins EF Core, Relational and Abstractions to the 8.0.21 the demo
+         API's design-time tooling compiles that project against; left to resolve on their own,
+         Npgsql pulls 8.0.11 and the assembly versions cannot be unified (MSB3277). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.21" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.0.0" />
     <PackageReference Include="Testcontainers.Redis" Version="4.0.0" />
     <!-- Drives the administrative endpoints through a real request pipeline: routing,
          authorization and model binding all take part, and a test that mounted the handlers
          directly would prove none of them. -->
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.10" />
+
+    <!-- The demo API, for PolicyAdminControllerTests. Its administrative controller is the only
+         place the four packages are driven together against a real database through MVC, and it
+         was the one part of the admin surface no test reached. Dropped on the floor leg with the
+         rest of the EF Core 8 graph. -->
+    <ProjectReference Include="..\DynamicWhere.API\DynamicWhere.API.csproj" />
   </ItemGroup>
 
   <!-- On the floor leg the suite narrows to the policy tests that need nothing but SQLite: the
@@ -65,6 +76,8 @@
     <Compile Remove="Policies/EfStoreConformanceTests.cs" />
     <Compile Remove="Policies/RedisStoreConformanceTests.cs" />
     <Compile Remove="Policies/PolicyEndpointTests.cs" />
+    <Compile Remove="Policies/PolicyEndpointHardeningTests.cs" />
+    <Compile Remove="Policies/PolicyAdminControllerTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -239,6 +239,31 @@ public class PolicyTransformPipelineTests
         Assert.Equal(33.19m, Apply(chain, 33.199999m, typeof(decimal)));
     }
 
+    /// <summary>
+    /// The kind travels with the value.
+    /// </summary>
+    /// <remarks>
+    /// Year, Quarter and Month constructed a new date and dropped it, while Day kept it — so a UTC
+    /// instant reduced to the first of its month serialized with no offset and a client east of UTC
+    /// read it as the month before the bucket it had been placed in.
+    /// </remarks>
+    [Theory]
+    [InlineData(DatePart.Year)]
+    [InlineData(DatePart.Quarter)]
+    [InlineData(DatePart.Month)]
+    [InlineData(DatePart.Day)]
+    public void A_date_part_keeps_the_kind_it_was_given(DatePart part)
+    {
+        ValueTransform chain = new(generalize: new GeneralizeStage(GeneralizeMode.DatePart, part: part));
+
+        object? reduced = Apply(
+            chain,
+            new DateTime(1987, 6, 15, 22, 30, 0, DateTimeKind.Utc),
+            typeof(DateTime));
+
+        Assert.Equal(DateTimeKind.Utc, Assert.IsType<DateTime>(reduced).Kind);
+    }
+
     [Theory]
     [InlineData(DatePart.Year, "1987-01-01")]
     [InlineData(DatePart.Quarter, "1987-04-01")]
@@ -303,4 +328,48 @@ public class PolicyTransformPipelineTests
         Assert.Equal("untouched", Apply(new ValueTransform(), "untouched", typeof(string)));
         Assert.True(new ValueTransform().IsEmpty);
     }
+    /// <summary>
+    /// A replacement short-circuits what runs. It does not short-circuit what the chain decided.
+    /// </summary>
+    /// <remarks>
+    /// <c>AllowsAggregate</c> and <c>MinGroupSize</c> read the running set, which a replacement
+    /// reduces to itself — so a rule carrying only a <c>Default</c> stage cancelled the aggregate
+    /// refusal and the k-anonymity floor of a mask it never outranked. A rule may carry a transform
+    /// with no feature at all, so the sealed-field check at the store boundary has nothing to refuse
+    /// it on, and the mask stays elected in its own slot: the chain held both and answered for one.
+    /// </remarks>
+    [Fact]
+    public void A_replacement_does_not_cancel_another_stages_aggregate_refusal()
+    {
+        ValueTransform chain = new(
+            mask: new MaskStage(MaskStrategy.Full),
+            @default: new DefaultStage("0", hasValue: true, allowAggregate: true));
+
+        Assert.False(chain.AllowsAggregate);
+    }
+
+    [Fact]
+    public void A_replacement_does_not_lower_another_stages_group_floor()
+    {
+        ValueTransform chain = new(
+            generalize: new GeneralizeStage(
+                GeneralizeMode.Round, step: 10, allowAggregate: true, minGroupSize: 25),
+            @default: new DefaultStage("0", hasValue: true, allowAggregate: true));
+
+        Assert.Equal(25, chain.MinGroupSize);
+    }
+
+    /// <summary>
+    /// What runs is still the replacement alone, which is the property the short-circuit exists for.
+    /// </summary>
+    [Fact]
+    public void A_replacement_still_runs_alone()
+    {
+        ValueTransform chain = new(
+            mask: new MaskStage(MaskStrategy.Full),
+            @default: new DefaultStage("N/A", hasValue: true));
+
+        Assert.Equal("N/A", Apply(chain, "a real value", typeof(string)));
+    }
+
 }

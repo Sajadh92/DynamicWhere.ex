@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
 
@@ -107,12 +107,19 @@ internal static class Generalizer
     }
 
     /// <summary>The first instant of the period the date falls in.</summary>
+    /// <remarks>
+    /// The kind travels with the value. Constructing a date without it produced an Unspecified
+    /// instant, which serializes with no offset — so a UTC value reduced to the first of its month
+    /// was read by a client east of UTC as the month before the one the bucket had placed it in,
+    /// while <c>DatePart.Day</c> on the same member kept its kind and disagreed.
+    /// </remarks>
     private static DateTime Reduce(DateTime value, DatePart part) =>
         part switch
         {
-            Enums.DatePart.Year => new DateTime(value.Year, 1, 1),
-            Enums.DatePart.Quarter => new DateTime(value.Year, ((value.Month - 1) / 3 * 3) + 1, 1),
-            Enums.DatePart.Month => new DateTime(value.Year, value.Month, 1),
+            Enums.DatePart.Year => new DateTime(value.Year, 1, 1, 0, 0, 0, value.Kind),
+            Enums.DatePart.Quarter =>
+                new DateTime(value.Year, ((value.Month - 1) / 3 * 3) + 1, 1, 0, 0, 0, value.Kind),
+            Enums.DatePart.Month => new DateTime(value.Year, value.Month, 1, 0, 0, 0, value.Kind),
             _ => value.Date
         };
 }

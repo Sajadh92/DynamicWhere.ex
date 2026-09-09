@@ -67,7 +67,7 @@ public sealed class ValueTransform
     {
         get
         {
-            foreach (TransformStage stage in Stages)
+            foreach (TransformStage stage in Configured)
             {
                 if (!stage.AllowAggregate)
                 {
@@ -92,7 +92,7 @@ public sealed class ValueTransform
         {
             int floor = 0;
 
-            foreach (TransformStage stage in Stages)
+            foreach (TransformStage stage in Configured)
             {
                 if (stage.MinGroupSize > floor)
                 {
@@ -101,6 +101,57 @@ public sealed class ValueTransform
             }
 
             return floor;
+        }
+    }
+
+    /// <summary>
+    /// Every stage configured on this chain, whether or not it will run.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Stages"/> answers what runs; this answers what somebody declared. They differ
+    /// only for a replacement, which short-circuits the rest — and a stage that is suppressed for
+    /// output still describes a field somebody chose to obscure, so a decision about whether that
+    /// field may be aggregated has to see it.
+    /// <para>
+    /// Reading the running set instead let a replacement cancel the aggregate refusal and the group
+    /// floor of a mask it never outranked. A rule may carry a replacement without carrying any
+    /// feature at all, so the sealed-field check at the store boundary has no feature to refuse it
+    /// on, and the mask stays elected in its own slot — the chain held both and answered for one.
+    /// </para>
+    /// </remarks>
+    private IEnumerable<TransformStage> Configured
+    {
+        get
+        {
+            if (Mutate is not null)
+            {
+                yield return Mutate;
+            }
+
+            if (Generalize is not null)
+            {
+                yield return Generalize;
+            }
+
+            if (Format is not null)
+            {
+                yield return Format;
+            }
+
+            if (Mask is not null)
+            {
+                yield return Mask;
+            }
+
+            if (Truncate is not null)
+            {
+                yield return Truncate;
+            }
+
+            if (Default is not null)
+            {
+                yield return Default;
+            }
         }
     }
 

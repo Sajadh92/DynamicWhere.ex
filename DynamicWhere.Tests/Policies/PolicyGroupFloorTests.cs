@@ -138,6 +138,143 @@ public class PolicyGroupFloorTests
                 && (d.Reason?.Contains("below the group floor") ?? false));
     }
 
+    // ---- the floor governs the whole answer, not only the page ---------------------------------
+
+    /// <summary>
+    /// The count describes the rows that came back.
+    /// </summary>
+    /// <remarks>
+    /// Suppressing after the query left <c>TotalCount</c> and <c>PageCount</c> describing a result
+    /// that was never returned — which is a count of exactly the groups the floor exists to hide,
+    /// readable by bisecting a Having threshold while every response comes back empty. The floor is
+    /// a predicate on the query now, so the count is taken over the groups that reached it.
+    /// </remarks>
+    [Fact]
+    public void The_count_describes_the_groups_that_survived_the_floor()
+    {
+        SummaryResult result = Query(Options(floor: 3)).ToList(Grouped());
+
+        // Support has three, Engineering two, Legal one.
+        Assert.Equal(1, result.TotalCount);
+        Assert.Equal(new[] { "Support" }, Departments(result));
+    }
+
+    /// <summary>
+    /// And a page holds as many rows as it says it does.
+    /// </summary>
+    /// <remarks>
+    /// Suppression ran after Skip and Take, so a page of ten could come back with four and the six
+    /// it dropped were never backfilled from the next page. No sequence of requests returned the
+    /// surviving groups in full, and a client that stops when a page is short stopped on the first.
+    /// </remarks>
+    [Fact]
+    public void A_page_is_not_thinned_by_the_floor()
+    {
+        Summary summary = Grouped();
+
+        summary.Page = new PageBy { PageNumber = 1, PageSize = 2 };
+
+        SummaryResult result = Query(Options(floor: 2)).ToList(summary);
+
+        // Engineering and Support reach the floor; Legal does not. Both fit on the page.
+        Assert.Equal(2, result.Data.Count);
+        Assert.Equal(2, result.TotalCount);
+    }
+
+    // ---- the alias the library keeps for itself --------------------------------------------------
+
+    /// <summary>
+    /// The reserved alias is refused wherever a caller can write it, not only in the aggregate list.
+    /// </summary>
+    /// <remarks>
+    /// The gate leaves a name it does not recognize alone, and the validator runs after injection —
+    /// by which point the alias is a legitimate aggregate. A caller naming it in Having bound to the
+    /// count this control keeps for itself, and read the number of suppressed groups straight out of
+    /// <c>TotalCount</c>.
+    /// </remarks>
+    [Fact]
+    public void A_having_clause_may_not_name_the_reserved_alias()
+    {
+        Summary summary = Grouped();
+
+        summary.Having = new ConditionGroup
+        {
+            Sort = 1,
+            Conditions =
+            {
+                new Condition
+                {
+                    Sort = 1,
+                    Field = GroupFloorAlias,
+                    DataType = DataType.Number,
+                    Operator = Operator.LessThan,
+                    Values = { "5" }
+                }
+            }
+        };
+
+        PolicyException refused = Assert.Throws<PolicyException>(
+            () => Query(Options(floor: 2)).ToList(summary));
+
+        Assert.Equal(PolicyErrorCode.GroupTooSmall, refused.ErrorCode);
+    }
+
+    [Fact]
+    public void An_order_clause_may_not_name_the_reserved_alias_either()
+    {
+        Summary summary = Grouped();
+
+        summary.Orders = new List<OrderBy>
+        {
+            new() { Sort = 1, Field = GroupFloorAlias, Direction = Direction.Ascending }
+        };
+
+        PolicyException refused = Assert.Throws<PolicyException>(
+            () => Query(Options(floor: 2)).ToList(summary));
+
+        Assert.Equal(PolicyErrorCode.GroupTooSmall, refused.ErrorCode);
+    }
+
+    /// <summary>
+    /// A caller's own Having still applies, alongside the floor rather than instead of it.
+    /// </summary>
+    [Fact]
+    public void The_callers_having_survives_the_injected_one()
+    {
+        // Salary declares a floor of three of its own, which outranks the global two, so the floor
+        // alone leaves Support: three members, topping out at 70.
+        Assert.Equal(
+            new[] { "Support" },
+            Departments(Query(Options(floor: 2)).ToList(Grouped("Salary", "top"))));
+
+        Summary narrowed = Grouped("Salary", "top");
+
+        narrowed.Having = new ConditionGroup
+        {
+            Sort = 1,
+            Conditions =
+            {
+                new Condition
+                {
+                    Sort = 1,
+                    Field = "top",
+                    DataType = DataType.Number,
+                    Operator = Operator.GreaterThan,
+                    Values = { "100" }
+                }
+            }
+        };
+
+        // The caller's clause is applied as well as the floor's, not instead of it: Support reaches
+        // the floor and fails the threshold, so nothing comes back.
+        SummaryResult result = Query(Options(floor: 2)).ToList(narrowed);
+
+        Assert.Empty(Departments(result));
+        Assert.Equal(0, result.TotalCount);
+    }
+
+    private const string GroupFloorAlias = "__dwGroupSize";
+
     // ---- the injected count --------------------------------------------------------------------
 
     /// <summary>

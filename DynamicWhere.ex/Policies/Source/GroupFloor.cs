@@ -3,6 +3,8 @@ using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.DTOs;
+using DynamicWhere.ex.Policies.Enums;
+using System.Globalization;
 
 namespace DynamicWhere.ex.Policies.Source;
 
@@ -76,6 +78,11 @@ internal static class GroupFloor
     /// </summary>
     /// <param name="summary">The sanitized summary, modified in place.</param>
     /// <param name="floor">The effective floor.</param>
+    /// <param name="dryRun">
+    /// True to add the count without the predicate that enforces it, so the transformer can record
+    /// what would have been dropped.
+    /// </param>
+    /// <param name="trace">Collects the record that the floor was applied.</param>
     /// <returns>True when a count was added and must be removed from the result again.</returns>
     /// <exception cref="ArgumentException">
     /// Thrown when the caller has already used the reserved alias.
@@ -90,11 +97,28 @@ internal static class GroupFloor
     /// pipeline emits <c>Count()</c> over the group whatever the field says.
     /// </para>
     /// </remarks>
-    internal static bool Inject(Summary summary, int floor)
+    internal static bool Inject(Summary summary, int floor, bool dryRun, PolicyTrace trace)
     {
         if (floor <= 1 || summary.GroupBy is null)
         {
             return false;
+        }
+
+        // The alias is the library's, everywhere it can appear. Reserving it in the aggregate list
+        // alone left it usable in Having and in Orders, where the gate leaves an unrecognized name
+        // untouched and the validator — which runs after this injection — then sees a legitimate
+        // aggregate alias. A caller could bind to the count this control keeps for itself.
+        Refuse(summary.Having);
+
+        if (summary.Orders is not null)
+        {
+            foreach (OrderBy order in summary.Orders)
+            {
+                if (string.Equals(order.Field, SizeAlias, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ArgumentException(SizeAlias);
+                }
+            }
         }
 
         // A grouped summary with no aggregates is legal, and the list can genuinely be null despite
@@ -118,6 +142,75 @@ internal static class GroupFloor
             Alias = SizeAlias
         });
 
+        // Filtered by the database rather than by the transformer, so the floor governs the whole
+        // answer and not only the rows on the page. Suppressing after the query left TotalCount
+        // and PageCount describing a result that was never returned — a count of the groups the
+        // floor exists to hide — and, because suppression ran after Skip and Take, thinned each
+        // page without backfilling it, so no sequence of requests ever returned the surviving
+        // groups in full.
+        //
+        // Not in a dry run. That posture records what it would have done and does nothing, and a
+        // predicate the database applied cannot be un-applied; ResultTransformer.Suppress records
+        // the drops there instead.
+        if (!dryRun)
+        {
+            ConditionGroup reached = new()
+            {
+                Sort = 1,
+                Connector = Connector.And,
+                Conditions =
+                {
+                    new Condition
+                    {
+                        Sort = 1,
+                        Field = SizeAlias,
+                        DataType = DataType.Number,
+                        Operator = Operator.GreaterThanOrEqual,
+                        Values = { floor.ToString(CultureInfo.InvariantCulture) }
+                    }
+                }
+            };
+
+            if (summary.Having is not null)
+            {
+                reached.SubConditionGroups.Add(summary.Having);
+            }
+
+            summary.Having = reached;
+
+            // One record for the control, not one per group. An operator asking why a department
+            // is missing still gets an answer that is not "look at the data", and the answer no
+            // longer names the sizes of the groups the floor exists to hide — which the per-group
+            // records handed back to the caller in the trace they can read.
+            trace.Add(new PolicyDecision(
+                SizeAlias,
+                PolicyFeature.Aggregate,
+                PolicyAction.Dropped,
+                $"groups below the group floor of {floor} are excluded by the query"));
+        }
+
         return true;
+    }
+
+    /// <summary>Refuses a having clause that has taken the alias this control reserves.</summary>
+    private static void Refuse(ConditionGroup? group)
+    {
+        if (group is null)
+        {
+            return;
+        }
+
+        foreach (Condition condition in group.Conditions)
+        {
+            if (string.Equals(condition.Field, SizeAlias, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(SizeAlias);
+            }
+        }
+
+        foreach (ConditionGroup sub in group.SubConditionGroups)
+        {
+            Refuse(sub);
+        }
     }
 }

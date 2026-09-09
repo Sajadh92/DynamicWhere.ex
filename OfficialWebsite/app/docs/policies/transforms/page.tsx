@@ -52,7 +52,7 @@ export default function Page() {
           <tr><td><code>Phone</code></td><td>Keeps the last group of digits.</td></tr>
           <tr><td><code>Regex</code></td><td><code>Pattern</code> and <code>Replacement</code>.</td></tr>
           <tr><td><code>Fixed</code></td><td>A constant string from <code>Text</code>.</td></tr>
-          <tr><td><code>Hash</code></td><td>Salted hash. Needs <code>options.HashSalt</code>.</td></tr>
+          <tr><td><code>Hash</code></td><td>Salted hash. Requires <code>options.HashSalt</code>; a query is refused without one.</td></tr>
           <tr><td><code>Null</code></td><td>Removes the value. Refused at startup on a non-nullable value type.</td></tr>
         </tbody>
       </table>

@@ -68,6 +68,13 @@ public sealed class DwPolicyOptions
     /// committed to source control is not a salt. Without one, a hash of a national identifier or a
     /// postcode is reversed by hashing a dictionary of candidates and comparing.
     /// <para>
+    /// Required, not advisory. A query masking a field to a hash is refused with
+    /// <c>MissingHashSalt</c> while this is blank, and <c>DwPolicy.ValidateModel(options, types)</c>
+    /// reports it at startup. The default is empty and there is deliberately no generated one: a
+    /// salt that changed per process would change every hashed value with it, and the whole point of
+    /// the strategy is that the same value hashes to the same text.
+    /// </para>
+    /// <para>
     /// It must stay stable for the life of a deployment: the same value hashes to the same text, so
     /// a caller can group and join by it without learning what it is, and rotating the salt changes
     /// every hashed value at once.

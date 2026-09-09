@@ -1,4 +1,5 @@
-using System.Globalization;
+﻿using System.Globalization;
+using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
@@ -34,6 +35,10 @@ internal static class TransformPipeline
     /// Thrown when the chain produces a value the member cannot hold. A configuration error, not a
     /// policy decision, so it is not a <c>PolicyException</c> — but it fails the query rather than
     /// passing the untransformed value through.
+    /// </exception>
+    /// <exception cref="PolicyException">
+    /// Thrown with <see cref="PolicyErrorCode.MissingHashSalt"/> when the chain masks to a hash and
+    /// the deployment set no salt.
     /// </exception>
     internal static object? Apply(
         ValueTransform chain,
@@ -88,6 +93,20 @@ internal static class TransformPipeline
 
         if (chain.Mask is { } mask)
         {
+            // A hash with no salt is reversed by hashing a dictionary of candidates and comparing,
+            // which is trivial for the low-entropy identifiers this strategy is documented for. The
+            // digest is well-formed either way, so neither the operator nor the caller receiving it
+            // can tell — which is why the query is refused rather than answered. The same choice
+            // MissingContextValue makes for a forced predicate that cannot be built.
+            if (mask.Strategy == MaskStrategy.Hash && string.IsNullOrEmpty(options.HashSalt))
+            {
+                throw new PolicyException(
+                    PolicyErrorCode.MissingHashSalt,
+                    context.FieldPath,
+                    PolicyFeature.Select,
+                    options.Tier);
+            }
+
             current = MaskEngine.Apply(mask, AsText(current), options.HashSalt);
         }
 

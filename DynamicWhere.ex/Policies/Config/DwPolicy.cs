@@ -233,9 +233,30 @@ public static class DwPolicy
     /// attributes that are not there.
     /// </para>
     /// </remarks>
-    public static PolicyModelReport ValidateModel(params Type[] types)
+    public static PolicyModelReport ValidateModel(params Type[] types) =>
+        ValidateModel(null, types);
+
+    /// <summary>
+    /// Checks a policy model against the posture it will run under, and throws when it cannot work.
+    /// </summary>
+    /// <param name="options">
+    /// The options about to be passed to <see cref="Configure"/>, or null to check the attributes
+    /// alone.
+    /// </param>
+    /// <param name="types">The entity and DTO types to inspect.</param>
+    /// <returns>The report, so a host can log the warnings rather than ignore them.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the model contains anything that will fail a query.
+    /// </exception>
+    /// <remarks>
+    /// Takes the options rather than reading <see cref="Options"/>, because a host validates before
+    /// it configures — reading the static here would check the model against the default posture and
+    /// report a salt that is one line from being set.
+    /// </remarks>
+    public static PolicyModelReport ValidateModel(DwPolicyOptions? options, params Type[] types)
     {
-        PolicyModelReport report = PolicyModelValidator.Inspect(types ?? Array.Empty<Type>());
+        PolicyModelReport report =
+            PolicyModelValidator.Inspect(types ?? Array.Empty<Type>(), options);
 
         if (!report.IsValid)
         {

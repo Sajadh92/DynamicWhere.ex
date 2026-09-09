@@ -152,5 +152,18 @@ public enum PolicyErrorCode
     /// Silently overwriting a column the caller already named would lose whatever they were
     /// counting and hand back the library's number as theirs.
     /// </remarks>
-    GroupTooSmall = 20
+    GroupTooSmall = 20,
+
+    /// <summary>
+    /// A field is masked to a hash and the deployment supplied no salt for it.
+    /// </summary>
+    /// <remarks>
+    /// Refused rather than hashed without one, for the same reason a forced predicate whose context
+    /// value is missing refuses the query: the alternative is a control that appears to be working.
+    /// An unsalted hash of a national identifier or a postcode is reversed by hashing a dictionary
+    /// of candidates and comparing, and its output is a well-formed digest indistinguishable from a
+    /// salted one — so nothing about the response tells the operator, or the caller receiving it,
+    /// that the value is recoverable.
+    /// </remarks>
+    MissingHashSalt = 21
 }

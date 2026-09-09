@@ -1,5 +1,6 @@
 ﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Attributes;
+using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Validation;
 
@@ -41,6 +42,13 @@ internal class MalformedStage
 
     [DwMask(MaskStrategy.Full)]
     public decimal Bonus { get; set; }
+}
+
+/// <summary>A member masked to a hash, which is only as good as the salt the host supplies.</summary>
+internal class HashedIdentifier
+{
+    [DwMask(MaskStrategy.Hash)]
+    public string NationalId { get; set; } = string.Empty;
 }
 
 /// <summary>Two attributes that contradict each other.</summary>
@@ -260,6 +268,38 @@ public class PolicyValidationTests
 
         Assert.Contains(report.Errors, e => e.Contains("MalformedStage.Salary", StringComparison.Ordinal));
         Assert.Contains(report.Errors, e => e.Contains("MalformedStage.Bonus", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The one check that needs both halves: no attribute can carry a salt, so a scan seeing only
+    /// the types cannot know whether the hash it found will work.
+    /// </summary>
+    [Fact]
+    public void A_hash_with_no_salt_is_reported_when_the_posture_is_supplied()
+    {
+        PolicyModelReport report = PolicyModelValidator.Inspect(
+            new[] { typeof(HashedIdentifier) }, new DwPolicyOptions());
+
+        Assert.Contains(report.Errors, e => e.Contains("HashSalt", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_hash_with_a_salt_is_not_reported()
+    {
+        PolicyModelReport report = PolicyModelValidator.Inspect(
+            new[] { typeof(HashedIdentifier) }, new DwPolicyOptions { HashSalt = "pepper" });
+
+        Assert.Empty(report.Errors);
+    }
+
+    /// <summary>
+    /// The types-only overload cannot see a posture and does not guess at one. A host that validates
+    /// before it configures would otherwise be told about a salt it is one line from setting.
+    /// </summary>
+    [Fact]
+    public void The_scan_without_a_posture_says_nothing_about_the_salt()
+    {
+        Assert.Empty(PolicyModelValidator.Inspect(new[] { typeof(HashedIdentifier) }).Errors);
     }
 
 }

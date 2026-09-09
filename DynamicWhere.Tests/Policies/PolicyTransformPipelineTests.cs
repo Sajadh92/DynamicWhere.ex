@@ -1,4 +1,5 @@
-﻿using DynamicWhere.ex.Policies.Config;
+﻿using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
@@ -370,6 +371,59 @@ public class PolicyTransformPipelineTests
             @default: new DefaultStage("N/A", hasValue: true));
 
         Assert.Equal("N/A", Apply(chain, "a real value", typeof(string)));
+    }
+
+    // ---- the salt a hash cannot work without -----------------------------------------------------
+
+    /// <summary>
+    /// A hash with no salt is refused rather than answered.
+    /// </summary>
+    /// <remarks>
+    /// The digest is well formed either way, so neither the operator nor the caller receiving it can
+    /// tell that an unsalted hash of a national identifier or a postcode is reversed by hashing a
+    /// dictionary of candidates and comparing. The same choice <c>MissingContextValue</c> makes for
+    /// a forced predicate that cannot be built: refuse, rather than serve a control that only looks
+    /// like one.
+    /// </remarks>
+    [Fact]
+    public void A_hash_with_no_salt_refuses_the_query()
+    {
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Hash));
+
+        PolicyException refused = Assert.Throws<PolicyException>(
+            () => TransformPipeline.Apply(
+                chain, "AAA-111", typeof(string), Context(), new DwPolicyOptions()));
+
+        Assert.Equal(PolicyErrorCode.MissingHashSalt, refused.ErrorCode);
+        Assert.Equal("Salary", refused.FieldPath);
+    }
+
+    /// <summary>
+    /// And answers once a salt is set, so the refusal is about the salt and not about the strategy.
+    /// </summary>
+    [Fact]
+    public void A_hash_with_a_salt_still_answers()
+    {
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Hash));
+
+        object? hashed = Apply(chain, "AAA-111", typeof(string));
+
+        Assert.NotNull(hashed);
+        Assert.NotEqual("AAA-111", hashed);
+    }
+
+    /// <summary>
+    /// Only the hash needs one. Every other strategy is unaffected by an empty salt.
+    /// </summary>
+    [Fact]
+    public void Another_strategy_is_untouched_by_a_missing_salt()
+    {
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Full));
+
+        Assert.Equal(
+            "*******",
+            TransformPipeline.Apply(
+                chain, "AAA-111", typeof(string), Context(), new DwPolicyOptions()));
     }
 
 }

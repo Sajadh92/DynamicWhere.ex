@@ -1,5 +1,6 @@
 ﻿using System.Reflection;
 using DynamicWhere.ex.Policies.Attributes;
+using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Masking;
@@ -28,7 +29,22 @@ public static class PolicyModelValidator
     /// <param name="types">The entity and DTO types to inspect.</param>
     /// <returns>The problems found, empty when the model is sound.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="types"/> is null.</exception>
-    public static PolicyModelReport Inspect(IEnumerable<Type> types)
+    public static PolicyModelReport Inspect(IEnumerable<Type> types) => Inspect(types, null);
+
+    /// <summary>
+    /// Inspects the given types against a posture, which lets it check what the attributes alone
+    /// cannot answer.
+    /// </summary>
+    /// <param name="types">The entity and DTO types to inspect.</param>
+    /// <param name="options">The posture the model will run under, or null to skip those checks.</param>
+    /// <returns>The problems found, empty when the model is sound.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="types"/> is null.</exception>
+    /// <remarks>
+    /// One check needs both halves: a hash mask is only as good as the salt the deployment supplies,
+    /// and the attribute cannot carry a salt — committing one to source control would defeat it. So
+    /// the pairing is invisible to a scan that sees only the types.
+    /// </remarks>
+    public static PolicyModelReport Inspect(IEnumerable<Type> types, DwPolicyOptions? options)
     {
         if (types is null)
         {
@@ -40,14 +56,15 @@ public static class PolicyModelValidator
 
         foreach (Type type in types)
         {
-            Inspect(type, errors, warnings);
+            Inspect(type, errors, warnings, options);
         }
 
         return new PolicyModelReport(errors, warnings);
     }
 
     /// <summary>Inspects one type.</summary>
-    private static void Inspect(Type type, List<string> errors, List<string> warnings)
+    private static void Inspect(
+        Type type, List<string> errors, List<string> warnings, DwPolicyOptions? options)
     {
         Dictionary<string, string> aliases = new(StringComparer.OrdinalIgnoreCase);
 
@@ -82,6 +99,7 @@ public static class PolicyModelValidator
 
             CheckConflict(chain, member, errors);
             CheckMutator(chain, member, errors);
+            CheckSalt(chain, member, options, errors);
             CheckOutputType(chain, property, member, errors);
             CheckMaskedButOrderable(chain, property, member, warnings);
         }
@@ -174,6 +192,31 @@ public static class PolicyModelValidator
                 $"{member}: [DwDefault] replaces the value outright and short-circuits every other " +
                 "stage, so the other transforms on this member would never run. Remove one.");
         }
+    }
+
+    /// <summary>Refuses a hash mask the deployment supplied no salt for.</summary>
+    /// <remarks>
+    /// Reported here as well as refused at query time, so it surfaces at a deployment rather than on
+    /// a caller's request. The runtime refusal is the guarantee — a host that never calls this scan
+    /// is still not served a reversible digest — and this is the half that says so in time to fix
+    /// it.
+    /// </remarks>
+    private static void CheckSalt(
+        ValueTransform chain, string member, DwPolicyOptions? options, List<string> errors)
+    {
+        if (options is null
+            || chain.Mask?.Strategy != MaskStrategy.Hash
+            || !string.IsNullOrEmpty(options.HashSalt))
+        {
+            return;
+        }
+
+        errors.Add(
+            $"{member}: [DwMask(MaskStrategy.Hash)] with no DwPolicyOptions.HashSalt. An unsalted " +
+            "hash of a low-entropy value — a national identifier, a postcode — is reversed by " +
+            "hashing a dictionary of candidates and comparing, and the digest is well formed either " +
+            "way, so nothing about the output says so. Set a salt and keep it stable for the life " +
+            "of the deployment.");
     }
 
     /// <summary>Refuses a transformer type that cannot transform anything.</summary>

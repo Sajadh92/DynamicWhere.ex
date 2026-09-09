@@ -234,7 +234,9 @@ static async Task ConfigureDynamicWherePoliciesAsync(
     // Contradictions in the model, reported rather than thrown, so every one shows up in a single
     // run instead of one per restart. The Email/[DwNoOrder] pairing on Employee exists because this
     // check names it: a masked field that can still be sorted on ranks the real values.
-    PolicyModelReport report = DwPolicy.ValidateModel(typeof(Employee));
+    // Passed the options as well as the types: one check needs both halves. A [DwMask] that hashes
+    // is only as good as the salt this deployment supplies, and no attribute can carry a salt.
+    PolicyModelReport report = DwPolicy.ValidateModel(options, typeof(Employee));
 
     foreach (string warning in report.Warnings)
     {

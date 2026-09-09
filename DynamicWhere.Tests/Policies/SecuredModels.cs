@@ -37,6 +37,64 @@ internal class SecuredContact
     public string Phone { get; set; } = string.Empty;
 }
 
+/// <summary>A row whose every projectable field is denied.</summary>
+internal class AllDeniedRow
+{
+    [DwDenied]
+    public int Id { get; set; }
+
+    [DwDenied]
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>A row carrying a navigation that is denied as a whole, beside one that is not.</summary>
+internal class SealedNavigationRow
+{
+    public int Id { get; set; }
+
+    [DwDenied]
+    public SecuredContact? Sealed { get; set; }
+
+    public SecuredContact? Contact { get; set; }
+}
+
+/// <summary>
+/// A parent whose nested node carries a key. The projection builder adds that key whether the
+/// caller names it or not, so it is in the result of a request that only ever named its sibling.
+/// </summary>
+internal class KeyedParent
+{
+    public int Id { get; set; }
+
+    public KeyedChild? Child { get; set; }
+}
+
+/// <summary>The nested node, with a masked key no caller writes down.</summary>
+internal class KeyedChild
+{
+    [DwMask(MaskStrategy.Partial, KeepEnd = 2)]
+    public string Id { get; set; } = string.Empty;
+
+    public string Label { get; set; } = string.Empty;
+}
+
+/// <summary>The same shape with the key denied outright rather than masked.</summary>
+internal class SealedKeyParent
+{
+    public int Id { get; set; }
+
+    public SealedKeyChild? Child { get; set; }
+}
+
+/// <summary>The nested node whose key no caller may see at all.</summary>
+internal class SealedKeyChild
+{
+    [DwDenied]
+    public int Id { get; set; }
+
+    public string Label { get; set; } = string.Empty;
+}
+
 /// <summary>A type with no policy attributes at all.</summary>
 internal class PlainProduct
 {

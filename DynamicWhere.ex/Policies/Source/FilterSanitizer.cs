@@ -212,7 +212,8 @@ internal static class FilterSanitizer
         // that exists to protect the data from them.
         try
         {
-            GroupFloor.Inject(working, GroupFloor.For(working, gate.TypePolicy, gate.Options));
+            GroupFloor.Inject(
+                working, GroupFloor.For(working, gate.TypePolicy, gate.Options), gate.IsDryRun, trace);
         }
         catch (ArgumentException taken)
         {
@@ -856,29 +857,29 @@ internal static class FilterSanitizer
     /// Removes, or refuses, every segment projection field the policy denies.
     /// </summary>
     /// <remarks>
-    /// No projection is synthesized here. A segment with no selects composes whole rows, and
-    /// narrowing the projection would not close the disclosure anyway — participation is what
-    /// <see cref="GateSegmentParticipation"/> refuses.
+    /// A segment with no projection composes whole rows, so deny-select was enforced here against
+    /// precisely the callers who volunteered one and bypassable by sending none — the hole the
+    /// filter path closes by synthesizing, one surface along. Participation does not compensate:
+    /// it examines the fields the caller named, and a field nobody named is a field nobody gated.
+    /// <para>
+    /// Synthesizing unconditionally, with no opt-out. The filter path skips it for a caller
+    /// composing one clause at a time; a segment has no such form, and its only terminal
+    /// materializes.
+    /// </para>
     /// </remarks>
     private static void GateSegmentSelects(Segment segment, Gate gate)
     {
         if (segment.Selects is null || segment.Selects.Count == 0)
         {
+            if (SynthesizedProjection(gate) is List<string> synthesized)
+            {
+                segment.Selects = synthesized;
+            }
+
             return;
         }
 
-        List<string> kept = new(segment.Selects.Count);
-
-        foreach (string field in segment.Selects)
-        {
-            FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.Select);
-
-            if (policy.Allows(PolicyFeature.Select)
-                || !gate.Refuse(field, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy))
-            {
-                kept.Add(field);
-            }
-        }
+        List<string> kept = GateProjection(segment.Selects, gate);
 
         if (kept.Count == 0)
         {
@@ -1309,18 +1310,7 @@ internal static class FilterSanitizer
             return;
         }
 
-        List<string> kept = new(filter.Selects.Count);
-
-        foreach (string field in filter.Selects)
-        {
-            FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.Select);
-
-            if (policy.Allows(PolicyFeature.Select)
-                || !gate.Refuse(field, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy))
-            {
-                kept.Add(field);
-            }
-        }
+        List<string> kept = GateProjection(filter.Selects, gate);
 
         if (kept.Count == 0)
         {
@@ -1328,6 +1318,132 @@ internal static class FilterSanitizer
         }
 
         filter.Selects = kept;
+    }
+
+    /// <summary>
+    /// Gates a projection the caller wrote, against what that projection actually carries.
+    /// </summary>
+    /// <remarks>
+    /// A projection carries two things its text does not say. Naming a navigation names every
+    /// field beneath it, because the pipeline projects a navigation whole; and every nested node
+    /// carries its own key, because the projection builder adds one whether it was asked for or
+    /// not. Resolving the text alone therefore enforces deny-select against whoever spelled a path
+    /// out in full and leaves it bypassable by naming the parent, or by naming a sibling of the
+    /// key.
+    /// <para>
+    /// A navigation with nothing denied beneath it is left exactly as the caller wrote it. The
+    /// expansion happens only where there is something to narrow, so a type the policy has no
+    /// opinion about still generates the SQL the unguarded path would.
+    /// </para>
+    /// </remarks>
+    private static List<string> GateProjection(IEnumerable<string> selects, Gate gate)
+    {
+        List<string> kept = new();
+
+        void Keep(string path)
+        {
+            if (!kept.Contains(path, StringComparer.Ordinal))
+            {
+                kept.Add(path);
+            }
+        }
+
+        bool Allowed(string path)
+        {
+            FieldPolicy policy = gate.PolicyFor(path, PolicyFeature.Select);
+
+            return policy.Allows(PolicyFeature.Select)
+                || !gate.Refuse(path, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy);
+        }
+
+        foreach (string field in selects)
+        {
+            // The field's own decision first. A navigation that is itself denied is refused as it
+            // stands; what it carries is only asked about once it has survived on its own account.
+            if (!Allowed(field))
+            {
+                continue;
+            }
+
+            if (!gate.IsNavigation(field))
+            {
+                Keep(field);
+                KeepCarriedKeys(field, gate, Keep);
+
+                continue;
+            }
+
+            IReadOnlyList<string> carried = gate.ProjectionUnder(field);
+            List<string> survivors = new(carried.Count);
+            bool narrowed = false;
+
+            foreach (string path in carried)
+            {
+                if (Allowed(path))
+                {
+                    survivors.Add(path);
+                }
+                else
+                {
+                    narrowed = true;
+                }
+            }
+
+            if (!narrowed)
+            {
+                Keep(field);
+
+                continue;
+            }
+
+            foreach (string path in survivors)
+            {
+                Keep(path);
+            }
+        }
+
+        return kept;
+    }
+
+    /// <summary>
+    /// Gates the key of every nested node a path passes through, and keeps the ones that survive.
+    /// </summary>
+    /// <remarks>
+    /// The projection builder adds the key of each nested node whether the caller named it or not,
+    /// so the key is in the result whatever this decides. Naming it here is what lets the outbound
+    /// transform see it as carried — without that a masked nested key leaves unmasked, because the
+    /// walker matches a carried path against the projection and the caller never wrote this one.
+    /// <para>
+    /// A key that is denied outright refuses the clause rather than dropping it. Dropping is not
+    /// an option this layer has: the projection is built with the key regardless, so the only way
+    /// to honour the denial is to decline to build it.
+    /// </para>
+    /// </remarks>
+    private static void KeepCarriedKeys(string path, Gate gate, Action<string> keep)
+    {
+        int cut = path.IndexOf('.', StringComparison.Ordinal);
+
+        while (cut >= 0)
+        {
+            string node = path[..cut];
+
+            if (gate.HasKey(node))
+            {
+                string key = node + ".Id";
+                FieldPolicy policy = gate.PolicyFor(key, PolicyFeature.Select);
+
+                if (policy.Allows(PolicyFeature.Select))
+                {
+                    keep(key);
+                }
+                else
+                {
+                    gate.Deny(key, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy);
+                }
+            }
+
+            cut = path.IndexOf('.', cut + 1);
+        }
     }
 
     /// <summary>
@@ -1358,6 +1474,21 @@ internal static class FilterSanitizer
     /// </remarks>
     private static void SynthesizeSelects(Filter filter, Gate gate)
     {
+        if (SynthesizedProjection(gate) is List<string> allowed)
+        {
+            filter.Selects = allowed;
+        }
+    }
+
+    /// <summary>
+    /// The allowed projection to stand in for a missing one, or null to leave it missing.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the filter and the segment paths, because they are closing the same hole and a
+    /// second copy of this is a second place to forget.
+    /// </remarks>
+    private static List<string>? SynthesizedProjection(Gate gate)
+    {
         List<string> allowed = new();
         bool anyDenied = false;
 
@@ -1379,7 +1510,7 @@ internal static class FilterSanitizer
 
         if (!anyDenied || gate.IsDryRun)
         {
-            return;
+            return null;
         }
 
         if (allowed.Count == 0)
@@ -1387,7 +1518,7 @@ internal static class FilterSanitizer
             throw gate.Exception(WholeClause, PolicyFeature.Select, PolicyErrorCode.AllSelectsDenied, null);
         }
 
-        filter.Selects = allowed;
+        return allowed;
     }
 
     /// <summary>
@@ -1916,6 +2047,120 @@ internal static class FilterSanitizer
                 {
                     yield return property.Name;
                 }
+            }
+        }
+
+        /// <summary>
+        /// True when a validated path names a navigation rather than a scalar.
+        /// </summary>
+        internal bool IsNavigation(string path)
+        {
+            Type? type = TypeAt(path);
+
+            return type is not null && !CacheReflection.IsSimpleType(type);
+        }
+
+        /// <summary>
+        /// True when the type a path names carries a key the projection builder will add.
+        /// </summary>
+        internal bool HasKey(string path)
+        {
+            Type? type = TypeAt(path);
+
+            return type is not null && CacheReflection.FindProperty(type, "Id") is not null;
+        }
+
+        /// <summary>
+        /// Every path a projection actually carries when the caller names one navigation.
+        /// </summary>
+        /// <remarks>
+        /// Naming a navigation projects the whole object, so the caller who named the parent
+        /// receives every field beneath it. Resolving the name alone therefore enforces
+        /// deny-select against whoever spelled the child out in full and leaves it bypassable by
+        /// asking for its parent instead — the same shape as sending no projection at all.
+        /// <para>
+        /// The walk stops where <see cref="AttributePolicyProvider"/>'s does, and carries the same
+        /// cycle guard. Nothing below that depth holds a fragment, so there is no decision down
+        /// there to enforce and descending further would only enumerate paths the resolver cannot
+        /// speak about.
+        /// </para>
+        /// </remarks>
+        internal IReadOnlyList<string> ProjectionUnder(string path)
+        {
+            List<string> paths = new();
+            Type? type = TypeAt(path);
+
+            if (type is not null)
+            {
+                Descend(path, type, 1, paths, new HashSet<Type>());
+            }
+
+            return paths;
+        }
+
+        private static void Descend(
+            string prefix, Type type, int depth, List<string> paths, HashSet<Type> seen)
+        {
+            // A type reachable from itself would otherwise enumerate until the stack ran out.
+            if (!seen.Add(type))
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<string, PropertyInfo> entry in CacheReflection.GetTypeProperties(type))
+            {
+                PropertyInfo property = entry.Value;
+
+                if (!property.CanRead
+                    || !property.CanWrite
+                    || property.GetIndexParameters().Length != 0)
+                {
+                    continue;
+                }
+
+                string child = $"{prefix}.{property.Name}";
+
+                if (CacheReflection.IsSimpleType(property.PropertyType))
+                {
+                    paths.Add(child);
+
+                    continue;
+                }
+
+                Type nested = CacheReflection.GetCollectionElementType(property.PropertyType)
+                    ?? property.PropertyType;
+
+                // A collection of a primitive is a value the projection assigns whole, not a
+                // navigation into its element type. Descending into byte would enumerate nothing
+                // and drop the member from an expansion that is supposed to preserve it.
+                if (CacheReflection.IsSimpleType(nested))
+                {
+                    paths.Add(child);
+
+                    continue;
+                }
+
+                if (depth >= AttributePolicyProvider.MaxDepth)
+                {
+                    continue;
+                }
+
+                Descend(child, nested, depth + 1, paths, seen);
+            }
+
+            seen.Remove(type);
+        }
+
+        /// <summary>The type a validated path names, or null when it names nothing.</summary>
+        private Type? TypeAt(string path)
+        {
+            try
+            {
+                return CacheReflection.GetFieldType(_entityType, path);
+            }
+            catch (LogicException)
+            {
+                return null;
             }
         }
 

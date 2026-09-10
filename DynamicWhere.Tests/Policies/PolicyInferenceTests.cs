@@ -50,7 +50,7 @@ public class PolicyInferenceTests : IDisposable
         new(new IDwPolicyProvider[] { new AttributePolicyProvider() });
 
     private static DwPolicyOptions Options(DwTier tier, bool dryRun = false) =>
-        new() { Tier = tier, DryRun = dryRun };
+        new() { Tier = tier, DryRun = dryRun, Caps = { MinGroupSize = 1 } };
 
     private PolicyQueryable<Staff> Guarded(DwTier tier, bool dryRun = false) =>
         _db.Staff.ApplyPolicy(Caller(), Options(tier, dryRun), Attributes());

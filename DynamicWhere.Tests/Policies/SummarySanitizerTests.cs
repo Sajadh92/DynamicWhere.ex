@@ -1,4 +1,4 @@
-using DynamicWhere.ex.Classes.Complex;
+﻿using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
@@ -30,13 +30,25 @@ public class SummarySanitizerTests
     private static DwPolicyContext Caller() =>
         new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
 
+    /// <summary>
+    /// A posture with the group floor switched off.
+    /// </summary>
+    /// <remarks>
+    /// Explicitly one, which is how a deployment says "no floor" now that unset means five. This
+    /// file is about what the sanitizer does to a summary, and a floor above one injects a count
+    /// aggregate of its own — a real behaviour with its own tests in <c>PolicyGroupFloorTests</c>,
+    /// and noise in every assertion here about the shape the sanitizer produced.
+    /// </remarks>
+    private static DwPolicyOptions NoFloor(DwTier tier) =>
+        new() { Tier = tier, Caps = { MinGroupSize = 1 } };
+
     private static (Summary Result, PolicyTrace Trace) Guard<T>(Summary summary, DwTier tier)
         where T : class
     {
         PolicyTrace trace = new(tier, dryRun: false);
 
         Summary result = FilterSanitizer.Sanitize<T>(
-            summary, AttributeResolver(), Caller(), new DwPolicyOptions { Tier = tier }, trace);
+            summary, AttributeResolver(), Caller(), NoFloor(tier), trace);
 
         return (result, trace);
     }
@@ -49,7 +61,7 @@ public class SummarySanitizerTests
 
         Summary result = FilterSanitizer.Sanitize<T>(
             summary, new PolicyResolver(new IDwPolicyProvider[] { provider }),
-            Caller(), new DwPolicyOptions { Tier = tier }, trace);
+            Caller(), NoFloor(tier), trace);
 
         return (result, trace);
     }

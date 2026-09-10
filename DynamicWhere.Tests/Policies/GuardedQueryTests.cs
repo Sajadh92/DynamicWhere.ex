@@ -42,7 +42,8 @@ public class GuardedQueryTests : IDisposable
         new(new IDwPolicyProvider[] { new AttributePolicyProvider() });
 
     private PolicyQueryable<Staff> Guarded(DwTier tier = DwTier.Convenience) =>
-        _db.Staff.ApplyPolicy(Caller(), new DwPolicyOptions { Tier = tier }, Resolver());
+        _db.Staff.ApplyPolicy(
+            Caller(), new DwPolicyOptions { Tier = tier, Caps = { MinGroupSize = 1 } }, Resolver());
 
     // ------------------------------------------------------------------ projection
 

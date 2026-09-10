@@ -19,7 +19,18 @@ public sealed class DwCaps
     private int _maxQueryCost = 1000;
     private int _defaultFieldCost = 1;
     private int _maxAuditEvents = 10_000;
-    private int _minGroupSize = 1;
+    private int _minGroupSize;
+
+    /// <summary>
+    /// The floor a deployment gets when it never mentions <see cref="MinGroupSize"/> at all.
+    /// </summary>
+    /// <remarks>
+    /// Five, the usual k-anonymity choice, rather than the one that changes nothing. The
+    /// compatibility argument for shipping this off does not survive being looked at: the floor
+    /// applies only to a guarded summary, guarded queries are new in this release, and so there is
+    /// no caller anywhere whose results it can change.
+    /// </remarks>
+    public const int DefaultMinGroupSize = 5;
 
     /// <summary>The largest page a caller may request.</summary>
     public int MaxPageSize
@@ -126,10 +137,18 @@ public sealed class DwCaps
     /// group of one returns that row's exact value under any function, so permitting a masked field
     /// to be aggregated without a floor hands back precisely what the mask was there to hide.
     /// <para>
-    /// One by default, which is no floor at all, so no existing caller changes behaviour. Above one
-    /// it applies to every grouped summary rather than only to those touching a transformed field —
-    /// a group of one is a re-identification risk whatever is in it, and making the floor
-    /// conditional on a transform would leave an unmasked-but-sensitive field with none.
+    /// A deployment that never mentions this gets <see cref="DefaultMinGroupSize"/>. A deployment
+    /// that writes <c>MinGroupSize = 1</c> gets no floor at all, in production, with nothing
+    /// refused and nothing warned about. Those are two different instructions and the difference is
+    /// readable through <see cref="IsMinGroupSizeSet"/> — which is the whole reason this is not
+    /// simply defaulted to one. Shipping the safe value as the default and the unsafe value as an
+    /// explicit sentence is the only arrangement that is both safe by default and honest about
+    /// whose choice it is.
+    /// </para>
+    /// <para>
+    /// Above one it applies to every grouped summary rather than only to those touching a
+    /// transformed field — a group of one is a re-identification risk whatever is in it, and making
+    /// the floor conditional on a transform would leave an unmasked-but-sensitive field with none.
     /// </para>
     /// <para>
     /// A field may raise it for itself through <c>MinGroupSize</c> on the attribute that transforms
@@ -138,9 +157,22 @@ public sealed class DwCaps
     /// </remarks>
     public int MinGroupSize
     {
-        get => _minGroupSize;
+        get => _minGroupSize == 0 ? DefaultMinGroupSize : _minGroupSize;
         set => _minGroupSize = Set(value);
     }
+
+    /// <summary>
+    /// True when a deployment set <see cref="MinGroupSize"/> itself, rather than inheriting
+    /// <see cref="DefaultMinGroupSize"/>.
+    /// </summary>
+    /// <remarks>
+    /// Reported because "off" and "never configured" have to be told apart by something. Without
+    /// this the only way to switch the floor off would be to write the value the default already
+    /// holds, and a startup check could not tell a deliberate opt-out from a deployment that had
+    /// never heard of the setting — which is exactly the trap that makes refusing to start the
+    /// wrong control here.
+    /// </remarks>
+    public bool IsMinGroupSizeSet => _minGroupSize != 0;
 
     /// <summary>Prevents any further change.</summary>
     internal void Freeze() => _frozen = true;

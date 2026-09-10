@@ -62,7 +62,12 @@ public class TransformQueryTests : IDisposable
     }
 
     private static DwPolicyOptions Options(DwTier tier = DwTier.Convenience) =>
-        new() { Tier = tier, HashSalt = "pepper" };
+        new()
+        {
+            Tier = tier,
+            HashSalt = "pepper-and-more-pepper",
+            Caps = { MinGroupSize = 1 }
+        };
 
     private static PolicyResolver Attributes() =>
         new(new IDwPolicyProvider[] { new AttributePolicyProvider() });

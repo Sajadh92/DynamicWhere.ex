@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Classes.Result;
@@ -30,6 +30,10 @@ public class PolicyOutboundAliasTests
     private static DwPolicyOptions Frozen()
     {
         DwPolicyOptions options = new();
+
+        // Off, because this file is about what a column is called and not about how many rows a
+        // group needs. The default floor of five suppresses every group in a two-row fixture.
+        options.Caps.MinGroupSize = 1;
 
         options.Freeze();
 

@@ -23,8 +23,14 @@ namespace DynamicWhere.Tests.Policies;
 /// a masked field to be aggregated without a floor hands back precisely what the mask was there to
 /// hide. The floor suppresses a group smaller than <c>k</c>.
 /// <para>
-/// It is off by default — <c>MinGroupSize</c> of one — so no existing caller changes behaviour. Set
-/// above one it applies to every grouped summary rather than only those touching a transformed
+/// It is <b>on by default</b>, at <c>DwCaps.DefaultMinGroupSize</c>. A deployment that wants no
+/// floor writes <c>MinGroupSize = 1</c> and gets exactly that. Those are two different
+/// instructions, which is why the setting starts unset rather than at one — see
+/// <see cref="A_deployment_that_says_nothing_gets_the_safe_floor"/> and
+/// <see cref="An_explicit_one_switches_the_floor_off_and_is_honoured"/>.
+/// </para>
+/// <para>
+/// Above one it applies to every grouped summary rather than only those touching a transformed
 /// field, because a group of one is a re-identification risk whatever is in it.
 /// </para>
 /// </remarks>
@@ -372,6 +378,84 @@ public class PolicyGroupFloorTests
     public void A_global_floor_larger_than_the_field_wins_instead()
     {
         Assert.Empty(Departments(Query(Options(floor: 4)).ToList(Grouped("Salary", "top"))));
+    }
+
+    // ---- the default, and switching it off ------------------------------------------------------
+
+    /// <summary>
+    /// A deployment that never mentions the floor gets one, and it is the safe value rather than
+    /// the compatible one.
+    /// </summary>
+    /// <remarks>
+    /// The compatibility argument for shipping this off does not survive being looked at. The floor
+    /// applies only to a guarded summary, and a guarded summary is new in this release, so there is
+    /// no caller anywhere whose results shipping it on can change.
+    /// </remarks>
+    [Fact]
+    public void A_deployment_that_says_nothing_gets_the_safe_floor()
+    {
+        DwPolicyOptions options = new();
+
+        Assert.Equal(5, DwCaps.DefaultMinGroupSize);
+        Assert.Equal(DwCaps.DefaultMinGroupSize, options.Caps.MinGroupSize);
+        Assert.False(options.Caps.IsMinGroupSizeSet);
+    }
+
+    /// <summary>The default suppresses a real query's small groups without being asked to.</summary>
+    [Fact]
+    public void The_default_floor_suppresses_the_small_groups_of_an_unconfigured_deployment()
+    {
+        DwPolicyOptions options = new();
+
+        options.Freeze();
+
+        SummaryResult result = Query(options).ToList(Grouped());
+
+        // Two in Engineering, three in Support, one in Legal. None of them reaches five, so the
+        // report is empty — which is the floor doing exactly what it is for on a fixture this
+        // small, and why every test in this file that is about something else sets it to one.
+        Assert.Empty(result.Data);
+    }
+
+    /// <summary>
+    /// An explicit one is a deployment saying "no floor", and it is obeyed in production with
+    /// nothing refused and nothing warned about.
+    /// </summary>
+    /// <remarks>
+    /// The reason the backing value starts unset instead of at one. If one were the default, the
+    /// library could not tell a deliberate opt-out from a deployment that had never heard of the
+    /// setting — so any check that refused to start would trap the developer who meant it.
+    /// </remarks>
+    [Fact]
+    public void An_explicit_one_switches_the_floor_off_and_is_honoured()
+    {
+        DwPolicyOptions options = Options(floor: 1);
+
+        Assert.True(options.Caps.IsMinGroupSizeSet);
+        Assert.Equal(1, options.Caps.MinGroupSize);
+
+        SummaryResult result = Query(options).ToList(Grouped());
+
+        // All three groups, the group of one included. Nobody is protected from themselves here,
+        // because somebody said so in a sentence.
+        Assert.Equal(3, result.Data.Count);
+    }
+
+    /// <summary>Setting the default's own value still counts as having set it.</summary>
+    /// <remarks>
+    /// A deployment that writes five means five, and would go on meaning five if a later release
+    /// changed the default. Reporting it as unset would make that upgrade change a decision
+    /// somebody had already made.
+    /// </remarks>
+    [Fact]
+    public void Setting_the_floor_to_the_default_value_is_still_setting_it()
+    {
+        DwPolicyOptions options = new();
+
+        options.Caps.MinGroupSize = DwCaps.DefaultMinGroupSize;
+
+        Assert.True(options.Caps.IsMinGroupSizeSet);
+        Assert.Equal(DwCaps.DefaultMinGroupSize, options.Caps.MinGroupSize);
     }
 
     // ---- the cap's own guards ------------------------------------------------------------------

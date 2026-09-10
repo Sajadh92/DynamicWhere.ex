@@ -35,7 +35,7 @@ public class PolicySurfaceTests
     private static PolicyQueryable<SecuredEmployee> Guarded(DwTier tier = DwTier.Convenience) =>
         People().ApplyPolicy(
             Caller(),
-            new DwPolicyOptions { Tier = tier },
+            new DwPolicyOptions { Tier = tier, Caps = { MinGroupSize = 1 } },
             new PolicyResolver(new IDwPolicyProvider[] { new AttributePolicyProvider() }));
 
     [Fact]

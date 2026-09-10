@@ -75,6 +75,9 @@
     <Compile Remove="Policies/EfPolicyStoreTests.cs" />
     <Compile Remove="Policies/EfStoreConformanceTests.cs" />
     <Compile Remove="Policies/RedisStoreConformanceTests.cs" />
+    <Compile Remove="Policies/EfTokenVaultConformanceTests.cs" />
+    <Compile Remove="Policies/RedisTokenVaultConformanceTests.cs" />
+    <Compile Remove="Policies/DemoPolicyModelTests.cs" />
     <Compile Remove="Policies/PolicyEndpointTests.cs" />
     <Compile Remove="Policies/PolicyEndpointHardeningTests.cs" />
     <Compile Remove="Policies/PolicyAdminControllerTests.cs" />

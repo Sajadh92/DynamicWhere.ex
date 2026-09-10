@@ -473,7 +473,7 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             yield return new MaskStage(
                 mask.Strategy, mask.KeepStart, mask.KeepEnd, mask.MaskChar, mask.PreserveLength,
                 mask.Pattern, mask.Replacement, mask.Text,
-                mask.AllowAggregate, mask.MinGroupSize);
+                mask.AllowAggregate, mask.MinGroupSize, mask.TokenScope);
         }
 
         if (property.GetCustomAttribute<DwTruncateAttribute>(inherit: true) is { } truncate)

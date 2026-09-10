@@ -42,7 +42,7 @@ internal sealed class NotATransformer
 /// </summary>
 public class PolicyTransformPipelineTests
 {
-    private static DwPolicyOptions Options() => new() { HashSalt = "pepper" };
+    private static DwPolicyOptions Options() => new() { HashSalt = "pepper-and-more-pepper" };
 
     private static DwTransformContext Context(object? entity = null) =>
         new(entity ?? new SecuredEmployee(), "Salary", new DwPolicyContext());
@@ -410,6 +410,73 @@ public class PolicyTransformPipelineTests
 
         Assert.NotNull(hashed);
         Assert.NotEqual("AAA-111", hashed);
+    }
+
+    /// <summary>
+    /// The salt keys the hash rather than being glued to the front of the value.
+    /// </summary>
+    /// <remarks>
+    /// <c>SHA256(salt || value)</c> collides whenever a salt-and-value pair can be re-split: the
+    /// salt <c>"secret1"</c> with the value <c>"23"</c> and the salt <c>"secret"</c> with the value
+    /// <c>"123"</c> are the same bytes and hash to the same digest. Two deployments would be
+    /// producing one another's masked values without either of them being able to tell. HMAC keys
+    /// the hash properly and the two disagree, which is what this asserts.
+    /// </remarks>
+    [Fact]
+    public void A_salt_and_a_value_that_could_be_re_split_do_not_collide()
+    {
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Hash));
+
+        object? left = TransformPipeline.Apply(
+            chain, "23", typeof(string), Context(),
+            new DwPolicyOptions { HashSalt = "sixteen-char-salt1" });
+
+        object? right = TransformPipeline.Apply(
+            chain, "123", typeof(string), Context(),
+            new DwPolicyOptions { HashSalt = "sixteen-char-salt" });
+
+        Assert.NotEqual(left, right);
+    }
+
+    /// <summary>The same value under the same salt still hashes to the same text.</summary>
+    /// <remarks>
+    /// The property the whole strategy is sold on: a caller can group and join by a hashed column
+    /// without ever learning what is in it. Changing the construction to HMAC had to keep it.
+    /// </remarks>
+    [Fact]
+    public void A_hash_is_stable_for_one_value_under_one_salt()
+    {
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Hash));
+
+        Assert.Equal(
+            Apply(chain, "AAA-111", typeof(string)),
+            Apply(chain, "AAA-111", typeof(string)));
+    }
+
+    /// <summary>
+    /// A salt too short to resist being guessed is refused, and a blank one still means "unset".
+    /// </summary>
+    /// <remarks>
+    /// Two different failures. Blank is a deployment that never configured one, which the query
+    /// refuses with <c>MissingHashSalt</c> and the startup scan reports. Short is a deployment that
+    /// did configure one and picked something recoverable offline — refused where it is written, so
+    /// it fails at startup rather than producing digests nobody can tell from strong ones.
+    /// </remarks>
+    [Fact]
+    public void A_short_salt_is_refused_and_a_blank_one_is_not()
+    {
+        DwPolicyOptions options = new();
+
+        Assert.Throws<ArgumentException>(() => options.HashSalt = "pepper");
+        Assert.Equal(16, DwPolicyOptions.MinimumHashSaltLength);
+
+        options.HashSalt = string.Empty;
+
+        Assert.Equal(string.Empty, options.HashSalt);
+
+        options.HashSalt = new string('x', DwPolicyOptions.MinimumHashSaltLength);
+
+        Assert.Equal(new string('x', DwPolicyOptions.MinimumHashSaltLength), options.HashSalt);
     }
 
     /// <summary>

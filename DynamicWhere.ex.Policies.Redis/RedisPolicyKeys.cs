@@ -33,6 +33,7 @@ internal sealed class RedisPolicyKeys
         Broad = $"{root}:rules";
         Owner = $"{root}:owner";
         Version = $"{root}:version";
+        Tokens = $"{root}:tokens";
 
         // The channel design section 5.4 names. A channel and a key of the same text do not
         // collide: Redis keeps the keyspace and the pub/sub namespace apart.
@@ -61,6 +62,21 @@ internal sealed class RedisPolicyKeys
 
     /// <summary>The channel a write announces itself on.</summary>
     public string Channel { get; }
+
+    /// <summary>
+    /// The hash mapping a scoped value to the token standing in for it.
+    /// </summary>
+    /// <remarks>
+    /// One hash rather than a key per mapping, so the whole vault is one thing to back up, one
+    /// thing to move and one thing to delete. It also rules out a per-mapping expiry: a token that
+    /// aged out would be reissued under a new one, and a column that quietly changes token is worse
+    /// than a hash that never grows.
+    /// <para>
+    /// Under the same prefix as the rules, so two applications sharing one Redis keep their tokens
+    /// apart for exactly the reason they keep their rules apart.
+    /// </para>
+    /// </remarks>
+    public string Tokens { get; }
 
     /// <summary>
     /// The hash holding one caller's user-level rules.

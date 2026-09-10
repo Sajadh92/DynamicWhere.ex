@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
@@ -118,6 +118,53 @@ public sealed class DwPolicyVersionConfiguration : IEntityTypeConfiguration<DwPo
 }
 
 /// <summary>
+/// Maps <see cref="DwPolicyTokenRecord"/> onto the <c>DwPolicyTokens</c> table.
+/// </summary>
+/// <remarks>
+/// Shipped separately from the two rule configurations, and applied alongside them, so a deployment
+/// that never tokenizes can leave the table out of its model entirely rather than migrating in one
+/// it will never write to.
+/// </remarks>
+public sealed class DwPolicyTokenConfiguration : IEntityTypeConfiguration<DwPolicyTokenRecord>
+{
+    /// <summary>The table this configuration maps to.</summary>
+    public const string Table = "DwPolicyTokens";
+
+    /// <inheritdoc />
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is null.</exception>
+    public void Configure(EntityTypeBuilder<DwPolicyTokenRecord> builder)
+    {
+        if (builder is null)
+        {
+            throw new ArgumentNullException(nameof(builder));
+        }
+
+        builder.ToTable(Table);
+
+        // The scoped digest is the key, not a surrogate. A generated key would let the same value
+        // be inserted twice under two tokens, and the second insert would win silently for whoever
+        // read it next — which is the one failure a vault cannot have. The primary key is what
+        // makes the concurrent insert a violation the vault can catch and resolve.
+        builder.HasKey(t => t.Key);
+        builder.Property(t => t.Key).ValueGeneratedNever().HasMaxLength(512);
+
+        builder.Property(t => t.Scope).IsRequired().HasMaxLength(256);
+        builder.Property(t => t.Token).IsRequired().HasMaxLength(64);
+
+        builder.Property(t => t.CreatedAt).HasConversion(Instant);
+
+        // So an operator can count or retire one field's tokens without scanning the table. Not
+        // unique: a scope holds one row per distinct value, which is the whole point of it.
+        builder.HasIndex(t => t.Scope);
+    }
+
+    /// <summary>Stores the instant as UTC, matching the rule table's columns.</summary>
+    private static readonly ValueConverter<DateTimeOffset, DateTimeOffset> Instant =
+        new(value => value.ToUniversalTime(),
+            value => new DateTimeOffset(value.UtcDateTime, TimeSpan.Zero));
+}
+
+/// <summary>
 /// A context holding only the two policy tables, for a consumer who would rather not put them in
 /// their own.
 /// </summary>
@@ -141,6 +188,9 @@ public class DwPolicyDbContext : DbContext
     /// <summary>The single-row version.</summary>
     public DbSet<DwPolicyVersionRecord> PolicyVersion => Set<DwPolicyVersionRecord>();
 
+    /// <summary>The token vault, empty unless something masks to a token.</summary>
+    public DbSet<DwPolicyTokenRecord> PolicyTokens => Set<DwPolicyTokenRecord>();
+
     /// <inheritdoc />
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="modelBuilder"/> is null.</exception>
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -152,9 +202,10 @@ public class DwPolicyDbContext : DbContext
 
         base.OnModelCreating(modelBuilder);
 
-        // The same two configurations a consumer applies to their own context, so there is one
+        // The same three configurations a consumer applies to their own context, so there is one
         // schema and not a shipped one and an applied one that drift.
         modelBuilder.ApplyConfiguration(new DwPolicyRuleConfiguration());
         modelBuilder.ApplyConfiguration(new DwPolicyVersionConfiguration());
+        modelBuilder.ApplyConfiguration(new DwPolicyTokenConfiguration());
     }
 }

@@ -100,6 +100,7 @@ public static class PolicyModelValidator
             CheckConflict(chain, member, errors);
             CheckMutator(chain, member, errors);
             CheckSalt(chain, member, options, errors);
+            CheckTokenVault(chain, member, options, errors);
             CheckOutputType(chain, property, member, errors);
             CheckMaskedButOrderable(chain, property, member, warnings);
         }
@@ -217,6 +218,31 @@ public static class PolicyModelValidator
             "hashing a dictionary of candidates and comparing, and the digest is well formed either " +
             "way, so nothing about the output says so. Set a salt and keep it stable for the life " +
             "of the deployment.");
+    }
+
+    /// <summary>Refuses a tokenizing mask the deployment configured no vault for.</summary>
+    /// <remarks>
+    /// The same arrangement as <see cref="CheckSalt"/>: refused at query time whatever a host does,
+    /// and reported here in time to fix it. A missing vault is if anything the louder of the two
+    /// failures, because there is no output at all that a token could take — the mapping has
+    /// nowhere to be written down.
+    /// </remarks>
+    private static void CheckTokenVault(
+        ValueTransform chain, string member, DwPolicyOptions? options, List<string> errors)
+    {
+        if (options is null
+            || chain.Mask?.Strategy != MaskStrategy.Tokenize
+            || options.TokenVault is not null)
+        {
+            return;
+        }
+
+        errors.Add(
+            $"{member}: [DwMask(MaskStrategy.Tokenize)] with no DwPolicyOptions.TokenVault. A token " +
+            "is only a mask because the mapping is written down somewhere; with nowhere to write " +
+            "it, the value has no stand-in that would survive being read twice. Set a vault — " +
+            "InMemoryTokenVault for a single process, RedisTokenVault or EfTokenVault for anything " +
+            "that compares a tokenized column across restarts.");
     }
 
     /// <summary>Refuses a transformer type that cannot transform anything.</summary>
@@ -375,7 +401,8 @@ public static class PolicyModelValidator
                 ? null
                 : new MaskStage(
                     mask.Strategy, mask.KeepStart, mask.KeepEnd, mask.MaskChar, mask.PreserveLength,
-                    mask.Pattern, mask.Replacement, mask.Text),
+                    mask.Pattern, mask.Replacement, mask.Text,
+                    tokenScope: mask.TokenScope),
             truncate is null ? null : new TruncateStage(truncate.Length, truncate.Ellipsis),
             replacement is null ? null : new DefaultStage(replacement.Value, replacement.HasValue));
     }

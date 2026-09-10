@@ -165,5 +165,17 @@ public enum PolicyErrorCode
     /// salted one — so nothing about the response tells the operator, or the caller receiving it,
     /// that the value is recoverable.
     /// </remarks>
-    MissingHashSalt = 21
+    MissingHashSalt = 21,
+
+    /// <summary>
+    /// A field is masked to a token and the deployment configured no vault to keep the mapping in.
+    /// </summary>
+    /// <remarks>
+    /// The same refusal <see cref="MissingHashSalt"/> makes, for the same reason. Carrying on would
+    /// mean either emitting the real value or inventing a token with nowhere to record it, and the
+    /// second is worse than it sounds: an unrecorded token is a fresh random string every time the
+    /// value is read, so a caller sees one column that never groups, never joins and never repeats,
+    /// with nothing to say why.
+    /// </remarks>
+    MissingTokenVault = 22
 }

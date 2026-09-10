@@ -8,6 +8,7 @@ using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.AspNetCore;
 using DynamicWhere.ex.Policies.EntityFrameworkCore;
 using DynamicWhere.ex.Policies.Resolution;
+using DynamicWhere.ex.Policies.Tokens;
 using DynamicWhere.ex.Policies.Validation;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -214,8 +215,16 @@ static async Task ConfigureDynamicWherePoliciesAsync(
         // Strict would throw on both — see design section 7.5.
         Tier = DwTier.Convenience,
 
-        // Salt for MaskStrategy.Hash. A real deployment keeps this out of source.
+        // Salt for MaskStrategy.Hash. A real deployment keeps this out of source, and the library
+        // refuses anything under sixteen characters, because a salt that can be brute-forced
+        // offline puts every digest back within reach.
         HashSalt = "dynamicwhere-demo-salt",
+
+        // Where MaskStrategy.Tokenize keeps its mapping. In memory here because the demo is one
+        // process and its database is rebuilt anyway; a deployment that compares a tokenized column
+        // across restarts wants RedisTokenVault or EfTokenVault instead, or every restart reissues
+        // every token.
+        TokenVault = new InMemoryTokenVault(),
 
         // A store that cannot be reached serves the last good snapshot rather than failing the
         // request, bounded by MaxSnapshotAge below.

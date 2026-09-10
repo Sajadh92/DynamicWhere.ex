@@ -1,5 +1,6 @@
 ﻿using DynamicWhere.ex.Policies.Discovery;
 using DynamicWhere.ex.Policies.Enums;
+using DynamicWhere.ex.Policies.Tokens;
 
 namespace DynamicWhere.ex.Policies.Config;
 
@@ -17,6 +18,7 @@ public sealed class DwPolicyOptions
     private bool _dryRun;
     private string _hashSalt = string.Empty;
     private IServiceProvider? _services;
+    private IDwTokenVault? _tokenVault;
     private StoreFailureMode _storeFailure = StoreFailureMode.LastKnownGood;
     private TimeSpan _maxSnapshotAge = TimeSpan.FromMinutes(15);
     private TimeSpan _refreshInterval = TimeSpan.FromSeconds(30);
@@ -86,7 +88,66 @@ public sealed class DwPolicyOptions
         set
         {
             Guard();
-            _hashSalt = value ?? throw new ArgumentNullException(nameof(value));
+
+            if (value is null)
+            {
+                throw new ArgumentNullException(nameof(value));
+            }
+
+            // Blank stays legal and means "nobody configured one", which a hashing query then
+            // refuses with MissingHashSalt. A short salt is a different thing: somebody did
+            // configure one, and it is weak enough to be guessed rather than stolen. Refusing it
+            // here makes that a startup failure the operator can act on, rather than a digest
+            // nobody can tell apart from a strong one.
+            if (value.Length is > 0 and < MinimumHashSaltLength)
+            {
+                throw new ArgumentException(
+                    $"A hash salt of {value.Length} characters is short enough to be guessed, "
+                    + $"which puts every hashed value back within reach. Use at least "
+                    + $"{MinimumHashSaltLength}, from a random source, held wherever this "
+                    + "deployment keeps its secrets.",
+                    nameof(value));
+            }
+
+            _hashSalt = value;
+        }
+    }
+
+    /// <summary>
+    /// The shortest <see cref="HashSalt"/> this library will accept once one is supplied at all.
+    /// </summary>
+    /// <remarks>
+    /// Sixteen characters. A salt shorter than that is brute-forced offline against a handful of
+    /// known values, and recovering it hands back every hashed value the deployment has ever
+    /// emitted. There is no matching ceiling, and no check that the salt is random, because neither
+    /// is something a length can measure.
+    /// </remarks>
+    public const int MinimumHashSaltLength = 16;
+
+    /// <summary>
+    /// Where the mapping behind <c>MaskStrategy.Tokenize</c> is kept, or null when nothing
+    /// tokenizes.
+    /// </summary>
+    /// <remarks>
+    /// Required by that strategy and ignored by every other, so a deployment that does not tokenize
+    /// never sets it. A query masking to a token while this is null is refused with
+    /// <c>MissingTokenVault</c>, and <c>DwPolicy.ValidateModel(options, types)</c> reports it at
+    /// startup — the same treatment a hash with no salt gets, and for the same reason: a query that
+    /// carried on would have to emit either the real value or a token it had nowhere to record, and
+    /// nobody downstream could tell which.
+    /// <para>
+    /// <see cref="Tokens.InMemoryTokenVault"/> is the obvious starting point and the wrong finishing
+    /// point for anything that compares a tokenized column across restarts. The Redis and Entity
+    /// Framework Core packages each ship a durable one.
+    /// </para>
+    /// </remarks>
+    public IDwTokenVault? TokenVault
+    {
+        get => _tokenVault;
+        set
+        {
+            Guard();
+            _tokenVault = value;
         }
     }
 

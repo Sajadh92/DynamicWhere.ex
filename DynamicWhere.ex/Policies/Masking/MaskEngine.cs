@@ -78,6 +78,17 @@ internal static class MaskEngine
             MaskStrategy.Phone => Phone(stage, value),
             MaskStrategy.Regex => Regex(stage, value),
             MaskStrategy.Hash => Hash(value, salt),
+
+            // Not reachable, and an exception rather than a full mask so it stays that way. A token
+            // is not a function of its input — it comes from a vault this type deliberately knows
+            // nothing about — so the pipeline applies it before calling here. Masking in full
+            // instead would be safe and silent, which is how a mis-wiring survives to production
+            // with every tokenized column reading as a run of stars.
+            MaskStrategy.Tokenize => throw new InvalidOperationException(
+                "A tokenizing mask reached the mask engine, which has no vault to resolve it "
+                + "against. TransformPipeline applies MaskStrategy.Tokenize itself; a caller "
+                + "reaching this has bypassed it."),
+
             _ => Run(stage, value.Length)
         };
     }
@@ -198,7 +209,7 @@ internal static class MaskEngine
             value, stage.Pattern!, stage.Replacement, RegexOptions.None, RegexBudget);
 
     /// <summary>
-    /// Replaces the value with a salted hash of it.
+    /// Replaces the value with a keyed hash of it.
     /// </summary>
     /// <remarks>
     /// The point of the salt is that the output cannot be reversed by hashing a dictionary of
@@ -206,12 +217,23 @@ internal static class MaskEngine
     /// postcode makes trivial. The salt therefore lives in options, supplied at startup, and never
     /// in the attribute where it would be committed to source control.
     /// <para>
+    /// HMAC rather than <c>SHA256(salt || value)</c>. The concatenation is the construction every
+    /// guide warns about: it is length-extendable, and it collides whenever a salt-and-value pair
+    /// can be re-split — a salt ending in a digit and a value beginning with one produce the same
+    /// input as the pair that moved the digit across. HMAC is the primitive built for keying a hash,
+    /// and switching to it costs nothing that concatenation was buying.
+    /// </para>
+    /// <para>
     /// The same value hashes to the same text within a deployment, which is deliberate: a caller can
-    /// still group and join by it without ever learning what it is.
+    /// still group and join by it without ever learning what it is. That property is also the limit
+    /// of what this strategy can promise. Anyone who can write a chosen value and read it back
+    /// hashed learns the digest of that value and can then recognise it wherever else it appears, no
+    /// matter how good the salt is. Closing that needs a token whose output is not derived from the
+    /// value at all — see <see cref="MaskStrategy.Tokenize"/>.
     /// </para>
     /// </remarks>
     private static string Hash(string value, string salt) =>
         Convert.ToHexString(
-                SHA256.HashData(Encoding.UTF8.GetBytes(string.Concat(salt, value))))
+                HMACSHA256.HashData(Encoding.UTF8.GetBytes(salt), Encoding.UTF8.GetBytes(value)))
             .ToLower(CultureInfo.InvariantCulture);
 }

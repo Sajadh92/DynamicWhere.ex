@@ -49,8 +49,21 @@ public class Employee
     /// without selecting anything. Restricting the operators to Equal and In is the control — a
     /// caller can confirm a code it already knows and cannot sweep for one it does not.
     /// </remarks>
+    /// <para>
+    /// Tokenized on the way out as well. A token is drawn at random and written into the vault
+    /// configured in <c>Program.cs</c>, so nothing about the output can be turned back into a code
+    /// without reading that vault — unlike a hash, which anyone holding the salt can recompute.
+    /// The column stays groupable and joinable because one code always maps to one token, and it
+    /// stays confirmable because the operators above still run against the real value in SQL.
+    /// </para>
+    /// <para>
+    /// <c>[DwNoOrder]</c> for the reason Email carries it: sorting runs against the stored value,
+    /// so paging a tokenized column in order ranks the real codes. Startup validation asks for it.
+    /// </para>
     [DwAlias("Code")]
     [DwOperators(Allow = new[] { Operator.Equal, Operator.In })]
+    [DwMask(MaskStrategy.Tokenize)]
+    [DwNoOrder]
     [DwDescribe(Label = "Employee code", Group = "Identity", Order = 4)]
     public string EmployeeCode { get; set; } = string.Empty;
 

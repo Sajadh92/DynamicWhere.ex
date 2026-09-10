@@ -194,6 +194,10 @@ public sealed class MaskStage : TransformStage
     /// </exception>
     /// <param name="allowAggregate">True to permit aggregating the field this stage transforms.</param>
     /// <param name="minGroupSize">The smallest group it may be aggregated over, or zero for none.</param>
+    /// <param name="tokenScope">
+    /// What a token is namespaced by under <see cref="MaskStrategy.Tokenize"/>, or null to use the
+    /// field's own path.
+    /// </param>
     public MaskStage(
         MaskStrategy strategy,
         int keepStart = 0,
@@ -204,7 +208,8 @@ public sealed class MaskStage : TransformStage
         string? replacement = null,
         string? text = null,
         bool allowAggregate = false,
-        int minGroupSize = 0)
+        int minGroupSize = 0,
+        string? tokenScope = null)
         : base(TransformKind.Mask, allowAggregate, minGroupSize)
     {
         if (keepStart < 0 || keepEnd < 0)
@@ -228,6 +233,17 @@ public sealed class MaskStage : TransformStage
                 "place.", nameof(text));
         }
 
+        // Null means "use the field path", which is the safe default. A blank string is somebody
+        // trying to say something and saying nothing, and honouring it would namespace every
+        // tokenized field in the deployment together — so two fields that merely happen to hold the
+        // same value would share a token and each would disclose the other's membership.
+        if (tokenScope is not null && string.IsNullOrWhiteSpace(tokenScope))
+        {
+            throw new ArgumentException(
+                "A token scope cannot be blank. Leave it unset to scope tokens to the field's own " +
+                "path, or name a scope two fields are meant to share.", nameof(tokenScope));
+        }
+
         Strategy = strategy;
         KeepStart = keepStart;
         KeepEnd = keepEnd;
@@ -236,6 +252,7 @@ public sealed class MaskStage : TransformStage
         Pattern = pattern;
         Replacement = replacement ?? string.Empty;
         Text = text;
+        TokenScope = tokenScope;
     }
 
     /// <summary>How the value is obscured.</summary>
@@ -261,6 +278,18 @@ public sealed class MaskStage : TransformStage
 
     /// <summary>The constant under <see cref="MaskStrategy.Fixed"/>.</summary>
     public string? Text { get; }
+
+    /// <summary>
+    /// What a token is namespaced by under <see cref="MaskStrategy.Tokenize"/>, or null to use the
+    /// field's own path.
+    /// </summary>
+    /// <remarks>
+    /// Per field by default, so two columns holding the same value get different tokens and neither
+    /// discloses the other. Naming a shared scope is how a deployment opts out of that: an employee
+    /// identifier appearing on three entities can be given one scope so a caller can still join
+    /// them, at the cost of learning that the three rows concern the same person.
+    /// </remarks>
+    public string? TokenScope { get; }
 }
 
 /// <summary>Shortens text to a maximum length.</summary>

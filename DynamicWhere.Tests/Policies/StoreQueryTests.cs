@@ -36,7 +36,7 @@ public class StoreQueryTests : IDisposable
 
     private static DwPolicyOptions Options()
     {
-        DwPolicyOptions options = new() { HashSalt = "pepper" };
+        DwPolicyOptions options = new() { HashSalt = "pepper-and-more-pepper" };
 
         options.Freeze();
 
@@ -216,7 +216,7 @@ public class StoreQueryTests : IDisposable
             PolicyEffect.Mask, validFrom: noon, validTo: noon.AddHours(1),
             transform: new MaskStage(MaskStrategy.Fixed, text: "hidden")));
 
-        DwPolicyOptions options = new() { HashSalt = "pepper", MaxSnapshotAge = TimeSpan.FromDays(3650) };
+        DwPolicyOptions options = new() { HashSalt = "pepper-and-more-pepper", MaxSnapshotAge = TimeSpan.FromDays(3650) };
 
         options.Freeze();
 

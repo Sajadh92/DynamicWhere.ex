@@ -287,7 +287,7 @@ public class PolicyValidationTests
     public void A_hash_with_a_salt_is_not_reported()
     {
         PolicyModelReport report = PolicyModelValidator.Inspect(
-            new[] { typeof(HashedIdentifier) }, new DwPolicyOptions { HashSalt = "pepper" });
+            new[] { typeof(HashedIdentifier) }, new DwPolicyOptions { HashSalt = "pepper-and-more-pepper" });
 
         Assert.Empty(report.Errors);
     }

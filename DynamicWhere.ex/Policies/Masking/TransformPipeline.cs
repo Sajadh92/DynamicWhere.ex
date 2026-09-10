@@ -107,7 +107,12 @@ internal static class TransformPipeline
                     options.Tier);
             }
 
-            current = MaskEngine.Apply(mask, AsText(current), options.HashSalt);
+            // Tokenization is the one strategy that is not a pure function of its input, so it is
+            // applied here where the vault and the field path are both in scope rather than in the
+            // engine, which has neither and is documented as having neither.
+            current = mask.Strategy == MaskStrategy.Tokenize
+                ? Tokenize(mask, AsText(current), context, options)
+                : MaskEngine.Apply(mask, AsText(current), options.HashSalt);
         }
 
         if (chain.Truncate is { } truncate)
@@ -116,6 +121,39 @@ internal static class TransformPipeline
         }
 
         return current;
+    }
+
+    /// <summary>
+    /// Replaces a value with the token standing in for it.
+    /// </summary>
+    /// <remarks>
+    /// The vault is checked before the value is, so a deployment that configured none is told on
+    /// the first row it reads rather than on the first row that happens to hold something. A field
+    /// whose values are mostly null would otherwise pass every test and fail in production.
+    /// <para>
+    /// Scoped to the field's own path unless the stage names a scope. Sharing one is how a
+    /// tokenized identifier stays joinable across entities, and it is opted into because the
+    /// joinability is itself a disclosure.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="PolicyException">
+    /// Thrown with <see cref="PolicyErrorCode.MissingTokenVault"/> when no vault is configured.
+    /// </exception>
+    private static string? Tokenize(
+        MaskStage mask, string? value, DwTransformContext context, DwPolicyOptions options)
+    {
+        if (options.TokenVault is not { } vault)
+        {
+            throw new PolicyException(
+                PolicyErrorCode.MissingTokenVault,
+                context.FieldPath,
+                PolicyFeature.Select,
+                options.Tier);
+        }
+
+        // Null has nothing to stand in for, and minting a token for it would invent a value where
+        // the database holds none. Every other strategy makes the same choice.
+        return value is null ? null : vault.GetOrCreate(mask.TokenScope ?? context.FieldPath, value);
     }
 
     /// <summary>

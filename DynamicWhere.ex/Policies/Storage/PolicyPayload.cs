@@ -147,6 +147,14 @@ public static class PolicyPayload
                         writer.WriteString("text", mask.Text);
                     }
 
+                    // Written only when set, because absent and "the field's own path" are the same
+                    // instruction and writing one of them out as the other would make a rule that
+                    // round-trips differently from the one somebody wrote.
+                    if (mask.TokenScope is not null)
+                    {
+                        writer.WriteString("tokenScope", mask.TokenScope);
+                    }
+
                     break;
 
                 case GeneralizeStage generalize:
@@ -215,7 +223,8 @@ public static class PolicyPayload
             ReadString(root, "replacement"),
             ReadString(root, "text"),
             allowAggregate,
-            minGroupSize);
+            minGroupSize,
+            ReadString(root, "tokenScope"));
 
     /// <summary>Builds a generalization stage.</summary>
     private static GeneralizeStage ReadGeneralize(

@@ -65,6 +65,19 @@ public sealed class DwMaskAttribute : DwPolicyAttribute
     public string? Text { get; set; }
 
     /// <summary>
+    /// What tokens are namespaced by under <see cref="MaskStrategy.Tokenize"/>, or null to scope
+    /// them to this field's own path.
+    /// </summary>
+    /// <remarks>
+    /// Unlike the hash salt, this belongs in source control: it is a name, not a secret, and it is
+    /// exactly the sort of decision that has to be readable beside the field it governs. Two fields
+    /// sharing a scope share their tokens, which is what makes a tokenized identifier joinable
+    /// across entities — and is also what tells a caller the two rows concern the same subject, so
+    /// it is opted into rather than assumed.
+    /// </remarks>
+    public string? TokenScope { get; set; }
+
+    /// <summary>
     /// True to permit aggregating this field despite the transform.
     /// </summary>
     /// <remarks>

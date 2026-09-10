@@ -77,7 +77,7 @@ public class PolicyGraphWalkTests
 {
     private static DwPolicyContext Caller() => new();
 
-    private static DwPolicyOptions Options() => new() { HashSalt = "pepper" };
+    private static DwPolicyOptions Options() => new() { HashSalt = "pepper-and-more-pepper" };
 
     private static TypePolicy PolicyFor<T>() =>
         new PolicyResolver(new IDwPolicyProvider[] { new AttributePolicyProvider() })

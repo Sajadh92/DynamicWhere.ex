@@ -1,4 +1,4 @@
-using BenchmarkDotNet.Attributes;
+﻿using BenchmarkDotNet.Attributes;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
@@ -34,6 +34,8 @@ public class PolicyBenchmarks
     private IQueryable<Person> _source = null!;
     private List<GatedPerson> _gated = null!;
     private IQueryable<GatedPerson> _gatedSource = null!;
+    private List<PlainPerson> _plain = null!;
+    private IQueryable<PlainPerson> _plainSource = null!;
     private DwPolicyContext _caller = null!;
     private DwPolicyOptions _options = null!;
     private PolicyResolver _resolver = null!;
@@ -77,7 +79,24 @@ public class PolicyBenchmarks
 
         _gatedSource = _gated.AsQueryable();
 
-        _options = new DwPolicyOptions { Tier = DwTier.Convenience, HashSalt = "bench" };
+        _plain = new List<PlainPerson>(RowCount);
+
+        for (int i = 0; i < RowCount; i++)
+        {
+            _plain.Add(new PlainPerson
+            {
+                Id = i,
+                Name = $"person-{i}",
+                Email = $"person{i}@example.com",
+                NationalId = $"AAA-{i:D6}",
+                Department = i % 4 == 0 ? "Engineering" : "Support",
+                Salary = 50_000m + (i % 50) * 1_000m
+            });
+        }
+
+        _plainSource = _plain.AsQueryable();
+
+        _options = new DwPolicyOptions { Tier = DwTier.Convenience, HashSalt = "bench-salt-not-a-secret" };
         _resolver = new PolicyResolver(new IDwPolicyProvider[] { new AttributePolicyProvider() });
         _caller = new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
 
@@ -132,6 +151,23 @@ public class PolicyBenchmarks
     public int Guarded() =>
         _source.ApplyPolicy(_caller, _options, _resolver).ToList(_filter).Data?.Count ?? 0;
 
+    /// <summary>The same query through the guard, over a type no policy speaks to.</summary>
+    /// <remarks>
+    /// The gating budget's own measurement, and the only one of these that isolates it. Every field
+    /// is resolved, the filter is sanitized and the forced predicates are injected; nothing is
+    /// denied, so no projection is synthesized, and nothing is transformed, so the walk returns
+    /// immediately. What is left is the cost of asking, which is what a deployment pays on every
+    /// guarded query whether or not its policy has anything to say.
+    /// <para>
+    /// <see cref="GuardedGatingOnly"/> is the next step up: it denies a field, and denying one means
+    /// projecting instead of returning entities. That cost is real and belongs to deny-select rather
+    /// than to gating, which is why the two are measured apart.
+    /// </para>
+    /// </remarks>
+    [Benchmark]
+    public int GuardedNoPolicy() =>
+        _plainSource.ApplyPolicy(_caller, _options, _resolver).ToList(_gatedFilter).Data?.Count ?? 0;
+
     /// <summary>The same query, gated but with nothing to transform.</summary>
     /// <remarks>
     /// The measurement that separates the two costs. Gating and injection are paid once per query;
@@ -159,7 +195,23 @@ public class PolicyBenchmarks
         PolicySimulator.Simulate<Person>(_filter, _caller, _options, _resolver);
 }
 
-/// <summary>The same shape with a denial and no transform, to price gating on its own.</summary>
+/// <summary>The same shape with no policy attributes at all, to price the guard on its own.</summary>
+public class PlainPerson
+{
+    public int Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+
+    public string Email { get; set; } = string.Empty;
+
+    public string NationalId { get; set; } = string.Empty;
+
+    public string Department { get; set; } = string.Empty;
+
+    public decimal Salary { get; set; }
+}
+
+/// <summary>The same shape with a denial and no transform, to price deny-select.</summary>
 public class GatedPerson
 {
     public int Id { get; set; }

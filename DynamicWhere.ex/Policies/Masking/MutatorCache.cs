@@ -27,6 +27,30 @@ internal static class MutatorCache
         Getters.GetOrAdd(property, BuildGetter)(instance);
 
     /// <summary>
+    /// Returns the compiled getter itself, for a caller reading the same property from many
+    /// instances.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Read"/> is a dictionary lookup and a delegate call. The lookup is cheap and it is
+    /// still paid per row, which on a large result is the difference between the transform walk
+    /// costing a delegate call per value and costing a hash of a <see cref="PropertyInfo"/> as
+    /// well. A caller that already knows it is about to touch ten thousand instances of one type
+    /// takes the delegate once.
+    /// </remarks>
+    internal static Func<object, object?> Getter(PropertyInfo property) =>
+        Getters.GetOrAdd(property, BuildGetter);
+
+    /// <summary>
+    /// Returns the compiled setter itself, or null when the property cannot be written.
+    /// </summary>
+    /// <remarks>
+    /// The null is the same answer <see cref="Write"/> reports by returning false, handed over
+    /// before the loop rather than on each pass through it.
+    /// </remarks>
+    internal static Action<object, object?>? Setter(PropertyInfo property) =>
+        Setters.GetOrAdd(property, BuildSetter);
+
+    /// <summary>
     /// Writes a property's value onto an instance.
     /// </summary>
     /// <returns>False when the property cannot be written to.</returns>

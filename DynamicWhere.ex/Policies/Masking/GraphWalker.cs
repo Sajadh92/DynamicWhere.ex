@@ -21,6 +21,14 @@ namespace DynamicWhere.ex.Policies.Masking;
 /// applied to a tracked entity is recorded by EF as a pending modification and written back as the
 /// real value on the next save anywhere in the same unit of work.
 /// </para>
+/// <para>
+/// This is the only part of the policy layer whose cost grows with the size of the result, so it is
+/// the only part written for it. Everything that can be hoisted out of the per-row loop is: the set
+/// of root objects is built once for the whole result rather than once per path, and the property
+/// and its compiled accessors are resolved once per runtime type rather than once per row. What is
+/// left per value is a delegate call, the transform itself, and a second delegate call — which is
+/// as close to the floor as changing a value after materialization can get.
+/// </para>
 /// </remarks>
 internal static class GraphWalker
 {
@@ -34,7 +42,7 @@ internal static class GraphWalker
     /// outside this set was never selected, so there is no value present to transform.
     /// </param>
     /// <param name="context">Who is asking.</param>
-    /// <param name="options">Carries the hash salt and the service provider.</param>
+    /// <param name="options">Carries the hash salt, the token vault and the service provider.</param>
     /// <param name="trace">Collects what was transformed.</param>
     /// <exception cref="InvalidOperationException">
     /// Thrown when a path the result should carry cannot be reached on it. Skipping instead would
@@ -53,7 +61,14 @@ internal static class GraphWalker
             return;
         }
 
-        List<object> roots = new();
+        // Reference identity, not equality. Two rows can share one referenced object, and
+        // transforming it twice would hash a hash or truncate a truncation.
+        //
+        // Built once for the whole result rather than once per transformed path. It was the second,
+        // and on a result of ten thousand rows that is a ten-thousand-entry set allocated, filled
+        // and discarded for every field the policy transforms — several times the cost of the
+        // masking it was there to support.
+        HashSet<object> roots = new(ReferenceComparer.Instance);
 
         foreach (object? row in rows)
         {
@@ -107,8 +122,12 @@ internal static class GraphWalker
     }
 
     /// <summary>Navigates one path from every root and transforms the value it lands on.</summary>
+    /// <remarks>
+    /// The root set is read and never written, so every path walks from the same one. A path with
+    /// no navigation in it — which is most of them — does not build a set at all.
+    /// </remarks>
     private static void ApplyPath(
-        List<object> roots,
+        HashSet<object> roots,
         string path,
         ValueTransform chain,
         DwPolicyContext context,
@@ -117,14 +136,7 @@ internal static class GraphWalker
     {
         string[] segments = path.Split('.');
 
-        // Reference identity, not equality. Two rows can share one referenced object, and
-        // transforming it twice would hash a hash or truncate a truncation.
-        HashSet<object> owners = new(ReferenceComparer.Instance);
-
-        foreach (object root in roots)
-        {
-            owners.Add(root);
-        }
+        IReadOnlyCollection<object> owners = roots;
 
         for (int i = 0; i < segments.Length - 1; i++)
         {
@@ -136,23 +148,40 @@ internal static class GraphWalker
             }
         }
 
+        string member = segments[^1];
         bool transformed = false;
+
+        // One entry, not a dictionary. A materialized result is one runtime type in every case that
+        // matters — entities of one class, or rows of one generated projection — so a single
+        // remembered type turns the per-row property lookup into a reference comparison. A result
+        // that really did alternate types would fall back to the lookup it does today.
+        Type? resolvedFor = null;
+        Accessors accessors = default;
 
         foreach (object owner in owners)
         {
-            PropertyInfo property = Find(owner, segments[^1], path);
+            Type type = owner.GetType();
 
-            object? value = MutatorCache.Read(property, owner);
+            if (!ReferenceEquals(type, resolvedFor))
+            {
+                accessors = Accessors.For(type, member, path);
+                resolvedFor = type;
+            }
+
+            object? value = accessors.Get(owner);
+
             object? replacement = TransformPipeline.Apply(
-                chain, value, property.PropertyType, new DwTransformContext(owner, path, context), options);
+                chain, value, accessors.MemberType, new DwTransformContext(owner, path, context), options);
 
-            if (!MutatorCache.Write(property, owner, replacement))
+            if (accessors.Set is null)
             {
                 throw new InvalidOperationException(
                     $"'{path}' is transformed by policy but has no setter, so the transformed value " +
                     "cannot replace the real one. Give the member a setter, or project into a type " +
                     "that has one.");
             }
+
+            accessors.Set(owner, replacement);
 
             transformed = true;
         }
@@ -173,13 +202,25 @@ internal static class GraphWalker
     /// leave untransformed. A missing <em>property</em> is a different matter and does fail, because
     /// it means the result is not the shape the policy was resolved against.
     /// </remarks>
-    private static HashSet<object> Descend(HashSet<object> owners, string segment, string path)
+    private static HashSet<object> Descend(
+        IReadOnlyCollection<object> owners, string segment, string path)
     {
         HashSet<object> next = new(ReferenceComparer.Instance);
 
+        Type? resolvedFor = null;
+        Accessors accessors = default;
+
         foreach (object owner in owners)
         {
-            object? value = MutatorCache.Read(Find(owner, segment, path), owner);
+            Type type = owner.GetType();
+
+            if (!ReferenceEquals(type, resolvedFor))
+            {
+                accessors = Accessors.For(type, segment, path);
+                resolvedFor = type;
+            }
+
+            object? value = accessors.Get(owner);
 
             if (value is null)
             {
@@ -206,17 +247,55 @@ internal static class GraphWalker
     }
 
     /// <summary>
-    /// Finds a property on an instance's runtime type.
+    /// One property of one runtime type, with its compiled accessors already resolved.
     /// </summary>
     /// <remarks>
-    /// The runtime type, never the declared one: a dynamic projection's type is generated per query
-    /// shape, and the declared type of a row in one is <see cref="object"/>.
+    /// A struct so that remembering one costs nothing. It exists to be resolved once and read many
+    /// times, which is the whole of the optimisation: the three lookups behind it — the property by
+    /// name, the getter, the setter — are each a hash of something, and each was being paid on
+    /// every row of every result.
     /// </remarks>
-    private static PropertyInfo Find(object instance, string segment, string path) =>
-        CacheReflection.FindProperty(instance.GetType(), segment)
-        ?? throw new InvalidOperationException(
-            $"'{path}' is transformed by policy, but '{segment}' does not exist on " +
-            $"{instance.GetType().Name}. The value would otherwise be emitted exactly as stored.");
+    private readonly struct Accessors
+    {
+        private Accessors(
+            Type memberType, Func<object, object?> get, Action<object, object?>? set)
+        {
+            MemberType = memberType;
+            Get = get;
+            Set = set;
+        }
+
+        /// <summary>The type the transformed value has to fit.</summary>
+        internal Type MemberType { get; }
+
+        /// <summary>Reads the value from an instance.</summary>
+        internal Func<object, object?> Get { get; }
+
+        /// <summary>Writes the value onto an instance, or null when the member is read-only.</summary>
+        internal Action<object, object?>? Set { get; }
+
+        /// <summary>
+        /// Resolves a property on a runtime type.
+        /// </summary>
+        /// <remarks>
+        /// The runtime type, never the declared one: a dynamic projection's type is generated per
+        /// query shape, and the declared type of a row in one is <see cref="object"/>.
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when the type does not carry the member. The result is then not the shape the
+        /// policy was resolved against, and going on would emit the value exactly as stored.
+        /// </exception>
+        internal static Accessors For(Type type, string segment, string path)
+        {
+            PropertyInfo property = CacheReflection.FindProperty(type, segment)
+                ?? throw new InvalidOperationException(
+                    $"'{path}' is transformed by policy, but '{segment}' does not exist on " +
+                    $"{type.Name}. The value would otherwise be emitted exactly as stored.");
+
+            return new Accessors(
+                property.PropertyType, MutatorCache.Getter(property), MutatorCache.Setter(property));
+        }
+    }
 
     /// <summary>Compares by reference, so two equal-but-distinct objects are both visited.</summary>
     private sealed class ReferenceComparer : IEqualityComparer<object>

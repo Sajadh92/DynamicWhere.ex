@@ -223,7 +223,7 @@ public class Employee
 | `[DwAlias]` | Give it a public name, renamed back on the way out |
 | `[DwForceWhere]` | Add a predicate to every guarded query — tenant scope, soft delete, ownership |
 | `[DwRequireWhere]` | Make a filter on it mandatory |
-| `[DwMask]` | Obscure the value — 8 strategies: `Full` `Partial` `Email` `Phone` `Regex` `Fixed` `Hash` `Null` |
+| `[DwMask]` | Obscure the value — 9 strategies: `Full` `Partial` `Email` `Phone` `Regex` `Fixed` `Hash` `Null` `Tokenize` |
 | `[DwMutate]`, `[DwDefault]`, `[DwGeneralize]`, `[DwTruncate]`, `[DwFormat]` | The other five transforms |
 | `[DwDescribe]`, `[DwAllowedValues]`, `[DwCost]`, `[DwAudit]` | Schema discovery, query budget, audit trail |
 
@@ -239,7 +239,21 @@ An optional store supplies rules at runtime, split into a cached broad zone and 
 
 `SUM`, `MAX` and `MIN` run **in SQL, against the stored value**, before any mask can apply — so `MAX(Salary)` over a department of one returns that person's exact pay. Aggregating a transformed field is therefore **denied by default**, opted into with `AllowAggregate = true`, and bounded by `MinGroupSize`, which suppresses any group smaller than *k*.
 
-It defaults to **1 — off** — because any other default would change the result of an existing grouping query. Turn it on deliberately. → **[Security & k-anonymity](https://doc.dynamicwhere.com/docs/policies/security)**
+It **defaults to 5**. Write `MinGroupSize = 1` to switch it off and it is off, in production, with nothing refused and nothing warned about — the setting starts unset rather than at one precisely so that "off" and "never configured" stay different sentences. → **[Security & k-anonymity](https://doc.dynamicwhere.com/docs/policies/security)**
+
+### Hiding a value you still want to group by
+
+`Hash` and `Tokenize` both keep a column groupable and joinable while hiding what is in it. The difference is where the secret lives.
+
+A hash is **computed from the value**, with HMAC-SHA256 keyed by `HashSalt` — at least 16 characters, or it is refused where it is written. Whoever holds that salt can recompute every digest the deployment ever emitted.
+
+A token is **drawn at random** and written into `TokenVault`, so the only way back is to read the vault: a store you can lock, move and revoke separately from the data. Three ship — in-memory in the core package, Redis and Entity Framework Core in the providers — all held to one conformance suite.
+
+```csharp
+new DwPolicyOptions { HashSalt = secret, TokenVault = new RedisTokenVault(redis) }
+```
+
+Neither closes equality, and that is the point of both: the same value maps to the same output so the column stays usable, which also means anyone who can write a chosen value and read it back learns that one value's stand-in. → **[Transforms](https://doc.dynamicwhere.com/docs/policies/transforms)**
 
 ### The four packages
 
@@ -324,7 +338,7 @@ The complete reference — every enum, class, extension method, validation rule,
 - **New: field-level policies.** A layer that decides what each caller may filter, sort, select, group, aggregate and see — attributes for the compile-time half, an optional store for the runtime half. See [above](#field-level-policies).
 - **New: three companion packages.** `Policies.Redis` and `Policies.EntityFrameworkCore` hold rules; `Policies.AspNetCore` mounts the admin API, explain, simulate and health, and refuses to map without a named authorization policy.
 - **No breaking changes.** The 2.x API is untouched. `FilterResult<T>` and `SummaryResult` each gain one nullable `Policy` property, null when the query was not guarded. Nothing enforces until you opt in.
-- **Worth knowing before you turn it on:** `MinGroupSize` ships at 1 (off), and a guarded query costs roughly 15 percent, rising to about 2.6x when it transforms every row of a large result. Both are documented rather than hidden — see [Security](https://doc.dynamicwhere.com/docs/policies/security) and [Configuration](https://doc.dynamicwhere.com/docs/policies/configuration).
+- **Worth knowing before you turn it on:** gating costs nothing measurable, but transforming every row of a large result costs about 1.6x in time and 7x in allocations, because each value is rebuilt after materialization rather than in SQL. `MinGroupSize` ships **on at 5**, so a guarded summary suppresses groups under five until you say otherwise — see [Security](https://doc.dynamicwhere.com/docs/policies/security) and [Configuration](https://doc.dynamicwhere.com/docs/policies/configuration).
 
 ## Version 2.1.5 highlights
 

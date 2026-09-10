@@ -42,7 +42,7 @@ export default function Page() {
         never masks anything.
       </p>
 
-      <h2 id="mask">The eight mask strategies</h2>
+      <h2 id="mask">The nine mask strategies</h2>
       <table>
         <thead><tr><th>Strategy</th><th>Result</th></tr></thead>
         <tbody>
@@ -52,13 +52,11 @@ export default function Page() {
           <tr><td><code>Phone</code></td><td>Keeps the last group of digits.</td></tr>
           <tr><td><code>Regex</code></td><td><code>Pattern</code> and <code>Replacement</code>.</td></tr>
           <tr><td><code>Fixed</code></td><td>A constant string from <code>Text</code>.</td></tr>
-          <tr><td><code>Hash</code></td><td>Salted hash. Requires <code>options.HashSalt</code>; a query is refused without one.</td></tr>
+          <tr><td><code>Hash</code></td><td>HMAC-SHA256 keyed by <code>options.HashSalt</code>. A query is refused without one, and a salt under 16 characters is refused where it is written.</td></tr>
           <tr><td><code>Null</code></td><td>Removes the value. Refused at startup on a non-nullable value type.</td></tr>
+          <tr><td><code>Tokenize</code></td><td>A random token from <code>options.TokenVault</code>. A query is refused without one.</td></tr>
         </tbody>
       </table>
-      <p>
-        <code>MaskStrategy.Tokenize</code> is deferred to a later release.
-      </p>
       <Code lang="csharp">{`[DwMask(MaskStrategy.Partial, KeepEnd = 4)]
 public string CardNumber { get; set; }        // ************4242
 
@@ -66,7 +64,61 @@ public string CardNumber { get; set; }        // ************4242
 public string Email { get; set; }             // s*************@c******.com
 
 [DwMask(MaskStrategy.Hash)]
-public string NationalId { get; set; }        // stable per salt, useful for joins`}</Code>
+public string NationalId { get; set; }        // stable per salt, useful for joins
+
+[DwMask(MaskStrategy.Tokenize)]
+public string PassportNumber { get; set; }    // stable per vault, useful for joins`}</Code>
+
+      <h2 id="hash-vs-token">Hashing against tokenizing</h2>
+      <p>
+        Both keep a column groupable and joinable while hiding what is in it, and
+        both do it by mapping one value to one output. The difference is where the
+        secret lives, and it decides what an attacker has to reach to undo the mask.
+      </p>
+      <table>
+        <thead><tr><th></th><th><code>Hash</code></th><th><code>Tokenize</code></th></tr></thead>
+        <tbody>
+          <tr><td>Output</td><td>32 hex characters</td><td>32 hex characters</td></tr>
+          <tr><td>Derived from the value</td><td>yes</td><td>no</td></tr>
+          <tr><td>Reversed by</td><td>holding the salt</td><td>reading the vault</td></tr>
+          <tr><td>A weak secret</td><td>brute-forced offline</td><td>does not exist</td></tr>
+          <tr><td>Survives a restart</td><td>always</td><td>only with a durable vault</td></tr>
+          <tr><td>Discloses equality</td><td>yes</td><td>yes</td></tr>
+        </tbody>
+      </table>
+      <p>
+        A hash is computed, so whoever holds the salt can recompute every digest the
+        deployment has ever emitted, and a guessable salt is recovered offline. A
+        token is drawn at random the first time a value is seen and written into a
+        vault, so the only way back is to read that vault — a store you can lock,
+        move and revoke separately from the data.
+      </p>
+      <Code lang="csharp">{`new DwPolicyOptions
+{
+    HashSalt   = secret,                      // 16 characters or more
+    TokenVault = new RedisTokenVault(redis)   // or EfTokenVault, or InMemoryTokenVault
+}`}</Code>
+      <p>
+        Three vaults ship and all three pass one conformance suite.{" "}
+        <code>InMemoryTokenVault</code> lives and dies with the process, which is
+        right for a test and wrong for any column compared across restarts.{" "}
+        <code>RedisTokenVault</code> and <code>EfTokenVault</code> keep the mapping
+        outside the process and cache every mapping they resolve, which they can do
+        safely because a token is written once and never rewritten.
+      </p>
+      <p>
+        Tokens are namespaced by the field&apos;s own path, so two columns holding
+        the same value get different tokens. Name a shared <code>TokenScope</code>{" "}
+        on both when you want them to match — at the cost of telling a caller the two
+        rows concern the same subject.
+      </p>
+      <Callout tone="warn" title="Neither one hides equality">
+        The same value maps to the same output under both, which is what makes the
+        column usable and is also a disclosure no setting removes. Anyone who can
+        write a chosen value and read the column back masked learns that
+        value&apos;s stand-in and can recognise it in every other row. A field that
+        cannot accept that wants <code>Fixed</code>, <code>Null</code>, or a denial.
+      </Callout>
 
       <h2 id="others">The other five</h2>
       <table>

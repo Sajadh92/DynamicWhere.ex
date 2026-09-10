@@ -614,6 +614,34 @@ it, plus nine site pages matching the depth the cache feature sets. Security has
 - **Fragments are still rebuilt per field per query.** Now measured: it is not the dominant cost.
 - **`MaskStrategy.Tokenize` deferred.**
 
+### Four of those five closed, 2026-09-10
+
+Everything above except the schema explosion, which is being designed separately.
+
+- **The budget is two budgets, and both are met.** The single 5 percent figure contradicted the
+  design's own 100 ns per row per value: ten thousand rows with two transformed fields is 2 ms of
+  transform work against a 700 µs query. Gating now has a budget of its own and measures at
+  **1.00× time, 1.05× allocations**; transformation is budgeted per value at **21 ns and 65 bytes**
+  against a 100 ns target. The walker was rewritten around the fact that it is the only part of this
+  layer whose cost grows with the result — root set built once per result rather than once per path,
+  accessors resolved once per runtime type rather than once per row, and a `readonly struct` context
+  in place of an allocation per value. The transforming case went from **2.61× to 1.62×** in time and
+  **16.2× to 7.1×** in allocations. `GuardedNoPolicy` is the new benchmark that isolates gating; the
+  old numbers could not, because the only gating measurement also denied a field and so paid for a
+  synthesized projection.
+- **`MinGroupSize` ships on, at 5.** The compatibility argument did not survive being looked at: the
+  floor applies only to a guarded summary, and guarded queries are new in this release. The setting
+  starts *unset* rather than at one, so `MinGroupSize = 1` still means "no floor" and is honoured in
+  production with nothing refused — `IsMinGroupSizeSet` is what tells the two apart.
+- **`MaskStrategy.Tokenize` ships.** A random token from `DwPolicyOptions.TokenVault`, scoped to the
+  field path by default. Three vaults: `InMemoryTokenVault` in the core, `RedisTokenVault` and
+  `EfTokenVault` in the providers, all held to one conformance suite.
+- **`Hash` is HMAC-SHA256 and its salt has a floor.** The old `SHA256(salt || value)` collided
+  whenever a pair could be re-split, and a salt is now refused below 16 characters. Neither strategy
+  hides equality, which design §7.6 now states outright rather than leaving to be inferred.
+
+Still open: **`/schema` returns 335 fields for a 33-property self-referencing entity.**
+
 ### What a merge does
 
 `publish.yml` packs and pushes four packages to NuGet on every push to master, and the same push

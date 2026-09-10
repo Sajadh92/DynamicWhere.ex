@@ -22,10 +22,11 @@ export default function Page() {
         removed.
       </p>
 
-      <Callout tone="warn" title="Read this page before turning MinGroupSize off">
-        It ships at <strong>1 — off</strong>. That is the compatible default, not
-        the safe one, and it is the single control on this page that a reader
-        cannot infer from the API.
+      <Callout tone="warn" title="MinGroupSize ships on, at 5">
+        Read this page before you turn it off. The compatibility argument for
+        shipping it off does not hold: the floor applies only to a{" "}
+        <em>guarded</em> summary, and guarded queries are new in this release, so
+        there is no caller anywhere whose results it can change.
       </Callout>
 
       <h2 id="sets">1. Set operations reconstruct a denied field</h2>
@@ -67,14 +68,24 @@ export default function Page() {
       <Code lang="csharp">{`[DwGeneralize(GeneralizeMode.Round, Step = 5000,
               AllowAggregate = true, MinGroupSize = 5)]
 public decimal Salary { get; set; }`}</Code>
-      <Callout tone="danger" title="MinGroupSize defaults to 1, which is off">
-        Any other default would silently change the result of an existing
-        grouping query for anyone upgrading, so the compatible choice was the
-        only one available. Set <code>options.Caps.MinGroupSize</code> globally,
-        or per field on any transform attribute, and treat it as a decision
-        rather than a default. Without the floor, <code>AllowAggregate</code> is
-        a hole with a lid on it rather than a feature.
+      <Callout tone="warn" title="The floor is on by default, and switching it off is one line">
+        <code>DwCaps.MinGroupSize</code> defaults to <strong>5</strong>. Writing{" "}
+        <code>MinGroupSize = 1</code> switches it off and it is off — in
+        production, with nothing refused and nothing warned about. A deployment
+        that wants singleton groups is entitled to them.
       </Callout>
+      <p>
+        The setting starts <em>unset</em> rather than at one, which is what makes
+        both halves possible: <code>IsMinGroupSizeSet</code> tells a deliberate
+        opt-out from a deployment that never heard of the control. Without that
+        distinction, any check strict enough to catch the second would trap the
+        first. A per-field <code>MinGroupSize</code> on any transform attribute
+        raises the floor for that field; the effective floor is the largest in
+        play.
+      </p>
+      <Code lang="csharp">{`new DwPolicyOptions()                                 // floor of 5
+new DwPolicyOptions { Caps = { MinGroupSize = 1 } }   // no floor, and meant
+new DwPolicyOptions { Caps = { MinGroupSize = 10 } }  // stricter`}</Code>
       <p>
         The floor <strong>suppresses rows</strong>; it does not refuse the query.
         A summary whose every group is a singleton returns nothing.
@@ -138,7 +149,8 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
       <h2 id="posture">Getting the posture right</h2>
       <ul>
         <li>Use <code>DwTier.Strict</code> unless you need <code>getQueryString</code>.</li>
-        <li>Set <code>MinGroupSize</code> deliberately before enabling <code>AllowAggregate</code> anywhere.</li>
+        <li>Leave <code>MinGroupSize</code> alone unless you have a reason; setting it to 1 is a decision, not a default.</li>
+        <li>Prefer <code>Tokenize</code> over <code>Hash</code> where you can run a durable vault: neither hides equality, but only one of them can be undone by a leaked constant.</li>
         <li>Run <code>DwPolicy.ValidateModel(...)</code> at startup and treat its warnings as a checklist.</li>
         <li>Put <code>[DwEntity(RequirePolicy = true)]</code> on anything sensitive, so a missed guard fails loudly.</li>
         <li>Prefer <code>[DwOperators]</code> over allowing free filtering on a protected field.</li>

@@ -6,7 +6,7 @@ import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
   title: "Policy Configuration — options, caps, tiers and defaults",
-  description: "Every DynamicWhere.ex policy option and cap with its default: tiers, dry run, hash salt, store failure modes, query cost budget, MinGroupSize, plus startup validation and the twenty error codes.",
+  description: "Every DynamicWhere.ex policy option and cap with its default: tiers, dry run, hash salt, store failure modes, query cost budget, MinGroupSize, plus startup validation and the twenty-two error codes.",
   keywords: ["DwPolicyOptions", "DwCaps", "MaxQueryCost", "MinGroupSize", "policy configuration"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/configuration/" },
 };
@@ -19,7 +19,8 @@ export default function Page() {
 {
     Tier            = DwTier.Convenience,
     DryRun          = false,
-    HashSalt        = secret,
+    HashSalt        = secret,              // 16 characters or more
+    TokenVault      = tokenVault,          // needed only by MaskStrategy.Tokenize
     Services        = serviceProvider,     // resolves IValueTransformer
     StoreFailure    = StoreFailureMode.LastKnownGood,
     MaxSnapshotAge  = TimeSpan.FromMinutes(15),
@@ -70,12 +71,19 @@ export default function Page() {
           <tr><td><code>MaxQueryCost</code></td><td>1000</td><td>Budget consumed by <code>[DwCost]</code> weights.</td></tr>
           <tr><td><code>DefaultFieldCost</code></td><td>1</td><td>Charged for an unweighted field.</td></tr>
           <tr><td><code>MaxAuditEvents</code></td><td>10000</td><td>Audit buffer before draining.</td></tr>
-          <tr><td><code>MinGroupSize</code></td><td><strong>1 (off)</strong></td><td>k-anonymity group floor. See <Link href="/docs/policies/security">Security</Link>.</td></tr>
+          <tr><td><code>MinGroupSize</code></td><td><strong>5</strong></td><td>k-anonymity group floor. Set 1 to switch it off. See <Link href="/docs/policies/security">Security</Link>.</td></tr>
         </tbody>
       </table>
       <p>
         Every cap is frozen at startup, refuses a value below one, and reports
         through the trace with its own error code.
+      </p>
+      <p>
+        <code>MinGroupSize</code> is the one that starts <em>unset</em> rather
+        than at its default value, so that <code>MinGroupSize = 1</code> can mean
+        &quot;no floor, and I mean it&quot; rather than being indistinguishable
+        from a deployment that never configured anything.{" "}
+        <code>IsMinGroupSizeSet</code> reports which of the two happened.
       </p>
 
       <h2 id="dryrun">Dry run</h2>
@@ -105,29 +113,49 @@ if (report.Errors.Count > 0) throw new InvalidOperationException("Policy model i
       </p>
 
       <h2 id="performance">Performance</h2>
+      <p>
+        There are two budgets, because there are two costs. Gating is paid{" "}
+        <strong>once per query</strong>. Transformation is paid{" "}
+        <strong>per row per transformed field</strong>, so no single percentage
+        describes it — the same guard is 1.16× over a hundred rows and 1.62× over
+        ten thousand, on identical code.
+      </p>
       <p>Measured with BenchmarkDotNet over 10,000 in-memory rows:</p>
       <table>
-        <thead><tr><th></th><th>Unguarded</th><th>Gating only</th><th>Gating + transforms</th></tr></thead>
+        <thead><tr><th>10,000 rows</th><th>Time</th><th>Allocated</th></tr></thead>
         <tbody>
-          <tr><td>Time</td><td>741 µs</td><td>857 µs (1.16×)</td><td>1,933 µs (2.61×)</td></tr>
-          <tr><td>Allocated</td><td>210 KB</td><td>409 KB (1.94×)</td><td>3,397 KB (16.2×)</td></tr>
+          <tr><td>Unguarded</td><td>685 µs</td><td>210 KB</td></tr>
+          <tr><td>Guarded, nothing denied or transformed</td><td>683 µs (<strong>1.00×</strong>)</td><td>220 KB (<strong>1.05×</strong>)</td></tr>
+          <tr><td>Guarded, one field deny-select</td><td>785 µs (1.15×)</td><td>409 KB (1.95×)</td></tr>
+          <tr><td>Guarded, two fields transformed every row</td><td>1,111 µs (1.62×)</td><td>1,488 KB (7.1×)</td></tr>
         </tbody>
       </table>
       <p>
-        Gating and injection are paid once per query — a cached field resolve is
-        239–250 ns and sanitizing a five-condition filter is 2.8 µs. The
-        transform walk is paid <strong>per row</strong>, and it clones what it
-        touches because values change after materialization rather than in SQL.
+        <strong>Gating costs nothing measurable.</strong> Resolving every field,
+        sanitizing the filter and injecting forced predicates lands inside the
+        noise of the unguarded query. A cached field resolve is 232–234 ns and
+        sanitizing a five-condition filter is 2.8 µs.
+      </p>
+      <p>
+        <strong>Deny-select costs 1.15×</strong>, because denying a field means
+        the query projects instead of returning entities. That belongs to the
+        feature rather than to the guard.
+      </p>
+      <p>
+        <strong>Transformation costs about 21 ns and 65 bytes per value</strong>,
+        against a design budget of 100 ns. It builds a new value for each one,
+        because the change happens after materialization rather than in SQL.
       </p>
       <Callout tone="note" title="No database in those numbers">
         These are in-memory LINQ, so the policy layer share looks as large as it
         ever can. Against a real query the I/O dominates and the relative
-        overhead is much smaller. Budget roughly 15 percent for a guarded query,
-        and more when you transform every row of a large result.
+        overhead is much smaller.
       </Callout>
+      <Code lang="bash">{`dotnet run -c Release --project DynamicWhere.Benchmarks \\
+  -- --filter "*PolicyBenchmarks*" --job medium`}</Code>
 
       <h2 id="errors">Error codes</h2>
-      <p><code>PolicyException.ErrorCode</code>, values 1 to 20:</p>
+      <p><code>PolicyException.ErrorCode</code>, values 1 to 22:</p>
       <table>
         <thead><tr><th>Code</th><th>Raised when</th></tr></thead>
         <tbody>
@@ -146,6 +174,8 @@ if (report.Errors.Count > 0) throw new InvalidOperationException("Policy model i
           <tr><td><code>PolicyContextNotPrepared</code> (18)</td><td><code>PrepareAsync</code> was never called.</td></tr>
           <tr><td><code>QueryCostExceeded</code> (19)</td><td>The query cost budget was exceeded.</td></tr>
           <tr><td><code>GroupTooSmall</code> (20)</td><td>A summary already uses the alias the group floor reserves.</td></tr>
+          <tr><td><code>MissingHashSalt</code> (21)</td><td>A field masks to a hash and no salt was configured.</td></tr>
+          <tr><td><code>MissingTokenVault</code> (22)</td><td>A field masks to a token and no vault was configured.</td></tr>
         </tbody>
       </table>
     </DocPage>

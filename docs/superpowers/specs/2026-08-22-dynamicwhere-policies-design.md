@@ -299,17 +299,39 @@ An unguarded `ToList(filter)` on this entity throws. Without it, every policy is
 ### 4.4 Transformation
 
 ```csharp
-public enum MaskStrategy { Full, Partial, Email, Phone, Regex, Fixed, Hash, Tokenize, Null }
+public enum MaskStrategy { Full, Partial, Email, Phone, Regex, Fixed, Hash, Null, Tokenize }
 
 [DwMask(MaskStrategy.Partial, KeepStart = 0, KeepEnd = 4)]        // ****1234
 [DwMask(MaskStrategy.Email)]                                      // j***@d***.com
 [DwMask(MaskStrategy.Regex, Pattern = @"\d", Replacement = "#")]
 [DwMask(MaskStrategy.Fixed, Text = "[REDACTED]")]
 [DwMask(MaskStrategy.Hash)]                                       // salt from options
+[DwMask(MaskStrategy.Tokenize)]                                   // vault from options
 [DwMask(MaskStrategy.Full, MaskChar = '*', PreserveLength = false)]
 ```
 
 The hash salt lives in `DwPolicyOptions`, never in the attribute. A salt committed to source control is not a salt.
+
+> **Correction (2026-09-10).** **All nine strategies ship in v3.0**, `Tokenize` included; §10's
+> deferral is withdrawn. Two changes came with it.
+>
+> `Hash` is **HMAC-SHA256 keyed by the salt**, not `SHA256(salt || value)`. The concatenation is
+> length-extendable and collides whenever a pair can be re-split — salt `secret1` with value `23`
+> and salt `secret` with value `123` are the same bytes. A salt is also now refused below
+> `DwPolicyOptions.MinimumHashSaltLength`, which is 16; blank still means "none configured" and is
+> still refused at query time with `MissingHashSalt`.
+>
+> `Tokenize` replaces the value with a **random token from `DwPolicyOptions.TokenVault`**, keyed by
+> a scope that defaults to the field's own path. Three vaults ship: `InMemoryTokenVault` in the core
+> package, `RedisTokenVault` and `EfTokenVault` in the providers, all held to one conformance suite.
+> A missing vault is refused with `MissingTokenVault` and reported by the startup scan.
+>
+> **What each strategy is for, now that both exist.** A hash is *derived* from its input, so whoever
+> holds the salt can recompute every digest the deployment has ever emitted, and a weak salt is
+> recoverable offline. A token is *drawn* and written down, so it can only be reversed by reading
+> the vault — a store that can be locked, moved and revoked separately from the data. Neither closes
+> equality: the same value maps to the same output under both, on purpose, because a column nobody
+> can group by is a column nobody can use. §7.6 states what that leaves open.
 
 ```csharp
 [DwMutate(typeof(SalaryBandTransformer))]
@@ -632,6 +654,47 @@ Guarded query overhead target is under 5 percent versus unguarded, dominated by 
 > roughly 15 percent for a guarded query, and roughly 2.6x for one that transforms every row of a
 > large result.**
 
+> **Correction (2026-09-10). The budget is now two budgets, and both are met.**
+>
+> The single 5 percent figure could never have held, and not because the code was slow. The table
+> above already budgets 100 ns per row per transformed value; ten thousand rows with two transformed
+> fields is 2 ms of transform work against a 700 us query. The end-to-end target and the per-row
+> target contradicted each other from the day both were written. Splitting them is the fix.
+>
+> **Gating is budgeted at under 5 percent and measured at nothing.** Resolving every field,
+> sanitizing the filter and injecting forced predicates, over a type no policy speaks to:
+>
+> | 10,000 rows | Time | Allocated |
+> |---|---|---|
+> | Unguarded | 685 us | 210 KB |
+> | Guarded, nothing denied or transformed | 683 us (**1.00x**) | 220 KB (**1.05x**) |
+>
+> **Transformation is budgeted per value, not as a percentage.** It is paid per row per transformed
+> field, so no single percentage describes it — the same guard is 1.16x over a hundred rows and
+> 1.62x over ten thousand, on identical code.
+>
+> | Per transformed value | Budget | Measured |
+> |---|---|---|
+> | Time | under 100 ns | **21 ns** |
+> | Allocated | one output value | **65 bytes** |
+>
+> **Deny-select is its own line, and belongs to the feature rather than to the guard.** Denying a
+> field means the query projects instead of returning entities, which costs 1.15x in time and 1.95x
+> in allocations at ten thousand rows whatever the policy layer does afterwards.
+>
+> **What changed in the code.** The walker was rewritten around the fact that it is the only part of
+> this layer whose cost grows with the result. The root object set is built once for the whole result
+> rather than once per transformed path; the property and its compiled accessors are resolved once per
+> runtime type rather than once per row; and `DwTransformContext` became a `readonly struct`, because
+> one was being allocated for every value of every row. Against the same benchmark on the same
+> machine, the transforming case went from **2.61x to 1.62x** in time and from **16.2x to 7.1x** in
+> allocations.
+>
+> The two caveats from the Phase 9 note still hold and still matter. These are in-memory LINQ numbers
+> with no database round trip, so the policy layer's share is as large as it can possibly look. And
+> the per-operation targets were always met: a cached field resolve is 232-234 ns against a 1 us
+> target, and sanitizing the five-condition filter is 2.8 us against 50 us.
+
 ---
 
 ## 7. Security analysis
@@ -666,6 +729,18 @@ Mitigation: aggregating a masked field is denied by default and opted into with 
 > anyone upgrading. It is a deliberate opt-in, and the one control in this document that a reader
 > cannot infer from the API.
 
+> **Correction (2026-09-10).** **The floor ships on, at 5.** The compatibility argument above does
+> not survive being looked at: the floor applies only to a *guarded* summary, guarded queries are
+> new in this release, and so there is no caller anywhere whose results shipping it on can change.
+>
+> The setting starts **unset** rather than at one, which is what makes both halves possible. Unset
+> means `DwCaps.DefaultMinGroupSize`. An explicit `MinGroupSize = 1` means no floor and is honoured
+> in production, with nothing refused and nothing warned about — a deployment that wants singleton
+> groups is entitled to them and should not have to fight the library for them.
+> `DwCaps.IsMinGroupSizeSet` reports which of the two happened, because "off" and "never configured"
+> are different facts, and a control that cannot tell them apart can only trap the person who meant
+> it.
+
 ### 7.3 TotalCount cardinality disclosure
 
 `ToList` computes `query.Count()` on the pre-pagination query. Filtering `Salary > 200000` and reading `TotalCount` counts the high earners without selecting anything.
@@ -681,6 +756,33 @@ Mitigation: startup validation emits a warning when a field is masked but still 
 ### 7.5 getQueryString leaks the generated SQL
 
 Returning raw SQL exposes injected tenant predicates and the column names of denied fields. The strict tier throws; the convenience tier allows it, documented.
+
+### 7.6 A stable mask discloses equality
+
+> **Added 2026-09-10, with `Tokenize`.**
+
+`Hash` and `Tokenize` both promise that one value always produces one output, which is what lets a
+caller group by a masked column, join two results on it, and count distinct subjects without ever
+being shown a value. That promise is itself a disclosure, and no configuration removes it.
+
+Anyone who can write a chosen value and read the column back masked learns that value's output, and
+can then recognise it in every other row. The attack needs write access to the protected data and
+read access to the masked column, and what it yields is membership rather than the value itself.
+
+There is no mitigation, because the property being exploited is the feature. What differs between
+the two strategies is everything *around* it:
+
+| | `Hash` | `Tokenize` |
+|---|---|---|
+| Output is | derived from the value | drawn at random |
+| Reversed by | holding the salt | reading the vault |
+| A weak secret | is brute-forced offline | does not exist |
+| Rotating it | changes every value at once | is a store migration |
+| Discloses equality | yes | yes |
+
+So `Tokenize` closes the *derivation* class — recomputation, and offline dictionary work against a
+guessable salt — and closes nothing else. A deployment that cannot accept equality disclosure has to
+stop preserving equality, which means `Fixed`, `Null`, or denying the field outright.
 
 ---
 
@@ -779,6 +881,19 @@ Any future store provider inherits the whole suite.
 
 Guarded against unguarded, asserting the 5 percent budget. Mutator cache hit and miss, resolution cost, sanitize cost. CI fails on regression beyond threshold.
 
+> **Correction (2026-09-10).** **CI does not fail on a benchmark regression, and deliberately does
+> not.** A timing gate on a shared runner fails for a neighbour's build, and the workflow it would
+> gate is the one that publishes to NuGet — a release blocked by noise is a worse outcome than a
+> regression caught on the next manual run. `DynamicWhere.Benchmarks` is run by hand:
+>
+> ```
+> dotnet run -c Release --project DynamicWhere.Benchmarks -- --filter "*PolicyBenchmarks*" --job medium
+> ```
+>
+> Six benchmarks at two row counts. `GuardedNoPolicy` is the one the gating budget is held to;
+> `GuardedGatingOnly` prices deny-select; `Guarded` prices the transform walk. Without all three the
+> end-to-end number cannot say which part moved. See the correction to §6.5.
+
 ### 8.7 Coverage grid
 
 | Axis | Cases |
@@ -812,5 +927,6 @@ All four were settled before or during Phase 1. Recorded here as the decisions t
 
 - `Segment` has its own `PolicyFeature` flag, `32`; `All` is `63`. Resolved in Phase 1.
 - `MinGroupSize` is a global option with a per-field attribute override. Lands in Phase 8.
-- Tokenize is deferred to v3.1. The other eight mask strategies ship in v3.0.
+- ~~Tokenize is deferred to v3.1. The other eight mask strategies ship in v3.0.~~ **Withdrawn
+  2026-09-10: all nine ship in v3.0, with a vault behind the ninth. See §4.4 and §7.6.**
 - The entry method is `ApplyPolicy(ctx)`; the class-level flag is `[DwEntity(RequirePolicy = true)]`.

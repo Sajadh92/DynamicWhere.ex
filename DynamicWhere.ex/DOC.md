@@ -1471,7 +1471,7 @@ A context carries the snapshot it was served, and the staleness ceiling measures
 | `[DwAlias("name")]` | member | A public name, accepted anywhere a field path is, renamed back on output |
 | `[DwForceWhere(op, Value =, ContextValue =)]` | member | A predicate ANDed into every guarded query |
 | `[DwRequireWhere(Operators =)]` | member | The caller must filter on this member |
-| `[DwMask(strategy)]` | member | `Full` `Partial` `Email` `Phone` `Regex` `Fixed` `Hash` `Null` |
+| `[DwMask(strategy)]` | member | `Full` `Partial` `Email` `Phone` `Regex` `Fixed` `Hash` `Null` `Tokenize` |
 | `[DwMutate(typeof(T))]` | member | Hand the value to an `IValueTransformer`; the type is checked at startup |
 | `[DwDefault]` / `[DwDefault("v")]` | member | Replace with the type default or a constant |
 | `[DwGeneralize(mode)]` | member | `Round` `Bucket` `DatePart` `Truncate` — reduce precision, keep the type |
@@ -1534,6 +1534,61 @@ DwPolicy.Configure(policyOptions, provider);
 
 A rule can never target a field the source code seals — refused in `PolicyRule`'s constructor, so it holds for every store and for the admin API alike.
 
+### Hiding a value you still want to group by
+
+Two strategies keep a column usable while hiding what is in it. Both map one value to one output,
+so a caller can still group by the column, join two results on it and count distinct subjects.
+
+```csharp
+[DwMask(MaskStrategy.Hash)]        // needs DwPolicyOptions.HashSalt
+[DwMask(MaskStrategy.Tokenize)]    // needs DwPolicyOptions.TokenVault
+```
+
+A **hash** is computed from the value. It is HMAC-SHA256 keyed by `HashSalt`, which must be at
+least 16 characters — a shorter one is refused where it is written, because a salt that can be
+brute-forced offline puts every digest the deployment ever emitted back within reach. A blank salt
+means none is configured, and a hashing query is then refused with `MissingHashSalt`.
+
+A **token** is not computed from anything. It is drawn at random the first time a value is seen and
+written down in `TokenVault`, so the only way back to the value is to read the vault. That makes the
+mapping a store you can lock, move and revoke separately from the data, rather than a secret sitting
+in configuration. A tokenizing query with no vault is refused with `MissingTokenVault`.
+
+```csharp
+new DwPolicyOptions
+{
+    HashSalt   = secret,                 // 16 characters or more
+    TokenVault = new InMemoryTokenVault() // or RedisTokenVault, or EfTokenVault
+}
+```
+
+| | `Hash` | `Tokenize` |
+|---|---|---|
+| Output | 32 hex characters | 32 hex characters |
+| Derived from the value | yes | no |
+| Reversed by | holding the salt | reading the vault |
+| A weak secret | brute-forced offline | does not exist |
+| Survives a restart | always | only with a durable vault |
+| Discloses equality | yes | yes |
+
+Three vaults ship, all held to one conformance suite. `InMemoryTokenVault` lives and dies with the
+process, which is right for a test and wrong for any column compared across restarts.
+`RedisTokenVault` and `EfTokenVault` keep the mapping outside the process, and each caches every
+mapping it resolves — a token is written once and never rewritten, so a cached answer cannot go
+stale.
+
+Tokens are namespaced by the field's own path, so two columns holding the same value get different
+tokens. Name a shared `TokenScope` when you want them to match:
+
+```csharp
+[DwMask(MaskStrategy.Tokenize, TokenScope = "person-identifier")]
+public string NationalId { get; set; }
+```
+
+**What neither closes.** Anyone who can write a chosen value and read the column back masked learns
+that value's output and can then recognise it in every other row. That is inherent in preserving
+equality and no setting removes it. A field that cannot accept it wants `Fixed`, `Null`, or a denial.
+
 ### k-anonymity — the control you would not guess
 
 `SUM`, `MAX` and `MIN` execute **in SQL against the stored value**, before any transform applies. `GROUP BY Department` with `MAX(Salary)` over a department of one returns that person's exact salary.
@@ -1548,7 +1603,15 @@ Two halves, and neither works alone:
 public decimal Salary { get; set; }
 ```
 
-`DwCaps.MinGroupSize` is the global floor and defaults to **1 — off**, because any other default would silently change the result of an existing grouping query. A per-field `MinGroupSize` raises it for that field. Turn it on deliberately.
+`DwCaps.MinGroupSize` is the global floor and **defaults to 5**. A per-field `MinGroupSize` raises it for that field; the effective floor is the largest in play.
+
+Say `MinGroupSize = 1` to switch it off, and it is off — in production, with nothing refused and nothing warned about. The setting starts *unset* rather than at one precisely so that those two are different sentences: `IsMinGroupSizeSet` tells a deliberate opt-out from a deployment that never heard of the control, and without that distinction any check strict enough to catch the second would trap the first.
+
+```csharp
+new DwPolicyOptions()                                  // floor of 5
+new DwPolicyOptions { Caps = { MinGroupSize = 1 } }    // no floor, and meant
+new DwPolicyOptions { Caps = { MinGroupSize = 10 } }   // stricter
+```
 
 ### Configuration
 
@@ -1561,7 +1624,7 @@ public decimal Salary { get; set; }
 | `MaxQueryCost` | 1000 | Budget consumed by `[DwCost]` weights |
 | `DefaultFieldCost` | 1 | Charged for an unweighted field |
 | `MaxAuditEvents` | 10000 | Audit buffer before draining |
-| `MinGroupSize` | 1 (off) | k-anonymity group floor |
+| `MinGroupSize` | 5 | k-anonymity group floor. Set 1 to switch it off |
 
 Options are frozen at startup. Every cap refuses a value below one, except `DefaultFieldCost`, which accepts zero: that is the posture for a model weighing only its few expensive fields and leaving the rest free.
 
@@ -1581,20 +1644,44 @@ Options are frozen at startup. Every cap refuses a value below one, except `Defa
 
 ### Performance
 
+There are two budgets, because there are two costs. Gating is paid **once per query**;
+transformation is paid **per row per transformed field**, so no single percentage describes it — the
+same guard is 1.16× over a hundred rows and 1.62× over ten thousand, on identical code.
+
 Measured with BenchmarkDotNet over 10,000 in-memory rows:
 
-| | Unguarded | Gating only | Gating + transforms |
-|---|---|---|---|
-| Time | 741 µs | 857 µs (1.16×) | 1,933 µs (2.61×) |
-| Allocated | 210 KB | 409 KB (1.94×) | 3,397 KB (16.2×) |
+| 10,000 rows | Time | Allocated |
+|---|---|---|
+| Unguarded | 685 µs | 210 KB |
+| Guarded, nothing denied or transformed | 683 µs (**1.00×**) | 220 KB (**1.05×**) |
+| Guarded, one field deny-select | 785 µs (1.15×) | 409 KB (1.95×) |
+| Guarded, two fields transformed on every row | 1,111 µs (1.62×) | 1,488 KB (7.1×) |
 
-Gating and injection are paid once per query; the transform walk is paid **per row**, and it clones what it touches because values change after materialization rather than in SQL. A cached field resolve is 239–250 ns and sanitizing a five-condition filter is 2.8 µs.
+**Gating costs nothing measurable.** Resolving every field, sanitizing the filter and injecting
+forced predicates lands inside the noise of the unguarded query.
 
-There is no database round trip in those numbers, so the policy layer's share looks as large as it ever can — against a real query the I/O dominates.
+**Deny-select costs 1.15×** because denying a field means the query projects instead of returning
+entities. That belongs to the feature rather than to the guard.
+
+**Transformation costs about 21 ns and 65 bytes per value**, against a design budget of 100 ns. It
+has to build a new value for each one, because the change happens after materialization rather than
+in SQL.
+
+A cached field resolve is 232–234 ns against a 1 µs target, and sanitizing a five-condition filter
+is 2.8 µs against 50 µs.
+
+There is no database round trip in those numbers, so the policy layer's share looks as large as it
+ever can — against a real query the I/O dominates.
+
+Run them yourself:
+
+```
+dotnet run -c Release --project DynamicWhere.Benchmarks -- --filter "*PolicyBenchmarks*" --job medium
+```
 
 ### Error codes
 
-`PolicyException.ErrorCode`, values 1–20: `FieldDeniedForWhere` `FieldDeniedForSelect` `FieldDeniedForOrder` `FieldDeniedForGroup` `FieldDeniedForAggregate` `FieldDeniedForSegment` `AllSelectsDenied` `OperatorNotAllowed` `CapExceeded` `PolicyRequired` `RequiredFilterMissing` `MissingContextValue` `AmbiguousFieldName` `QueryStringDenied` `AmbiguousGroupKey` `TransformRequiresMaterialization` `StoreUnavailable` `PolicyContextNotPrepared` `QueryCostExceeded` `GroupTooSmall`.
+`PolicyException.ErrorCode`, values 1–22: `FieldDeniedForWhere` `FieldDeniedForSelect` `FieldDeniedForOrder` `FieldDeniedForGroup` `FieldDeniedForAggregate` `FieldDeniedForSegment` `AllSelectsDenied` `OperatorNotAllowed` `CapExceeded` `PolicyRequired` `RequiredFilterMissing` `MissingContextValue` `AmbiguousFieldName` `QueryStringDenied` `AmbiguousGroupKey` `TransformRequiresMaterialization` `StoreUnavailable` `PolicyContextNotPrepared` `QueryCostExceeded` `GroupTooSmall` `MissingHashSalt` `MissingTokenVault`.
 
 ---
 

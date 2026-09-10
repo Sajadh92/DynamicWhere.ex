@@ -21,4 +21,15 @@ public class OrderBy
     /// The sorting direction.
     /// </summary>
     public Direction Direction { get; set; } = Direction.Ascending;
+
+    /// <summary>
+    /// Returns a copy. <see cref="Field"/> is rewritten in place by the validator, so a guarded
+    /// query sorts a copy rather than the caller's own instance.
+    /// </summary>
+    internal OrderBy Clone() => new()
+    {
+        Sort = Sort,
+        Field = Field,
+        Direction = Direction
+    };
 }

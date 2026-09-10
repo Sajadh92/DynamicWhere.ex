@@ -1,4 +1,4 @@
-using DynamicWhere.API.Models;
+﻿using DynamicWhere.API.Models;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -356,6 +356,74 @@ public static class DataSeeder
         };
 
         await context.Employees.AddAsync(manager);
+
+        // A team large enough to demonstrate k-anonymity, which two employees cannot.
+        //
+        // DwCaps.MinGroupSize suppresses any group smaller than k, so a department of one is refused
+        // rather than returned — and with only a CEO and a manager on file, every group was a
+        // singleton and the guard could only ever be seen refusing. Engineering gets eight so an
+        // aggregate over it is served; Support gets two so the same query over a smaller group is
+        // still refused. Both cases matter: a floor that only ever refuses looks like a broken
+        // feature, and one that only ever allows looks like no feature at all.
+        var team = new[]
+        {
+            ("Priya",  "Raman",     "Engineering", 118000m, EmploymentType.FullTime,   "Senior Engineer"),
+            ("Marcus", "Bell",      "Engineering", 104000m, EmploymentType.FullTime,   "Engineer"),
+            ("Lena",   "Fischer",   "Engineering",  99000m, EmploymentType.FullTime,   "Engineer"),
+            ("Omar",   "Haddad",    "Engineering", 112000m, EmploymentType.FullTime,   "Senior Engineer"),
+            ("Yuki",   "Tanaka",    "Engineering",  87000m, EmploymentType.Contract,   "Engineer"),
+            ("Sofia",  "Marchetti", "Engineering",  93000m, EmploymentType.FullTime,   "Engineer"),
+            ("Daniel", "Okafor",    "Support",      71000m, EmploymentType.FullTime,   "Support Lead"),
+            ("Aisha",  "Nasser",    "Support",      64000m, EmploymentType.PartTime,   "Support Analyst")
+        };
+
+        int code = 3;
+
+        foreach ((string first, string last, string department, decimal salary,
+                  EmploymentType employment, string position) in team)
+        {
+            await context.Employees.AddAsync(new Employee
+            {
+                Id = Guid.NewGuid(),
+                FirstName = first,
+                LastName = last,
+                Email = $"{first.ToLowerInvariant()}.{last.ToLowerInvariant()}@company.com",
+                EmployeeCode = $"EMP{code:D3}",
+                HireDate = DateTime.SpecifyKind(new DateTime(2019, 1, 1).AddDays(code * 37), DateTimeKind.Utc),
+                IsActive = true,
+                Salary = salary,
+                EmploymentType = employment,
+                Department = department,
+                Position = position,
+                ManagerId = manager.Id,
+                Address = new Address
+                {
+                    Street = $"{100 + code} Market Street",
+                    City = "San Francisco",
+                    State = "CA",
+                    Country = "USA",
+                    ZipCode = "94105"
+                },
+                Skills =
+                [
+                    new Skill { Name = "C#", ProficiencyLevel = 4, YearsOfExperience = 6 }
+                ],
+                // Populated so the nested-collection mask has something to mask. A demo that walks
+                // into an empty list proves the walk did not throw, not that it transforms.
+                EmergencyContacts =
+                [
+                    new EmergencyContact
+                    {
+                        Name = $"{first} (next of kin)",
+                        Relationship = "Spouse",
+                        PhoneNumber = $"+1-415-555-{1000 + code:D4}",
+                        AlternatePhoneNumber = $"+1-415-555-{2000 + code:D4}"
+                    }
+                ]
+            });
+
+            code++;
+        }
 
         await context.SaveChangesAsync();
 

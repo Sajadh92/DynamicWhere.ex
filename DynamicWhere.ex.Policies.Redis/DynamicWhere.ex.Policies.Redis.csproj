@@ -1,0 +1,57 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StackExchange.Redis" Version="2.8.24" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DynamicWhere.ex\DynamicWhere.ex.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The key layout is internal: it is an implementation detail of where this store puts things
+         in Redis, and publishing it would commit the layout as API. The conformance suite needs to
+         address a fresh prefix per store, which is what this opens up. -->
+    <InternalsVisibleTo Include="DynamicWhere.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+      <PackageId>DynamicWhere.ex.Policies.Redis</PackageId>
+      <Title>DynamicWhere.ex Policies — Redis store</Title>
+      <Description>A Redis-backed policy store for DynamicWhere.ex field-level policies. Holds runtime rules in Redis and invalidates through pub/sub, so a policy change reaches every instance in milliseconds rather than at the next poll. Implements IDwPolicyStore and IDwPolicyWritableStore, and passes the same store conformance suite the in-memory and Entity Framework stores do. Broad rules load whole; user-level rules are fetched per caller, so a million users cost nothing at startup. Requires DynamicWhere.ex. Full reference at https://doc.dynamicwhere.com.</Description>
+      <Summary>Redis-backed policy store with pub/sub invalidation for DynamicWhere.ex.</Summary>
+      <PackageTags>DynamicWhere DynamicWhere.ex Redis StackExchangeRedis Policy PolicyStore FieldLevelSecurity DataMasking Authorization RBAC ABAC Multitenancy EFCore EntityFrameworkCore Cache PubSub DotNet NET6 CSharp</PackageTags>
+      <Authors>Sajjad H. Al-Khafaji</Authors>
+      <Company>Sajjad H. Al-Khafaji</Company>
+      <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
+      <PackageLicenseExpression>MIT</PackageLicenseExpression>
+      <!-- Locked to the core's version. build/check-version.ps1 fails the build when the three
+           disagree, because publish.yml packs all three from one push and a provider shipped at a
+           version its core was never built against is a dependency nobody tested. -->
+      <Version>3.0.0</Version>
+      <PackageReleaseNotes>v3.0.0 — First release. A Redis-backed policy store for the DynamicWhere.ex field-level policy layer, introduced in DynamicWhere.ex 3.0.0. Holds runtime rules in Redis and invalidates through pub/sub with a poll behind it, because pub/sub is fire-and-forget and the poll is what bounds a dropped message. Passes the same store conformance suite as the in-memory and Entity Framework Core stores. Requires DynamicWhere.ex 3.0.0.</PackageReleaseNotes>
+      <PackageProjectUrl>https://doc.dynamicwhere.com</PackageProjectUrl>
+      <RepositoryType>git</RepositoryType>
+      <RepositoryBranch>master</RepositoryBranch>
+      <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
+      <PackageIcon>icon.png</PackageIcon>
+      <PackageReadmeFile>README.md</PackageReadmeFile>
+      <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+      <PublishRepositoryUrl>true</PublishRepositoryUrl>
+      <IncludeSymbols>true</IncludeSymbols>
+      <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+      <GenerateDocumentationFile>true</GenerateDocumentationFile>
+      <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+      <None Include="..\DynamicWhere.ex\icon.png" Pack="true" PackagePath="\" />
+      <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

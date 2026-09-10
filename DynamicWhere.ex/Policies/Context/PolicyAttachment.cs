@@ -1,0 +1,93 @@
+using DynamicWhere.ex.Policies.Storage;
+
+namespace DynamicWhere.ex.Policies.Context;
+
+/// <summary>
+/// What one store provider pinned to one caller's context when the context was prepared: the
+/// snapshot that provider will read for the life of the context, and that caller's user-level
+/// rules.
+/// </summary>
+/// <remarks>
+/// The two travel together because they answer the same question at the same instant. Resolving the
+/// narrow zone lazily on the query path would need I/O inside <c>GetFragments</c>, which is
+/// synchronous and documented to perform none; re-reading the snapshot per field would let a
+/// refresh land between two fields of one query, so a filter could be gated on version 41 and a
+/// projection on version 42.
+/// <para>
+/// The presence of an attachment is itself the signal that somebody looked. A context without one
+/// is refused rather than served from the broad zone alone, because a user-level denial that
+/// silently does not apply is indistinguishable from a caller who has no user rules.
+/// </para>
+/// </remarks>
+internal sealed class PolicyAttachment
+{
+    /// <summary>Initializes an attachment.</summary>
+    /// <param name="snapshot">The pinned broad zone.</param>
+    /// <param name="loadedAt">
+    /// When the provider's own clock said the snapshot loaded, for the staleness ceiling.
+    /// </param>
+    /// <param name="narrow">This caller's user-level rules.</param>
+    /// <param name="preparedFor">
+    /// The user identities the narrow zone was read for, so a context whose caller changed
+    /// afterwards can be told apart from one that did not.
+    /// </param>
+    internal PolicyAttachment(
+        StoreSnapshot snapshot,
+        DateTimeOffset loadedAt,
+        NarrowZone narrow,
+        IReadOnlyCollection<string> preparedFor)
+    {
+        Snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
+        LoadedAt = loadedAt;
+        Narrow = narrow ?? throw new ArgumentNullException(nameof(narrow));
+        PreparedFor = new HashSet<string>(preparedFor, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The broad zone this context reads, fixed for its lifetime.</summary>
+    internal StoreSnapshot Snapshot { get; }
+
+    /// <summary>
+    /// When the provider loaded that snapshot, by the provider's own clock.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <c>StoreSnapshot.LoadedAt</c>, which a store stamps with a clock this
+    /// library does not control. A store clock running ahead would make every snapshot look
+    /// fresher than it is and silently extend the ceiling; the provider stamps its own.
+    /// </remarks>
+    internal DateTimeOffset LoadedAt { get; }
+
+    /// <summary>The caller's user-level rules, read once.</summary>
+    internal NarrowZone Narrow { get; }
+
+    /// <summary>
+    /// The user identities the narrow zone was read for.
+    /// </summary>
+    /// <remarks>
+    /// A context is mutable, so a user subject can be added after it was prepared — and that user's
+    /// rules would then never have been read. Identities are compared rather than counted: two
+    /// identities are not the same two identities.
+    /// </remarks>
+    internal HashSet<string> PreparedFor { get; }
+
+    /// <summary>
+    /// True when the narrow zone was read for every user identity the caller now claims.
+    /// </summary>
+    /// <remarks>
+    /// One direction only. A caller who <em>gained</em> an identity has rules nobody read, which is
+    /// a denial that does not apply. A caller who <em>lost</em> one is safe without a second check:
+    /// the zone holds rules for a subject the context no longer claims, and those fail the ordinary
+    /// subject match.
+    /// </remarks>
+    internal bool Covers(IEnumerable<string> userIdentities)
+    {
+        foreach (string identity in userIdentities)
+        {
+            if (!PreparedFor.Contains(identity))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}

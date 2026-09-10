@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
@@ -11,6 +11,14 @@
     <PackageReference Include="System.Linq.Dynamic.Core" Version="1.6.7" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The policy gate is internal on purpose: the sanitizer, the deep clones it relies on, and
+         the guard check are implementation details of ApplyPolicy, not API a consumer calls. They
+         still need direct tests, and publishing them to get those would commit them as surface
+         permanently. -->
+    <InternalsVisibleTo Include="DynamicWhere.Tests" />
+  </ItemGroup>
+
   <PropertyGroup>
       <PackageId>DynamicWhere.ex</PackageId>
       <Title>DynamicWhere.ex — JSON-driven queries for EF Core</Title>
@@ -21,14 +29,36 @@
       <Company>Sajjad H. Al-Khafaji</Company>
       <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
       <PackageLicenseExpression>MIT</PackageLicenseExpression>
-      <Version>2.1.5</Version>
+      <Version>3.0.0</Version>
       <PackageProjectUrl>https://doc.dynamicwhere.com</PackageProjectUrl>
       <RepositoryType>git</RepositoryType>
       <RepositoryBranch>master</RepositoryBranch>
       <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
       <PackageIcon>icon.png</PackageIcon>
       <PackageReadmeFile>README.md</PackageReadmeFile>
-      <PackageReleaseNotes>v2.1.5 — Documentation only. Fixes the XML documentation shipped with the package, which drives IntelliSense in consuming projects: an unescaped generic argument in the Select&lt;T&gt; comment truncated its remarks and returns text, three ToList/ToListAsync overloads were missing the getQueryString parameter description, and CacheReporting.GetQuickHealthSummary documented a parameter it does not take. The library now builds with zero warnings. No API or behaviour changes from 2.1.4.
+      <PackageReleaseNotes>v3.0.0 — Field-level policies. A new layer that decides what each caller may filter, sort, select, group, aggregate, and see. Additive: nothing enforces until you opt in, and a project with no policy attributes and no DwPolicy.Configure call behaves exactly as 2.1.5.
+
+Entry point: query.ApplyPolicy(ctx) returns a guarded handle. Requests are sanitized before the query is built and results are transformed after they materialize; the query engine itself is unchanged.
+
+Access control: [DwDeny] and six named sugar attributes refuse any of Where, Select, Order, Group, Aggregate or Segment per field. [DwOperators] restricts which operators may target a field. [DwEntity(RequirePolicy = true)] makes an unguarded query on the type throw instead of returning rows.
+
+Injection: [DwAlias] gives a field a public name, renamed back on the way out. [DwForceWhere] adds a predicate to every guarded query — a tenant boundary, a soft-delete filter, an ownership check. [DwRequireWhere] makes a filter on the field mandatory.
+
+Transformation, applied in memory after materialization: [DwMask] with eight strategies (Full, Partial, Email, Phone, Regex, Fixed, Hash, Null), plus [DwMutate], [DwDefault], [DwGeneralize], [DwTruncate] and [DwFormat].
+
+Precedence: six levels, sealed attributes first and overridable attributes last, with dynamic user, role, tenant and global rules in between. Attributes are sealed by default, so a compile-time decision cannot be lifted by a runtime rule unless you mark it Overridable.
+
+Dynamic rules: an optional store supplies rules at runtime without a redeploy, split into a cached broad zone and a per-request narrow zone. Ships in-memory; Redis and Entity Framework Core stores are separate packages. A context must be prepared once per request with DwPolicy.PrepareAsync(ctx), and an unprepared context is refused rather than silently falling back to attributes.
+
+k-anonymity: aggregating a transformed field is denied by default and opted into with AllowAggregate = true. DwCaps.MinGroupSize suppresses any group smaller than k, so an aggregate cannot be read off a group of one. It defaults to 1 — off — because any other default would change the result of an existing grouping query. Turn it on deliberately: see https://doc.dynamicwhere.com/docs/policies/security.
+
+Also: query cost budgets with [DwCost], audit trails with [DwAudit] and IDwAuditSink, schema discovery with [DwDescribe] and [DwAllowedValues], startup model validation, a dry-run mode, and a PolicyTrace on FilterResult and SummaryResult reporting what the policy did.
+
+Breaking changes: none to the 2.x API. FilterResult&lt;T&gt; and SummaryResult each gain one nullable Policy property, null when the query was not guarded.
+
+MaskStrategy.Tokenize is deferred to a later release; the other eight strategies ship.
+
+v2.1.5 — Documentation only. Fixes the XML documentation shipped with the package, which drives IntelliSense in consuming projects: an unescaped generic argument in the Select&lt;T&gt; comment truncated its remarks and returns text, three ToList/ToListAsync overloads were missing the getQueryString parameter description, and CacheReporting.GetQuickHealthSummary documented a parameter it does not take. The library now builds with zero warnings. No API or behaviour changes from 2.1.4.
 
 v2.1.4 — Security and correctness fix. Recommended for all users.
 

@@ -24,6 +24,7 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 - **Nested navigation** through references and collections, with auto-wrapped `.Any()` lambdas where needed.
 - **Heterogeneous `Condition.Values`** — pass raw numbers, booleans, strings; normalized per `DataType`.
 - **Thread-safe reflection cache** with FIFO / LRU / LFU eviction and six tuned presets.
+- **Field-level policies** *(new in 3.0)* — decide per caller what may be filtered, sorted, selected, grouped, aggregated and seen. Opt-in: nothing enforces until you ask.
 - **Free Forever.** Targets .NET 6, 7, 8, 9.
 
 ---
@@ -31,13 +32,13 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 ## Install
 
 ```bash
-dotnet add package DynamicWhere.ex --version 2.1.5
+dotnet add package DynamicWhere.ex --version 3.0.0
 ```
 
 Or via Package Manager:
 
 ```powershell
-Install-Package DynamicWhere.ex -Version 2.1.5
+Install-Package DynamicWhere.ex -Version 3.0.0
 ```
 
 Dependencies (restored automatically):
@@ -172,6 +173,101 @@ Rows with an empty collection sort as `null` (or the type default for non-nullab
 
 ---
 
+## Field-level policies
+
+*New in 3.0. Entirely opt-in — a project with no policy attributes and no `DwPolicy.Configure` call behaves exactly as 2.1.5.*
+
+The library accepts a JSON `Filter` from any caller and turns it into a query. Policies add the missing question: **who is asking, and what are they allowed to see?**
+
+```csharp
+// Once, at startup.
+DwPolicy.Configure(new DwPolicyOptions { Tier = DwTier.Convenience, HashSalt = secret });
+
+// Once per request.
+var caller = await DwPolicy.PrepareAsync(
+    new DwPolicyContext()
+        .WithSubject(DwSubjectKind.User, userId)
+        .WithSubject(DwSubjectKind.Role, "Support"));
+
+// Then query through the guarded handle instead of the raw IQueryable.
+var result = await db.Employees.ApplyPolicy(caller).ToListAsync(filter);
+```
+
+Requests are sanitized before the query is built; results are transformed after they materialize. The query engine itself is unchanged.
+
+```csharp
+[DwEntity(RequirePolicy = true)]          // an unguarded read throws instead of returning rows
+public class Employee
+{
+    [DwMask(MaskStrategy.Email), DwNoOrder]
+    public string Email { get; set; }      // s*************@c******.com on the way out
+
+    [DwForceWhere(Operator.Equal, Value = "true")]
+    public bool IsActive { get; set; }     // ANDed into every guarded query, asked for or not
+
+    [DwGeneralize(GeneralizeMode.Round, Step = 5000, AllowAggregate = true, MinGroupSize = 5)]
+    [DwNoOrder, DwAudit, DwCost(10)]
+    public decimal Salary { get; set; }    // rounded, aggregatable only over groups of 5+
+
+    [DwDenied]
+    public JsonDocument? WorkSchedule { get; set; }   // absent from /schema, rejected by POST /rules
+}
+```
+
+**Six features, per field:** `Where` · `Select` · `Order` · `Group` · `Aggregate` · `Segment`.
+
+| Attribute | What it does |
+|---|---|
+| `[DwDeny]`, `[DwDenied]`, `[DwNoWhere]`, `[DwNoSelect]`, `[DwNoOrder]`, `[DwNoGroup]`, `[DwNoAggregate]` | Refuse features for a field |
+| `[DwOperators]` | Restrict which operators may target it |
+| `[DwAlias]` | Give it a public name, renamed back on the way out |
+| `[DwForceWhere]` | Add a predicate to every guarded query — tenant scope, soft delete, ownership |
+| `[DwRequireWhere]` | Make a filter on it mandatory |
+| `[DwMask]` | Obscure the value — 9 strategies: `Full` `Partial` `Email` `Phone` `Regex` `Fixed` `Hash` `Null` `Tokenize` |
+| `[DwMutate]`, `[DwDefault]`, `[DwGeneralize]`, `[DwTruncate]`, `[DwFormat]` | The other five transforms |
+| `[DwDescribe]`, `[DwAllowedValues]`, `[DwCost]`, `[DwAudit]` | Schema discovery, query budget, audit trail |
+
+### Sealed by default
+
+Attributes cannot be lifted by a runtime rule unless you mark them `Overridable = true`. Six precedence levels decide every field, sealed attributes first and overridable attributes last, with dynamic user, role, tenant and global rules in between.
+
+### Rules without a redeploy
+
+An optional store supplies rules at runtime, split into a cached broad zone and a per-request narrow zone. In-memory ships in the core package; **Redis** and **Entity Framework Core** are separate packages. A store can never grant a field the source code seals.
+
+### The control you would not guess: `MinGroupSize`
+
+`SUM`, `MAX` and `MIN` run **in SQL, against the stored value**, before any mask can apply — so `MAX(Salary)` over a department of one returns that person's exact pay. Aggregating a transformed field is therefore **denied by default**, opted into with `AllowAggregate = true`, and bounded by `MinGroupSize`, which suppresses any group smaller than *k*.
+
+It **defaults to 5**. Write `MinGroupSize = 1` to switch it off and it is off, in production, with nothing refused and nothing warned about — the setting starts unset rather than at one precisely so that "off" and "never configured" stay different sentences. → **[Security & k-anonymity](https://doc.dynamicwhere.com/docs/policies/security)**
+
+### Hiding a value you still want to group by
+
+`Hash` and `Tokenize` both keep a column groupable and joinable while hiding what is in it. The difference is where the secret lives.
+
+A hash is **computed from the value**, with HMAC-SHA256 keyed by `HashSalt` — at least 16 characters, or it is refused where it is written. Whoever holds that salt can recompute every digest the deployment ever emitted.
+
+A token is **drawn at random** and written into `TokenVault`, so the only way back is to read the vault: a store you can lock, move and revoke separately from the data. Three ship — in-memory in the core package, Redis and Entity Framework Core in the providers — all held to one conformance suite.
+
+```csharp
+new DwPolicyOptions { HashSalt = secret, TokenVault = new RedisTokenVault(redis) }
+```
+
+Neither closes equality, and that is the point of both: the same value maps to the same output so the column stays usable, which also means anyone who can write a chosen value and read it back learns that one value's stand-in. → **[Transforms](https://doc.dynamicwhere.com/docs/policies/transforms)**
+
+### The four packages
+
+| Package | What it adds |
+|---|---|
+| `DynamicWhere.ex` | Everything above |
+| `DynamicWhere.ex.Policies.Redis` | Rules in Redis, pub/sub invalidation with a poll behind it |
+| `DynamicWhere.ex.Policies.EntityFrameworkCore` | Rules in any EF Core provider |
+| `DynamicWhere.ex.Policies.AspNetCore` | Admin API — schema, rules, explain, simulate, health. Refuses to mount without a named authorization policy |
+
+**Full guide → [doc.dynamicwhere.com/docs/policies](https://doc.dynamicwhere.com/docs/policies)**
+
+---
+
 ## Reflection cache
 
 A thread-safe `ConcurrentDictionary`-backed cache across three stores (TypeProperties · PropertyPath · CollectionElementType) eliminates reflection overhead on repeated queries. Three eviction strategies and six tuned presets:
@@ -230,11 +326,19 @@ The complete reference — every enum, class, extension method, validation rule,
 | [Extension Methods](https://doc.dynamicwhere.com/docs/extensions) | All 17 methods with signatures, validations, examples |
 | [Validation Rules](https://doc.dynamicwhere.com/docs/validation)  | What's checked and what throws |
 | [JSON Cookbook](https://doc.dynamicwhere.com/docs/examples)       | 13 copy-pasteable end-to-end examples |
+| [Field-Level Policies](https://doc.dynamicwhere.com/docs/policies) | Attributes, precedence, masking, dynamic rules, admin API, k-anonymity |
 | [Cache & Optimization](https://doc.dynamicwhere.com/docs/cache)   | Architecture, stores, options, presets, monitoring |
 | [Error Codes](https://doc.dynamicwhere.com/docs/errors)           | Every `LogicException` message |
 | [Breaking Changes](https://doc.dynamicwhere.com/docs/breaking-changes) | Known limits and migration notes |
 
 ---
+
+## Version 3.0.0 highlights
+
+- **New: field-level policies.** A layer that decides what each caller may filter, sort, select, group, aggregate and see — attributes for the compile-time half, an optional store for the runtime half. See [above](#field-level-policies).
+- **New: three companion packages.** `Policies.Redis` and `Policies.EntityFrameworkCore` hold rules; `Policies.AspNetCore` mounts the admin API, explain, simulate and health, and refuses to map without a named authorization policy.
+- **No breaking changes.** The 2.x API is untouched. `FilterResult<T>` and `SummaryResult` each gain one nullable `Policy` property, null when the query was not guarded. Nothing enforces until you opt in.
+- **Worth knowing before you turn it on:** gating costs nothing measurable, but transforming every row of a large result costs about 1.6x in time and 7x in allocations, because each value is rebuilt after materialization rather than in SQL. `MinGroupSize` ships **on at 5**, so a guarded summary suppresses groups under five until you say otherwise — see [Security](https://doc.dynamicwhere.com/docs/policies/security) and [Configuration](https://doc.dynamicwhere.com/docs/policies/configuration).
 
 ## Version 2.1.5 highlights
 

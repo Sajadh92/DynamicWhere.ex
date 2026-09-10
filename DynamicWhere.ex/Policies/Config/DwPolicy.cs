@@ -1,0 +1,300 @@
+﻿using DynamicWhere.ex.Policies.Audit;
+using DynamicWhere.ex.Policies.Context;
+using DynamicWhere.ex.Policies.Resolution;
+using DynamicWhere.ex.Policies.Validation;
+
+namespace DynamicWhere.ex.Policies.Config;
+
+/// <summary>
+/// The application-wide policy configuration that <c>ApplyPolicy</c> reads from.
+/// </summary>
+/// <remarks>
+/// The enforcement posture is not a per-call parameter, so it has to live somewhere a call site can
+/// reach without being handed it — a posture a developer can forget to pass at one call site is not
+/// a posture at all. This is that place: set once during startup, frozen, and read from every
+/// guarded query afterwards.
+/// <para>
+/// Left unconfigured, the defaults enforce the attributes in the source code at the convenience
+/// tier. That is deliberately a working configuration rather than an inert one: a policy layer that
+/// silently does nothing until someone remembers to switch it on is worse than no policy layer,
+/// because the attributes in the code read as though they are in force.
+/// </para>
+/// </remarks>
+public static class DwPolicy
+{
+    private static readonly object Lock = new();
+
+    private static DwPolicyOptions _options = CreateDefaultOptions();
+    private static PolicyResolver _resolver = CreateResolver(Array.Empty<IDwPolicyProvider>());
+    private static IReadOnlyList<StorePolicyProvider> _stores = Array.Empty<StorePolicyProvider>();
+    private static bool _configured;
+
+    /// <summary>
+    /// The enforcement posture in force. Frozen — change it through <see cref="Configure"/>.
+    /// </summary>
+    public static DwPolicyOptions Options => _options;
+
+    /// <summary>True once <see cref="Configure"/> has been called.</summary>
+    public static bool IsConfigured => _configured;
+
+    /// <summary>The resolver every guarded query consults.</summary>
+    public static PolicyResolver Resolver => _resolver;
+
+    /// <summary>
+    /// The store-backed providers configured, in the order they were supplied.
+    /// </summary>
+    /// <remarks>
+    /// Exposed for a health endpoint, which reports each one's version, age and last error. There is
+    /// nothing to enforce with here: a provider hands out fragments and the resolver decides, so
+    /// reading this cannot change what any query is permitted to do.
+    /// </remarks>
+    public static IReadOnlyList<StorePolicyProvider> StoreProviders => _stores;
+
+    /// <summary>
+    /// Sets the posture and the runtime policy sources, once, during startup.
+    /// </summary>
+    /// <param name="options">The posture. Frozen by this call.</param>
+    /// <param name="providers">
+    /// Runtime policy sources, in any order. The attribute provider is always present and does not
+    /// need to be listed.
+    /// </param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="options"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when called more than once.</exception>
+    /// <remarks>
+    /// Refused after the first call. The posture is read by every request thread without
+    /// synchronization, and a tier that can change while requests are in flight is one that can be
+    /// relaxed by a code path nobody expected to be security-relevant.
+    /// <para>
+    /// <see cref="AttributePolicyProvider"/> is added whether or not it appears in
+    /// <paramref name="providers"/>. Attributes are the sealed level, and a configuration that
+    /// omitted them would let a runtime store grant access the source code refuses — which is the
+    /// one thing the level ordering exists to prevent.
+    /// </para>
+    /// </remarks>
+    public static void Configure(DwPolicyOptions options, params IDwPolicyProvider[] providers)
+    {
+        if (options is null)
+        {
+            throw new ArgumentNullException(nameof(options));
+        }
+
+        lock (Lock)
+        {
+            if (_configured)
+            {
+                throw new InvalidOperationException(
+                    "Policy is already configured. The enforcement posture is read by every request " +
+                    "thread and cannot change once the application is serving.");
+            }
+
+            options.Freeze();
+
+            IDwPolicyProvider[] supplied = providers ?? Array.Empty<IDwPolicyProvider>();
+
+            _options = options;
+            _resolver = CreateResolver(supplied);
+            _stores = supplied.OfType<StorePolicyProvider>().ToList();
+            _configured = true;
+        }
+    }
+
+    /// <summary>
+    /// Prepares a context for use, once per request, before its first query.
+    /// </summary>
+    /// <param name="context">The caller's context.</param>
+    /// <param name="ct">Cancels the loads.</param>
+    /// <returns>The same context, prepared, for chaining.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="context"/> is null.</exception>
+    /// <remarks>
+    /// Every configured store provider pins its current snapshot to the context and fetches this
+    /// caller's user-level rules. Everything downstream then resolves synchronously against what was
+    /// read here, and every query the context makes sees one coherent version of the policy.
+    /// <para>
+    /// A context that skips this is refused by any store provider that sees it. It could only be
+    /// served from the broad zone, where a denial written for one user does not appear — and a
+    /// denial that silently does not apply is the failure this whole layer exists to prevent.
+    /// </para>
+    /// <para>
+    /// Harmless and cheap when no store is configured: with nothing but attributes in force there is
+    /// nothing to pin, and the call does nothing.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// DwPolicyContext ctx = await DwPolicy.PrepareAsync(
+    ///     new DwPolicyContext()
+    ///         .WithSubject(DwSubjectKind.Tenant, tenantId)
+    ///         .WithSubject(DwSubjectKind.User, userId));
+    /// </code>
+    /// </example>
+    public static async ValueTask<DwPolicyContext> PrepareAsync(
+        DwPolicyContext context, CancellationToken ct = default)
+    {
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        IReadOnlyList<StorePolicyProvider> stores = _stores;
+
+        for (int i = 0; i < stores.Count; i++)
+        {
+            await stores[i].PrepareAsync(context, ct).ConfigureAwait(false);
+        }
+
+        return context;
+    }
+
+    /// <summary>
+    /// Writes everything a context recorded to a sink, and empties its buffer.
+    /// </summary>
+    /// <param name="context">The caller's context, after its queries have run.</param>
+    /// <param name="sink">Where the events go.</param>
+    /// <param name="ct">Cancels the writes.</param>
+    /// <returns>How many events were written.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="context"/> or <paramref name="sink"/> is null.
+    /// </exception>
+    /// <remarks>
+    /// Call it once per request, after the response. The query path is synchronous and a sink is
+    /// not, so events accumulate on the context while queries run and are written here — the only
+    /// arrangement that neither loses records to a fire-and-forget call nor blocks a request thread
+    /// on I/O.
+    /// <para>
+    /// A sink that throws part way leaves everything it never saw on the buffer and the failure is
+    /// rethrown, so a host can retry or log without the events having been silently consumed. It
+    /// does not retry on the caller's behalf: how many times to try writing an audit record, and
+    /// how long to hold a request open doing it, are the host's decisions.
+    /// </para>
+    /// <para>
+    /// The sink is passed rather than read from configuration so that a scoped one works — an audit
+    /// sink writing through a per-request database context is the ordinary case, and a singleton
+    /// held in options could not be one.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// await DwPolicy.DrainAuditAsync(ctx, sink);
+    /// </code>
+    /// </example>
+    public static async ValueTask<int> DrainAuditAsync(
+        DwPolicyContext context, IDwAuditSink sink, CancellationToken ct = default)
+    {
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        if (sink is null)
+        {
+            throw new ArgumentNullException(nameof(sink));
+        }
+
+        DwAuditEvent[] events = context.TakeAuditEvents();
+
+        for (int i = 0; i < events.Length; i++)
+        {
+            try
+            {
+                await sink.WriteAsync(events[i], ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Everything from the one that failed onward, in order. The events already written
+                // are not returned: a sink that accepted one and is asked for it again would record
+                // the same access twice, and a duplicated audit entry is its own kind of wrong
+                // answer.
+                context.ReturnAuditEvents(events[i..]);
+
+                throw;
+            }
+        }
+
+        return events.Length;
+    }
+
+    /// <summary>
+    /// Checks a policy model and throws when it cannot work, listing everything wrong at once.
+    /// </summary>
+    /// <param name="types">The entity and DTO types to inspect.</param>
+    /// <returns>
+    /// The report, so a host that would rather log the warnings than ignore them can read them.
+    /// </returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the model contains anything that will fail a query.
+    /// </exception>
+    /// <remarks>
+    /// Call it during startup, beside <see cref="Configure"/>. Attribute misuse then surfaces at a
+    /// deployment rather than on a caller's request at three in the morning, which is the whole
+    /// reason it exists.
+    /// <para>
+    /// Explicit about which types it inspects rather than scanning loaded assemblies: an application
+    /// knows its entity types, and a scan would wander into every referenced package looking for
+    /// attributes that are not there.
+    /// </para>
+    /// </remarks>
+    public static PolicyModelReport ValidateModel(params Type[] types) =>
+        ValidateModel(null, types);
+
+    /// <summary>
+    /// Checks a policy model against the posture it will run under, and throws when it cannot work.
+    /// </summary>
+    /// <param name="options">
+    /// The options about to be passed to <see cref="Configure"/>, or null to check the attributes
+    /// alone.
+    /// </param>
+    /// <param name="types">The entity and DTO types to inspect.</param>
+    /// <returns>The report, so a host can log the warnings rather than ignore them.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the model contains anything that will fail a query.
+    /// </exception>
+    /// <remarks>
+    /// Takes the options rather than reading <see cref="Options"/>, because a host validates before
+    /// it configures — reading the static here would check the model against the default posture and
+    /// report a salt that is one line from being set.
+    /// </remarks>
+    public static PolicyModelReport ValidateModel(DwPolicyOptions? options, params Type[] types)
+    {
+        PolicyModelReport report =
+            PolicyModelValidator.Inspect(types ?? Array.Empty<Type>(), options);
+
+        if (!report.IsValid)
+        {
+            throw new InvalidOperationException(
+                "The policy model cannot work as declared:" + Environment.NewLine
+                + string.Join(Environment.NewLine, report.Errors.Select(e => "  - " + e)));
+        }
+
+        return report;
+    }
+
+    /// <summary>
+    /// Builds a resolver over the attribute provider plus whatever else was supplied.
+    /// </summary>
+    private static PolicyResolver CreateResolver(IReadOnlyList<IDwPolicyProvider> providers)
+    {
+        List<IDwPolicyProvider> all = new() { new AttributePolicyProvider() };
+
+        foreach (IDwPolicyProvider provider in providers)
+        {
+            if (provider is not null and not AttributePolicyProvider)
+            {
+                all.Add(provider);
+            }
+        }
+
+        return new PolicyResolver(all);
+    }
+
+    /// <summary>
+    /// Builds the default posture, already frozen so it cannot be edited at request time.
+    /// </summary>
+    private static DwPolicyOptions CreateDefaultOptions()
+    {
+        DwPolicyOptions options = new();
+
+        options.Freeze();
+
+        return options;
+    }
+}

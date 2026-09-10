@@ -1,6 +1,6 @@
-# DynamicWhere.ex
+﻿# DynamicWhere.ex
 
-**Version:** 2.1.5 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** MIT (Free Forever)
+**Version:** 3.0.0 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** MIT (Free Forever)
 
 > A powerful and versatile library for dynamically creating complex filter, sort, paginate, group, aggregate, and set-operation expressions in Entity Framework Core applications — all driven by simple JSON objects from any front-end or API consumer.
 
@@ -15,17 +15,18 @@
 5. [Extension Methods Reference](#extension-methods-reference)
 6. [Validation Rules](#validation-rules)
 7. [JSON Examples for Every Extension Method](#json-examples-for-every-extension-method)
-8. [Reflection Cache & Optimization](#reflection-cache--optimization)
-9. [Cache Configuration Presets](#cache-configuration-presets)
-10. [Error Codes Reference](#error-codes-reference)
-11. [Breaking Changes & Known Limitations](#breaking-changes--known-limitations)
+8. [Field-Level Policies](#field-level-policies)
+9. [Reflection Cache & Optimization](#reflection-cache--optimization)
+10. [Cache Configuration Presets](#cache-configuration-presets)
+11. [Error Codes Reference](#error-codes-reference)
+12. [Breaking Changes & Known Limitations](#breaking-changes--known-limitations)
 
 ---
 
 ## Installation
 
 ```bash
-dotnet add package DynamicWhere.ex --version 2.1.5
+dotnet add package DynamicWhere.ex --version 3.0.0
 ```
 
 **Dependencies:**
@@ -33,6 +34,16 @@ dotnet add package DynamicWhere.ex --version 2.1.5
 |---------|---------|
 | `Microsoft.EntityFrameworkCore` | 6.0.22 |
 | `System.Linq.Dynamic.Core` | 1.6.7 |
+
+**Companion packages** (optional, only for [field-level policies](#field-level-policies)):
+
+| Package | What it adds |
+|---------|--------------|
+| `DynamicWhere.ex.Policies.Redis` | Runtime rules held in Redis |
+| `DynamicWhere.ex.Policies.EntityFrameworkCore` | Runtime rules held in any EF Core provider |
+| `DynamicWhere.ex.Policies.AspNetCore` | Admin API, claims adapter, audit middleware |
+
+All four ship at the same version and `build/check-version.ps1` refuses to let them drift.
 
 ---
 
@@ -1410,6 +1421,267 @@ This works at any depth, and paths may continue through reference navigations af
 **Not supported.** A path may not *end* on a collection of entities or other complex types — there is nothing comparable to sort by, and a `LogicException` with `OrderField[{field}]CannotEndOnCollectionOfComplexElements` is thrown. Sort by a scalar inside it instead (`Tags` ✗ → `Tags.Value` ✓). Collections of simple values (`List<string>`, `List<int>`, …) are supported.
 
 > **Note:** `Summary.Orders` is unaffected — it sorts grouped results by GroupBy fields and aggregate aliases, and GroupBy fields cannot be collections.
+
+---
+
+## Field-Level Policies
+
+*New in 3.0. Entirely opt-in: a project with no policy attributes and no `DwPolicy.Configure` call behaves exactly as 2.1.5.*
+
+The library accepts a `Filter` from any caller. Policies decide **who is asking and what they may see** — per field, across all six query features.
+
+### The shape
+
+Requests are sanitized before the query is built; results are transformed after they materialize. The four core query files are untouched.
+
+```
+caller request → ApplyPolicy(ctx) → sanitize → existing engine → transform → FilterResult.Policy
+```
+
+```csharp
+// Once, at startup. Refused on a second call: the tier is read by every request thread.
+DwPolicy.Configure(new DwPolicyOptions
+{
+    Tier = DwTier.Convenience,
+    HashSalt = secret,
+});
+
+// Once per request, never once per query.
+var caller = await DwPolicy.PrepareAsync(
+    new DwPolicyContext()
+        .WithSubject(DwSubjectKind.User, userId)
+        .WithSubject(DwSubjectKind.Role, "Support")
+        .WithSubject(DwSubjectKind.Tenant, tenantId)
+        .WithValue("TenantId", tenantId));
+
+var result = await db.Employees.ApplyPolicy(caller).ToListAsync(filter);
+```
+
+A context carries the snapshot it was served, and the staleness ceiling measures how old that snapshot is — which is why it is built once per request rather than reused. An unprepared context is **refused** by any store provider rather than quietly resolving from attributes alone.
+
+### Attribute reference
+
+| Attribute | Applies to | Effect |
+|---|---|---|
+| `[DwEntity(RequirePolicy = true)]` | class | An unguarded query on the type throws `PolicyRequired` |
+| `[DwDeny(features)]` | member | Refuse any of `Where`, `Select`, `Order`, `Group`, `Aggregate`, `Segment` |
+| `[DwDenied]` | member | Refuse all six |
+| `[DwNoWhere]` `[DwNoSelect]` `[DwNoOrder]` `[DwNoGroup]` `[DwNoAggregate]` | member | Refuse one feature each |
+| `[DwOperators(Allow =, Deny =)]` | member | Restrict which operators may target the member |
+| `[DwAlias("name")]` | member | A public name, accepted anywhere a field path is, renamed back on output |
+| `[DwForceWhere(op, Value =, ContextValue =)]` | member | A predicate ANDed into every guarded query |
+| `[DwRequireWhere(Operators =)]` | member | The caller must filter on this member |
+| `[DwMask(strategy)]` | member | `Full` `Partial` `Email` `Phone` `Regex` `Fixed` `Hash` `Null` `Tokenize` |
+| `[DwMutate(typeof(T))]` | member | Hand the value to an `IValueTransformer`; the type is checked at startup |
+| `[DwDefault]` / `[DwDefault("v")]` | member | Replace with the type default or a constant |
+| `[DwGeneralize(mode)]` | member | `Round` `Bucket` `DatePart` `Truncate` — reduce precision, keep the type |
+| `[DwTruncate(n)]` | member | Shorten text |
+| `[DwFormat("fmt")]` | member | Render through a .NET format string |
+| `[DwDescribe(Label =, Description =, Group =, Order =)]` | member | Feed the schema endpoint |
+| `[DwAllowedValues(...)]` | member | Offer a list rather than a free-text box |
+| `[DwCost(weight)]` | member | Charge the member against the query budget |
+| `[DwAudit(features)]` | member | Record every use to `IDwAuditSink` |
+
+All six transform attributes also carry `AllowAggregate` and `MinGroupSize`. Every policy attribute carries `Overridable`, which defaults to **false**.
+
+### Precedence
+
+Six levels, lowest number wins:
+
+| Level | Source |
+|---|---|
+| 1 | `SealedAttribute` — the default. No runtime rule can lift it |
+| 2 | `DynamicUser` |
+| 3 | `DynamicRole` |
+| 4 | `DynamicTenant` |
+| 5 | `DynamicGlobal` |
+| 6 | `OverridableAttribute` — an attribute marked `Overridable = true` |
+
+Ties break by level → specificity (an exact field beats a wildcard) → priority → strongest effect (`Deny` > `Mask` > `Allow`).
+
+Two things are deliberately **not** elected: forced predicates are collected and ANDed, because a conjunction can only narrow; operator restrictions intersect. Transform stages are elected per stage, so a rule can add a truncation on top of a sealed mask but cannot replace the mask.
+
+### Blocked-action semantics
+
+| Tier | A denied field |
+|---|---|
+| `Convenience` (default) | Is **dropped** — removed from the projection, the sort, the grouping |
+| `Strict` | **Throws** |
+
+A dropped field leaves nothing behind in the data, so `FilterResult<T>.Policy` (a `PolicyTrace`) is the only way a caller can tell a policy drop from a null value. `Strict` also refuses `getQueryString` and makes a deny-select field automatically deny-where inside a `Segment`.
+
+### Dynamic rules
+
+An optional store supplies rules at runtime. `InMemoryPolicyStore` ships in the core package; Redis and EF Core are separate packages, and all three pass one shared conformance suite.
+
+```csharp
+var store = new EfPolicyStore(() => new DwPolicyDbContext(options));
+var provider = await StorePolicyProvider.CreateAsync(store, policyOptions);
+
+DwPolicy.Configure(policyOptions, provider);
+```
+
+> **`DwPolicyDbContext` lives in the package, not your assembly.** EF Core looks for migrations where the context is declared, so scaffolding fails until you redirect it:
+> ```csharp
+> options.UseNpgsql(connection, sql => sql.MigrationsAssembly("YourProject"));
+> ```
+
+| `options.StoreFailure` | When the store is unreachable |
+|---|---|
+| `LastKnownGood` (default) | Serve the last snapshot, bounded by `MaxSnapshotAge` |
+| `FailClosed` | Refuse the query with `StoreUnavailable` |
+| `StaticOnly` | Fall back to attributes alone |
+
+A rule can never target a field the source code seals — refused in `PolicyRule`'s constructor, so it holds for every store and for the admin API alike.
+
+### Hiding a value you still want to group by
+
+Two strategies keep a column usable while hiding what is in it. Both map one value to one output,
+so a caller can still group by the column, join two results on it and count distinct subjects.
+
+```csharp
+[DwMask(MaskStrategy.Hash)]        // needs DwPolicyOptions.HashSalt
+[DwMask(MaskStrategy.Tokenize)]    // needs DwPolicyOptions.TokenVault
+```
+
+A **hash** is computed from the value. It is HMAC-SHA256 keyed by `HashSalt`, which must be at
+least 16 characters — a shorter one is refused where it is written, because a salt that can be
+brute-forced offline puts every digest the deployment ever emitted back within reach. A blank salt
+means none is configured, and a hashing query is then refused with `MissingHashSalt`.
+
+A **token** is not computed from anything. It is drawn at random the first time a value is seen and
+written down in `TokenVault`, so the only way back to the value is to read the vault. That makes the
+mapping a store you can lock, move and revoke separately from the data, rather than a secret sitting
+in configuration. A tokenizing query with no vault is refused with `MissingTokenVault`.
+
+```csharp
+new DwPolicyOptions
+{
+    HashSalt   = secret,                 // 16 characters or more
+    TokenVault = new InMemoryTokenVault() // or RedisTokenVault, or EfTokenVault
+}
+```
+
+| | `Hash` | `Tokenize` |
+|---|---|---|
+| Output | 32 hex characters | 32 hex characters |
+| Derived from the value | yes | no |
+| Reversed by | holding the salt | reading the vault |
+| A weak secret | brute-forced offline | does not exist |
+| Survives a restart | always | only with a durable vault |
+| Discloses equality | yes | yes |
+
+Three vaults ship, all held to one conformance suite. `InMemoryTokenVault` lives and dies with the
+process, which is right for a test and wrong for any column compared across restarts.
+`RedisTokenVault` and `EfTokenVault` keep the mapping outside the process, and each caches every
+mapping it resolves — a token is written once and never rewritten, so a cached answer cannot go
+stale.
+
+Tokens are namespaced by the field's own path, so two columns holding the same value get different
+tokens. Name a shared `TokenScope` when you want them to match:
+
+```csharp
+[DwMask(MaskStrategy.Tokenize, TokenScope = "person-identifier")]
+public string NationalId { get; set; }
+```
+
+**What neither closes.** Anyone who can write a chosen value and read the column back masked learns
+that value's output and can then recognise it in every other row. That is inherent in preserving
+equality and no setting removes it. A field that cannot accept it wants `Fixed`, `Null`, or a denial.
+
+### k-anonymity — the control you would not guess
+
+`SUM`, `MAX` and `MIN` execute **in SQL against the stored value**, before any transform applies. `GROUP BY Department` with `MAX(Salary)` over a department of one returns that person's exact salary.
+
+Two halves, and neither works alone:
+
+1. **Aggregating a transformed field is denied by default.** Opt in with `AllowAggregate = true`.
+2. **`MinGroupSize` suppresses any group smaller than *k*.** Groups below the floor are removed from the result, not refused.
+
+```csharp
+[DwGeneralize(GeneralizeMode.Round, Step = 5000, AllowAggregate = true, MinGroupSize = 5)]
+public decimal Salary { get; set; }
+```
+
+`DwCaps.MinGroupSize` is the global floor and **defaults to 5**. A per-field `MinGroupSize` raises it for that field; the effective floor is the largest in play.
+
+Say `MinGroupSize = 1` to switch it off, and it is off — in production, with nothing refused and nothing warned about. The setting starts *unset* rather than at one precisely so that those two are different sentences: `IsMinGroupSizeSet` tells a deliberate opt-out from a deployment that never heard of the control, and without that distinction any check strict enough to catch the second would trap the first.
+
+```csharp
+new DwPolicyOptions()                                  // floor of 5
+new DwPolicyOptions { Caps = { MinGroupSize = 1 } }    // no floor, and meant
+new DwPolicyOptions { Caps = { MinGroupSize = 10 } }   // stricter
+```
+
+### Configuration
+
+| Cap | Default | Meaning |
+|---|---|---|
+| `MaxPageSize` | 1000 | Largest page a caller may request |
+| `MaxConditions` | 50 | Conditions in one filter |
+| `MaxOrderFields` | 10 | Order fields in one query |
+| `MaxNavigationDepth` | 4 | How deep a field path may reach |
+| `MaxQueryCost` | 1000 | Budget consumed by `[DwCost]` weights |
+| `DefaultFieldCost` | 1 | Charged for an unweighted field |
+| `MaxAuditEvents` | 10000 | Audit buffer before draining |
+| `MinGroupSize` | 5 | k-anonymity group floor. Set 1 to switch it off |
+
+Options are frozen at startup. Every cap refuses a value below one, except `DefaultFieldCost`, which accepts zero: that is the posture for a model weighing only its few expensive fields and leaving the rest free.
+
+### Administration
+
+`app.MapDwPolicyAdmin(...)` mounts seven endpoints under `/dw-policies`. It **refuses to map without both `ReadPolicy` and `WritePolicy` named** — there is no default, and it fails at startup rather than on the first request.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/schema/{entity}` | Fields for a filter UI. Sealed fields are absent |
+| `GET` | `/rules?subject=` | List rules |
+| `POST` | `/rules` | Upsert. Sealed fields are rejected |
+| `DELETE` | `/rules/{id}` | Delete |
+| `POST` | `/explain` | The decision chain: what won, what it overrode, what was ignored |
+| `POST` | `/simulate` | The sanitized clause, without executing or auditing |
+| `GET` | `/health` | Snapshot version, age, degraded state, last error |
+
+### Performance
+
+There are two budgets, because there are two costs. Gating is paid **once per query**;
+transformation is paid **per row per transformed field**, so no single percentage describes it — the
+same guard is 1.16× over a hundred rows and 1.62× over ten thousand, on identical code.
+
+Measured with BenchmarkDotNet over 10,000 in-memory rows:
+
+| 10,000 rows | Time | Allocated |
+|---|---|---|
+| Unguarded | 685 µs | 210 KB |
+| Guarded, nothing denied or transformed | 683 µs (**1.00×**) | 220 KB (**1.05×**) |
+| Guarded, one field deny-select | 785 µs (1.15×) | 409 KB (1.95×) |
+| Guarded, two fields transformed on every row | 1,111 µs (1.62×) | 1,488 KB (7.1×) |
+
+**Gating costs nothing measurable.** Resolving every field, sanitizing the filter and injecting
+forced predicates lands inside the noise of the unguarded query.
+
+**Deny-select costs 1.15×** because denying a field means the query projects instead of returning
+entities. That belongs to the feature rather than to the guard.
+
+**Transformation costs about 21 ns and 65 bytes per value**, against a design budget of 100 ns. It
+has to build a new value for each one, because the change happens after materialization rather than
+in SQL.
+
+A cached field resolve is 232–234 ns against a 1 µs target, and sanitizing a five-condition filter
+is 2.8 µs against 50 µs.
+
+There is no database round trip in those numbers, so the policy layer's share looks as large as it
+ever can — against a real query the I/O dominates.
+
+Run them yourself:
+
+```
+dotnet run -c Release --project DynamicWhere.Benchmarks -- --filter "*PolicyBenchmarks*" --job medium
+```
+
+### Error codes
+
+`PolicyException.ErrorCode`, values 1–22: `FieldDeniedForWhere` `FieldDeniedForSelect` `FieldDeniedForOrder` `FieldDeniedForGroup` `FieldDeniedForAggregate` `FieldDeniedForSegment` `AllSelectsDenied` `OperatorNotAllowed` `CapExceeded` `PolicyRequired` `RequiredFilterMissing` `MissingContextValue` `AmbiguousFieldName` `QueryStringDenied` `AmbiguousGroupKey` `TransformRequiresMaterialization` `StoreUnavailable` `PolicyContextNotPrepared` `QueryCostExceeded` `GroupTooSmall` `MissingHashSalt` `MissingTokenVault`.
 
 ---
 

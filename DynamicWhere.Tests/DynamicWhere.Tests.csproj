@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -7,20 +7,87 @@
 
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+
+    <!-- The EF Core version this suite runs against. Defaults to 8, which the sales fixture needs
+         for DateOnly/TimeOnly and primitive-collection mapping. CI also runs one leg at 6.0.22 —
+         the floor four packable projects declare — because the expression-tree APIs the compiled
+         mutator and predicate injection depend on differ between 6 and 8, and a floor that is only
+         ever compiled against is a floor nothing has run on. Set with:
+             dotnet test -p:DwEfCoreVersion=6.0.22 -->
+    <DwEfCoreVersion Condition="'$(DwEfCoreVersion)' == ''">8.0.10</DwEfCoreVersion>
+    <DwFloorLeg Condition="'$(DwEfCoreVersion)' != '8.0.10'">true</DwFloorLeg>
+
+    <!-- EF Core 6 drags in a SQLitePCLRaw that still advertises alpine RIDs. Not actionable from
+         here, and the branch builds warning-free, so it is silenced on the floor leg alone. -->
+    <NoWarn Condition="'$(DwFloorLeg)' == 'true'">$(NoWarn);NETSDK1206</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
-    <!-- EF Core 8 for DateOnly/TimeOnly and primitive-collection mapping in the sales fixture.
-         The library itself declares EF Core 6.0.22 as its floor and was verified against it. -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.10" />
+    <!-- Version comes from DwEfCoreVersion above: 8.0.10 by default, because the sales fixture
+         needs DateOnly/TimeOnly and primitive-collection mapping; 6.0.22 on the floor leg. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="$(DwEfCoreVersion)" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
   </ItemGroup>
 
+  <!-- Npgsql 8 and Mvc.Testing 8 both depend on EF Core 8, so leaving them referenced on the floor
+       leg would let NuGet resolve the whole graph back up to 8 and the leg would silently test
+       nothing. They are dropped there, along with the suites that need them. -->
+  <ItemGroup Condition="'$(DwFloorLeg)' != 'true'">
+    <!-- The store conformance suite runs against real infrastructure rather than a fake. A fake
+         Redis proves the fake works, and the one property the suite exists to check is that three
+         real stores behave alike. Both containers are provisioned identically here and on CI.
+         Note that publish.yml runs the tests before it packs, so a Docker daemon is now needed to
+         cut a release, not merely to build. -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+
+    <!-- Not used directly. It pins EF Core, Relational and Abstractions to the 8.0.21 the demo
+         API's design-time tooling compiles that project against; left to resolve on their own,
+         Npgsql pulls 8.0.11 and the assembly versions cannot be unified (MSB3277). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.21" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.0.0" />
+    <PackageReference Include="Testcontainers.Redis" Version="4.0.0" />
+    <!-- Drives the administrative endpoints through a real request pipeline: routing,
+         authorization and model binding all take part, and a test that mounted the handlers
+         directly would prove none of them. -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.10" />
+
+    <!-- The demo API, for PolicyAdminControllerTests. Its administrative controller is the only
+         place the four packages are driven together against a real database through MVC, and it
+         was the one part of the admin surface no test reached. Dropped on the floor leg with the
+         rest of the EF Core 8 graph. -->
+    <ProjectReference Include="..\DynamicWhere.API\DynamicWhere.API.csproj" />
+  </ItemGroup>
+
+  <!-- On the floor leg the suite narrows to the policy tests that need nothing but SQLite: the
+       resolver, the sanitizer, the transform pipeline and the inference attacks — which is exactly
+       where the expression-tree differences between EF Core 6 and 8 would surface. The sales
+       fixture is excluded because it maps DateOnly/TimeOnly, which EF Core 6 cannot. -->
+  <ItemGroup Condition="'$(DwFloorLeg)' == 'true'">
+    <Compile Remove="*.cs" />
+    <Compile Remove="Domain/**/*.cs" />
+    <!-- Kept: AttributeProviderTests reflects over the Blog graph declared here, and it carries no
+         database of its own. -->
+    <Compile Include="TestModel.cs" />
+    <Compile Remove="Policies/EfPolicyModelTests.cs" />
+    <Compile Remove="Policies/EfPolicyStoreTests.cs" />
+    <Compile Remove="Policies/EfStoreConformanceTests.cs" />
+    <Compile Remove="Policies/RedisStoreConformanceTests.cs" />
+    <Compile Remove="Policies/EfTokenVaultConformanceTests.cs" />
+    <Compile Remove="Policies/RedisTokenVaultConformanceTests.cs" />
+    <Compile Remove="Policies/DemoPolicyModelTests.cs" />
+    <Compile Remove="Policies/PolicyEndpointTests.cs" />
+    <Compile Remove="Policies/PolicyEndpointHardeningTests.cs" />
+    <Compile Remove="Policies/PolicyAdminControllerTests.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\DynamicWhere.ex\DynamicWhere.ex.csproj" />
+    <ProjectReference Include="..\DynamicWhere.ex.Policies.Redis\DynamicWhere.ex.Policies.Redis.csproj" />
+    <ProjectReference Include="..\DynamicWhere.ex.Policies.EntityFrameworkCore\DynamicWhere.ex.Policies.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="..\DynamicWhere.ex.Policies.AspNetCore\DynamicWhere.ex.Policies.AspNetCore.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -71,6 +71,9 @@ export default function Page() {
           <tr><td><code>MaxQueryCost</code></td><td>1000</td><td>Budget consumed by <code>[DwCost]</code> weights.</td></tr>
           <tr><td><code>DefaultFieldCost</code></td><td>1</td><td>Charged for an unweighted field.</td></tr>
           <tr><td><code>MaxAuditEvents</code></td><td>10000</td><td>Audit buffer before draining.</td></tr>
+          <tr><td><code>SchemaDepth</code></td><td>2</td><td>Levels a schema request walks when it names no depth.</td></tr>
+          <tr><td><code>SchemaCycleLimit</code></td><td>2</td><td>Times one type may appear on one path.</td></tr>
+          <tr><td><code>MaxSchemaFields</code></td><td>2000</td><td>Fields one schema response may carry before it truncates.</td></tr>
           <tr><td><code>MinGroupSize</code></td><td><strong>5</strong></td><td>k-anonymity group floor. Set 1 to switch it off. See <Link href="/docs/policies/security">Security</Link>.</td></tr>
         </tbody>
       </table>
@@ -111,6 +114,61 @@ if (report.Errors.Count > 0) throw new InvalidOperationException("Policy model i
         member type. Warnings cover things that work but probably should not,
         chiefly a transformed field that is still orderable.
       </p>
+
+      <h2 id="from-a-file">Configuration from a file</h2>
+      <p>
+        Every value on the posture binds from <code>IConfiguration</code>. Three
+        things cannot, because they are objects rather than values: the entity
+        catalogue, the token vault and the service provider. Those stay in code,
+        which is what the callback is for.
+      </p>
+      <Code lang="csharp">{`builder.Services.AddDwPolicies(
+    builder.Configuration.GetSection("DynamicWhere:Policies"),
+    options =>
+    {
+        options.Entities.Expose<Employee>("Employee");
+        options.TokenVault = new RedisTokenVault(redis);
+    });`}</Code>
+      <Code lang="json">{`{
+  "DynamicWhere": {
+    "Policies": {
+      "Tier": "Strict",
+      "StoreFailure": "LastKnownGood",
+      "MaxSnapshotAge": "00:15:00",
+      "Caps": {
+        "MinGroupSize": 5,
+        "SchemaDepth": 2,
+        "MaxSchemaFields": 2000
+      }
+    }
+  }
+}`}</Code>
+      <p>
+        Configuration binds first and the callback runs second, so a line
+        somebody wrote deliberately is never overwritten by a file. Every key is
+        optional, and an absent one leaves its default in place.
+      </p>
+      <Callout tone="warn" title="A key nothing answers to refuses to start">
+        The binder&apos;s own default is to ignore an unmatched key, which would
+        let <code>MinGropSize</code> sit in a file doing nothing while the
+        deployment believed it had set a floor. Binding runs with{" "}
+        <code>ErrorOnUnknownConfiguration</code>, so a typo fails at startup
+        rather than silently switching a control off.
+      </Callout>
+      <p>
+        Every setter&apos;s own validation still applies. A cap below one, a
+        snapshot age that is not a positive interval and a salt shorter than
+        sixteen characters are all refused exactly as they are in code. The group
+        floor&apos;s opt-out survives unchanged, because it lives in the setter:
+        saying nothing leaves it unset, writing <code>1</code> records a
+        deliberate choice.
+      </p>
+      <Callout tone="danger" title="A salt in appsettings.json is not a salt">
+        <code>HashSalt</code> binds like anything else, and configuration is the
+        right channel for it — through user secrets, an environment variable or a
+        vault. Committing it to a file in the repository is the thing the
+        attribute refuses to allow, and nothing here can tell the difference.
+      </Callout>
 
       <h2 id="performance">Performance</h2>
       <p>

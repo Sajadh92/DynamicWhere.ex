@@ -40,7 +40,7 @@ export default function Page() {
       <table>
         <thead><tr><th>Method</th><th>Route</th><th>Auth</th><th>Purpose</th></tr></thead>
         <tbody>
-          <tr><td><code>GET</code></td><td><code>/schema/{"{entity}"}</code></td><td>Read</td><td>Fields for a filter UI: labels, groups, order, allowed values, cost.</td></tr>
+          <tr><td><code>POST</code></td><td><code>/schema</code></td><td>Read</td><td>Fields for a filter UI: labels, groups, order, allowed values, cost. Takes <code>paths</code> and <code>depth</code>.</td></tr>
           <tr><td><code>GET</code></td><td><code>/rules?subject=</code></td><td>Read</td><td>List rules.</td></tr>
           <tr><td><code>POST</code></td><td><code>/rules</code></td><td>Write</td><td>Upsert a rule.</td></tr>
           <tr><td><code>DELETE</code></td><td><code>/rules/{"{id}"}</code></td><td>Write</td><td>Delete a rule.</td></tr>
@@ -49,6 +49,54 @@ export default function Page() {
           <tr><td><code>GET</code></td><td><code>/health</code></td><td>Read</td><td>Snapshot version, age, degraded state, last error.</td></tr>
         </tbody>
       </table>
+
+      <h2 id="schema-request">Asking for part of an entity</h2>
+      <p>
+        <code>POST /dw-policies/schema</code> takes a body rather than a query
+        string, because the request carries a <strong>list</strong> of paths — and
+        a list in a query string needs a separator. A comma is legal in a{" "}
+        <code>[DwAlias]</code>, so the separator would eventually split a name in
+        half and resolve neither piece.
+      </p>
+      <Code lang="json">{`{ "entity": "employee" }                            // 59 fields, two levels
+{ "entity": "employee", "depth": 1 }                // 13 fields, the entity alone
+{ "entity": "employee", "depth": 99 }               // 99 fields, as deep as a query may reach
+{ "entity": "employee", "paths": ["Manager"] }      // 59 fields, rooted at the manager
+{ "entity": "employee", "paths": ["Manager", "Address"], "depth": 1 }`}</Code>
+      <p>
+        <code>depth</code> is an integer and nothing else. A value beyond the
+        query cap is clamped rather than refused, and the response reports both
+        the depth it used and the ceiling, so a caller wanting everything sends a
+        large number and learns the limit from the reply.
+      </p>
+      <p>
+        The response is flat with a parent on every entry, which is a tree in
+        adjacency form. <code>nodes</code> carries every navigation the walk
+        touched, expanded or not, so a tree UI hangs each node and each field
+        under its parent in one pass with no path parsing.
+      </p>
+      <Code lang="json">{`{
+  "entity": "employee",
+  "roots": ["Manager"], "depth": 2, "maxDepth": 4, "truncated": false,
+  "fields": [ { "path": "Manager.FirstName", "parent": "Manager", ... } ],
+  "nodes":  [ { "path": "Manager.Address", "parent": "Manager", "entity": "address",
+                "depth": 3, "expanded": false, "remainingDepth": 0 } ]
+}`}</Code>
+      <p>
+        <code>remainingDepth</code> says what asking for that path would return,
+        so a node reporting zero has nothing to open. It accounts for{" "}
+        <code>SchemaCycleLimit</code> as well as the query cap, and it is measured
+        the way a request for that path would measure it — asking for a subtree
+        resets the guard&apos;s count, which is what keeps drilling productive.
+      </p>
+      <Callout tone="note" title="A full-depth request returns 99, not 335">
+        The cycle guard lets a type appear twice on one path, so{" "}
+        <code>Manager.Email</code> is described and{" "}
+        <code>Manager.Manager.Email</code> is not. Both remain queryable, and the
+        second remains reachable by asking for the{" "}
+        <code>Manager.Manager</code> subtree. Raising{" "}
+        <code>SchemaCycleLimit</code> restores the exhaustive listing exactly.
+      </Callout>
 
       <h2 id="schema">Schema, and the sealed-field rule</h2>
       <p>

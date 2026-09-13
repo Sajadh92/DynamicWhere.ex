@@ -1624,6 +1624,9 @@ new DwPolicyOptions { Caps = { MinGroupSize = 10 } }   // stricter
 | `MaxQueryCost` | 1000 | Budget consumed by `[DwCost]` weights |
 | `DefaultFieldCost` | 1 | Charged for an unweighted field |
 | `MaxAuditEvents` | 10000 | Audit buffer before draining |
+| `SchemaDepth` | 2 | Levels a schema request walks when it names no depth |
+| `SchemaCycleLimit` | 2 | Times one type may appear on one path |
+| `MaxSchemaFields` | 2000 | Fields one schema response may carry before it truncates |
 | `MinGroupSize` | 5 | k-anonymity group floor. Set 1 to switch it off |
 
 Options are frozen at startup. Every cap refuses a value below one, except `DefaultFieldCost`, which accepts zero: that is the posture for a model weighing only its few expensive fields and leaving the rest free.
@@ -1634,13 +1637,107 @@ Options are frozen at startup. Every cap refuses a value below one, except `Defa
 
 | Method | Route | Purpose |
 |---|---|---|
-| `GET` | `/schema/{entity}` | Fields for a filter UI. Sealed fields are absent |
+| `POST` | `/schema` | Fields for a filter UI. Sealed fields are absent |
 | `GET` | `/rules?subject=` | List rules |
 | `POST` | `/rules` | Upsert. Sealed fields are rejected |
 | `DELETE` | `/rules/{id}` | Delete |
 | `POST` | `/explain` | The decision chain: what won, what it overrode, what was ignored |
 | `POST` | `/simulate` | The sanitized clause, without executing or auditing |
 | `GET` | `/health` | Snapshot version, age, degraded state, last error |
+
+### Schema discovery
+
+`POST /dw-policies/schema` describes what one caller may do with one entity. It is a POST rather
+than a GET because the request carries a **list** of paths, and a list in a query string needs a
+separator — a comma is legal in a `[DwAlias]`, so the separator would eventually split a name in
+half and resolve neither piece.
+
+```jsonc
+{ "entity": "employee" }                              // 59 fields, two levels
+{ "entity": "employee", "depth": 1 }                  // 13 fields, the entity alone
+{ "entity": "employee", "depth": 99 }                 // 99 fields, as deep as a query may reach
+{ "entity": "employee", "paths": ["Manager"] }        // 59 fields, rooted at the manager
+{ "entity": "employee", "paths": ["Manager", "Address"], "depth": 1 }   // 20 fields
+```
+
+`depth` is an integer and nothing else. A value beyond the query cap is clamped rather than refused,
+and the response reports both the depth it used and the ceiling — so a caller wanting everything
+sends a large number and learns the limit from the reply. There is no sentinel to parse.
+
+The response is **flat, with a parent on every entry**, which is a tree in adjacency form:
+
+```jsonc
+{
+  "entity": "employee",
+  "roots": ["Manager"], "depth": 2, "maxDepth": 4, "truncated": false,
+  "fields": [ { "path": "Manager.FirstName", "parent": "Manager", "dataType": "Text", ... } ],
+  "nodes":  [ { "path": "Manager.Address", "parent": "Manager", "entity": "address",
+                "depth": 3, "expanded": false, "remainingDepth": 0 } ]
+}
+```
+
+`nodes` carries every navigation the walk touched, expanded or not, so a tree UI hangs each node and
+each field under its parent in one pass with no path parsing. `remainingDepth` says what asking for
+that path would return, so a node reporting zero has nothing to open.
+
+Five rules bound the walk.
+
+1. **A returned path never exceeds the query cap**, so the schema cannot advertise a path the query
+   would refuse.
+2. **A type may appear at most twice on one path** (`SchemaCycleLimit`). That is what holds a
+   full-depth request to 99 fields rather than 335 on a self-referencing entity. The 236 paths it
+   removes are repeats like `Manager.Manager.Email`, which stay queryable and stay reachable by
+   asking for the subtree.
+3. **The guard counts within the view you asked for.** Drilling into the manager describes it as
+   though it were the entity, which is what keeps drilling productive — counting from the entity
+   would make a request for `Manager.Manager` describe nothing at all.
+4. **Fields are deduplicated by path**, so two overlapping roots list a field once.
+5. **`MaxSchemaFields` bounds any single response**, setting `truncated` rather than throwing.
+
+A path naming a simple field is refused; a path naming nothing is a 404. `POST /explain` takes the
+same two parameters, because it walks the same field list.
+
+### Configuration from a file
+
+Every value on the posture binds from `IConfiguration`. The entity catalogue, the token vault and
+the service provider cannot: they are objects rather than values, and stay in code.
+
+```csharp
+builder.Services.AddDwPolicies(
+    builder.Configuration.GetSection("DynamicWhere:Policies"),
+    options =>
+    {
+        options.Entities.Expose<Employee>("Employee");
+        options.TokenVault = new RedisTokenVault(redis);
+    });
+```
+
+```jsonc
+{
+  "DynamicWhere": {
+    "Policies": {
+      "Tier": "Strict",
+      "StoreFailure": "LastKnownGood",
+      "MaxSnapshotAge": "00:15:00",
+      "Caps": { "MinGroupSize": 5, "SchemaDepth": 2, "MaxSchemaFields": 2000 }
+    }
+  }
+}
+```
+
+Configuration binds first and the callback runs second, so a line somebody wrote deliberately is
+never overwritten by a file. **A key nothing answers to refuses to start**: the binder's own default
+is to ignore an unmatched key, which would let `MinGropSize` sit in a file doing nothing while the
+deployment believed it had set a floor.
+
+Every setter's own validation still applies. A cap below one, a snapshot age that is not a positive
+interval and a salt shorter than sixteen characters are all refused exactly as they are in code, and
+the group floor's opt-out survives unchanged — saying nothing leaves it unset, writing `1` records a
+deliberate choice.
+
+`HashSalt` binds like anything else, and configuration is the right channel for it through user
+secrets, an environment variable or a vault. A salt committed to `appsettings.json` is not a salt,
+and nothing here can tell the difference.
 
 ### Performance
 

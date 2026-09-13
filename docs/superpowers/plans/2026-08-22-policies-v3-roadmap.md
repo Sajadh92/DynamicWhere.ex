@@ -640,7 +640,25 @@ Everything above except the schema explosion, which is being designed separately
   whenever a pair could be re-split, and a salt is now refused below 16 characters. Neither strategy
   hides equality, which design §7.6 now states outright rather than leaving to be inferred.
 
-Still open: **`/schema` returns 335 fields for a 33-property self-referencing entity.**
+### The fifth closed, 2026-09-13
+
+**`/schema` returned 335 fields for a 33-property self-referencing entity.** Now 59 by default.
+
+The endpoint became `POST /schema` with a typed request, `{ entity, paths, depth }`. A POST for a
+read matches `/explain` and `/simulate`, and the reason is the list: a comma is legal in a
+`[DwAlias]`, so a comma-separated query parameter would eventually split a name in half. Three caps
+bound the walk — `SchemaDepth` 2, `SchemaCycleLimit` 2, `MaxSchemaFields` 2000 — and the response is
+flat with a parent on every entry, carrying a node list a tree UI groups in one pass.
+
+The guard counts within the requested view rather than from the entity, so drilling into a subtree
+describes it as though it were the entity and no path is ever undiscoverable. The 236 paths a
+full-depth request no longer lists are repeats like `Manager.Manager.Email`; they stay queryable, and
+raising the cycle limit restores the exhaustive listing exactly — asserted at 335.
+
+The posture also binds from `IConfiguration` now, in the core package, with an unrecognised key
+refusing to start rather than being ignored.
+
+**All five limitations carried into the release are closed.**
 
 ### What a merge does
 

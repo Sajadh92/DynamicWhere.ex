@@ -587,6 +587,38 @@ Aliases resolve first because every later step needs real paths. Injection happe
 
 The output is a cloned `Filter`; the caller's object is untouched. The function is pure, with no database and no EF involvement, so it is directly unit-testable.
 
+> **Correction (2026-09-13). Schema discovery is a POST with a typed request, and the walk is
+> bounded by three settings rather than by the query cap alone.**
+>
+> `GET /schema/{entity}` is replaced by `POST /schema` taking `{ entity, paths, depth }`. A POST for
+> a read matches `/explain` and `/simulate` beside it, and the reason is the `paths` list: a list in
+> a query string needs a separator, and a comma is legal in a `[DwAlias]` — an alias is refused only
+> when blank, dotted, or the wildcard — so the separator would eventually split a name in half and
+> resolve neither piece.
+>
+> `depth` is an integer, clamped to the query cap rather than refused, and the response reports both
+> the depth it used and the ceiling. There is deliberately no sentinel meaning "all of it": a
+> sentinel is a second thing to parse.
+>
+> Three caps join `DwCaps`: `SchemaDepth` (2), `SchemaCycleLimit` (2) and `MaxSchemaFields` (2000).
+> The first two are what turn the 335-field listing of a thirty-three property self-referencing
+> entity into 59 by default and 99 at full depth; the third is a ceiling so no combination of paths
+> and depth can ask for an unbounded response, and it sets `Truncated` rather than throwing.
+>
+> The response is **flat with a parent on every entry** — an adjacency list rather than nested JSON.
+> Nesting would have broken every consumer of the field list, made searching recursive, and needed a
+> rule for which parent owns a field two requested roots can both reach. `Nodes` carries every
+> navigation the walk touched, expanded or not, each with the level it sits at and how much lies
+> beneath it, so a tree is one grouping pass with no path parsing.
+>
+> **The cycle guard counts within the requested view, not from the entity.** Asking for a subtree
+> describes it as though it were the entity, which is what keeps drilling productive: counting from
+> the entity would make a request for `Manager.Manager` describe nothing, and a front end would be
+> offering a node that opens onto an empty response. The consequence is that a path can be described
+> more deeply when asked for than it was listed at, which is the feature rather than a wart.
+
+---
+
 ### 6.3 Error contract
 
 ```csharp
@@ -694,6 +726,21 @@ Guarded query overhead target is under 5 percent versus unguarded, dominated by 
 > with no database round trip, so the policy layer's share is as large as it can possibly look. And
 > the per-operation targets were always met: a cached field resolve is 232-234 ns against a 1 us
 > target, and sanitizing the five-condition filter is 2.8 us against 50 us.
+
+---
+
+> **Correction (2026-09-13).** The enforcement posture binds from `IConfiguration`. Every value on
+> `DwPolicyOptions` and `DwCaps` is a plain settable property, and `AddDwPolicies(section, configure)`
+> binds the section, then runs a callback for the three things configuration cannot carry: the entity
+> catalogue, the token vault and the service provider.
+>
+> It lives in the **core** package rather than the ASP.NET Core one, for the reason
+> `PolicySchemaBuilder` gives about itself — a host with no web stack should still get this — at the
+> cost of two dependencies that ship with the shared framework.
+>
+> **An unrecognised key refuses to start.** The binder's own default is to ignore a key nothing
+> matches, which would let `MinGropSize` sit in a file doing nothing while the deployment believed it
+> had a floor: the fail-open shape §7 exists to hunt, arriving through a channel §7 never considered.
 
 ---
 

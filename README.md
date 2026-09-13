@@ -231,6 +231,18 @@ public class Employee
 
 Attributes cannot be lifted by a runtime rule unless you mark them `Overridable = true`. Six precedence levels decide every field, sealed attributes first and overridable attributes last, with dynamic user, role, tenant and global rules in between.
 
+### Configuration, and a field picker that fits on a screen
+
+The whole posture binds from `appsettings.json`, environment variables or a vault. A key nothing answers to **refuses to start**, because a misspelt `MinGropSize` sitting in a file doing nothing is exactly the failure the rest of this layer exists to prevent.
+
+```csharp
+builder.Services.AddDwPolicies(
+    builder.Configuration.GetSection("DynamicWhere:Policies"),
+    options => options.Entities.Expose<Employee>("Employee"));
+```
+
+`POST /dw-policies/schema` describes an entity for a filter UI, two levels deep by default and drillable a subtree at a time. The response is flat with a parent on every field and node, so a tree is one grouping pass on the client. → **[Admin API](https://doc.dynamicwhere.com/docs/policies/admin)**
+
 ### Rules without a redeploy
 
 An optional store supplies rules at runtime, split into a cached broad zone and a per-request narrow zone. In-memory ships in the core package; **Redis** and **Entity Framework Core** are separate packages. A store can never grant a field the source code seals.

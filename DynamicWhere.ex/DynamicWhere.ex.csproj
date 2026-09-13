@@ -9,6 +9,18 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="6.0.22" />
     <PackageReference Include="System.Linq.Dynamic.Core" Version="1.6.7" />
+
+    <!-- The policy posture binds from IConfiguration, which is why these are here rather than in
+         the ASP.NET Core package. The schema builder already lives in this assembly on the grounds
+         that a host with no web stack should still get discovery; a worker service that wants its
+         caps in a file is the same argument, and putting the binding one package up would leave it
+         writing the binder call by hand and losing the unknown-key check that is the point of
+         shipping this at all.
+         All three ship with the shared framework, and this library already depends on EF Core, so
+         the graph is not being kept bare. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>

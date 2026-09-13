@@ -27,6 +27,10 @@
     <!-- Version comes from DwEfCoreVersion above: 8.0.10 by default, because the sales fixture
          needs DateOnly/TimeOnly and primitive-collection mapping; 6.0.22 on the floor leg. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="$(DwEfCoreVersion)" />
+    <!-- ConfigurationBuilder, for the posture-binding tests. In the always-on group rather
+         than beside Npgsql, because binding is a core feature and the floor leg has to run
+         its tests too. An Extensions package at 6.0.0 pulls no EF Core graph with it. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />

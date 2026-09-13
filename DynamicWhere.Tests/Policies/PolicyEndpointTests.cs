@@ -251,6 +251,15 @@ public class PolicyEndpointTests
         Assert.Equal(HttpStatusCode.Forbidden, written.StatusCode);
     }
 
+    /// <summary>
+    /// Every route, not two of them.
+    /// </summary>
+    /// <remarks>
+    /// It named two endpoints and claimed all of them, which is the shape that lets a new route
+    /// ship unguarded: the mapping wraps each route in Read or Write by hand, and a route added
+    /// without either compiles, serves, and passes a test that never asks about it. Found when
+    /// /schema became a POST and this would not have noticed a missing wrapper.
+    /// </remarks>
     [Fact]
     public async Task A_caller_with_no_role_reaches_nothing()
     {
@@ -260,6 +269,30 @@ public class PolicyEndpointTests
 
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/dw-policies/rules")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/dw-policies/health")).StatusCode);
+
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync(
+                "/dw-policies/schema", new { entity = Entity })).StatusCode);
+
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync(
+                "/dw-policies/explain", new { entity = Entity })).StatusCode);
+
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync(
+                "/dw-policies/simulate",
+                new { entity = Entity, filter = new { } })).StatusCode);
+
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/dw-policies/rules", Rule())).StatusCode);
+
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.DeleteAsync($"/dw-policies/rules/{Guid.NewGuid()}")).StatusCode);
     }
 
     // ---- schema --------------------------------------------------------------------------------

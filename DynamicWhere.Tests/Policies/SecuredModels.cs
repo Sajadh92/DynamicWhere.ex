@@ -311,6 +311,16 @@ internal class SecuredAccount
 /// without a denial reaching the assertion first.
 /// </summary>
 /// <summary>A navigation answering to a public name, so a schema request can be written in it.</summary>
+/// <summary>A navigation onto a type the caller can see nothing of.</summary>
+internal class ClosedBranchRow
+{
+    public int Id { get; set; }
+
+    public AllDeniedRow? Hidden { get; set; }
+
+    public SecuredContact? Contact { get; set; }
+}
+
 internal class AliasedNavigationRow
 {
     public int Id { get; set; }

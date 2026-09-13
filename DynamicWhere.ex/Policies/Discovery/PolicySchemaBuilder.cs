@@ -135,6 +135,8 @@ public static class PolicySchemaBuilder
             walker.Walk(root.Type, root.Path, root.Level, stop, root.Occurrences, root.Parent);
         }
 
+        Prune(walker.Nodes, walker.Fields);
+
         walker.Fields.Sort(Compare);
         walker.Nodes.Sort(static (left, right) =>
             string.Compare(left.Path, right.Path, StringComparison.OrdinalIgnoreCase));
@@ -243,17 +245,96 @@ public static class PolicySchemaBuilder
 
             if (navigation is null)
             {
-                throw new ArgumentException(
-                    $"'{path}' names '{match.Name}', which holds a value rather than a related " +
-                    "entity. Only a navigation can be the root of a schema request; ask for the " +
-                    "entity and read the field out of the list.",
-                    nameof(path));
+                // Named a value rather than a navigation. Saying so is the helpful answer and, for a
+                // field the caller cannot use at all, it is also a disclosure: design 5.7 keeps such
+                // a field out of the schema entirely, and confirming it here would let a caller
+                // recover the whole property list one guess at a time — which is exactly what the
+                // omission exists to prevent. So the helpful message is reserved for a field they
+                // can already see in the response, and anything else answers as though the path
+                // named nothing.
+                return Visible(entityType, canonical, context, resolver)
+                    ? throw new ArgumentException(
+                        $"'{path}' names '{match.Name}', which holds a value rather than a related " +
+                        "entity. Only a navigation can be the root of a schema request; ask for the " +
+                        "entity and read the field out of the list.",
+                        nameof(path))
+                    : null;
             }
 
             current = navigation;
         }
 
         return canonical;
+    }
+
+    /// <summary>
+    /// Drops a navigation the walk went into and found nothing in.
+    /// </summary>
+    /// <remarks>
+    /// Design 5.7 keeps a field the caller can do nothing with out of the schema entirely. A
+    /// navigation whose whole subtree is denied is the same fact one level up: listing it would name
+    /// a branch that opens onto nothing, and naming it is the disclosure the field rule exists to
+    /// avoid. The old schema had no node list and so said nothing about such a branch either way.
+    /// <para>
+    /// Only a node the walk actually entered. A node it stopped at is listed whether or not anything
+    /// is usable beneath it, which is the deliberate choice recorded in the design: finding out would
+    /// cost a level of policy resolution per navigation, which is most of the work the depth limit
+    /// exists to avoid. For a node already entered the answer is free, so it is taken.
+    /// </para>
+    /// <para>
+    /// Repeated until nothing moves, because dropping a node can empty its parent. Every field's
+    /// parent survives by construction: a node holding a field is a node something points at.
+    /// </para>
+    /// </remarks>
+    private static void Prune(List<PolicySchemaNode> nodes, IReadOnlyList<PolicySchemaField> fields)
+    {
+        while (true)
+        {
+            HashSet<string> carrying = new(StringComparer.OrdinalIgnoreCase);
+
+            foreach (PolicySchemaField field in fields)
+            {
+                if (field.Parent is not null)
+                {
+                    carrying.Add(field.Parent);
+                }
+            }
+
+            foreach (PolicySchemaNode node in nodes)
+            {
+                if (node.Parent is not null)
+                {
+                    carrying.Add(node.Parent);
+                }
+            }
+
+            if (nodes.RemoveAll(node => node.Expanded && !carrying.Contains(node.Path)) == 0)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>True when the caller may do at least one thing with a field.</summary>
+    /// <remarks>
+    /// The same test <c>Describe</c> applies when deciding whether a field is listed, so the two
+    /// answers cannot drift: a field the schema omits is a field this reports as invisible, and a
+    /// path naming it is answered as though it named nothing.
+    /// </remarks>
+    private static bool Visible(
+        Type entityType, string path, DwPolicyContext context, PolicyResolver resolver)
+    {
+        FieldPolicy policy = resolver.Resolve(entityType, path, context);
+
+        foreach (PolicyFeature feature in Features)
+        {
+            if (policy.Allows(feature))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Resolves the requested paths into roots, or the entity itself when none was named.</summary>

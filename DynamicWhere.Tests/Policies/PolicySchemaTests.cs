@@ -598,6 +598,81 @@ public class PolicySchemaTests
             Assert.Single(Describe<PlainNode>().Nodes, n => n.Path == "Next").Entity);
     }
 
+    /// <summary>
+    /// A path naming a field the caller cannot use at all is answered as though it named nothing.
+    /// </summary>
+    /// <remarks>
+    /// Found by the security pass. Design 5.7 keeps a denied field out of the schema entirely, and
+    /// an error naming it put it straight back: a caller could recover the whole property list one
+    /// guess at a time, against the one endpoint built to describe only what they may use. The
+    /// helpful message is reserved for a field they can already see in the response.
+    /// </remarks>
+    [Fact]
+    public void A_path_naming_a_denied_field_is_not_confirmed()
+    {
+        DwPolicyOptions options = Frozen();
+        PolicyResolver resolver = new(new IDwPolicyProvider[] { new AttributePolicyProvider() });
+
+        // NationalId is [DwDenied] and absent from the schema. It answers like a typo.
+        Assert.Null(PolicySchemaBuilder.ResolveNavigation(
+            typeof(SecuredEmployee), "NationalId", new DwPolicyContext(), options, resolver));
+
+        Assert.Null(PolicySchemaBuilder.ResolveNavigation(
+            typeof(SecuredEmployee), "NotAnythingAtAll", new DwPolicyContext(), options, resolver));
+
+        // Name is usable, so naming it still gets the answer that helps.
+        Assert.Throws<ArgumentException>(() => PolicySchemaBuilder.ResolveNavigation(
+            typeof(SecuredEmployee), "Name", new DwPolicyContext(), options, resolver));
+    }
+
+    /// <summary>
+    /// A navigation the walk entered and found nothing usable in is not listed.
+    /// </summary>
+    /// <remarks>
+    /// The field rule one level up. A branch whose whole subtree is denied would otherwise be named
+    /// by the node list, which is the disclosure keeping its fields out of the schema exists to
+    /// avoid. It applies only to a node the walk entered, where the answer is free — a node it
+    /// stopped at is listed either way, which is the deliberate choice in the design.
+    /// </remarks>
+    [Fact]
+    public void A_navigation_with_nothing_usable_under_it_is_not_listed()
+    {
+        PolicySchema schema = Describe<ClosedBranchRow>();
+
+        Assert.DoesNotContain(schema.Nodes, n => n.Path == "Hidden");
+        Assert.DoesNotContain(schema.Fields, f => f.Parent == "Hidden");
+
+        // The branch beside it is untouched, so this is not simply dropping every node.
+        Assert.Contains(schema.Nodes, n => n.Path == "Contact");
+        Assert.Contains(schema.Fields, f => f.Path == "Contact.Phone");
+    }
+
+    /// <summary>
+    /// Every field hangs under a node that is actually listed, so the adjacency never dangles.
+    /// </summary>
+    /// <remarks>
+    /// The property pruning has to preserve. A field whose parent was dropped would leave a
+    /// consumer building a tree with a branch it cannot place.
+    /// </remarks>
+    [Fact]
+    public void No_field_hangs_under_a_node_that_is_missing()
+    {
+        foreach (PolicySchema schema in new[]
+        {
+            Describe<ClosedBranchRow>(),
+            Describe<SecuredEmployee>(),
+            Describe<PlainNode>(request: new PolicySchemaRequest { Depth = 4 })
+        })
+        {
+            HashSet<string> listed = new(
+                schema.Nodes.Select(n => n.Path), StringComparer.OrdinalIgnoreCase);
+
+            Assert.All(
+                schema.Fields.Where(f => f.Parent is not null),
+                f => Assert.Contains(f.Parent!, listed));
+        }
+    }
+
     // ---- parents -------------------------------------------------------------------------------
 
     [Fact]

@@ -22,6 +22,7 @@ public class PolicySchemaTests
     private static PolicySchema Describe<T>(
         DwPolicyContext? context = null,
         DwPolicyOptions? options = null,
+        PolicySchemaRequest? request = null,
         params IDwPolicyProvider[] extra)
     {
         DwEntityCatalog catalog = new();
@@ -38,7 +39,8 @@ public class PolicySchemaTests
             catalog,
             context ?? new DwPolicyContext(),
             options ?? Frozen(),
-            new PolicyResolver(providers));
+            new PolicyResolver(providers),
+            request);
     }
 
     private static DwPolicyOptions Frozen()
@@ -285,9 +287,15 @@ public class PolicySchemaTests
     }
 
     /// <summary>
-    /// A self-referencing type would otherwise walk forever. The depth cap is what stops it, so a
-    /// schema of one is finite rather than merely slow.
+    /// A self-referencing type would otherwise walk forever, and the assertion that it does not has
+    /// to name the level it stops at.
     /// </summary>
+    /// <remarks>
+    /// The previous version of this asserted no path exceeded four segments, which the default depth
+    /// of two makes true whatever the walk does — it passed with the cycle guard removed and with
+    /// the depth limit removed. Two exact paths, one present and one absent, is what it takes for
+    /// the test to have an opinion.
+    /// </remarks>
     [Fact]
     public void A_self_referencing_type_terminates()
     {
@@ -295,7 +303,338 @@ public class PolicySchemaTests
 
         Assert.Contains(schema.Fields, f => f.Path == "Label");
         Assert.Contains(schema.Fields, f => f.Path == "Next.Label");
-        Assert.All(schema.Fields, f => Assert.True(f.Path.Split('.').Length <= 4));
+        Assert.DoesNotContain(schema.Fields, f => f.Path == "Next.Next.Label");
+        Assert.Equal(2, schema.Fields.Count);
+    }
+
+    // ---- depth ---------------------------------------------------------------------------------
+
+    /// <summary>A deployment that says nothing gets the entity and one level of navigation.</summary>
+    [Fact]
+    public void The_default_walk_covers_two_levels()
+    {
+        DwPolicyOptions options = new();
+
+        Assert.Equal(2, options.Caps.SchemaDepth);
+
+        PolicySchema schema = Describe<SecuredEmployee>();
+
+        Assert.Contains(schema.Fields, f => f.Path == "Name");
+        Assert.Contains(schema.Fields, f => f.Path == "Contact.Phone");
+        Assert.Equal(2, schema.Depth);
+    }
+
+    [Fact]
+    public void A_depth_of_one_describes_the_entity_alone()
+    {
+        PolicySchema schema = Describe<SecuredEmployee>(request: new PolicySchemaRequest { Depth = 1 });
+
+        Assert.Contains(schema.Fields, f => f.Path == "Name");
+        Assert.DoesNotContain(schema.Fields, f => f.Path.Contains('.'));
+        Assert.Equal(1, schema.Depth);
+    }
+
+    /// <summary>
+    /// A depth beyond what a query may reach is clamped rather than refused, and the response says
+    /// what it used.
+    /// </summary>
+    /// <remarks>
+    /// This is what removes the need for a sentinel meaning "as deep as possible". A caller sends a
+    /// large number, reads <c>Depth</c> back, and learns the ceiling from <c>MaxDepth</c> without
+    /// ever having to know it in advance.
+    /// </remarks>
+    [Fact]
+    public void A_depth_beyond_the_query_cap_is_clamped_and_reported()
+    {
+        PolicySchema schema = Describe<PlainNode>(request: new PolicySchemaRequest { Depth = 99 });
+
+        Assert.Equal(4, schema.MaxDepth);
+        Assert.Equal(4, schema.Depth);
+    }
+
+    [Fact]
+    public void A_depth_below_one_is_refused()
+    {
+        // Zero levels describes nothing, and answering with an empty list would read as a caller
+        // who may use no fields rather than a request that asked for none.
+        Assert.Throws<ArgumentException>(
+            () => Describe<SecuredEmployee>(request: new PolicySchemaRequest { Depth = 0 }));
+    }
+
+    // ---- the cycle guard -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A type may appear twice on one path and not three times, which is what makes a
+    /// self-referencing entity describable rather than combinatorial.
+    /// </summary>
+    [Fact]
+    public void A_type_may_not_repeat_beyond_the_limit()
+    {
+        DwPolicyOptions permissive = new();
+
+        permissive.Caps.SchemaCycleLimit = 3;
+        permissive.Freeze();
+
+        PolicySchema deeper = Describe<PlainNode>(
+            options: permissive, request: new PolicySchemaRequest { Depth = 4 });
+
+        // Three occurrences allowed, so the third level appears and the fourth does not.
+        Assert.Contains(deeper.Fields, f => f.Path == "Next.Next.Label");
+        Assert.DoesNotContain(deeper.Fields, f => f.Path == "Next.Next.Next.Label");
+
+        // And at the shipped limit of two, the same request stops a level earlier. The depth is
+        // identical in both runs, so the guard is the only thing that differs.
+        PolicySchema shipped = Describe<PlainNode>(request: new PolicySchemaRequest { Depth = 4 });
+
+        Assert.DoesNotContain(shipped.Fields, f => f.Path == "Next.Next.Label");
+    }
+
+    /// <summary>
+    /// The guard counts within the view a request asked for, so drilling into a branch shows what
+    /// the entity-rooted walk stopped short of.
+    /// </summary>
+    /// <remarks>
+    /// The alternative — counting from the entity — would make this request describe nothing, and a
+    /// front end would be offering a node that opens onto an empty response. Every path stays
+    /// reachable precisely because the count resets.
+    /// </remarks>
+    [Fact]
+    public void The_guard_counts_within_the_view_so_drilling_makes_progress()
+    {
+        Assert.DoesNotContain(Describe<PlainNode>().Fields, f => f.Path == "Next.Next.Label");
+
+        PolicySchema drilled = Describe<PlainNode>(
+            request: new PolicySchemaRequest { Paths = new[] { "Next" } });
+
+        Assert.Contains(drilled.Fields, f => f.Path == "Next.Label");
+        Assert.Contains(drilled.Fields, f => f.Path == "Next.Next.Label");
+    }
+
+    /// <summary>
+    /// A requested root arrives with its own type already counted once, not at zero.
+    /// </summary>
+    /// <remarks>
+    /// The reset that makes drilling work is a reset to one, not to nothing. Seeding an empty count
+    /// would give a requested subtree one more level of self-reference than the same subtree gets
+    /// from the entity, so the same path would describe two different things depending on how you
+    /// arrived at it. Found by mutation: emptying the seed turned no test red until this one.
+    /// </remarks>
+    [Fact]
+    public void A_requested_root_counts_its_own_type_once()
+    {
+        PolicySchema schema = Describe<PlainNode>(
+            request: new PolicySchemaRequest { Paths = new[] { "Next" }, Depth = 3 });
+
+        Assert.Contains(schema.Fields, f => f.Path == "Next.Label");
+        Assert.Contains(schema.Fields, f => f.Path == "Next.Next.Label");
+        Assert.DoesNotContain(schema.Fields, f => f.Path == "Next.Next.Next.Label");
+        Assert.Equal(2, schema.Fields.Count);
+    }
+
+    // ---- paths ---------------------------------------------------------------------------------
+
+    [Fact]
+    public void A_path_roots_the_walk()
+    {
+        PolicySchema schema = Describe<SecuredEmployee>(
+            request: new PolicySchemaRequest { Paths = new[] { "Contact" } });
+
+        Assert.Contains(schema.Fields, f => f.Path == "Contact.Phone");
+        Assert.DoesNotContain(schema.Fields, f => f.Path == "Name");
+        Assert.Equal(new[] { "Contact" }, schema.Roots);
+    }
+
+    [Fact]
+    public void Two_paths_are_answered_in_one_response()
+    {
+        PolicySchema schema = Describe<PlainNode>(
+            request: new PolicySchemaRequest { Paths = new[] { "Next", "Next.Next" }, Depth = 1 });
+
+        Assert.Contains(schema.Fields, f => f.Path == "Next.Label");
+        Assert.Contains(schema.Fields, f => f.Path == "Next.Next.Label");
+        Assert.DoesNotContain(schema.Fields, f => f.Path == "Label");
+    }
+
+    /// <summary>Two roots that reach the same field list it once.</summary>
+    /// <remarks>
+    /// Without this a picker would show one column twice, and the caller would have no way to tell
+    /// which of the two was the real one. It is also why the fields are flat with a parent rather
+    /// than nested: a nested document would have to choose an owner for the duplicate.
+    /// </remarks>
+    [Fact]
+    public void Overlapping_paths_list_a_field_once()
+    {
+        PolicySchema schema = Describe<PlainNode>(
+            request: new PolicySchemaRequest { Paths = new[] { "Next", "Next.Next" } });
+
+        Assert.Single(schema.Fields, f => f.Path == "Next.Next.Label");
+    }
+
+    [Fact]
+    public void A_path_naming_a_field_rather_than_a_navigation_is_refused()
+    {
+        // Refused rather than reported as missing. The caller is holding a real name and using it
+        // in the wrong place, and "no such thing" is a lie they would act on.
+        ArgumentException refused = Assert.Throws<ArgumentException>(
+            () => Describe<SecuredEmployee>(
+                request: new PolicySchemaRequest { Paths = new[] { "Name" } }));
+
+        Assert.Contains("rather than a related entity", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_path_naming_nothing_resolves_to_nothing()
+    {
+        Assert.Null(PolicySchemaBuilder.ResolveNavigation(
+            typeof(SecuredEmployee),
+            "NotAnything",
+            new DwPolicyContext(),
+            Frozen(),
+            new PolicyResolver(new IDwPolicyProvider[] { new AttributePolicyProvider() })));
+    }
+
+    [Fact]
+    public void A_path_already_at_the_navigation_cap_is_refused()
+    {
+        // Four navigations deep with a cap of four leaves no level to describe, so the request is
+        // refused rather than answered with an empty list that reads like a denial.
+        Assert.Throws<ArgumentException>(
+            () => Describe<PlainNode>(
+                request: new PolicySchemaRequest { Paths = new[] { "Next.Next.Next.Next" } }));
+    }
+
+    [Fact]
+    public void A_navigation_is_addressable_by_its_alias()
+    {
+        PolicySchema schema = Describe<AliasedNavigationRow>(
+            request: new PolicySchemaRequest { Paths = new[] { "details" } });
+
+        Assert.Contains(schema.Fields, f => f.Path == "Contact.Phone");
+        Assert.Equal(new[] { "Contact" }, schema.Roots);
+    }
+
+    [Fact]
+    public void An_unrooted_request_echoes_no_roots()
+    {
+        Assert.Empty(Describe<SecuredEmployee>().Roots);
+    }
+
+    // ---- nodes ---------------------------------------------------------------------------------
+
+    [Fact]
+    public void A_walked_navigation_is_a_node_that_says_it_was_walked()
+    {
+        PolicySchemaNode node = Assert.Single(
+            Describe<SecuredEmployee>().Nodes, n => n.Path == "Contact");
+
+        Assert.True(node.Expanded);
+        Assert.Null(node.Parent);
+        Assert.Equal(2, node.Depth);
+    }
+
+    /// <summary>
+    /// A navigation the walk stopped at is still listed, which is what a front end draws an
+    /// unopened branch from.
+    /// </summary>
+    [Fact]
+    public void A_navigation_left_alone_is_a_node_that_says_so()
+    {
+        PolicySchemaNode node = Assert.Single(
+            Describe<PlainNode>().Nodes, n => n.Path == "Next.Next");
+
+        Assert.False(node.Expanded);
+        Assert.Equal("Next", node.Parent);
+        Assert.Equal(3, node.Depth);
+    }
+
+    /// <summary>
+    /// A node reports what expanding it would actually yield, which accounts for the cycle guard as
+    /// well as the query cap.
+    /// </summary>
+    [Fact]
+    public void A_node_reports_how_much_lies_beneath_it()
+    {
+        // Contact holds only simple members, so there is nothing under it to ask for.
+        Assert.Equal(
+            0,
+            Assert.Single(Describe<SecuredEmployee>().Nodes, n => n.Path == "Contact").RemainingDepth);
+
+        // Both self-referencing nodes report one, and the number is the answer to "what do I get if
+        // I open this". Asking for a path resets the guard's count, so the reply is measured the
+        // same way — a node that inherited the current walk's count would report nothing beneath it
+        // and then hand back a field the moment somebody clicked it.
+        Assert.Equal(
+            1,
+            Assert.Single(Describe<PlainNode>().Nodes, n => n.Path == "Next").RemainingDepth);
+
+        Assert.Equal(
+            1,
+            Assert.Single(Describe<PlainNode>().Nodes, n => n.Path == "Next.Next").RemainingDepth);
+
+        // And it is honoured: opening the node returns the level it promised.
+        Assert.Contains(
+            Describe<PlainNode>(request: new PolicySchemaRequest { Paths = new[] { "Next.Next" } })
+                .Fields,
+            f => f.Path == "Next.Next.Next.Label");
+    }
+
+    /// <summary>
+    /// A node whose type the catalogue never exposed carries no entity name.
+    /// </summary>
+    /// <remarks>
+    /// The catalogue exists so a caller cannot enumerate the application's types by asking about
+    /// them, and a nested navigation does not need its type exposed for the walk to pass through it.
+    /// Naming one here would hand back exactly the fact the catalogue withholds.
+    /// </remarks>
+    [Fact]
+    public void A_node_whose_type_nobody_exposed_is_unnamed()
+    {
+        Assert.Null(
+            Assert.Single(Describe<SecuredEmployee>().Nodes, n => n.Path == "Contact").Entity);
+
+        // The self-referencing case is the contrast: the walk exposes PlainNode as the entity, so
+        // its own navigation resolves to a name.
+        Assert.NotNull(
+            Assert.Single(Describe<PlainNode>().Nodes, n => n.Path == "Next").Entity);
+    }
+
+    // ---- parents -------------------------------------------------------------------------------
+
+    [Fact]
+    public void A_field_hangs_under_the_navigation_that_carries_it()
+    {
+        PolicySchema schema = Describe<SecuredEmployee>();
+
+        Assert.Null(Assert.Single(schema.Fields, f => f.Path == "Name").Parent);
+        Assert.Equal("Contact", Assert.Single(schema.Fields, f => f.Path == "Contact.Phone").Parent);
+    }
+
+    // ---- the field cap -------------------------------------------------------------------------
+
+    /// <summary>
+    /// The cap cuts the list short and says so, rather than throwing.
+    /// </summary>
+    /// <remarks>
+    /// A field picker missing its tail can tell its user; a failed request can only say nothing. It
+    /// is a ceiling rather than a shape — the depth and the cycle guard are what keep an ordinary
+    /// response small, and this exists so no combination of paths and depth can ask for an
+    /// unbounded one.
+    /// </remarks>
+    [Fact]
+    public void Reaching_the_field_cap_truncates_and_says_so()
+    {
+        DwPolicyOptions capped = new();
+
+        capped.Caps.MaxSchemaFields = 2;
+        capped.Freeze();
+
+        PolicySchema schema = Describe<SecuredEmployee>(options: capped);
+
+        Assert.True(schema.Truncated);
+        Assert.Equal(2, schema.Fields.Count);
+
+        // And an ordinary request is never truncated, so the flag means something when it is set.
+        Assert.False(Describe<SecuredEmployee>().Truncated);
     }
 
     /// <summary>

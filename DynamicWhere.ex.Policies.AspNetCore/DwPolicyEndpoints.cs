@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Config;
@@ -73,8 +73,12 @@ public static class DwPolicyEndpoints
         RouteHandlerBuilder Write(RouteHandlerBuilder route) =>
             options.AllowAnonymousAccess ? route : route.RequireAuthorization(options.WritePolicy!);
 
-        Read(endpoints.MapGet($"{prefix}/schema/{{entity}}", (string entity, HttpContext http) =>
-            Schema(entity, http, options)));
+        // POST for a read, like /explain and /simulate beside it. The request carries a list of
+        // paths, and a list does not survive a query string without a separator — which would be a
+        // bug waiting for the alias that contains one. Nothing forbids a comma in an alias: it is
+        // refused only when blank, dotted, or the wildcard.
+        Read(endpoints.MapPost($"{prefix}/schema", (HttpContext http, SchemaRequest request) =>
+            Schema(http, request, options)));
 
         Read(endpoints.MapGet($"{prefix}/rules", (HttpContext http, string? subject) =>
             Rules(http, subject)));
@@ -99,21 +103,96 @@ public static class DwPolicyEndpoints
     // ------------------------------------------------------------------------------ schema
 
     private static async Task<IResult> Schema(
-        string entity, HttpContext http, DwPolicyAdminOptions options)
+        HttpContext http, SchemaRequest request, DwPolicyAdminOptions options)
     {
-        Type? type = DwPolicy.Options.Entities.Resolve(entity);
+        Type? type = DwPolicy.Options.Entities.Resolve(request?.Entity);
 
         // The same answer whether the entity does not exist or merely was not exposed. Telling
         // those apart is precisely what an enumeration attempt is looking for.
         if (type is null)
         {
-            return Results.NotFound(new { error = $"No entity named '{entity}'." });
+            return Results.NotFound(new { error = $"No entity named '{request?.Entity}'." });
         }
 
         DwPolicyContext context = await CallerAsync(http, options).ConfigureAwait(false);
 
-        return Results.Ok(PolicySchemaBuilder.Describe(
-            type, DwPolicy.Options.Entities, context, DwPolicy.Options, DwPolicy.Resolver));
+        return Described(type, context, request!.Paths, request.Depth, request.Entity!)
+            switch
+        {
+            { Schema: { } schema } => Results.Ok(schema),
+            { NotFound: { } missing } => Results.NotFound(new { error = missing }),
+            { Invalid: { } bad } => Results.BadRequest(new { error = bad }),
+            _ => Results.BadRequest(new { error = "The schema request could not be read." })
+        };
+    }
+
+    /// <summary>
+    /// Resolves the requested paths and builds the schema, or says which of the two ways it failed.
+    /// </summary>
+    /// <remarks>
+    /// Paths are resolved here rather than inside the builder so the transport can answer the two
+    /// mistakes differently. A path naming nothing is a 404, matching how an unknown entity is
+    /// answered; a path naming a field rather than a navigation is a 400, because the caller is
+    /// holding a real name and using it in the wrong place, and telling them "no such thing" would
+    /// be a lie they would act on.
+    /// <para>
+    /// Shared by <c>/schema</c> and <c>/explain</c>, which take the same two parameters because
+    /// they walk the same field list.
+    /// </para>
+    /// </remarks>
+    private static (PolicySchema? Schema, string? NotFound, string? Invalid) Described(
+        Type type,
+        DwPolicyContext context,
+        IReadOnlyList<string>? paths,
+        int? depth,
+        string entity)
+    {
+        List<string>? canonical = null;
+
+        if (paths is not null && paths.Count > 0)
+        {
+            canonical = new List<string>(paths.Count);
+
+            foreach (string path in paths)
+            {
+                string? resolved;
+
+                try
+                {
+                    resolved = PolicySchemaBuilder.ResolveNavigation(
+                        type, path, context, DwPolicy.Options, DwPolicy.Resolver);
+                }
+                catch (ArgumentException blank)
+                {
+                    return (null, null, blank.Message);
+                }
+
+                if (resolved is null)
+                {
+                    return (null, $"'{path}' is not a navigation of '{entity}'.", null);
+                }
+
+                canonical.Add(resolved);
+            }
+        }
+
+        try
+        {
+            return (
+                PolicySchemaBuilder.Describe(
+                    type,
+                    DwPolicy.Options.Entities,
+                    context,
+                    DwPolicy.Options,
+                    DwPolicy.Resolver,
+                    new PolicySchemaRequest { Paths = canonical, Depth = depth }),
+                null,
+                null);
+        }
+        catch (ArgumentException refused)
+        {
+            return (null, null, refused.Message);
+        }
     }
 
     // ------------------------------------------------------------------------------- rules
@@ -244,8 +323,24 @@ public static class DwPolicyEndpoints
 
         DwPolicyContext context = await CallerAsync(http, options).ConfigureAwait(false);
 
-        PolicySchema schema = PolicySchemaBuilder.Describe(
-            type, DwPolicy.Options.Entities, context, DwPolicy.Options, DwPolicy.Resolver);
+        // The same two parameters /schema takes, because this walks the same field list. Before
+        // they existed a bare request resolved the decision chain for every field at every depth,
+        // which on the self-referencing entity that motivated all of this was 335 resolutions to
+        // answer a question about one of them.
+        (PolicySchema? built, string? missing, string? invalid) = Described(
+            type, context, request?.Paths, request?.Depth, request?.Entity!);
+
+        if (missing is not null)
+        {
+            return Results.NotFound(new { error = missing });
+        }
+
+        if (built is null)
+        {
+            return Results.BadRequest(new { error = invalid ?? "The request could not be read." });
+        }
+
+        PolicySchema schema = built;
 
         if (!string.IsNullOrWhiteSpace(request!.Field))
         {
@@ -584,10 +679,40 @@ public sealed record RuleRequest(
     }
 }
 
+/// <summary>
+/// What to describe.
+/// </summary>
+/// <param name="Entity">The public name of the entity.</param>
+/// <param name="Paths">
+/// The navigations to root the description at, or null to describe the entity itself. Several are
+/// answered in one response, so a field picker opening three branches makes one request.
+/// </param>
+/// <param name="Depth">
+/// How many levels of type to walk from each root, or null for <c>DwCaps.SchemaDepth</c>. A value
+/// beyond what the query cap allows is clamped rather than refused, and the response reports both
+/// the depth it used and the ceiling — which is why there is no sentinel for "as deep as possible"
+/// and nothing here to parse.
+/// </param>
+/// <remarks>
+/// A record rather than a query string. The paths are a list, and a list in a query string needs a
+/// separator; a comma is legal in an alias, so the separator would eventually split a name in half
+/// and resolve neither piece.
+/// </remarks>
+public sealed record SchemaRequest(
+    string? Entity,
+    IReadOnlyList<string>? Paths = null,
+    int? Depth = null);
+
 /// <summary>What to explain.</summary>
 /// <param name="Entity">The public name of the entity.</param>
 /// <param name="Field">One field, or null to explain every field the caller can use.</param>
-public sealed record ExplainRequest(string? Entity, string? Field);
+/// <param name="Paths">Where to look, as on <see cref="SchemaRequest"/>.</param>
+/// <param name="Depth">How far to look, as on <see cref="SchemaRequest"/>.</param>
+public sealed record ExplainRequest(
+    string? Entity,
+    string? Field,
+    IReadOnlyList<string>? Paths = null,
+    int? Depth = null);
 
 /// <summary>What to simulate.</summary>
 /// <param name="Entity">The public name of the entity.</param>

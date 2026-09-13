@@ -20,6 +20,9 @@ public sealed class DwCaps
     private int _defaultFieldCost = 1;
     private int _maxAuditEvents = 10_000;
     private int _minGroupSize;
+    private int _schemaDepth = 2;
+    private int _schemaCycleLimit = 2;
+    private int _maxSchemaFields = 2000;
 
     /// <summary>
     /// The floor a deployment gets when it never mentions <see cref="MinGroupSize"/> at all.
@@ -173,6 +176,69 @@ public sealed class DwCaps
     /// wrong control here.
     /// </remarks>
     public bool IsMinGroupSizeSet => _minGroupSize != 0;
+
+    /// <summary>
+    /// How many levels of type a schema request walks when it names no depth of its own.
+    /// </summary>
+    /// <remarks>
+    /// Two: the entity's own fields, plus one level of navigation. Separate from
+    /// <see cref="MaxNavigationDepth"/> on purpose — that one says how deep a <em>query</em> may
+    /// reach and stays at four, while this says how much of that a single <em>description</em>
+    /// carries. A caller can still filter on a path the default schema does not list, and can ask
+    /// for it by name.
+    /// <para>
+    /// The walk was previously bounded only by the query cap, which enumerated every
+    /// <c>Manager.Subordinates.Manager</c> combination a self-referencing entity allows: 335 fields
+    /// for a thirty-three property type, correct and unusable as a field picker. A request names a
+    /// deeper level, or a subtree, when it wants one.
+    /// </para>
+    /// </remarks>
+    public int SchemaDepth
+    {
+        get => _schemaDepth;
+        set => _schemaDepth = Set(value);
+    }
+
+    /// <summary>
+    /// How many times one type may appear on a single path before the schema stops descending.
+    /// </summary>
+    /// <remarks>
+    /// Two, which is the entity plus one self-reference: <c>Manager.Email</c> is described and
+    /// <c>Manager.Manager.Email</c> is not. Both remain queryable, and the second remains reachable
+    /// by asking for the <c>Manager.Manager</c> subtree, because the count is taken within the view
+    /// a request asked for rather than from the entity. That is what keeps drilling productive —
+    /// counting from the entity would make a request for that subtree describe nothing at all.
+    /// <para>
+    /// Raising it to <see cref="MaxNavigationDepth"/> restores the exhaustive listing, for a
+    /// consumer that genuinely wants every combination in one response.
+    /// </para>
+    /// </remarks>
+    public int SchemaCycleLimit
+    {
+        get => _schemaCycleLimit;
+        set => _schemaCycleLimit = Set(value);
+    }
+
+    /// <summary>
+    /// The most fields one schema response may carry before it is cut short.
+    /// </summary>
+    /// <remarks>
+    /// A ceiling rather than a shape. <see cref="SchemaDepth"/> and <see cref="SchemaCycleLimit"/>
+    /// are what keep an ordinary response small; this exists so that no combination of requested
+    /// paths and depth can ask the endpoint to build an unbounded one.
+    /// <para>
+    /// Two thousand, which is far above what a default request produces — the thirty-three property
+    /// entity that motivated all of this returns fifty-nine — so reaching it means a deliberately
+    /// deep or many-rooted request rather than an ordinary one. Reaching it sets
+    /// <c>PolicySchema.Truncated</c> rather than throwing: a field picker missing its tail can say
+    /// so, where a failed request can only say nothing.
+    /// </para>
+    /// </remarks>
+    public int MaxSchemaFields
+    {
+        get => _maxSchemaFields;
+        set => _maxSchemaFields = Set(value);
+    }
 
     /// <summary>Prevents any further change.</summary>
     internal void Freeze() => _frozen = true;

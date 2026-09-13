@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -145,7 +145,9 @@ public class PolicyEndpointHardeningTests
         HttpClient client = host.GetTestClient();
 
         Assert.Equal(
-            HttpStatusCode.OK, (await client.GetAsync($"/dw-policies/schema/{Entity}")).StatusCode);
+            HttpStatusCode.OK,
+            (await client.PostAsJsonAsync(
+                "/dw-policies/schema", new { entity = Entity })).StatusCode);
 
         Assert.Equal(
             HttpStatusCode.OK,
@@ -435,10 +437,14 @@ public class PolicyEndpointHardeningTests
         HttpClient client = host.GetTestClient();
 
         Assert.Equal(
-            HttpStatusCode.OK, (await client.GetAsync($"/dw-policies/schema/{Entity}")).StatusCode);
+            HttpStatusCode.OK,
+            (await client.PostAsJsonAsync(
+                "/dw-policies/schema", new { entity = Entity })).StatusCode);
 
         Assert.Equal(
             HttpStatusCode.OK,
-            (await client.GetAsync($"/dw-policies/schema/{typeof(Staff).FullName}")).StatusCode);
+            (await client.PostAsJsonAsync(
+                "/dw-policies/schema",
+                new { entity = typeof(Staff).FullName })).StatusCode);
     }
 }

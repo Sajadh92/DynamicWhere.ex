@@ -310,6 +310,15 @@ internal class SecuredAccount
 /// A self-referencing type with no policy attributes at all, so a depth cap can be exercised
 /// without a denial reaching the assertion first.
 /// </summary>
+/// <summary>A navigation answering to a public name, so a schema request can be written in it.</summary>
+internal class AliasedNavigationRow
+{
+    public int Id { get; set; }
+
+    [DwAlias("details")]
+    public SecuredContact? Contact { get; set; }
+}
+
 internal class PlainNode
 {
     public string Label { get; set; } = string.Empty;

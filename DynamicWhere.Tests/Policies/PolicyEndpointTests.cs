@@ -270,7 +270,7 @@ public class PolicyEndpointTests
         using IHost host = await HostAsync();
 
         JsonElement body = await JsonAsync(await host.GetTestClient()
-            .GetAsync($"/dw-policies/schema/{Entity}"));
+            .PostAsJsonAsync("/dw-policies/schema", new { entity = Entity }));
 
         Assert.Equal(Entity, body.GetProperty("entity").GetString());
         Assert.NotEmpty(body.GetProperty("fields").EnumerateArray());
@@ -289,11 +289,13 @@ public class PolicyEndpointTests
 
         Assert.Equal(
             HttpStatusCode.NotFound,
-            (await client.GetAsync("/dw-policies/schema/System.String")).StatusCode);
+            (await client.PostAsJsonAsync(
+                "/dw-policies/schema", new { entity = "System.String" })).StatusCode);
 
         Assert.Equal(
             HttpStatusCode.NotFound,
-            (await client.GetAsync("/dw-policies/schema/NoSuchThing")).StatusCode);
+            (await client.PostAsJsonAsync(
+                "/dw-policies/schema", new { entity = "NoSuchThing" })).StatusCode);
     }
 
     /// <summary>
@@ -306,7 +308,7 @@ public class PolicyEndpointTests
         using IHost host = await HostAsync();
 
         JsonElement body = await JsonAsync(await host.GetTestClient()
-            .GetAsync($"/dw-policies/schema/{Entity}"));
+            .PostAsJsonAsync("/dw-policies/schema", new { entity = Entity }));
 
         Assert.DoesNotContain(
             body.GetProperty("fields").EnumerateArray(),

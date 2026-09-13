@@ -109,7 +109,7 @@ public class Employee
       <ul>
         <li><Link href="/docs/policies/attributes">Attributes</Link> — all eighteen, with what each one does</li>
         <li><Link href="/docs/policies/precedence">Precedence</Link> — six levels, and why attributes are sealed by default</li>
-        <li><Link href="/docs/policies/transforms">Transforms &amp; masking</Link> — eight mask strategies and five other transforms</li>
+        <li><Link href="/docs/policies/transforms">Transforms &amp; masking</Link> — nine mask strategies and five other transforms</li>
         <li><Link href="/docs/policies/store">Dynamic store</Link> — rules without a redeploy</li>
         <li><Link href="/docs/policies/providers">Store providers</Link> — Redis and Entity Framework Core</li>
         <li><Link href="/docs/policies/admin">Admin API</Link> — schema, rules, explain, simulate, health</li>

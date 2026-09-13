@@ -8,11 +8,14 @@ using DynamicWhere.ex.Policies.Enums;
 namespace DynamicWhere.ex.Policies.Masking;
 
 /// <summary>
-/// The eight strategies, as pure functions from text to text.
+/// The strategies that are pure functions from text to text.
 /// </summary>
 /// <remarks>
 /// No state, no options object, no context: everything a strategy needs arrives in its
-/// <see cref="MaskStage"/> or as the salt. That is what lets the whole set be tested exhaustively
+/// <see cref="MaskStage"/> or as the salt. That is what
+/// <see cref="MaskStrategy.Tokenize"/> cannot satisfy — a token comes from a vault, so the pipeline
+/// applies that one before reaching here, and this type refuses it rather than masking in full.
+/// Eight of the nine strategies are here. That is what lets the whole set be tested exhaustively
 /// against every shape of input without a fixture.
 /// <para>
 /// Every strategy fails closed. A value that does not fit the strategy it was given — an address

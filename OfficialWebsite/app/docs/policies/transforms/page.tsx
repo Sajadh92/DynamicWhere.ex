@@ -5,8 +5,8 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Transforms & Masking — eight strategies and five other transforms",
-  description: "How DynamicWhere.ex changes values on the way out: eight mask strategies, generalization, mutation, defaults, truncation and formatting, applied in memory after materialization.",
+  title: "Transforms & Masking — nine strategies and five other transforms",
+  description: "How DynamicWhere.ex changes values on the way out: nine mask strategies including hashing and tokenization, generalization, mutation, defaults, truncation and formatting, applied in memory after materialization.",
   keywords: ["data masking .NET", "MaskStrategy", "EF Core data masking", "generalization k-anonymity", "PII masking"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/transforms/" },
 };

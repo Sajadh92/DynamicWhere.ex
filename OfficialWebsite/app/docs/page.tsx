@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 import Link from "next/link";
 import DocPage from "@/components/DocPage";
 import { Code } from "@/components/Code";
@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "Documentation — Dynamic LINQ from JSON for EF Core",
   description:
-    "Official docs for DynamicWhere.ex — a free .NET library that turns JSON filter objects into safe, validated Entity Framework Core LINQ queries. Filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT across .NET 6, 7, 8, and 9.",
+    "Official docs for DynamicWhere.ex — a free .NET library that turns JSON filter objects into safe, validated Entity Framework Core LINQ queries. Filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT across .NET 6, 7, 8, 9, and 10.",
   keywords: [
     "DynamicWhere.ex documentation",
     "EF Core dynamic filter docs",

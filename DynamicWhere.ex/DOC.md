@@ -4,6 +4,11 @@
 
 > A powerful and versatile library for dynamically creating complex filter, sort, paginate, group, aggregate, and set-operation expressions in Entity Framework Core applications — all driven by simple JSON objects from any front-end or API consumer.
 
+> **Reading this with an AI agent?** This manual is written to be read a section at a time, which is
+> the wrong shape for an agent. Point it at **https://doc.dynamicwhere.com/llms.txt** instead — the
+> same surface, condensed into one plain-text pass, with the exact spellings and a list of the traps
+> that produce silently wrong code.
+
 ---
 
 ## Table of Contents

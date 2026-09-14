@@ -1,4 +1,4 @@
-# DynamicWhere.ex
+﻿# DynamicWhere.ex
 
 **JSON-driven queries for Entity Framework Core.**
 
@@ -11,6 +11,20 @@
 A powerful, versatile library for dynamically composing complex **filter, sort, paginate, group, aggregate, and set-operation** (Union / Intersect / Except) expressions in Entity Framework Core applications — all driven by simple JSON objects from any front-end or API consumer.
 
 **Full reference, JSON cookbook, and tuning guide → [doc.dynamicwhere.com](https://doc.dynamicwhere.com)**
+
+### Using an AI coding agent?
+
+Point it at **[doc.dynamicwhere.com/llms.txt](https://doc.dynamicwhere.com/llms.txt)** — the entire API
+surface in one plain-text file: every shape and field name, every enum member verbatim, all seventeen
+methods, the whole policy layer, and the traps that produce code which compiles and is quietly wrong.
+
+```text
+Read https://doc.dynamicwhere.com/llms.txt before writing any
+DynamicWhere.ex code. It is the complete API surface.
+```
+
+Works with Claude, Copilot, Cursor, Codex or anything else that can read a URL. If yours cannot,
+copy it from [the reference page](https://doc.dynamicwhere.com/docs/ai).
 
 ---
 
@@ -25,7 +39,7 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 - **Heterogeneous `Condition.Values`** — pass raw numbers, booleans, strings; normalized per `DataType`.
 - **Thread-safe reflection cache** with FIFO / LRU / LFU eviction and six tuned presets.
 - **Field-level policies** *(new in 3.0)* — decide per caller what may be filtered, sorted, selected, grouped, aggregated and seen. Opt-in: nothing enforces until you ask.
-- **Free Forever.** Targets .NET 6, 7, 8, 9.
+- **Free Forever.** Targets .NET 6, 7, 8, 9, 10.
 
 ---
 

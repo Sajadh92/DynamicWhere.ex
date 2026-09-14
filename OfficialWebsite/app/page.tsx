@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 import Link from "next/link";
 import { SITE } from "@/lib/nav";
 import Footer from "@/components/Footer";
@@ -7,7 +7,7 @@ import { Code } from "@/components/Code";
 import JsonLd from "@/components/JsonLd";
 import { HOME_FAQ, breadcrumbJsonLd, faqJsonLd } from "@/lib/seo";
 
-const HOME_TITLE = `${SITE.name} — JSON Dynamic LINQ Filter for Entity Framework Core (.NET 6/7/8/9)`;
+const HOME_TITLE = `${SITE.name} — JSON Dynamic LINQ Filter for Entity Framework Core (.NET 6/7/8/9/10)`;
 const HOME_DESC =
   "Free open-source .NET library for dynamic, JSON-driven LINQ queries on EF Core. Filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT — all from a JSON body. Works with ASP.NET Core on .NET 6, 7, 8, 9.";
 
@@ -29,7 +29,23 @@ export const metadata: Metadata = {
   },
 };
 
-const FEATURES = [
+type Feature = {
+  title: string;
+  desc: string;
+  icon: string;
+  /** Set on the one card worth clicking straight through to. */
+  href?: string;
+  badge?: string;
+};
+
+const FEATURES: Feature[] = [
+  {
+    title: "Field-level policies",
+    desc: "Decide per caller what may be filtered, sorted, selected, grouped and seen. Masking, tokenization and a k-anonymity floor.",
+    icon: "shield",
+    href: "/docs/policies",
+    badge: "New in 3.0",
+  },
   {
     title: "JSON-driven filters",
     desc: "Pass a Condition / ConditionGroup straight from your front-end. No expression trees, no string LINQ.",
@@ -135,7 +151,7 @@ export default function HomePage() {
               v
             </span>
             <span>
-              {SITE.version} released · heterogeneous values, six cache presets
+              {SITE.version} released · field-level policies, masking, tokenization
             </span>
             <span className="text-[var(--color-fg-3)]">→</span>
           </a>
@@ -153,7 +169,7 @@ export default function HomePage() {
             validated, EF Core-native LINQ queries — filter, sort, paginate,
             project, group, aggregate, and run UNION / INTERSECT / EXCEPT
             without writing a single expression tree. Works with ASP.NET Core
-            on .NET 6, 7, 8, and 9.
+            on .NET 6, 7, 8, 9, and 10.
           </p>
 
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -203,25 +219,44 @@ export default function HomePage() {
               Everything you need to query dynamically
             </h2>
             <p className="mx-auto mt-3 max-w-[560px] text-[15px] text-[var(--color-fg-2)]">
-              One package. Eleven extension methods. Three composable shapes (Filter, Segment, Summary).
+              Four packages. Seventeen extension methods. Three composable shapes (Filter, Segment, Summary), and a policy layer deciding who sees what.
             </p>
           </div>
 
           <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {FEATURES.map((f) => (
-              <div
-                key={f.title}
-                className="group relative overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] p-5 transition hover:border-[var(--color-border-2)]"
-              >
-                <div className="mb-3 grid h-9 w-9 place-items-center rounded-md bg-gradient-to-br from-violet-500/20 to-purple-600/20 text-[var(--color-accent)]">
-                  <FeatureIcon kind={f.icon} />
+            {FEATURES.map((f) => {
+              const card = (
+                <>
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="grid h-9 w-9 place-items-center rounded-md bg-gradient-to-br from-violet-500/20 to-purple-600/20 text-[var(--color-accent)]">
+                      <FeatureIcon kind={f.icon} />
+                    </div>
+                    {f.badge && (
+                      <span className="rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-accent)]">
+                        {f.badge}
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="text-[15px] font-semibold text-white">{f.title}</h3>
+                  <p className="mt-1.5 text-[13.5px] leading-relaxed text-[var(--color-fg-2)]">
+                    {f.desc}
+                  </p>
+                </>
+              );
+
+              const shell =
+                "group relative block overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] p-5 transition hover:border-[var(--color-border-2)]";
+
+              return f.href ? (
+                <Link key={f.title} href={f.href} className={shell}>
+                  {card}
+                </Link>
+              ) : (
+                <div key={f.title} className={shell}>
+                  {card}
                 </div>
-                <h3 className="text-[15px] font-semibold text-white">{f.title}</h3>
-                <p className="mt-1.5 text-[13.5px] leading-relaxed text-[var(--color-fg-2)]">
-                  {f.desc}
-                </p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>
@@ -270,7 +305,7 @@ export default function HomePage() {
             </h2>
           </div>
 
-          <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {[
               { title: "Installation", desc: "Add to your project in seconds.", href: "/docs/installation" },
               { title: "Quick Start", desc: "A working filter in 30 lines.", href: "/docs/quick-start" },
@@ -278,6 +313,8 @@ export default function HomePage() {
               { title: "JSON Cookbook", desc: "13 copy-pasteable examples.", href: "/docs/examples" },
               { title: "Enums Reference", desc: "Every DataType & Operator.", href: "/docs/enums" },
               { title: "Classes Reference", desc: "Condition → Filter → Result.", href: "/docs/classes" },
+              { title: "Field-Level Policies", desc: "Who may query what, and see what.", href: "/docs/policies" },
+              { title: "Masking & Tokenization", desc: "Nine ways to hide a value.", href: "/docs/policies/transforms" },
               { title: "Cache Tuning", desc: "Six tuned presets.", href: "/docs/cache/presets" },
               { title: "Error Codes", desc: "Every LogicException explained.", href: "/docs/errors" },
             ].map((c) => (
@@ -372,6 +409,7 @@ function FeatureIcon({ kind }: { kind: string }) {
     case "merge": return <svg {...props}><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M6 21V9a9 9 0 0 0 9 9" /></svg>;
     case "tree": return <svg {...props}><path d="M12 2v6M12 8l-4 4M12 8l4 4M8 12v6M16 12v6M8 18h.01M16 18h.01M12 22h.01" /></svg>;
     case "cpu": return <svg {...props}><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" /><line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" /><line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" /><line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" /></svg>;
+    case "shield": return <svg {...props}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M9 12h6" /></svg>;
     default: return null;
   }
 }

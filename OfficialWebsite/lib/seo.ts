@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 import { SITE } from "./nav";
 
 const BASE = `https://${SITE.domain}`;
@@ -136,7 +136,7 @@ export const HOME_FAQ: Faq[] = [
   },
   {
     q: "Which .NET and EF Core versions are supported?",
-    a: "DynamicWhere.ex targets .NET 6, .NET 7, .NET 8, and .NET 9. It works with Entity Framework Core 6+ on any provider that supports IQueryable<T> — SQL Server, PostgreSQL (Npgsql), MySQL (Pomelo), and SQLite are all known to work.",
+    a: "DynamicWhere.ex targets .NET 6, .NET 7, .NET 8, .NET 9, and .NET 10. It works with Entity Framework Core 6+ on any provider that supports IQueryable<T> — SQL Server, PostgreSQL (Npgsql), MySQL (Pomelo), and SQLite are all known to work.",
   },
   {
     q: "How is DynamicWhere.ex different from System.Linq.Dynamic.Core?",
@@ -153,6 +153,10 @@ export const HOME_FAQ: Faq[] = [
   {
     q: "Does DynamicWhere.ex support nested navigation properties?",
     a: "Yes. Use dotted field paths like 'Category.Name' or 'Orders.Items.Price'. The library auto-wraps collection traversals with .Any() where needed and validates the path against your entity model.",
+  },
+  {
+    q: "Can I control which fields each caller is allowed to query and see?",
+    a: "Yes, since 3.0. The field-level policy layer decides per caller what may be filtered, sorted, selected, grouped, aggregated and returned. Attributes set the rules in code and an optional store supplies them at runtime without a redeploy. Values can be masked, hashed, tokenized, generalized or replaced on the way out, while filtering and sorting still run against the real value in SQL. It is entirely opt-in: a project that never calls ApplyPolicy behaves exactly as 2.1.5.",
   },
   {
     q: "Is it free?",

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 import Link from "next/link";
 import DocPage from "@/components/DocPage";
 import { Code } from "@/components/Code";
@@ -96,7 +96,7 @@ using DynamicWhere.ex.Optimization.Cache.Config; // CacheOptions, CacheEvictionS
 
       <h2 id="compatibility">Compatibility notes</h2>
       <ul>
-        <li><strong>Target framework:</strong> .NET 6, .NET 7, .NET 8, .NET 9.</li>
+        <li><strong>Target framework:</strong> .NET 6, .NET 7, .NET 8, .NET 9, .NET 10.</li>
         <li>
           <strong>EF Core provider:</strong> any provider that supports <code>ToQueryString()</code> works for the optional <code>getQueryString: true</code> flag. SQL Server, PostgreSQL (Npgsql), MySQL (Pomelo), and SQLite are all known to work.
         </li>

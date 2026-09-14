@@ -24,9 +24,9 @@
   <PropertyGroup>
     <PackageId>DynamicWhere.ex.Policies.AspNetCore</PackageId>
     <Title>DynamicWhere.ex Policies — ASP.NET Core</Title>
-    <Description>The administrative surface for the DynamicWhere.ex field-level policy layer: schema discovery, rule management, explain, simulate and health endpoints, a ClaimsPrincipal adapter, and per-request audit draining. Endpoints refuse to map without a named authorization policy. Targets .NET 6+.</Description>
+    <Description>The administrative surface for the DynamicWhere.ex field-level policy layer: schema discovery, rule management, explain, simulate and health endpoints, a ClaimsPrincipal adapter, and per-request audit draining. Endpoints refuse to map without a named authorization policy. Requires DynamicWhere.ex. Targets .NET 6+. Full reference at https://doc.dynamicwhere.com.</Description>
     <Summary>Admin API, explain, simulate, health and a ClaimsPrincipal adapter for DynamicWhere.ex policies.</Summary>
-    <PackageTags>DynamicWhere DynamicWhere.ex Policies AspNetCore Authorization Admin Schema Explain Simulate Audit ClaimsPrincipal EFCore LINQ Security FieldLevelSecurity DotNet NET6 CSharp</PackageTags>
+    <PackageTags>DynamicWhere DynamicWhere.ex Policies AspNetCore Authorization Admin Schema Explain Simulate Audit ClaimsPrincipal EFCore LINQ Security FieldLevelSecurity DotNet NET6 NET7 NET8 NET9 NET10 CSharp</PackageTags>
     <Authors>Sajjad H. Al-Khafaji</Authors>
     <Company>Sajjad H. Al-Khafaji</Company>
     <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>

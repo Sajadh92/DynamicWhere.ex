@@ -49,6 +49,32 @@ public sealed class RedisTokenVaultConformanceTests : DurableTokenVaultConforman
     /// <inheritdoc />
     protected override IDwTokenVault CreateVault() => new RedisTokenVault(_redis!, _prefix);
 
+    /// <summary>
+    /// Many callers minting for one value at once still end up with one token.
+    /// </summary>
+    /// <remarks>
+    /// The race the store's own uniqueness has to settle. Both writers would otherwise insert, and
+    /// the second would win for whoever read next — leaving one value with two tokens and a column
+    /// that no longer groups. The loser reads the winner's row rather than retrying, because
+    /// retrying would mint another token and lose the same race again.
+    /// <para>
+    /// It lives on the legs with a real server behind them. SQLite cannot show it: an in-memory
+    /// database is a single connection, and driving it from several threads throws rather than
+    /// contending, which is a fact about the test harness and not about the vault.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Many_callers_racing_for_one_value_all_get_one_token()
+    {
+        IDwTokenVault[] vaults = Enumerable.Range(0, 8).Select(_ => CreateVault()).ToArray();
+
+        string[] tokens = new string[vaults.Length];
+
+        Parallel.For(0, vaults.Length, i => tokens[i] = vaults[i].GetOrCreate(Scope, "AAA-000123"));
+
+        Assert.Single(tokens.Distinct(StringComparer.Ordinal));
+    }
+
     [Fact]
     public void Two_prefixes_are_two_vaults()
     {

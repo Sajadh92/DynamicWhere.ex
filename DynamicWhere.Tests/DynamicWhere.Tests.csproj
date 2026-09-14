@@ -81,6 +81,7 @@
     <Compile Remove="Policies/RedisStoreConformanceTests.cs" />
     <Compile Remove="Policies/EfTokenVaultConformanceTests.cs" />
     <Compile Remove="Policies/RedisTokenVaultConformanceTests.cs" />
+    <Compile Remove="Policies/PostgresTokenVaultConformanceTests.cs" />
     <Compile Remove="Policies/DemoPolicyModelTests.cs" />
     <Compile Remove="Policies/PolicyEndpointTests.cs" />
     <Compile Remove="Policies/PolicyEndpointHardeningTests.cs" />

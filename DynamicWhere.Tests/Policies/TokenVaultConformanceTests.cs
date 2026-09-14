@@ -148,21 +148,12 @@ public abstract class DurableTokenVaultConformanceTests : TokenVaultConformanceT
         Assert.Equal(written, CreateVault().GetOrCreate(Scope, "AAA-000123"));
     }
 
-    [Fact]
-    public void Many_callers_racing_for_one_value_all_get_one_token()
-    {
-        // Two vaults minting for the same value at the same moment is the race the store's own
-        // uniqueness has to settle, because both would otherwise write and the second would win
-        // for whoever read next — leaving one value with two tokens and a column that no longer
-        // groups. The loser reads the winner's row instead of retrying.
-        IDwTokenVault[] vaults = Enumerable.Range(0, 8).Select(_ => CreateVault()).ToArray();
-
-        string[] tokens = new string[vaults.Length];
-
-        Parallel.For(0, vaults.Length, i => tokens[i] = vaults[i].GetOrCreate(Scope, "AAA-000123"));
-
-        Assert.Single(tokens.Distinct(StringComparer.Ordinal));
-    }
+    // The race — many callers minting for one value at once — is deliberately not here. It needs a
+    // store that genuinely runs writers in parallel, and SQLite does not: an in-memory database is
+    // one connection, and driving it from several threads throws rather than contending. The store
+    // conformance suite already draws this line for the same reason, keeping its lost-update test
+    // on the PostgreSQL leg. So the race lives on the Redis and PostgreSQL vaults, which have real
+    // servers behind them.
 }
 
 /// <summary>The shared suite against the process-scoped vault.</summary>

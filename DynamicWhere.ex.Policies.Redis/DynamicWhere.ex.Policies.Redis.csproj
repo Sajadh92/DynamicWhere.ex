@@ -26,7 +26,7 @@
       <Title>DynamicWhere.ex Policies — Redis store</Title>
       <Description>A Redis-backed policy store for DynamicWhere.ex field-level policies. Holds runtime rules in Redis and invalidates through pub/sub, so a policy change reaches every instance in milliseconds rather than at the next poll. Implements IDwPolicyStore and IDwPolicyWritableStore, and passes the same store conformance suite the in-memory and Entity Framework stores do. Broad rules load whole; user-level rules are fetched per caller, so a million users cost nothing at startup. Also ships RedisTokenVault, the durable store behind MaskStrategy.Tokenize, so a tokenized column still lines up after a restart and across instances. Requires DynamicWhere.ex. Full reference at https://doc.dynamicwhere.com.</Description>
       <Summary>Redis-backed policy store with pub/sub invalidation for DynamicWhere.ex.</Summary>
-      <PackageTags>DynamicWhere DynamicWhere.ex Redis StackExchangeRedis Policy PolicyStore FieldLevelSecurity DataMasking Authorization RBAC ABAC Multitenancy EFCore EntityFrameworkCore Cache PubSub DotNet NET6 CSharp</PackageTags>
+      <PackageTags>DynamicWhere DynamicWhere.ex Redis StackExchangeRedis Policy PolicyStore FieldLevelSecurity DataMasking Tokenization Authorization RBAC ABAC Multitenancy EFCore EntityFrameworkCore Cache PubSub DotNet NET6 NET7 NET8 NET9 NET10 CSharp</PackageTags>
       <Authors>Sajjad H. Al-Khafaji</Authors>
       <Company>Sajjad H. Al-Khafaji</Company>
       <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>

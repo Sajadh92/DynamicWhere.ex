@@ -28,7 +28,7 @@
       <Title>DynamicWhere.ex Policies — Entity Framework Core store</Title>
       <Description>A database-backed policy store for DynamicWhere.ex field-level policies, built on Entity Framework Core with no raw SQL — so one package serves SQL Server, PostgreSQL, and any other EF Core provider. Implements IDwPolicyStore and IDwPolicyWritableStore, and passes the same store conformance suite the in-memory and Redis stores do. Also ships EfTokenVault, the durable store behind MaskStrategy.Tokenize, so a tokenized column still lines up after a restart. Ships the model rather than the migrations: apply the three entity configurations to your own DbContext and generate migrations for your own provider, or use the standalone DwPolicyDbContext. Version changes are polled from a single-row table, guarded by a concurrency token so two writers cannot lose an update. Requires DynamicWhere.ex. Full reference at https://doc.dynamicwhere.com.</Description>
       <Summary>Database-backed policy store for DynamicWhere.ex — SQL Server, PostgreSQL, any EF Core provider.</Summary>
-      <PackageTags>DynamicWhere DynamicWhere.ex EFCore EntityFrameworkCore EF-Core SqlServer PostgreSQL Policy PolicyStore FieldLevelSecurity DataMasking Authorization RBAC ABAC Multitenancy Migrations DotNet NET6 CSharp</PackageTags>
+      <PackageTags>DynamicWhere DynamicWhere.ex EFCore EntityFrameworkCore EF-Core SqlServer PostgreSQL Policy PolicyStore FieldLevelSecurity DataMasking Tokenization Authorization RBAC ABAC Multitenancy Migrations DotNet NET6 NET7 NET8 NET9 NET10 CSharp</PackageTags>
       <Authors>Sajjad H. Al-Khafaji</Authors>
       <Company>Sajjad H. Al-Khafaji</Company>
       <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>

@@ -10,8 +10,8 @@
     there publishes a package whose own documentation points at a different release.
 
     Every reference is matched by a pattern below. A captured version that differs from the
-    csproj fails the build, and a file that yields no match at all fails too, so a reference
-    deleted by accident is not silently accepted.
+    csproj fails the build, and so does a pattern that matches nothing, so a reference deleted or
+    reworded by accident is not silently accepted.
 
     Run it from anywhere:  pwsh ./build/check-version.ps1
 #>
@@ -47,6 +47,12 @@ $targets = [ordered]@{
         "\*\*Version:\*\* ($semver)",
         "DynamicWhere\.ex --version ($semver)"
     )
+    # What nuget.org shows under Release Notes. Each release adds an entry at the top headed with
+    # its version, and nothing else ties that heading to <Version>: a bump that forgot the entry
+    # would publish a package whose release notes open by describing the release before it.
+    'DynamicWhere.ex/DynamicWhere.ex.csproj' = @(
+        "<PackageReleaseNotes>v($semver)"
+    )
     'OfficialWebsite/lib/nav.ts' = @(
         '\bversion: "([^"]+)"'
     )
@@ -62,18 +68,22 @@ $targets = [ordered]@{
         'Version <strong>([^<]+)</strong>',
         "DynamicWhere\.ex --version ($semver)"
     )
-    # The two policy store providers ship as packages of their own and version in lockstep with
-    # the core. They are listed here because publish.yml packs all three from one push: a bump
-    # that missed one would ship a provider declaring a dependency on a core version it was never
-    # built or tested against, and nothing else in the build would notice.
+    # The three companion packages ship on their own and version in lockstep with the core. They
+    # are listed here because publish.yml packs all four from one push: a bump that missed one
+    # would ship a companion declaring a dependency on a core version it was never built or
+    # tested against, and nothing else in the build would notice. Their release notes are
+    # checked for the same reason as the core's.
     'DynamicWhere.ex.Policies.Redis/DynamicWhere.ex.Policies.Redis.csproj' = @(
-        '<Version>([^<]+)</Version>'
+        '<Version>([^<]+)</Version>',
+        "<PackageReleaseNotes>v($semver)"
     )
     'DynamicWhere.ex.Policies.EntityFrameworkCore/DynamicWhere.ex.Policies.EntityFrameworkCore.csproj' = @(
-        '<Version>([^<]+)</Version>'
+        '<Version>([^<]+)</Version>',
+        "<PackageReleaseNotes>v($semver)"
     )
     'DynamicWhere.ex.Policies.AspNetCore/DynamicWhere.ex.Policies.AspNetCore.csproj' = @(
-        '<Version>([^<]+)</Version>'
+        '<Version>([^<]+)</Version>',
+        "<PackageReleaseNotes>v($semver)"
     )
     # The install command for each companion package, on the docs pages that teach it. The core's
     # own pattern above cannot match these: 'DynamicWhere\.ex --version' does not match
@@ -93,6 +103,11 @@ $targets = [ordered]@{
         "Version ($semver) . targets net6\.0",
         "DynamicWhere\.ex --version ($semver)"
     )
+    # The page that serves that reference says which version it was generated against, in prose
+    # none of the patterns above reach.
+    'OfficialWebsite/app/docs/ai/page.tsx' = @(
+        "generated against version ($semver)"
+    )
 }
 
 $problems = @()
@@ -107,9 +122,20 @@ foreach ($target in $targets.GetEnumerator()) {
 
     $text = Get-Content $path -Raw
     $found = 0
+    $unmatched = 0
 
     foreach ($pattern in $target.Value) {
-        foreach ($hit in [regex]::Matches($text, $pattern)) {
+        $hits = [regex]::Matches($text, $pattern)
+
+        # Every pattern has to match, not merely one per file. In a file with two patterns, the one
+        # still matching would keep the file looking guarded while a reference reworded out of the
+        # other's reach went stale unread.
+        if ($hits.Count -eq 0) {
+            $problems += "$($target.Key): no reference matches $pattern"
+            $unmatched++
+        }
+
+        foreach ($hit in $hits) {
             $found++
             $actual = $hit.Groups[1].Value
 
@@ -119,10 +145,7 @@ foreach ($target in $targets.GetEnumerator()) {
         }
     }
 
-    if ($found -eq 0) {
-        $problems += "$($target.Key): no version reference found"
-    }
-    else {
+    if ($unmatched -eq 0) {
         Write-Host "  ok  $($target.Key) ($found reference$(if ($found -ne 1) { 's' }))"
     }
 }

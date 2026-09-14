@@ -1,0 +1,497 @@
+# DynamicWhere.ex — complete reference for coding agents
+
+> A .NET library that turns JSON filter objects into Entity Framework Core LINQ queries, plus an
+> opt-in field-level policy layer that decides what each caller may filter, sort, select, group,
+> aggregate and see.
+>
+> Version 3.0.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
+> Docs: https://doc.dynamicwhere.com
+
+This file is the whole public surface in one pass. Everything below is verbatim from the source.
+Where a name is not in this file, it does not exist — do not invent members.
+
+```
+dotnet add package DynamicWhere.ex --version 3.0.0
+dotnet add package DynamicWhere.ex.Policies.Redis                 # optional
+dotnet add package DynamicWhere.ex.Policies.EntityFrameworkCore   # optional
+dotnet add package DynamicWhere.ex.Policies.AspNetCore            # optional
+```
+
+---
+
+## 1. The model
+
+Three composable shapes, all plain JSON from any caller:
+
+- `Filter`  — where + order + page + select projection
+- `Segment` — several condition sets combined with UNION / INTERSECT / EXCEPT
+- `Summary` — group by + aggregate + having
+
+Namespaces: `DynamicWhere.ex.Source` (extensions), `DynamicWhere.ex.Classes.Core`,
+`DynamicWhere.ex.Classes.Complex`, `DynamicWhere.ex.Classes.Result`, `DynamicWhere.ex.Enums`.
+
+---
+
+## 2. Shapes
+
+Field names are exact. `Sort` is required wherever it appears and must be unique within its list.
+
+```
+Condition            Sort:int  Field:string?  DataType:DataType  Operator:Operator  Values:List<object>
+ConditionGroup       Sort:int  Connector:Connector  Conditions:List<Condition>  SubConditionGroups:List<ConditionGroup>
+ConditionSet         Sort:int  Intersection:Intersection?  ConditionGroup:ConditionGroup
+OrderBy              Sort:int  Field:string?  Direction:Direction          (default Ascending)
+AggregateBy          Field:string?  Alias:string?  Aggregator:Aggregator
+GroupBy              Fields:List<string>  AggregateBy:List<AggregateBy>
+PageBy               PageNumber:int  PageSize:int
+
+Filter               ConditionGroup:ConditionGroup?  Selects:List<string>?  Orders:List<OrderBy>?  Page:PageBy?
+Segment              ConditionSets:List<ConditionSet>  Selects:List<string>?  Orders:List<OrderBy>?  Page:PageBy?
+Summary              ConditionGroup:ConditionGroup?  GroupBy:GroupBy?  Having:ConditionGroup?  Orders:List<OrderBy>?  Page:PageBy?
+```
+
+Results:
+
+```
+FilterResult<T>      PageNumber:int  PageSize:int  PageCount:int  TotalCount:int
+                     Data:List<T>  QueryString:string?  Policy:PolicyTrace?
+SegmentResult<T>   : FilterResult<T>
+SummaryResult        same, with Data:List<dynamic>
+```
+
+`Policy` is null unless the query went through `ApplyPolicy`. `QueryString` is null unless the call
+passed `getQueryString: true`.
+
+---
+
+## 3. Enums — verbatim
+
+```
+DataType       Text Guid Number Boolean DateTime Date Enum
+
+Operator       Equal IEqual NotEqual INotEqual
+               Contains IContains NotContains INotContains
+               StartsWith IStartsWith NotStartsWith INotStartsWith
+               EndsWith IEndsWith NotEndsWith INotEndsWith
+               In IIn NotIn INotIn
+               GreaterThan GreaterThanOrEqual LessThan LessThanOrEqual
+               Between NotBetween IsNull IsNotNull
+
+Connector      And Or
+Direction      Ascending Descending
+Intersection   Union Intersect Except
+Aggregator     Count CountDistinct Sumation Average Minimum Maximum FirstOrDefault LastOrDefault
+```
+
+The `I` prefix means case-insensitive: `IEqual`, `IContains`, `IIn` and so on.
+`Sumation` is spelled with one `m` — that is the real member name.
+
+---
+
+## 4. Extension methods
+
+On `IQueryable<T> where T : class`, namespace `DynamicWhere.ex.Source`.
+
+```
+Composable, return a query:
+  Select<T>(List<string> fields)                -> IQueryable<T>
+  SelectDynamic<T>(List<string> fields)         -> IQueryable
+  Where<T>(Condition condition)                 -> IQueryable<T>
+  Where<T>(ConditionGroup group)                -> IQueryable<T>
+  Order<T>(OrderBy order)                       -> IQueryable<T>
+  Order<T>(List<OrderBy> orders)                -> IQueryable<T>
+  Page<T>(PageBy page)                          -> IQueryable<T>
+  Group<T>(GroupBy groupBy)                     -> IQueryable
+  Filter<T>(Filter filter)                      -> IQueryable<T>
+  FilterDynamic<T>(Filter filter)               -> IQueryable
+  Summary<T>(Summary summary)                   -> IQueryable
+
+Terminal, execute:
+  ToList<T>(Filter, bool getQueryString = false)          -> FilterResult<T>
+  ToListAsync<T>(Filter, bool getQueryString = false)     -> Task<FilterResult<T>>
+  ToListDynamic<T>(Filter, bool getQueryString = false)   -> FilterResult<dynamic>
+  ToListAsyncDynamic<T>(Filter, ...)                      -> Task<FilterResult<dynamic>>
+  ToList<T>(Summary, bool getQueryString = false)         -> SummaryResult
+  ToListAsync<T>(Summary, ...)                            -> Task<SummaryResult>
+  ToListAsync<T>(Segment)                                 -> Task<SegmentResult<T>>
+```
+
+`ToList` and `ToListDynamic` also exist on `IEnumerable<T>` for in-memory collections.
+There is no synchronous `ToList` for `Segment`.
+
+---
+
+## 5. Field paths
+
+Dotted paths cross references and collections. A collection segment is auto-wrapped in `.Any()`.
+
+```
+"Name"                      scalar
+"Contact.Email"             reference navigation
+"Orders.Total"              collection navigation, becomes Orders.Any(o => o.Total ...)
+"Orders.Items.Sku"          nested collections
+```
+
+Ordering across a collection aggregates to one comparable value: `Min` ascending, `Max` descending.
+
+---
+
+## 6. Validation
+
+Every shape is validated before a query is built; failures throw `LogicException` carrying a string
+error code. The rules that catch people out:
+
+- `Sort` must be unique within any list of conditions, sub-groups or condition sets.
+- Condition sets after the first must specify an `Intersection`.
+- `Values` count must match the operator: 1 for most, 2 for `Between`/`NotBetween`, 0 for
+  `IsNull`/`IsNotNull`, 1+ for the `In` family.
+- `PageNumber` and `PageSize` must be 1 or greater.
+- A `Having` clause may only reference aggregate aliases declared in the same `GroupBy`.
+
+Full list: https://doc.dynamicwhere.com/docs/errors
+
+---
+
+## 7. Field-level policies (new in 3.0, entirely opt-in)
+
+A project with no policy attributes and no `DwPolicy.Configure` call behaves exactly as 2.1.5.
+
+### Lifecycle
+
+```csharp
+// 1. Once at startup. Refused on a second call.
+builder.Services.AddDwPolicies(
+    builder.Configuration.GetSection("DynamicWhere:Policies"),
+    options =>
+    {
+        options.Entities.Expose<Employee>("Employee");
+        options.TokenVault = new InMemoryTokenVault();
+    });
+
+// or without configuration binding:
+DwPolicy.Configure(new DwPolicyOptions { Tier = DwTier.Strict, HashSalt = secret }, providers);
+
+// 2. Once per request, never once per query.
+DwPolicyContext caller = await DwPolicy.PrepareAsync(
+    new DwPolicyContext()
+        .WithSubject(DwSubjectKind.User, userId)
+        .WithSubject(DwSubjectKind.Role, "Support")
+        .WithSubject(DwSubjectKind.Tenant, tenantId)
+        .WithValue("TenantId", tenantId));
+
+// 3. Per query. The only entry point.
+FilterResult<Employee> result = await db.Employees.ApplyPolicy(caller).ToListAsync(filter);
+```
+
+`ApplyPolicy` returns a guarded handle mirroring every method above. An unprepared context is
+refused by any store provider. Requests are sanitized before the query is built; results are
+transformed after they materialize. The query engine itself is unchanged.
+
+### Attributes — all 18
+
+```
+Access control
+  [DwDeny(PolicyFeature features)]        refuse any combination of the six features
+  [DwDenied]                              refuse all six
+  [DwNoWhere] [DwNoSelect] [DwNoOrder] [DwNoGroup] [DwNoAggregate]
+  [DwOperators(Allow = Operator[], Deny = Operator[])]
+  [DwEntity(RequirePolicy = true)]        class-level; an unguarded query throws
+
+Injection
+  [DwAlias("public_name")]                 accepted anywhere a path is, renamed back on output
+  [DwForceWhere(Operator, Value = "...", ContextValue = "...")]
+  [DwRequireWhere(Operators = Operator[])]
+
+Transformation                             all six carry AllowAggregate and MinGroupSize
+  [DwMask(MaskStrategy, KeepStart, KeepEnd, MaskChar, PreserveLength,
+          Pattern, Replacement, Text, TokenScope)]
+  [DwMutate(typeof(T))]                    T : IValueTransformer
+  [DwDefault] / [DwDefault("value")]
+  [DwGeneralize(GeneralizeMode, Step, Part, Decimals)]
+  [DwTruncate(length, Ellipsis = "...")]
+  [DwFormat("fmt")]
+
+Discovery, budget, audit
+  [DwDescribe(Label, Description, Group, Order)]
+  [DwAllowedValues("a", "b", "c")]
+  [DwCost(weight)]
+  [DwAudit(PolicyFeature features)]
+
+Every policy attribute also carries Overridable (default false).
+```
+
+### Policy enums — verbatim
+
+```
+PolicyFeature     None=0 Where=1 Select=2 Order=4 Group=8 Aggregate=16 Segment=32 All=63   [Flags]
+MaskStrategy      Full Partial Email Phone Regex Fixed Hash Null Tokenize
+GeneralizeMode    Round Bucket DatePart Truncate
+DatePart          Year Quarter Month Day
+DwTier            Convenience Strict
+DwSubjectKind     Global Tenant Role User Custom
+PolicyEffect      Allow Mask Deny
+PolicyAction      Allowed Denied Dropped Masked Injected Mutated Defaulted Generalized
+PolicyLevel       SealedAttribute=1 DynamicUser=2 DynamicRole=3 DynamicTenant=4
+                  DynamicGlobal=5 OverridableAttribute=6
+StoreFailureMode  LastKnownGood FailClosed StaticOnly
+```
+
+### Precedence
+
+Lowest number wins. Ties break by specificity (exact field beats wildcard), then Priority
+descending, then strongest effect (Deny > Mask > Allow). A multi-role conflict resolves to Deny.
+
+Attributes are **sealed by default**: no runtime rule can lift one unless it is marked
+`Overridable = true`.
+
+### Blocked-action semantics
+
+| Caller asked for            | Convenience | Strict |
+|-----------------------------|-------------|--------|
+| WHERE on a denied field     | throw       | throw  |
+| WHERE with a denied operator| throw       | throw  |
+| ORDER on a denied field     | drop        | throw  |
+| SELECT a denied field       | drop        | throw  |
+| GROUP BY a denied field     | throw       | throw  |
+| AGGREGATE a denied field    | throw       | throw  |
+| `[DwRequireWhere]` missing  | throw       | throw  |
+| over any cap                | throw       | throw  |
+
+All selects dropped raises `AllSelectsDenied` rather than selecting everything.
+
+### Transforms
+
+Chain order is fixed: mutate → generalize → format → mask → truncate. `[DwDefault]` short-circuits
+all of them. Every stage but `Null` emits text, so a mask is only valid on a member text can be
+assigned to; a numeric member uses `[DwGeneralize]`.
+
+`Hash` is HMAC-SHA256 keyed by `DwPolicyOptions.HashSalt`, which must be at least 16 characters.
+`Tokenize` draws a random token from `DwPolicyOptions.TokenVault`, scoped to the field path unless
+`TokenScope` names a shared one. Vaults: `InMemoryTokenVault` (core), `RedisTokenVault`,
+`EfTokenVault`. Both strategies produce 32 lowercase hex characters and both preserve equality, so
+the column still groups and joins.
+
+### Caps — `DwPolicyOptions.Caps`
+
+```
+MaxPageSize          1000
+MaxConditions        50
+MaxOrderFields       10
+MaxNavigationDepth   4
+MaxQueryCost         1000
+DefaultFieldCost     1
+MaxAuditEvents       10000
+MinGroupSize         5       k-anonymity floor; write 1 to switch it off
+SchemaDepth          2       levels a schema request walks by default
+SchemaCycleLimit     2       times one type may repeat on one path
+MaxSchemaFields      2000
+```
+
+Frozen at startup. Every cap refuses a value below 1 except `DefaultFieldCost`, which accepts 0.
+
+### Configuration
+
+```jsonc
+{
+  "DynamicWhere": {
+    "Policies": {
+      "Tier": "Strict",
+      "DryRun": false,
+      "StoreFailure": "LastKnownGood",
+      "MaxSnapshotAge": "00:15:00",
+      "RefreshInterval": "00:00:30",
+      "Caps": { "MinGroupSize": 5, "SchemaDepth": 2, "MaxSchemaFields": 2000 }
+    }
+  }
+}
+```
+
+A key nothing answers to refuses to start. The entity catalogue, the token vault and the service
+provider cannot come from configuration — they are objects, and stay in code.
+
+### Admin endpoints — `app.MapDwPolicyAdmin(...)`
+
+Refuses to map without a named authorization policy. There is no default.
+
+```
+POST   /dw-policies/schema      { entity, paths?, depth? }   fields for a filter UI
+GET    /dw-policies/rules?subject=
+POST   /dw-policies/rules                                    upsert; sealed fields rejected
+DELETE /dw-policies/rules/{id}
+POST   /dw-policies/explain     { entity, field?, paths?, depth? }
+POST   /dw-policies/simulate    { entity, filter }           sanitized clause, not executed
+GET    /dw-policies/health
+```
+
+`/schema` is a POST because `paths` is a list and a comma is legal in a `[DwAlias]`.
+
+### Policy error codes — `PolicyException.ErrorCode`
+
+```
+1  FieldDeniedForWhere        12 MissingContextValue
+2  FieldDeniedForSelect       13 AmbiguousFieldName
+3  FieldDeniedForOrder        14 QueryStringDenied
+4  FieldDeniedForGroup        15 AmbiguousGroupKey
+5  FieldDeniedForAggregate    16 TransformRequiresMaterialization
+6  FieldDeniedForSegment      17 StoreUnavailable
+7  AllSelectsDenied           18 PolicyContextNotPrepared
+8  OperatorNotAllowed         19 QueryCostExceeded
+9  CapExceeded                20 GroupTooSmall
+10 PolicyRequired             21 MissingHashSalt
+11 RequiredFilterMissing      22 MissingTokenVault
+```
+
+`PolicyException` derives from `LogicException`, so existing catch blocks keep working.
+
+---
+
+## 8. Traps that produce silently wrong code
+
+Read this section before generating policy attributes.
+
+1. **A mask without `[DwNoOrder]` leaks through sorting.** Sorting runs against the stored value in
+   SQL, so paging a masked column in order ranks the real values. Pair them.
+
+2. **`AllowAggregate` without a group floor is a hole.** Aggregation runs in SQL before any
+   transform, so `MAX` over a group of one returns that row's exact value. `MinGroupSize` is the
+   other half; neither works alone.
+
+3. **What protects a masked-but-filterable column is `[DwOperators]`**, not the mask. Restrict it to
+   `Equal` and `In` so a caller can confirm a value they know and cannot sweep for one they do not.
+
+4. **A forced predicate wraps, never merges.** `(A OR B) AND TenantId = 5`, not
+   `(A OR B OR TenantId = 5)`. The library does this correctly; do not hand-build the equivalent.
+
+5. **`[DwDenied]` on a navigation does not deny the fields beneath it.** The denial is on the
+   navigation object. Deny the children or use a wildcard rule.
+
+6. **Tokenized columns only join across entities when both sides name the same `TokenScope`.**
+   Without it each field gets its own tokens by design.
+
+7. **Neither `Hash` nor `Tokenize` hides equality.** Anyone who can write a chosen value and read
+   the column back learns that value's stand-in. If the caller has no reason to group or join on the
+   column, use `Fixed`, `Null`, or deny it.
+
+8. **A context is prepared once per request, not per query.** A query on an unprepared context is
+   refused with `PolicyContextNotPrepared`.
+
+9. **Masking happens after materialization on detached objects.** Never apply it to tracked
+   entities; `ApplyPolicy` handles the detaching.
+
+10. **The group floor suppresses rows, it does not refuse the query.** A summary whose every group
+    is below the floor returns an empty list, not an error.
+
+---
+
+## 9. Worked examples
+
+### Filter
+
+```csharp
+using DynamicWhere.ex.Source;
+
+var filter = new Filter
+{
+    ConditionGroup = new ConditionGroup
+    {
+        Sort = 1,
+        Connector = Connector.And,
+        Conditions =
+        {
+            new Condition { Sort = 1, Field = "Department", DataType = DataType.Text,
+                            Operator = Operator.Equal, Values = { "Engineering" } },
+            new Condition { Sort = 2, Field = "Salary", DataType = DataType.Number,
+                            Operator = Operator.Between, Values = { 50000, 120000 } },
+        },
+    },
+    Orders = new List<OrderBy> { new() { Sort = 1, Field = "HireDate", Direction = Direction.Descending } },
+    Page = new PageBy { PageNumber = 1, PageSize = 25 },
+    Selects = new List<string> { "Id", "FirstName", "Department" },
+};
+
+FilterResult<Employee> result = await db.Employees.ToListAsync(filter);
+```
+
+### Summary
+
+```csharp
+var summary = new Summary
+{
+    GroupBy = new GroupBy
+    {
+        Fields = { "Department" },
+        AggregateBy =
+        {
+            new AggregateBy { Field = "Salary", Alias = "Total", Aggregator = Aggregator.Sumation },
+            new AggregateBy { Field = "Id", Alias = "Headcount", Aggregator = Aggregator.Count },
+        },
+    },
+};
+
+SummaryResult result = await db.Employees.ToListAsync(summary);
+```
+
+### Segment
+
+```csharp
+var segment = new Segment
+{
+    ConditionSets =
+    {
+        new ConditionSet { Sort = 1, ConditionGroup = active },
+        new ConditionSet { Sort = 2, Intersection = Intersection.Except, ConditionGroup = onLeave },
+    },
+};
+
+SegmentResult<Employee> result = await db.Employees.ToListAsync(segment);
+```
+
+### A policy-protected entity
+
+```csharp
+[DwEntity(RequirePolicy = true)]
+public class Employee
+{
+    public Guid Id { get; set; }
+
+    public string FirstName { get; set; } = string.Empty;
+
+    // Confirmable, not searchable, and unreadable: the operators stop a sweep,
+    // the token stops the read, and [DwNoOrder] stops the sort from ranking it.
+    [DwAlias("Code")]
+    [DwOperators(Allow = new[] { Operator.Equal, Operator.In })]
+    [DwMask(MaskStrategy.Tokenize)]
+    [DwNoOrder]
+    public string EmployeeCode { get; set; } = string.Empty;
+
+    [DwMask(MaskStrategy.Email)]
+    [DwNoOrder]
+    public string Email { get; set; } = string.Empty;
+
+    // Rounded on the way out, aggregatable only over groups of five or more.
+    [DwGeneralize(GeneralizeMode.Round, Step = 5000, AllowAggregate = true, MinGroupSize = 5)]
+    [DwNoOrder, DwAudit, DwCost(10)]
+    public decimal Salary { get; set; }
+
+    // Every guarded query is scoped to this, asked for or not.
+    [DwForceWhere(Operator.Equal, Value = "true")]
+    public bool IsActive { get; set; }
+
+    [DwDenied]
+    public JsonDocument? WorkSchedule { get; set; }
+}
+```
+
+---
+
+## 10. Where to read more
+
+```
+https://doc.dynamicwhere.com/docs                      overview
+https://doc.dynamicwhere.com/docs/examples             13 JSON recipes
+https://doc.dynamicwhere.com/docs/policies             the policy layer
+https://doc.dynamicwhere.com/docs/policies/use-cases   scenarios and attribute combinations
+https://doc.dynamicwhere.com/docs/policies/security    the seven inference channels
+https://doc.dynamicwhere.com/docs/errors               every error code
+https://github.com/Sajadh92/DynamicWhere.ex            source
+```

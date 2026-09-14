@@ -86,6 +86,13 @@ $targets = [ordered]@{
     'OfficialWebsite/app/docs/policies/admin/page.tsx' = @(
         "DynamicWhere\.ex\.Policies\.AspNetCore --version ($semver)"
     )
+    # The agent reference states the version twice and lists the install command. It duplicates the
+    # docs by design, which is exactly why it needs the guard: nothing else would notice it going
+    # stale, and an agent reading a stale version writes against an API that shipped before it.
+    'OfficialWebsite/public/llms.txt' = @(
+        "Version ($semver) . targets net6\.0",
+        "DynamicWhere\.ex --version ($semver)"
+    )
 }
 
 $problems = @()

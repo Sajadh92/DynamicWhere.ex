@@ -11,6 +11,30 @@ function normalizePath(p: string): string {
   return p;
 }
 
+/**
+ * The nearest ancestor that actually scrolls, or null when nothing does.
+ *
+ * This exists because `scrollIntoView` scrolls *every* scrollable ancestor, the
+ * window included. Centring a link low in the sidebar therefore scrolled the
+ * page down as well, sliding the sticky header half out of view on every load
+ * and every navigation. Scrolling this box directly cannot move the window.
+ */
+function scrollBoxOf(el: HTMLElement): HTMLElement | null {
+  let node = el.parentElement;
+
+  while (node) {
+    const overflow = getComputedStyle(node).overflowY;
+
+    if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight) {
+      return node;
+    }
+
+    node = node.parentElement;
+  }
+
+  return null;
+}
+
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const rawPathname = usePathname();
   const pathname = normalizePath(rawPathname || "/");
@@ -24,14 +48,28 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  // Auto-scroll active link into view whenever path changes.
+  // Centre the active link in the sidebar's own scroll box, and nowhere else.
   useEffect(() => {
     const el = activeRef.current;
     if (!el) return;
+
     // Defer to next frame so layout is settled.
-    requestAnimationFrame(() => {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
+    const frame = requestAnimationFrame(() => {
+      const box = scrollBoxOf(el);
+      if (!box) return;
+
+      const link = el.getBoundingClientRect();
+      const view = box.getBoundingClientRect();
+
+      box.scrollTo({
+        top: box.scrollTop + link.top - view.top - (box.clientHeight - link.height) / 2,
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+      });
     });
+
+    return () => cancelAnimationFrame(frame);
   }, [pathname]);
 
   const filtered = NAV.map((g) => ({

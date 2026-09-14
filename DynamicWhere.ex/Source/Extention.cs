@@ -3,6 +3,7 @@ using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Policies.Source;
 using DynamicWhere.ex.Source;
 using Microsoft.EntityFrameworkCore;
 using System.Linq.Dynamic.Core;
@@ -31,6 +32,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown if fields is empty, or if type T does not have a parameterless constructor.</exception>
     public static IQueryable<T> Select<T>(this IQueryable<T> query, List<string> fields) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -106,6 +109,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown if <paramref name="fields"/> is empty or contains an invalid field name.</exception>
     public static IQueryable SelectDynamic<T>(this IQueryable<T> query, List<string> fields) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -147,6 +152,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="condition"/> contains invalid data.</exception>
     public static IQueryable<T> Where<T>(this IQueryable<T> query, Condition condition) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -182,6 +189,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="group"/> contains invalid data.</exception>
     public static IQueryable<T> Where<T>(this IQueryable<T> query, ConditionGroup group) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -225,6 +234,8 @@ public static class Extension
     /// </remarks>
     public static IQueryable Group<T>(this IQueryable<T> query, GroupBy groupBy) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -254,6 +265,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="order"/> contains invalid data.</exception>
     public static IQueryable<T> Order<T>(this IQueryable<T> query, OrderBy order) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -291,6 +304,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="orders"/> contains invalid data.</exception>
     public static IQueryable<T> Order<T>(this IQueryable<T> query, List<OrderBy> orders) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -328,6 +343,8 @@ public static class Extension
     /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="page"/> is null.</exception>
     public static IQueryable<T> Page<T>(this IQueryable<T> query, PageBy page) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -357,6 +374,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
     public static IQueryable<T> Filter<T>(this IQueryable<T> query, Filter filter) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -409,6 +428,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
     public static IQueryable FilterDynamic<T>(this IQueryable<T> query, Filter filter) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -460,6 +481,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
     public static FilterResult<T> ToList<T>(this IQueryable<T> query, Filter filter, bool getQueryString = false) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -538,6 +561,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
     public static FilterResult<dynamic> ToListDynamic<T>(this IQueryable<T> query, Filter filter, bool getQueryString = false) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -614,6 +639,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
     public static FilterResult<T> ToList<T>(this IEnumerable<T> query, Filter filter, bool getQueryString = false) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         return query.AsQueryable().ToList(filter, getQueryString);
     }
 
@@ -630,6 +657,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
     public static FilterResult<dynamic> ToListDynamic<T>(this IEnumerable<T> query, Filter filter, bool getQueryString = false) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         return query.AsQueryable().ToListDynamic(filter, getQueryString);
     }
 
@@ -645,6 +674,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
     public static async Task<FilterResult<T>> ToListAsync<T>(this IQueryable<T> query, Filter filter, bool getQueryString = false) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -723,6 +754,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
     public static async Task<FilterResult<dynamic>> ToListAsyncDynamic<T>(this IQueryable<T> query, Filter filter, bool getQueryString = false) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -798,6 +831,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="summary"/> contains invalid data.</exception>
     public static IQueryable Summary<T>(this IQueryable<T> query, Summary summary) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -870,6 +905,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="summary"/> contains invalid data.</exception>
     public static SummaryResult ToList<T>(this IQueryable<T> query, Summary summary, bool getQueryString = false) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -968,6 +1005,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="summary"/> contains invalid data.</exception>
     public static SummaryResult ToList<T>(this IEnumerable<T> query, Summary summary, bool getQueryString = false) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         return query.AsQueryable().ToList(summary, getQueryString);
     }
 
@@ -983,6 +1022,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="summary"/> contains invalid data.</exception>
     public static async Task<SummaryResult> ToListAsync<T>(this IQueryable<T> query, Summary summary, bool getQueryString = false) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {
@@ -1080,6 +1121,8 @@ public static class Extension
     /// <exception cref="LogicException">Thrown when <paramref name="segment"/> contains invalid data.</exception>
     public static async Task<SegmentResult<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment) where T : class
     {
+        // Refuse a type that requires a policy context when the call is not inside one.
+        PolicyScope.Require<T>();
         // Validate input parameters.
         if (query == null)
         {

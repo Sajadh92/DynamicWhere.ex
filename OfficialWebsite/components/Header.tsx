@@ -64,8 +64,17 @@ export default function Header({
           <Link href="/docs/examples" className="rounded-md px-3 py-1.5 hover:bg-[var(--color-bg-3)] hover:text-white">
             Examples
           </Link>
+          <Link href="/docs/policies" className="rounded-md px-3 py-1.5 hover:bg-[var(--color-bg-3)] hover:text-white">
+            Policies
+          </Link>
           <Link href="/docs/cache" className="rounded-md px-3 py-1.5 hover:bg-[var(--color-bg-3)] hover:text-white">
             Cache
+          </Link>
+          <Link
+            href="/docs/ai"
+            className="rounded-md border border-[var(--color-accent)]/40 bg-[var(--color-accent-soft)] px-3 py-1.5 text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white"
+          >
+            For AI
           </Link>
         </div>
 

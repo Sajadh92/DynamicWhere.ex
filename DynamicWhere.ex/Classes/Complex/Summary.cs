@@ -32,4 +32,21 @@ public class Summary
     /// Represents pagination settings.
     /// </summary>
     public PageBy? Page { get; set; }
+
+    /// <summary>
+    /// Returns a deep copy.
+    /// </summary>
+    /// <remarks>
+    /// A summary reaches a condition group twice — once through <see cref="ConditionGroup"/> and
+    /// again through <see cref="Having"/>. Both are cloned; a copy shaped like a filter's would
+    /// leave the having clause shared with the caller.
+    /// </remarks>
+    internal Summary Clone() => new()
+    {
+        ConditionGroup = ConditionGroup?.Clone(),
+        GroupBy = GroupBy?.Clone(),
+        Having = Having?.Clone(),
+        Orders = Orders?.ConvertAll(o => o.Clone()),
+        Page = Page?.Clone()
+    };
 }

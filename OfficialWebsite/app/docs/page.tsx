@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 import Link from "next/link";
 import DocPage from "@/components/DocPage";
 import { Code } from "@/components/Code";
@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "Documentation — Dynamic LINQ from JSON for EF Core",
   description:
-    "Official docs for DynamicWhere.ex — a free .NET library that turns JSON filter objects into safe, validated Entity Framework Core LINQ queries. Filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT across .NET 6, 7, 8, and 9.",
+    "Official docs for DynamicWhere.ex — a free .NET library that turns JSON filter objects into safe, validated Entity Framework Core LINQ queries. Filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT across .NET 6, 7, 8, 9, and 10.",
   keywords: [
     "DynamicWhere.ex documentation",
     "EF Core dynamic filter docs",
@@ -30,7 +30,7 @@ export default function Page() {
       </p>
 
       <p>
-        Version <strong>2.1.5</strong>. Target framework <strong>.NET 6+</strong>.
+        Version <strong>3.0.0</strong>. Target framework <strong>.NET 6+</strong>.
         License <strong>MIT</strong> — free forever, for commercial and personal use.
       </p>
 
@@ -82,7 +82,7 @@ export default function Page() {
 
       <h2 id="thirty-second-tour">30-second tour</h2>
       <p>Install the package:</p>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 2.1.5`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 3.0.0`}</Code>
 
       <p>Build a filter from a JSON body and apply it to a DbSet:</p>
       <Code lang="csharp">{`using DynamicWhere.ex.Source;

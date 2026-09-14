@@ -26,4 +26,19 @@ public class Segment
     /// Represents the pagination for the segment.
     /// </summary>
     public PageBy? Page { get; set; }
+
+    /// <summary>
+    /// Returns a deep copy, cloning every condition set independently.
+    /// </summary>
+    /// <remarks>
+    /// Policy applies to each set on its own, so the sets must not share a condition group: a
+    /// rewrite aimed at one would otherwise land on all of them.
+    /// </remarks>
+    internal Segment Clone() => new()
+    {
+        ConditionSets = ConditionSets is null ? null! : ConditionSets.ConvertAll(s => s.Clone()),
+        Selects = Selects is null ? null : new List<string>(Selects),
+        Orders = Orders?.ConvertAll(o => o.Clone()),
+        Page = Page?.Clone()
+    };
 }

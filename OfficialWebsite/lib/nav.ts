@@ -1,14 +1,14 @@
-export type NavLink = { title: string; href: string };
+﻿export type NavLink = { title: string; href: string };
 export type NavGroup = { title: string; links: NavLink[] };
 
 export const SITE = {
   name: "DynamicWhere.ex",
   tagline: "JSON-driven dynamic LINQ for Entity Framework Core",
   description:
-    "DynamicWhere.ex is a free .NET library for building dynamic, JSON-driven LINQ queries on Entity Framework Core — filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT set operations from your front-end. Works with ASP.NET Core on .NET 6, 7, 8, and 9.",
+    "DynamicWhere.ex is a free .NET library for building dynamic, JSON-driven LINQ queries on Entity Framework Core — filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT set operations from your front-end. Works with ASP.NET Core on .NET 6, 7, 8, 9, and 10.",
   shortDescription:
-    "Dynamic JSON filter, sort, paginate, group, aggregate, and set operations for EF Core. .NET 6/7/8/9.",
-  version: "2.1.5",
+    "Dynamic JSON filter, sort, paginate, group, aggregate, and set operations for EF Core. .NET 6/7/8/9/10.",
+  version: "3.0.0",
   domain: "doc.dynamicwhere.com",
   repo: "https://github.com/Sajadh92/DynamicWhere.ex",
   nuget: "https://www.nuget.org/packages/DynamicWhere.ex",
@@ -34,6 +34,7 @@ export const SITE = {
     ".NET 7 EF Core filter",
     ".NET 8 EF Core filter",
     ".NET 9 EF Core filter",
+    ".NET 10 EF Core filter",
     "runtime LINQ",
     "predicate builder",
     "search API .NET",
@@ -52,6 +53,7 @@ export const NAV: NavGroup[] = [
       { title: "Introduction", href: "/docs" },
       { title: "Installation", href: "/docs/installation" },
       { title: "Quick Start", href: "/docs/quick-start" },
+      { title: "For AI Agents", href: "/docs/ai" },
     ],
   },
   {
@@ -147,6 +149,21 @@ export const NAV: NavGroup[] = [
       { title: "11. SelectDynamic", href: "/docs/examples/select-dynamic" },
       { title: "12. FilterDynamic", href: "/docs/examples/filter-dynamic" },
       { title: "13. Nested Collections", href: "/docs/examples/nested-collection" },
+    ],
+  },
+  {
+    title: "Field-Level Policies",
+    links: [
+      { title: "Overview", href: "/docs/policies" },
+      { title: "Attributes", href: "/docs/policies/attributes" },
+      { title: "Use Cases", href: "/docs/policies/use-cases" },
+      { title: "Precedence", href: "/docs/policies/precedence" },
+      { title: "Transforms & Masking", href: "/docs/policies/transforms" },
+      { title: "Dynamic Store", href: "/docs/policies/store" },
+      { title: "Store Providers", href: "/docs/policies/providers" },
+      { title: "Admin API", href: "/docs/policies/admin" },
+      { title: "Security & k-anonymity", href: "/docs/policies/security" },
+      { title: "Configuration", href: "/docs/policies/configuration" },
     ],
   },
   {

@@ -14,4 +14,13 @@ public class PageBy
     /// Represents the number of items per page.
     /// </summary>
     public int PageSize { get; set; }
+
+    /// <summary>
+    /// Returns a copy. Page has no reference members, so this is a plain field copy.
+    /// </summary>
+    internal PageBy Clone() => new()
+    {
+        PageNumber = PageNumber,
+        PageSize = PageSize
+    };
 }

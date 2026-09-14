@@ -25,16 +25,25 @@
 html {
   color-scheme: dark;
   scroll-behavior: smooth;
+  background: var(--color-bg);
+
+  /* Horizontal clipping lives here and only here, because overflow on the root
+     propagates to the viewport and clips there. Setting it on <body> as well
+     made the body its own scrolling box — and a scrolling box is what
+     `position: sticky` sticks to, so the header stuck to a box that scrolls
+     away with the page rather than to the viewport, and left the screen on the
+     way down. The scroll-margin-top rules further down already assume a header
+     that stays put. */
+  overflow-x: hidden;
 }
 
-html, body {
+body {
   background: var(--color-bg);
   color: var(--color-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  overflow-x: hidden;
 }
 
 * { border-color: var(--color-border); }

@@ -23,7 +23,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="DynamicWhere.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\DynamicWhere.ex\DynamicWhere.ex.csproj" />
+    <!-- The policy store and its administrative surface. Referenced here so the demo exercises all
+         four packages together against a real database, which is the one thing the unit suite
+         cannot do: it proves the packages work, not that they compose. -->
+    <ProjectReference Include="..\DynamicWhere.ex.Policies.EntityFrameworkCore\DynamicWhere.ex.Policies.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="..\DynamicWhere.ex.Policies.AspNetCore\DynamicWhere.ex.Policies.AspNetCore.csproj" />
   </ItemGroup>
 
   <ItemGroup>

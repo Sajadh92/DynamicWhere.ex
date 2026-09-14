@@ -1,0 +1,496 @@
+﻿using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Policies.Config;
+using DynamicWhere.ex.Policies.Context;
+using DynamicWhere.ex.Policies.DTOs;
+using DynamicWhere.ex.Policies.Enums;
+using DynamicWhere.ex.Policies.Masking;
+
+namespace DynamicWhere.Tests.Policies;
+
+/// <summary>A transformer that records what it was given and bands a salary.</summary>
+internal sealed class SalaryBandTransformer : IValueTransformer
+{
+    /// <inheritdoc />
+    public object? Transform(object? value, DwTransformContext context) =>
+        value is decimal amount && amount >= 100000m ? 999m : 1m;
+}
+
+/// <summary>A transformer that reads a sibling property, proving the whole entity is reachable.</summary>
+internal sealed class DepartmentAwareTransformer : IValueTransformer
+{
+    /// <inheritdoc />
+    public object? Transform(object? value, DwTransformContext context) =>
+        context.Entity is SecuredEmployee { Name: "Ada" } ? 0m : value;
+}
+
+/// <summary>A transformer that fails, to prove a failure is not swallowed.</summary>
+internal sealed class ExplodingTransformer : IValueTransformer
+{
+    /// <inheritdoc />
+    public object? Transform(object? value, DwTransformContext context) =>
+        throw new InvalidOperationException("boom");
+}
+
+/// <summary>Does not implement the interface, so it cannot be resolved.</summary>
+internal sealed class NotATransformer
+{
+}
+
+/// <summary>
+/// Covers the chain: the order its stages run in, the short-circuit, and the rule that decides
+/// which chains a member can carry at all.
+/// </summary>
+public class PolicyTransformPipelineTests
+{
+    private static DwPolicyOptions Options() => new() { HashSalt = "pepper-and-more-pepper" };
+
+    private static DwTransformContext Context(object? entity = null) =>
+        new(entity ?? new SecuredEmployee(), "Salary", new DwPolicyContext());
+
+    private static object? Apply(ValueTransform chain, object? value, Type memberType, object? entity = null) =>
+        TransformPipeline.Apply(chain, value, memberType, Context(entity), Options());
+
+    // -------------------------------------------------------------------------------- order
+
+    [Fact]
+    public void Generalize_runs_before_format_and_format_before_mask()
+    {
+        // A date reduced to its year, rendered, then partly hidden. Reversing any pair changes the
+        // answer, which is why the order is fixed rather than left to declaration.
+        ValueTransform chain = new(
+            generalize: new GeneralizeStage(GeneralizeMode.DatePart, part: DatePart.Year),
+            format: new FormatStage("yyyy-MM-dd"),
+            mask: new MaskStage(MaskStrategy.Partial, keepStart: 4));
+
+        Assert.Equal("1987******", Apply(chain, new DateTime(1987, 6, 15), typeof(string)));
+    }
+
+    [Fact]
+    public void Truncate_runs_last_so_the_length_cap_is_the_final_word()
+    {
+        ValueTransform chain = new(
+            mask: new MaskStage(MaskStrategy.Full),
+            truncate: new TruncateStage(3));
+
+        Assert.Equal("***", Apply(chain, "a much longer value", typeof(string)));
+    }
+
+    [Fact]
+    public void A_transformer_runs_first_and_sees_the_real_value()
+    {
+        ValueTransform chain = new(mutate: new MutateStage(typeof(SalaryBandTransformer)));
+
+        Assert.Equal(999m, Apply(chain, 120000m, typeof(decimal)));
+        Assert.Equal(1m, Apply(chain, 50000m, typeof(decimal)));
+    }
+
+    [Fact]
+    public void A_transformer_can_read_the_rest_of_the_entity()
+    {
+        ValueTransform chain = new(mutate: new MutateStage(typeof(DepartmentAwareTransformer)));
+
+        SecuredEmployee named = new() { Name = "Ada" };
+        SecuredEmployee other = new() { Name = "Bo" };
+
+        Assert.Equal(0m, Apply(chain, 500m, typeof(decimal), named));
+        Assert.Equal(500m, Apply(chain, 500m, typeof(decimal), other));
+    }
+
+    [Fact]
+    public void A_failing_transformer_fails_the_query_rather_than_returning_the_real_value()
+    {
+        // The one outcome a transformer must never produce. Catching this into "return what you were
+        // given" would hand the caller exactly the value the transform exists to hide.
+        ValueTransform chain = new(mutate: new MutateStage(typeof(ExplodingTransformer)));
+
+        Assert.Throws<InvalidOperationException>(() => Apply(chain, 1m, typeof(decimal)));
+    }
+
+    [Fact]
+    public void A_type_that_is_not_a_transformer_is_refused()
+    {
+        ValueTransform chain = new(mutate: new MutateStage(typeof(NotATransformer)));
+
+        InvalidOperationException error =
+            Assert.Throws<InvalidOperationException>(() => Apply(chain, 1m, typeof(decimal)));
+
+        Assert.Contains("IValueTransformer", error.Message, StringComparison.Ordinal);
+    }
+
+    // ------------------------------------------------------------------------- short circuit
+
+    [Fact]
+    public void A_replacement_discards_every_other_stage()
+    {
+        // Masking a value already replaced by a constant obscures nothing, and composing them would
+        // make the emitted value depend on an ordering rule invisible from the entity.
+        ValueTransform chain = new(
+            mask: new MaskStage(MaskStrategy.Full),
+            truncate: new TruncateStage(2),
+            @default: new DefaultStage("N/A", hasValue: true));
+
+        Assert.Equal("N/A", Apply(chain, "secret", typeof(string)));
+    }
+
+    [Fact]
+    public void A_replacement_with_no_constant_uses_the_member_types_own_default()
+    {
+        ValueTransform chain = new(@default: new DefaultStage(null, hasValue: false));
+
+        Assert.Equal(0m, Apply(chain, 120000m, typeof(decimal)));
+        Assert.Equal(0, Apply(chain, 42, typeof(int)));
+        Assert.Null(Apply(chain, "text", typeof(string)));
+    }
+
+    [Fact]
+    public void A_chain_reports_the_stages_it_will_run_in_the_order_it_runs_them()
+    {
+        ValueTransform chain = new(
+            generalize: new GeneralizeStage(GeneralizeMode.Round, step: 10),
+            mask: new MaskStage(MaskStrategy.Full),
+            truncate: new TruncateStage(3));
+
+        Assert.Equal(
+            new[] { TransformKind.Generalize, TransformKind.Mask, TransformKind.Truncate },
+            chain.Stages.Select(s => s.Kind));
+    }
+
+    [Fact]
+    public void A_replacement_alongside_another_stage_is_a_conflict_the_chain_can_report()
+    {
+        ValueTransform conflicted = new(
+            mask: new MaskStage(MaskStrategy.Full), @default: new DefaultStage(null, false));
+        ValueTransform alone = new(@default: new DefaultStage(null, false));
+
+        Assert.True(conflicted.HasConflictingDefault);
+        Assert.False(alone.HasConflictingDefault);
+    }
+
+    // -------------------------------------------------------------------- the assignability rule
+
+    [Fact]
+    public void A_mask_on_a_numeric_member_is_refused_rather_than_silently_skipped()
+    {
+        // The whole applicability question reduces to this one check. A mask emits text and text is
+        // not assignable to a decimal, so the pairing fails the query instead of handing back the
+        // number the mask was meant to hide.
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Full));
+
+        InvalidOperationException error =
+            Assert.Throws<InvalidOperationException>(() => Apply(chain, 120000m, typeof(decimal)));
+
+        Assert.Contains("cannot be assigned to Decimal", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_null_strategy_on_a_non_nullable_member_is_refused()
+    {
+        // Emitting default(int) instead would turn a removed value into a real-looking zero.
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Null));
+
+        Assert.Throws<InvalidOperationException>(() => Apply(chain, 42, typeof(int)));
+    }
+
+    [Fact]
+    public void A_null_strategy_on_a_nullable_member_is_allowed()
+    {
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Null));
+
+        Assert.Null(Apply(chain, 42, typeof(int?)));
+        Assert.Null(Apply(chain, "text", typeof(string)));
+    }
+
+    [Fact]
+    public void Generalization_keeps_the_member_type_so_a_numeric_field_can_hold_it()
+    {
+        ValueTransform chain = new(generalize: new GeneralizeStage(GeneralizeMode.Round, step: 10000));
+
+        Assert.Equal(120000m, Apply(chain, 118500m, typeof(decimal)));
+    }
+
+    // ------------------------------------------------------------------------- generalization
+
+    [Theory]
+    [InlineData(118500, 10000, 120000)]
+    [InlineData(23, 10, 20)]
+    [InlineData(-14, 10, -10)]
+    public void Rounding_snaps_to_the_nearest_step(int value, int step, int expected)
+    {
+        ValueTransform chain = new(generalize: new GeneralizeStage(GeneralizeMode.Round, step: step));
+
+        Assert.Equal(expected, Apply(chain, value, typeof(int)));
+    }
+
+    [Theory]
+    [InlineData(27, 10, "20-29")]
+    [InlineData(30, 10, "30-39")]
+    [InlineData(-1, 10, "-10--1")]
+    public void Bucketing_labels_the_band_the_value_falls_in(int value, int step, string expected)
+    {
+        ValueTransform chain = new(generalize: new GeneralizeStage(GeneralizeMode.Bucket, step: step));
+
+        Assert.Equal(expected, Apply(chain, value, typeof(string)));
+    }
+
+    [Fact]
+    public void Truncating_decimals_discards_rather_than_rounds()
+    {
+        ValueTransform chain = new(generalize: new GeneralizeStage(GeneralizeMode.Truncate, decimals: 2));
+
+        Assert.Equal(33.19m, Apply(chain, 33.199999m, typeof(decimal)));
+    }
+
+    /// <summary>
+    /// The kind travels with the value.
+    /// </summary>
+    /// <remarks>
+    /// Year, Quarter and Month constructed a new date and dropped it, while Day kept it — so a UTC
+    /// instant reduced to the first of its month serialized with no offset and a client east of UTC
+    /// read it as the month before the bucket it had been placed in.
+    /// </remarks>
+    [Theory]
+    [InlineData(DatePart.Year)]
+    [InlineData(DatePart.Quarter)]
+    [InlineData(DatePart.Month)]
+    [InlineData(DatePart.Day)]
+    public void A_date_part_keeps_the_kind_it_was_given(DatePart part)
+    {
+        ValueTransform chain = new(generalize: new GeneralizeStage(GeneralizeMode.DatePart, part: part));
+
+        object? reduced = Apply(
+            chain,
+            new DateTime(1987, 6, 15, 22, 30, 0, DateTimeKind.Utc),
+            typeof(DateTime));
+
+        Assert.Equal(DateTimeKind.Utc, Assert.IsType<DateTime>(reduced).Kind);
+    }
+
+    [Theory]
+    [InlineData(DatePart.Year, "1987-01-01")]
+    [InlineData(DatePart.Quarter, "1987-04-01")]
+    [InlineData(DatePart.Month, "1987-06-01")]
+    [InlineData(DatePart.Day, "1987-06-15")]
+    public void A_date_part_reduces_to_the_first_instant_of_its_period(DatePart part, string expected)
+    {
+        // Every part yields a date rather than a number, so the member keeps its type and a caller
+        // can still sort by it.
+        ValueTransform chain = new(generalize: new GeneralizeStage(GeneralizeMode.DatePart, part: part));
+
+        object? reduced = Apply(chain, new DateTime(1987, 6, 15, 13, 45, 0), typeof(DateTime));
+
+        Assert.Equal(DateTime.Parse(expected), reduced);
+    }
+
+    [Fact]
+    public void A_rounding_step_of_zero_is_refused_at_construction()
+    {
+        // It would divide by zero at the moment of masking, on a caller's query.
+        Assert.Throws<ArgumentException>(() => new GeneralizeStage(GeneralizeMode.Round, step: 0));
+        Assert.Throws<ArgumentException>(() => new GeneralizeStage(GeneralizeMode.Bucket, step: 0));
+    }
+
+    // ------------------------------------------------------------------------------ coercion
+
+    [Theory]
+    [InlineData("N/A", typeof(string), "N/A")]
+    [InlineData("12.5", typeof(decimal), 12.5)]
+    [InlineData("42", typeof(int), 42)]
+    [InlineData("true", typeof(bool), true)]
+    public void A_constant_is_converted_to_the_member_type(string value, Type target, object expected)
+    {
+        object? coerced = TransformPipeline.Coerce(value, target);
+
+        Assert.Equal(Convert.ChangeType(expected, Nullable.GetUnderlyingType(target) ?? target), coerced);
+    }
+
+    [Fact]
+    public void A_constant_reaches_the_types_C_sharp_forbids_as_attribute_arguments()
+    {
+        // The reason constants are written as text at all: C# will not accept a decimal or a
+        // DateTime as an attribute argument.
+        Assert.Equal(12.34m, TransformPipeline.Coerce("12.34", typeof(decimal)));
+        Assert.Equal(new DateTime(2026, 1, 31), TransformPipeline.Coerce("2026-01-31", typeof(DateTime)));
+        Assert.Equal(
+            Guid.Parse("0f8fad5b-d9cb-469f-a165-70867728950e"),
+            TransformPipeline.Coerce("0f8fad5b-d9cb-469f-a165-70867728950e", typeof(Guid)));
+    }
+
+    [Fact]
+    public void A_null_constant_becomes_the_member_types_default()
+    {
+        Assert.Equal(0, TransformPipeline.Coerce(null, typeof(int)));
+        Assert.Null(TransformPipeline.Coerce(null, typeof(int?)));
+        Assert.Null(TransformPipeline.Coerce(null, typeof(string)));
+    }
+
+    [Fact]
+    public void An_empty_chain_leaves_the_value_alone()
+    {
+        Assert.Equal("untouched", Apply(new ValueTransform(), "untouched", typeof(string)));
+        Assert.True(new ValueTransform().IsEmpty);
+    }
+    /// <summary>
+    /// A replacement short-circuits what runs. It does not short-circuit what the chain decided.
+    /// </summary>
+    /// <remarks>
+    /// <c>AllowsAggregate</c> and <c>MinGroupSize</c> read the running set, which a replacement
+    /// reduces to itself — so a rule carrying only a <c>Default</c> stage cancelled the aggregate
+    /// refusal and the k-anonymity floor of a mask it never outranked. A rule may carry a transform
+    /// with no feature at all, so the sealed-field check at the store boundary has nothing to refuse
+    /// it on, and the mask stays elected in its own slot: the chain held both and answered for one.
+    /// </remarks>
+    [Fact]
+    public void A_replacement_does_not_cancel_another_stages_aggregate_refusal()
+    {
+        ValueTransform chain = new(
+            mask: new MaskStage(MaskStrategy.Full),
+            @default: new DefaultStage("0", hasValue: true, allowAggregate: true));
+
+        Assert.False(chain.AllowsAggregate);
+    }
+
+    [Fact]
+    public void A_replacement_does_not_lower_another_stages_group_floor()
+    {
+        ValueTransform chain = new(
+            generalize: new GeneralizeStage(
+                GeneralizeMode.Round, step: 10, allowAggregate: true, minGroupSize: 25),
+            @default: new DefaultStage("0", hasValue: true, allowAggregate: true));
+
+        Assert.Equal(25, chain.MinGroupSize);
+    }
+
+    /// <summary>
+    /// What runs is still the replacement alone, which is the property the short-circuit exists for.
+    /// </summary>
+    [Fact]
+    public void A_replacement_still_runs_alone()
+    {
+        ValueTransform chain = new(
+            mask: new MaskStage(MaskStrategy.Full),
+            @default: new DefaultStage("N/A", hasValue: true));
+
+        Assert.Equal("N/A", Apply(chain, "a real value", typeof(string)));
+    }
+
+    // ---- the salt a hash cannot work without -----------------------------------------------------
+
+    /// <summary>
+    /// A hash with no salt is refused rather than answered.
+    /// </summary>
+    /// <remarks>
+    /// The digest is well formed either way, so neither the operator nor the caller receiving it can
+    /// tell that an unsalted hash of a national identifier or a postcode is reversed by hashing a
+    /// dictionary of candidates and comparing. The same choice <c>MissingContextValue</c> makes for
+    /// a forced predicate that cannot be built: refuse, rather than serve a control that only looks
+    /// like one.
+    /// </remarks>
+    [Fact]
+    public void A_hash_with_no_salt_refuses_the_query()
+    {
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Hash));
+
+        PolicyException refused = Assert.Throws<PolicyException>(
+            () => TransformPipeline.Apply(
+                chain, "AAA-111", typeof(string), Context(), new DwPolicyOptions()));
+
+        Assert.Equal(PolicyErrorCode.MissingHashSalt, refused.ErrorCode);
+        Assert.Equal("Salary", refused.FieldPath);
+    }
+
+    /// <summary>
+    /// And answers once a salt is set, so the refusal is about the salt and not about the strategy.
+    /// </summary>
+    [Fact]
+    public void A_hash_with_a_salt_still_answers()
+    {
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Hash));
+
+        object? hashed = Apply(chain, "AAA-111", typeof(string));
+
+        Assert.NotNull(hashed);
+        Assert.NotEqual("AAA-111", hashed);
+    }
+
+    /// <summary>
+    /// The salt keys the hash rather than being glued to the front of the value.
+    /// </summary>
+    /// <remarks>
+    /// <c>SHA256(salt || value)</c> collides whenever a salt-and-value pair can be re-split: the
+    /// salt <c>"secret1"</c> with the value <c>"23"</c> and the salt <c>"secret"</c> with the value
+    /// <c>"123"</c> are the same bytes and hash to the same digest. Two deployments would be
+    /// producing one another's masked values without either of them being able to tell. HMAC keys
+    /// the hash properly and the two disagree, which is what this asserts.
+    /// </remarks>
+    [Fact]
+    public void A_salt_and_a_value_that_could_be_re_split_do_not_collide()
+    {
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Hash));
+
+        object? left = TransformPipeline.Apply(
+            chain, "23", typeof(string), Context(),
+            new DwPolicyOptions { HashSalt = "sixteen-char-salt1" });
+
+        object? right = TransformPipeline.Apply(
+            chain, "123", typeof(string), Context(),
+            new DwPolicyOptions { HashSalt = "sixteen-char-salt" });
+
+        Assert.NotEqual(left, right);
+    }
+
+    /// <summary>The same value under the same salt still hashes to the same text.</summary>
+    /// <remarks>
+    /// The property the whole strategy is sold on: a caller can group and join by a hashed column
+    /// without ever learning what is in it. Changing the construction to HMAC had to keep it.
+    /// </remarks>
+    [Fact]
+    public void A_hash_is_stable_for_one_value_under_one_salt()
+    {
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Hash));
+
+        Assert.Equal(
+            Apply(chain, "AAA-111", typeof(string)),
+            Apply(chain, "AAA-111", typeof(string)));
+    }
+
+    /// <summary>
+    /// A salt too short to resist being guessed is refused, and a blank one still means "unset".
+    /// </summary>
+    /// <remarks>
+    /// Two different failures. Blank is a deployment that never configured one, which the query
+    /// refuses with <c>MissingHashSalt</c> and the startup scan reports. Short is a deployment that
+    /// did configure one and picked something recoverable offline — refused where it is written, so
+    /// it fails at startup rather than producing digests nobody can tell from strong ones.
+    /// </remarks>
+    [Fact]
+    public void A_short_salt_is_refused_and_a_blank_one_is_not()
+    {
+        DwPolicyOptions options = new();
+
+        Assert.Throws<ArgumentException>(() => options.HashSalt = "pepper");
+        Assert.Equal(16, DwPolicyOptions.MinimumHashSaltLength);
+
+        options.HashSalt = string.Empty;
+
+        Assert.Equal(string.Empty, options.HashSalt);
+
+        options.HashSalt = new string('x', DwPolicyOptions.MinimumHashSaltLength);
+
+        Assert.Equal(new string('x', DwPolicyOptions.MinimumHashSaltLength), options.HashSalt);
+    }
+
+    /// <summary>
+    /// Only the hash needs one. Every other strategy is unaffected by an empty salt.
+    /// </summary>
+    [Fact]
+    public void Another_strategy_is_untouched_by_a_missing_salt()
+    {
+        ValueTransform chain = new(mask: new MaskStage(MaskStrategy.Full));
+
+        Assert.Equal(
+            "*******",
+            TransformPipeline.Apply(
+                chain, "AAA-111", typeof(string), Context(), new DwPolicyOptions()));
+    }
+
+}

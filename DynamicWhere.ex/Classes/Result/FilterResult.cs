@@ -1,4 +1,6 @@
-﻿namespace DynamicWhere.ex.Classes.Result;
+﻿using DTOs = DynamicWhere.ex.Policies.DTOs;
+
+namespace DynamicWhere.ex.Classes.Result;
 
 /// <summary>
 /// Represents the result of a filtered query execution, including pagination information and a list of entities of type <typeparamref name="T"/>.
@@ -34,5 +36,14 @@ public class FilterResult<T>
     /// <summary>
     /// Represents the query string that applied on database side.
     /// </summary>
-    public string? QueryString { get; set; } 
+    public string? QueryString { get; set; }
+
+    /// <summary>
+    /// What the policy did to this query, or null when the query was not guarded.
+    /// </summary>
+    /// <remarks>
+    /// A dropped field leaves nothing behind in the data, so this is the only way a caller can tell
+    /// a policy drop apart from a null value.
+    /// </remarks>
+    public DTOs.PolicyTrace? Policy { get; set; }
 }

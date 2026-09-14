@@ -26,4 +26,21 @@ public class ConditionGroup
     /// The list of subcondition groups within the group.
     /// </summary>
     public List<ConditionGroup> SubConditionGroups { get; set; } = new();
+
+    /// <summary>
+    /// Returns a deep copy, recursing through <see cref="SubConditionGroups"/>.
+    /// </summary>
+    /// <remarks>
+    /// The recursion is the point. A shallow copy of a group would share the nested groups with
+    /// the original, and the validator rewrites condition fields at every depth.
+    /// </remarks>
+    internal ConditionGroup Clone() => new()
+    {
+        Sort = Sort,
+        Connector = Connector,
+        Conditions = Conditions is null ? null! : Conditions.ConvertAll(c => c.Clone()),
+        SubConditionGroups = SubConditionGroups is null
+            ? null!
+            : SubConditionGroups.ConvertAll(g => g.Clone())
+    };
 }

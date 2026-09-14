@@ -1,0 +1,359 @@
+﻿using DynamicWhere.ex.Classes.Complex;
+using DynamicWhere.ex.Classes.Core;
+using DynamicWhere.ex.Enums;
+using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Policies.Config;
+using DynamicWhere.ex.Policies.Context;
+using DynamicWhere.ex.Policies.DTOs;
+using DynamicWhere.ex.Policies.Enums;
+using DynamicWhere.ex.Policies.Resolution;
+using DynamicWhere.ex.Policies.Source;
+
+namespace DynamicWhere.Tests.Policies;
+
+/// <summary>
+/// Covers the gate applied to a <see cref="Summary"/>.
+/// </summary>
+/// <remarks>
+/// A summary is the shape where field paths stop being the only vocabulary. <c>GroupBy.Fields</c>
+/// and <c>AggregateBy.Field</c> are property paths, but <c>Having</c>'s condition fields and
+/// <c>Orders</c>'s fields are aggregate aliases or dot-stripped group-by fields, and the validator
+/// checks them against a set of names rather than against reflection. Sending one of those through
+/// <c>Validate&lt;T&gt;()</c> would reject a query that is valid today; skipping them would let an
+/// alias read a field whose own policy refuses it.
+/// </remarks>
+public class SummarySanitizerTests
+{
+    private static PolicyResolver AttributeResolver() =>
+        new(new IDwPolicyProvider[] { new AttributePolicyProvider() });
+
+    private static DwPolicyContext Caller() =>
+        new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
+
+    /// <summary>
+    /// A posture with the group floor switched off.
+    /// </summary>
+    /// <remarks>
+    /// Explicitly one, which is how a deployment says "no floor" now that unset means five. This
+    /// file is about what the sanitizer does to a summary, and a floor above one injects a count
+    /// aggregate of its own — a real behaviour with its own tests in <c>PolicyGroupFloorTests</c>,
+    /// and noise in every assertion here about the shape the sanitizer produced.
+    /// </remarks>
+    private static DwPolicyOptions NoFloor(DwTier tier) =>
+        new() { Tier = tier, Caps = { MinGroupSize = 1 } };
+
+    private static (Summary Result, PolicyTrace Trace) Guard<T>(Summary summary, DwTier tier)
+        where T : class
+    {
+        PolicyTrace trace = new(tier, dryRun: false);
+
+        Summary result = FilterSanitizer.Sanitize<T>(
+            summary, AttributeResolver(), Caller(), NoFloor(tier), trace);
+
+        return (result, trace);
+    }
+
+    private static (Summary Result, PolicyTrace Trace) Guard<T>(
+        Summary summary, DwTier tier, FakePolicyProvider provider)
+        where T : class
+    {
+        PolicyTrace trace = new(tier, dryRun: false);
+
+        Summary result = FilterSanitizer.Sanitize<T>(
+            summary, new PolicyResolver(new IDwPolicyProvider[] { provider }),
+            Caller(), NoFloor(tier), trace);
+
+        return (result, trace);
+    }
+
+    private static ConditionGroup Having(string field, int value) => new()
+    {
+        Conditions =
+        {
+            new Condition
+            {
+                Field = field,
+                DataType = DataType.Number,
+                Operator = Operator.GreaterThan,
+                Values = { value }
+            }
+        }
+    };
+
+    private static Summary GroupedBy(string field, params AggregateBy[] aggregates) => new()
+    {
+        GroupBy = new GroupBy
+        {
+            Fields = new List<string> { field },
+            AggregateBy = new List<AggregateBy>(aggregates)
+        }
+    };
+
+    [Fact]
+    public void Grouping_by_a_refused_field_throws_in_both_tiers()
+    {
+        // InternalNotes carries [DwDeny(Order | Group)]. Grouping cannot be dropped the way a sort
+        // can: removing a grouping key collapses rows together and changes every aggregate in the
+        // result rather than merely returning them unordered.
+        foreach (DwTier tier in new[] { DwTier.Convenience, DwTier.Strict })
+        {
+            PolicyException exception = Assert.Throws<PolicyException>(
+                () => Guard<SecuredEmployee>(GroupedBy("InternalNotes"), tier));
+
+            Assert.Equal(PolicyErrorCode.FieldDeniedForGroup, exception.ErrorCode);
+            Assert.Equal("InternalNotes", exception.FieldPath);
+        }
+    }
+
+    [Fact]
+    public void Aggregating_a_refused_field_throws_in_both_tiers()
+    {
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "NationalId", Alias = "Ids", Aggregator = Aggregator.CountDistinct });
+
+        foreach (DwTier tier in new[] { DwTier.Convenience, DwTier.Strict })
+        {
+            PolicyException exception = Assert.Throws<PolicyException>(
+                () => Guard<SecuredEmployee>(summary, tier));
+
+            Assert.Equal(PolicyErrorCode.FieldDeniedForAggregate, exception.ErrorCode);
+            Assert.Equal("NationalId", exception.FieldPath);
+        }
+    }
+
+    [Fact]
+    public void A_field_denied_only_for_projection_can_still_be_aggregated()
+    {
+        // Salary carries [DwNoSelect]. Refusing to show a column is not the same as refusing to
+        // total it, and conflating the two would make the feature flags meaningless.
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "Salary", Alias = "TotalPay", Aggregator = Aggregator.Sumation });
+
+        (Summary result, PolicyTrace trace) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("Salary", result.GroupBy!.AggregateBy[0].Field);
+        Assert.Empty(trace.Decisions);
+    }
+
+    [Fact]
+    public void A_count_with_no_field_has_no_underlying_policy_and_is_allowed()
+    {
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Alias = "Rows", Aggregator = Aggregator.Count });
+
+        (Summary result, _) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("Rows", result.GroupBy!.AggregateBy[0].Alias);
+    }
+
+    [Fact]
+    public void The_summarys_where_clause_is_gated_like_any_other_filter()
+    {
+        Summary summary = GroupedBy("Name");
+        summary.ConditionGroup = new ConditionGroup
+        {
+            Conditions =
+            {
+                new Condition
+                {
+                    Field = "Contact.Email",
+                    DataType = DataType.Text,
+                    Operator = Operator.Equal,
+                    Values = { "a@b.c" }
+                }
+            }
+        };
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(summary, DwTier.Convenience));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, exception.ErrorCode);
+    }
+
+    [Fact]
+    public void Group_and_aggregate_paths_come_back_canonical()
+    {
+        Summary summary = GroupedBy(
+            "  name  ",
+            new AggregateBy { Field = "salary", Alias = "TotalPay", Aggregator = Aggregator.Sumation });
+
+        (Summary result, _) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("Name", result.GroupBy!.Fields[0]);
+        Assert.Equal("Salary", result.GroupBy.AggregateBy[0].Field);
+    }
+
+    [Fact]
+    public void The_callers_summary_is_never_touched()
+    {
+        Summary original = GroupedBy(
+            "name",
+            new AggregateBy { Field = "salary", Alias = "TotalPay", Aggregator = Aggregator.Sumation });
+
+        Guard<SecuredEmployee>(original, DwTier.Strict);
+
+        Assert.Equal("name", original.GroupBy!.Fields[0]);
+        Assert.Equal("salary", original.GroupBy.AggregateBy[0].Field);
+    }
+
+    [Fact]
+    public void A_summary_over_a_type_with_no_attributes_passes_through()
+    {
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "Id", Alias = "Ids", Aggregator = Aggregator.CountDistinct });
+
+        (Summary result, PolicyTrace trace) = Guard<PlainProduct>(summary, DwTier.Strict);
+
+        Assert.Equal("Name", result.GroupBy!.Fields[0]);
+        Assert.Empty(trace.Decisions);
+    }
+
+    // ------------------------------------------------------------------- aliases
+
+    [Fact]
+    public void A_having_clause_cannot_filter_through_an_alias_onto_a_field_denied_for_where()
+    {
+        // Contact.Email carries [DwNoWhere] but nothing forbids counting it. Without this gate,
+        // HAVING COUNT(DISTINCT Email) > n is a working oracle over a column the caller is not
+        // allowed to filter on -- ask repeatedly and narrow the answer down.
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "Contact.Email", Alias = "Emails", Aggregator = Aggregator.CountDistinct });
+
+        summary.Having = Having("Emails", 1);
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(summary, DwTier.Convenience));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, exception.ErrorCode);
+        Assert.Equal("Contact.Email", exception.FieldPath);
+    }
+
+    [Fact]
+    public void A_having_clause_over_an_allowed_alias_survives_untouched()
+    {
+        // The other half of the same guarantee: Validate<T>() throws on an alias, so a sanitizer
+        // that canonicalized this would break a query that works today.
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "Salary", Alias = "TotalPay", Aggregator = Aggregator.Sumation });
+
+        summary.Having = Having("TotalPay", 1000);
+
+        (Summary result, PolicyTrace trace) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("TotalPay", result.Having!.Conditions[0].Field);
+        Assert.Empty(trace.Decisions);
+    }
+
+    [Fact]
+    public void An_alias_is_matched_the_way_the_validator_matches_it()
+    {
+        // Validator compares aliases with OrdinalIgnoreCase. A stricter comparison here would let
+        // a differently-cased alias miss the gate entirely, which is access granted.
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "Contact.Email", Alias = "Emails", Aggregator = Aggregator.CountDistinct });
+
+        summary.Having = Having("EMAILS", 1);
+
+        Assert.Throws<PolicyException>(() => Guard<SecuredEmployee>(summary, DwTier.Convenience));
+    }
+
+    [Fact]
+    public void A_count_alias_with_no_source_field_can_be_filtered_on()
+    {
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Alias = "Rows", Aggregator = Aggregator.Count });
+
+        summary.Having = Having("Rows", 5);
+
+        (Summary result, _) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("Rows", result.Having!.Conditions[0].Field);
+    }
+
+    [Fact]
+    public void An_order_naming_an_alias_is_not_sent_through_reflection()
+    {
+        // The regression this guards: an alias is not a property, so canonicalizing it would throw
+        // a validation error on a summary the library accepts today.
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "Salary", Alias = "TotalPay", Aggregator = Aggregator.Sumation });
+
+        summary.Orders = new List<OrderBy> { new() { Field = "TotalPay", Direction = Direction.Descending } };
+
+        (Summary result, _) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("TotalPay", result.Orders![0].Field);
+    }
+
+    [Fact]
+    public void An_order_naming_an_alias_over_a_field_denied_for_order_is_gated()
+    {
+        // InternalNotes carries [DwDeny(Order | Group)]. Sorting by an aggregate of it reveals the
+        // ordering the policy refuses, so the alias inherits the refusal.
+        Summary summary = GroupedBy(
+            "Name",
+            new AggregateBy { Field = "InternalNotes", Alias = "Notes", Aggregator = Aggregator.CountDistinct });
+
+        summary.Orders = new List<OrderBy> { new() { Field = "Notes" } };
+
+        (Summary dropped, PolicyTrace trace) = Guard<SecuredEmployee>(summary, DwTier.Convenience);
+
+        Assert.Empty(dropped.Orders!);
+        Assert.Contains(trace.Decisions, d => d.FieldPath == "InternalNotes" && d.Action == PolicyAction.Dropped);
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(summary, DwTier.Strict));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForOrder, exception.ErrorCode);
+    }
+
+    [Fact]
+    public void An_order_naming_a_dotted_group_by_key_is_accepted()
+    {
+        Summary summary = GroupedBy("Contact.Phone");
+        summary.Orders = new List<OrderBy> { new() { Field = "Contact.Phone" } };
+
+        (Summary result, _) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("Contact.Phone", result.Orders![0].Field);
+    }
+
+    [Fact]
+    public void An_order_naming_the_dot_stripped_form_of_a_group_by_key_is_gated_through_it()
+    {
+        // The validator accepts "ContactPhone" for a group-by key of "Contact.Phone", because that
+        // is the alias the projection emits. It is neither a property path nor an aggregate alias,
+        // so a gate that knew only those two vocabularies would wave it straight through.
+        FakePolicyProvider provider = new FakePolicyProvider()
+            .Add("Contact.Phone", PolicyFeature.Order, PolicyEffect.Deny, PolicyLevel.SealedAttribute);
+
+        Summary summary = GroupedBy("Contact.Phone");
+        summary.Orders = new List<OrderBy> { new() { Field = "ContactPhone" } };
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(summary, DwTier.Strict, provider));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForOrder, exception.ErrorCode);
+        Assert.Equal("Contact.Phone", exception.FieldPath);
+    }
+
+    [Fact]
+    public void An_order_naming_nothing_recognizable_is_left_for_the_validator_to_reject()
+    {
+        Summary summary = GroupedBy("Name");
+        summary.Orders = new List<OrderBy> { new() { Field = "NotAnythingAtAll" } };
+
+        (Summary result, _) = Guard<SecuredEmployee>(summary, DwTier.Strict);
+
+        Assert.Equal("NotAnythingAtAll", result.Orders![0].Field);
+    }
+}

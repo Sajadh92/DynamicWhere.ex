@@ -26,4 +26,21 @@ public class Filter
     /// Represents pagination settings.
     /// </summary>
     public PageBy? Page { get; set; }
+
+    /// <summary>
+    /// Returns a deep copy, so a guarded query can be canonicalized and rewritten without the
+    /// caller's own filter changing underneath them.
+    /// </summary>
+    /// <remarks>
+    /// A null branch stays null rather than becoming an empty collection. The gate decides whether
+    /// to synthesize a projection by testing <see cref="Selects"/> for null, so the distinction
+    /// carries meaning.
+    /// </remarks>
+    internal Filter Clone() => new()
+    {
+        ConditionGroup = ConditionGroup?.Clone(),
+        Selects = Selects is null ? null : new List<string>(Selects),
+        Orders = Orders?.ConvertAll(o => o.Clone()),
+        Page = Page?.Clone()
+    };
 }

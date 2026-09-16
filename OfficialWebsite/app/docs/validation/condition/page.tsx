@@ -81,26 +81,29 @@ export default function Page() {
           </tr>
           <tr>
             <td>
-              <code>Date</code> / <code>DateTime</code> values must parse in the
-              invariant culture, as the member&apos;s own <code>DateTime</code> or{" "}
-              <code>DateTimeOffset</code>
+              <code>Date</code> / <code>DateTime</code> values must be ISO&nbsp;8601,
+              year-first, or a format declared with <code>DwDates.Configure</code>
             </td>
-            <td><code>InvalidFormat</code></td>
+            <td>
+              <code>AmbiguousDateFormat</code> for a day/month-first date,
+              otherwise <code>InvalidFormat</code>
+            </td>
           </tr>
         </tbody>
       </table>
 
       <Callout tone="warn" title="A date value is read the way the predicate will read it">
-        Validation reads a date value exactly as the predicate builder does: with the
-        invariant culture, as the member&apos;s own <code>DateTime</code> or{" "}
-        <code>DateTimeOffset</code>. The server&apos;s culture plays no part, so a
+        Validation reads a date value exactly as the predicate builder does, with
+        the member&apos;s own <code>DateTime</code>, <code>DateTimeOffset</code> or{" "}
+        <code>DateOnly</code> type. The server&apos;s culture plays no part, so a
         value is accepted or refused the same way on every host, and a value that
-        passes validation is one the builder can use. The invariant culture reads a
-        slash date month-first: <code>&quot;15/09/2026&quot;</code> is refused, and{" "}
-        <code>&quot;01/09/2026&quot;</code> is 9 January. Send ISO&nbsp;8601 (
+        passes validation is one the builder can use. ISO&nbsp;8601 (
         <code>&quot;2026-09-15&quot;</code>,{" "}
-        <code>&quot;2026-09-15T12:00:00Z&quot;</code>). See{" "}
-        <Link href="/docs/breaking-changes#date-invariant-culture">breaking changes</Link>.
+        <code>&quot;2026-09-15T12:00:00Z&quot;</code>) and year-first dates are
+        accepted everywhere; <code>&quot;01/09/2026&quot;</code> is refused with{" "}
+        <code>AmbiguousDateFormat</code> unless the deployment declares its order.
+        See <Link href="/docs/enums/data-type">DataType</Link> and{" "}
+        <Link href="/docs/breaking-changes#date-value-formats">breaking changes</Link>.
       </Callout>
 
       <h2 id="related">Related</h2>

@@ -119,11 +119,11 @@ export default function Page() {
           <code>InvalidFormat</code>.
         </li>
         <li>
-          <code>Date</code> / <code>DateTime</code> values must parse with the
-          invariant culture, as the member&apos;s own <code>DateTime</code> or{" "}
-          <code>DateTimeOffset</code> — <code>InvalidFormat</code>. Validation and
-          the predicate builder read them the same way, so the server&apos;s culture
-          decides nothing: send ISO&nbsp;8601. See{" "}
+          <code>Date</code> / <code>DateTime</code> values must be ISO&nbsp;8601,
+          year-first, or a format declared with <code>DwDates.Configure</code> —{" "}
+          <code>AmbiguousDateFormat</code> for a day/month-first date such as{" "}
+          <code>01/09/2026</code>, <code>InvalidFormat</code> otherwise. The
+          server&apos;s culture decides nothing. See{" "}
           <Link href="/docs/validation/condition">Condition validation</Link>.
         </li>
         <li>

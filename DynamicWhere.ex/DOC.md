@@ -113,7 +113,9 @@ Since 3.1.0 the predicate is built from the member's own CLR type, which is what
 
 | | What the library does |
 |---|---|
-| Value parsing | **Invariant culture**, re-emitted in round-trip form, so a filter means the same day on every host. The invariant culture reads a slash date **month-first**: `15/09/2026` is refused with `InvalidFormat`, but `01/09/2026` is silently 9 January. Validation reads the value exactly as the builder will, so the server's culture decides nothing. Send ISO 8601 (`2026-09-01`) |
+| Accepted texts | **ISO 8601** (`2026-09-01`, optionally `T` or a space and a time, a fraction, `Z` or an offset) and **year-first** dates (`2026/09/01`, `2026.09.01`), on every deployment. A numeric date that leads with a day or a month — `01/09/2026`, `15.09.2026` — is refused with `AmbiguousDateFormat` whatever its numbers, so a client finds out on its first request rather than on the fifth of the month. Anything else, including `12:00` and `Sep 2026`, is `InvalidFormat`. The server's culture and calendar decide nothing |
+| Declared formats | A deployment whose clients send a local form declares it once: `DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))`, or bound from `DynamicWhere:Dates:Formats`. Two formats that read one text differently are refused at configuration |
+| `DateOnly` member | Compared as a day under both date data types, against a `DateOnly(y, m, d)` constructor. On Npgsql, `WHERE "Day" = DATE '2026-09-01'` |
 | `HAVING` | Names an alias, so the type comes from the aggregate behind it: `Minimum`, `Maximum`, `FirstOrDefault` and `LastOrDefault` carry the member's type, nullable if the member is, and the predicate is built as for that member. On Npgsql, `HAVING max(col) > TIMESTAMPTZ '…'` |
 | `DateTimeOffset` member | Compared against a `DateTimeOffset` literal normalised to UTC. A value carrying no zone is read as UTC, so `Date` names the day the caller wrote. On Npgsql `Date` becomes `date_trunc('day', col AT TIME ZONE 'UTC')` |
 | `DateTime` member | Compared against a `DateTime` literal. A value carrying `Z` or an offset converts to the host's local time first, as it always has — send it in the convention the column stores |
@@ -279,7 +281,8 @@ The library normalizes every element before validation/build:
 | `string` | as-is |
 | `bool` | `"true"` / `"false"` (lowercase) |
 | `JsonElement` (System.Text.Json) | unwrapped by `ValueKind` (`String` → text, `Number` → raw JSON token, `True`/`False` → lowercase) |
-| numeric / `IFormattable` | `InvariantCulture` formatting |
+| `DateTime` / `DateTimeOffset` / `DateOnly` | Year-first text: `2026-09-01T12:30:00`, `2026-09-01T12:30:00+03:00`, `2026-09-01`. Before 3.1.0 a `DateTime` became month-first `09/01/2026 12:30:00` |
+| numeric / other `IFormattable` | `InvariantCulture` formatting |
 | anything else (`JValue`, etc.) | `value.ToString()` |
 | `null` | `string.Empty` |
 
@@ -703,7 +706,7 @@ Async-only segment operation. Executes each `ConditionSet` independently, then a
 | `Guid` values must parse as `Guid` | `InvalidFormat` |
 | `Number` values must parse as a numeric type | `InvalidFormat` |
 | `Boolean` values must parse as `bool` | `InvalidFormat` |
-| `Date` / `DateTime` values must parse as a date **in the invariant culture** | `InvalidFormat` |
+| `Date` / `DateTime` values must be ISO 8601, year-first, or a declared format | `InvalidFormat`, or `AmbiguousDateFormat` for a day/month-first date |
 
 ### ConditionGroup Validation Rules
 
@@ -1940,7 +1943,8 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `InvalidPageNumber` | `PageNumberMustBeGreaterThanZero` | PageNumber ≤ 0 |
 | `InvalidPageSize` | `PageSizeMustBeGreaterThanZero` | PageSize ≤ 0 |
 | `MustHaveFields` | `MustHasFields` | Empty fields list in Select |
-| `InvalidFormat` | `InvalidFormat` | Value doesn't parse for declared DataType. Date values are read with the invariant culture, so a host-specific form such as `15/09/2026` is refused |
+| `InvalidFormat` | `InvalidFormat` | Value doesn't parse for declared DataType. For a date: not ISO 8601, year-first, or a declared format |
+| `AmbiguousDateFormat` | `AmbiguousDateFormat` | A date value that leads with a day or a month (`01/09/2026`) and matches no declared format. `LogicException.Subject` carries the field |
 | `SelectTypeMustHaveParameterlessConstructor` | `SelectTypeMustHaveParameterlessConstructor` | `Select<T>` or `Filter.Selects` on a `T` the projection cannot construct. `LogicException.Subject` carries the type's full name |
 | `InvalidAlias` | `AggregationMustHasValidAlias` | Alias is not a plain identifier — empty, or carrying a dot, comma, space, or dash |
 | `GroupByMustHaveFields` | `GroupByMustHasAtLeastOneField` | GroupBy with no fields |
@@ -1969,7 +1973,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
    `ToListAsync<T>(Segment)` is the only entry point for segment queries. There is no synchronous `ToList<T>(Segment)` variant. Each `ConditionSet` is materialized independently into memory, then set operations are performed in-memory.
 
 3. **Date Values are Read with the Invariant Culture**
-   Since 3.1.0, `Date` and `DateTime` values are parsed with `InvariantCulture` rather than the server's. A deployment that sent culture-formatted values — `15/09/2026` on a day-first host — now receives `InvalidFormat` where the filter used to run. Worse, a day of 12 or less is not refused at all: the invariant culture reads `01/09/2026` month-first, as 9 January. Send ISO 8601. In exchange, the same filter means the same day on every server, `DateTimeOffset` columns work at all, and a `DateTimeOffset` value is normalised to UTC.
+   Since 3.1.0 a date value must be ISO 8601, year-first, or a format the deployment declared through `DwDates.Configure`. The server's culture used to decide: `01/09/2026` was 1 September on a day-first server and 9 January on another. It is now refused with `AmbiguousDateFormat` unless the order is declared, and forms the lenient parser used to accept — `12:00` as today at noon — are `InvalidFormat`. A deployment that sent culture-formatted dates either switches its clients to ISO 8601 or declares the format once at startup. In exchange, a filter means one thing on every server, `DateTimeOffset` and `DateOnly` columns work, and a `DateTimeOffset` value is normalised to UTC.
 
 4. **Case-Insensitive Operators use `.ToLower()`**
    All `I*` operators (e.g., `IContains`, `IEqual`) normalize both sides via `.ToLower()`. This works correctly with SQL Server (`COLLATE` is typically case-insensitive), but be aware of potential performance or behavior differences on case-sensitive database collations (e.g., PostgreSQL with `C` locale).

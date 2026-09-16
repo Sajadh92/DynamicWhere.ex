@@ -157,7 +157,18 @@ export default function Page() {
             </td>
           </tr>
           <tr>
-            <td>numeric / <code>IFormattable</code></td>
+            <td>
+              <code>DateTime</code> / <code>DateTimeOffset</code> /{" "}
+              <code>DateOnly</code>
+            </td>
+            <td>
+              year-first text — <code>2026-09-01T12:30:00</code>,{" "}
+              <code>2026-09-01T12:30:00+03:00</code>, <code>2026-09-01</code> (since
+              3.1.0; it was the month-first <code>09/01/2026 12:30:00</code>)
+            </td>
+          </tr>
+          <tr>
+            <td>numeric / other <code>IFormattable</code></td>
             <td>
               <code>InvariantCulture</code> formatting
             </td>

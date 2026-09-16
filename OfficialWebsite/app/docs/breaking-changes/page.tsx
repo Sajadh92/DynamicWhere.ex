@@ -25,8 +25,9 @@ export default function Page() {
         Five behaviours changed in <strong>3.1.0</strong>. Each one fixes a defect,
         and each one is visible to a caller that depended on the old shape. Date
         comparisons now read the member&apos;s type before building
-        the predicate (point&nbsp;14) and parse values with the invariant culture
-        (point&nbsp;15); an unpaged <code>PageCount</code> is now <code>1</code>{" "}
+        the predicate (point&nbsp;14) and accept a value only in ISO&nbsp;8601, a
+        year-first form, or a format the deployment declares (point&nbsp;15); an
+        unpaged <code>PageCount</code> is now <code>1</code>{" "}
         rather than <code>TotalCount</code> (point&nbsp;16); the{" "}
         <code>Select</code> constructor refusal carries a stable code instead of an
         English sentence (point&nbsp;17); and a guarded query is refused unless its
@@ -318,11 +319,14 @@ export default function Page() {
         <li>
           A <code>DateTimeOffset</code> member is compared against a{" "}
           <code>DateTimeOffset</code> literal; a <code>DateTime</code> member
-          against a <code>DateTime</code> literal.
+          against a <code>DateTime</code> literal; a <code>DateOnly</code> member
+          against a <code>DateOnly</code>, as a day under both data types.
         </li>
         <li>
           A nullable member is unwrapped with <code>.Value</code> under its guard,
-          so <code>DataType.Date</code> emits <code>{`{field}.Value.Date`}</code>.
+          so <code>DataType.Date</code> emits <code>{`{field}.Value.Date`}</code> —
+          or <code>{`{field}.Value`}</code> on a <code>DateOnly?</code>, which is
+          already a day.
         </li>
         <li>
           A <code>Having</code> condition names an aggregate alias rather than a
@@ -358,6 +362,25 @@ export default function Page() {
         </code>
         . All of these now work.
       </Callout>
+      <Callout tone="danger" title="Fixed: DateOnly members could not be filtered">
+        Until 3.1.0 no condition on a <code>DateOnly</code> member worked.{" "}
+        <code>DataType.Date</code> asked it for a <code>.Date</code> it does not
+        have —{" "}
+        <code>
+          ParseException: No property or field &apos;Date&apos; exists in type
+          &apos;DateOnly&apos;
+        </code>{" "}
+        — and <code>DataType.DateTime</code> compared it against a{" "}
+        <code>DateTime</code> literal —{" "}
+        <code>
+          ParseException: Operator &apos;==&apos; incompatible with operand types
+          &apos;DateOnly&apos; and &apos;DateTime&apos;
+        </code>
+        . Both data types now compare a <code>DateOnly</code> as a day, and a
+        nullable <code>DateOnly</code> is guarded like any other nullable date. On
+        PostgreSQL an <code>Equal</code> becomes{" "}
+        <code>{`WHERE "Day" = DATE '2026-09-01'`}</code>.
+      </Callout>
       <Callout tone="warn" title="IsNull answers a constant on a non-nullable member">
         With the guard gone, there is nothing left for{" "}
         <Link href="/docs/enums/operator"><code>IsNull</code></Link> and{" "}
@@ -377,26 +400,48 @@ export default function Page() {
         <code>Or</code> if you want the unset rows back.
       </Callout>
 
-      <h2 id="date-invariant-culture">15. Date Values Are Parsed with the Invariant Culture</h2>
+      <h2 id="date-value-formats">15. Date Values Are ISO 8601, Year-First, or a Declared Format</h2>
       <p>
-        Condition values for the two date types are now parsed with{" "}
-        <code>CultureInfo.InvariantCulture</code> and re-emitted in round-trip form —
-        at validation and in the builder alike, as the member&apos;s own date type.
-        The shipped predicate used to carry your raw text into a{" "}
+        Condition values for the two date types are now read against an explicit
+        list of formats, never the lenient .NET parser, and re-emitted in
+        round-trip form — at validation and in the builder alike, as the
+        member&apos;s own date type. Every deployment accepts ISO&nbsp;8601 (
+        <code>2026-09-01</code>, optionally with a time after a <code>T</code> or
+        a space, a fraction, and <code>Z</code> or an offset) and year-first dates
+        with <code>/</code> or <code>.</code> (<code>2026/09/01</code>,{" "}
+        <code>2026.09.01</code>), plus any format the deployment declares. The
+        shipped predicate used to carry your raw text into a{" "}
         <code>DateTime.Parse</code> that the runtime evaluated in the host&apos;s
-        culture, so the same filter meant different days on two servers.
+        culture, so the same filter meant different days on two servers; the
+        host&apos;s culture and calendar now play no part.
       </p>
-      <Callout tone="danger" title="Culture-formatted values are now refused — or silently re-read">
-        A value the invariant culture cannot read is refused with{" "}
-        <Link href="/docs/errors"><code>InvalidFormat</code></Link>. A host that
-        sent day-first values such as <code>&quot;15/09/2026&quot;</code> and
-        happened to run under a day-first culture parsed them before and gets{" "}
-        <code>InvalidFormat</code> now. Worse, a day-first value whose day is 12 or
-        less is <em>not</em> refused: the invariant culture reads it month-first, so{" "}
-        <code>&quot;01/09/2026&quot;</code> — 1 September on that host until now —
-        filters on 9 January without any error. Send ISO&nbsp;8601 —{" "}
-        <code>&quot;2026-09-15&quot;</code>,{" "}
-        <code>&quot;2026-09-15T12:00:00Z&quot;</code>.
+      <Callout tone="danger" title="Day-first and month-first values are now refused">
+        A numeric date that leads with a day or a month —{" "}
+        <code>&quot;01/09/2026&quot;</code>, <code>&quot;15/09/2026&quot;</code>,{" "}
+        <code>&quot;09/15/2026&quot;</code>, <code>&quot;01.09.2026&quot;</code>,{" "}
+        <code>&quot;1/9/26&quot;</code>, with or without a time — is refused with
+        the new code{" "}
+        <Link href="/docs/errors"><code>AmbiguousDateFormat</code></Link>, whatever
+        its numbers, with the field on <code>LogicException.Subject</code>. A server
+        whose culture used to read such values refuses them now, unless it
+        declares the form. The refusal goes by shape on purpose: refusing only values with
+        two valid readings would fail on the 5th of the month and pass on the 15th,
+        so a client would find out in production instead of on its first request.
+        Send ISO&nbsp;8601 — <code>&quot;2026-09-15&quot;</code>,{" "}
+        <code>&quot;2026-09-15T12:00:00Z&quot;</code> — or declare the form your
+        clients send once at startup, with{" "}
+        <code>{`DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))`}</code>; see{" "}
+        <Link href="/docs/enums/data-type#date-formats">DataType → Date formats</Link>.
+      </Callout>
+      <Callout tone="warn" title="Values the lenient parser guessed at are now InvalidFormat">
+        Anything that is neither an accepted form nor a day-first or month-first
+        date is refused with{" "}
+        <Link href="/docs/errors"><code>InvalidFormat</code></Link>. That includes
+        values the lenient parser used to accept without a word:{" "}
+        <code>&quot;12:00&quot;</code> was today at noon,{" "}
+        <code>&quot;1/9&quot;</code> a day of the current year, and{" "}
+        <code>&quot;Sep 2026&quot;</code> and{" "}
+        <code>&quot;1 September 2026&quot;</code> were 1 September.
       </Callout>
       <Callout tone="warn" title="Zones: DateTimeOffset normalizes to UTC, DateTime does not">
         On a <code>DateTimeOffset</code> member the value is normalized to UTC, and
@@ -408,6 +453,19 @@ export default function Page() {
         <code>DateTime</code> members keep the previous behaviour: a value carrying
         a zone is converted to the host&apos;s local time, which is the reading a{" "}
         <code>timestamp without time zone</code> column is compared against.
+      </Callout>
+      <Callout tone="warn" title="C# date objects in Values are written year-first">
+        A <code>DateTime</code>, <code>DateTimeOffset</code> or{" "}
+        <code>DateOnly</code> placed in <code>Condition.Values</code> from C# is
+        now written as year-first text —{" "}
+        <code>&quot;2026-09-01T12:30:00&quot;</code>,{" "}
+        <code>&quot;2026-09-01T12:30:00+03:00&quot;</code>,{" "}
+        <code>&quot;2026-09-01&quot;</code> — instead of the month-first invariant
+        form <code>&quot;09/01/2026 12:30:00&quot;</code>, so a C# caller is never
+        refused for sending an unambiguous value. It also ends a silent misreading:
+        that month-first text used to be parsed back in the host&apos;s culture, so
+        on a day-first server <code>new DateTime(2026, 9, 1)</code> filtered on
+        9 January.
       </Callout>
 
       <h2 id="unpaged-page-count">16. <code>PageCount</code> on an Unpaged Result Is <code>1</code></h2>
@@ -449,9 +507,9 @@ export default function Page() {
       <Callout tone="danger" title="Two things to update">
         Middleware that string-matched the old sentence stops matching, and anything
         that scraped the type name out of the message must read{" "}
-        <code>Subject</code> instead. The count of stable codes went from 27 to 28,
-        leaving one validation failure whose message is a sentence rather than a
-        code —{" "}
+        <code>Subject</code> instead. The count of stable codes went from 27 to 28
+        (29 with point&nbsp;15&apos;s <code>AmbiguousDateFormat</code>), leaving one
+        validation failure whose message is a sentence rather than a code —{" "}
         <code>{`Unsupported combination of DataType '{type}' and Operator '{op}'.`}</code>{" "}
         See <Link href="/docs/errors">the error code reference</Link>.
       </Callout>
@@ -490,12 +548,13 @@ export default function Page() {
       <h2 id="next">See also</h2>
       <ul>
         <li>
-          <Link href="/docs/errors">Error Codes Reference →</Link> the 28 stable
+          <Link href="/docs/errors">Error Codes Reference →</Link> the 29 stable
           validation messages.
         </li>
         <li>
           <Link href="/docs/enums/data-type"><code>DataType</code> →</Link>{" "}
-          context for points 14 and 15.
+          context for points 14 and 15, and how a deployment{" "}
+          <Link href="/docs/enums/data-type#date-formats">declares its date formats</Link>.
         </li>
         <li>
           <Link href="/docs/classes/filter-result"><code>FilterResult&lt;T&gt;</code> →</Link>{" "}

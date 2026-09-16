@@ -18,7 +18,7 @@ export default function Page() {
       <p>
         Every validation failure in DynamicWhere.ex throws a{" "}
         <code>LogicException</code> (which inherits from <code>Exception</code>).
-        The <code>Message</code> property carries one of the 28 stable error strings
+        The <code>Message</code> property carries one of the 29 stable error strings
         listed below, so you can pattern‑match them in middleware and surface
         meaningful problems to API callers.
       </p>
@@ -69,7 +69,7 @@ export default function Page() {
 });`}</Code>
       </Callout>
 
-      <h2 id="all-errors">All 28 error codes</h2>
+      <h2 id="all-errors">All 29 error codes</h2>
       <p>
         Codes wrapped in <code>(parens)</code> are parameterized — the bracketed
         token in the message is replaced at runtime with the offending operator,
@@ -96,6 +96,18 @@ export default function Page() {
         matching on that old sentence — or reading the type name out of it — needs
         updating. See{" "}
         <Link href="/docs/breaking-changes#select-code">breaking changes</Link>.
+      </Callout>
+
+      <Callout tone="danger" title="New in 3.1.0: AmbiguousDateFormat">
+        A <code>Date</code> or <code>DateTime</code> value that leads with a day or
+        a month — <code>01/09/2026</code>, <code>09/15/2026</code> — is refused with
+        its own code rather than read one way or the other, and the field is on{" "}
+        <code>Subject</code>. Its fix differs from <code>InvalidFormat</code>&apos;s:
+        the value is a date, so either the client sends ISO&nbsp;8601 or the
+        deployment declares the order it uses through{" "}
+        <code>DwDates.Configure</code>. See{" "}
+        <Link href="/docs/enums/data-type#date-formats">date formats</Link> and{" "}
+        <Link href="/docs/breaking-changes#date-value-formats">breaking changes</Link>.
       </Callout>
 
       <table>
@@ -182,11 +194,26 @@ export default function Page() {
             <td><code>InvalidFormat</code></td>
             <td>
               Value doesn't parse for declared <code>DataType</code>. A{" "}
-              <code>Date</code> / <code>DateTime</code> value is read with the
-              invariant culture, as the member&apos;s own date type — the same
-              reading at validation and when the predicate is built — so a
-              host-specific form such as <code>15/09/2026</code> raises this on
-              every server
+              <code>Date</code> / <code>DateTime</code> value must be ISO&nbsp;8601,
+              year-first, or a format declared through{" "}
+              <code>DwDates.Configure</code>, read as the member&apos;s own date
+              type — the same reading at validation and when the predicate is
+              built — so <code>12:00</code>, <code>1/9</code> or{" "}
+              <code>Sep 2026</code> raises this on every server. Raised by a date
+              value, it carries the field on <code>Subject</code>
+            </td>
+          </tr>
+          <tr>
+            <td><code>AmbiguousDateFormat</code></td>
+            <td><code>AmbiguousDateFormat</code></td>
+            <td>
+              A <code>Date</code> / <code>DateTime</code> value leads with a day or
+              a month — <code>01/09/2026</code>, <code>15/09/2026</code>,{" "}
+              <code>09/15/2026</code>, <code>01.09.2026</code>,{" "}
+              <code>1/9/26</code>, with or without a time — and no format declared
+              through <code>DwDates.Configure</code> reads it. Refused by shape,
+              whatever the numbers. The field, or the <code>Having</code> alias, is
+              on <code>Subject</code>
             </td>
           </tr>
           <tr>
@@ -282,9 +309,13 @@ export default function Page() {
         <code>LogicException(string message, string? subject)</code> — and the
         matching read-only property <code>Subject</code> (<code>string?</code>).
         It carries what a refusal is <em>about</em> where the code alone does not
-        say: today that is the rejected type&apos;s <code>FullName</code> on{" "}
-        <code>SelectTypeMustHaveParameterlessConstructor</code>. It is{" "}
-        <code>null</code> for every other code, because the parameterized codes
+        say: the rejected type&apos;s <code>FullName</code> on{" "}
+        <code>SelectTypeMustHaveParameterlessConstructor</code>, and the field —
+        or the <code>Having</code> alias — on <code>AmbiguousDateFormat</code> and
+        on an <code>InvalidFormat</code> raised by a <code>Date</code> or{" "}
+        <code>DateTime</code> value. It is <code>null</code> for every other code,
+        including <code>InvalidFormat</code> on a <code>Guid</code>,{" "}
+        <code>Number</code> or <code>Boolean</code> value; the parameterized codes
         already interpolate their operator, alias, aggregator, type, or field name
         into the message themselves.
       </p>
@@ -296,7 +327,12 @@ export default function Page() {
       <Code lang="csharp">{`catch (LogicException ex)
 {
     // ex.Message   -> "SelectTypeMustHaveParameterlessConstructor"
-    // ex.Subject   -> "MyApp.Dtos.CustomerRow"  (null for every other code)
+    // ex.Subject   -> "MyApp.Dtos.CustomerRow"
+    //
+    // ex.Message   -> "AmbiguousDateFormat"
+    // ex.Subject   -> "CreatedAt"
+    //
+    // null for most other codes
     return Results.BadRequest(new { error = ex.Message, subject = ex.Subject });
 }`}</Code>
 
@@ -313,7 +349,9 @@ export default function Page() {
           <code>AggregateBy</code>, <code>Having</code>,{" "}
           <code>Summary.Orders</code>), <code>RequiredValues</code>,{" "}
           <code>NotRequiredValues</code>, <code>RequiredTwoValue</code>,{" "}
-          <code>RequiredOneValue(op)</code>, <code>InvalidFormat</code>.
+          <code>RequiredOneValue(op)</code>, <code>InvalidFormat</code>,{" "}
+          <code>AmbiguousDateFormat</code> (the two format codes are also raised
+          for a date value in a <code>Having</code> condition).
         </li>
         <li>
           <Link href="/docs/validation/condition-group">ConditionGroup validation →</Link>{" "}

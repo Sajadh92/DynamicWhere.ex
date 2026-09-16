@@ -92,7 +92,7 @@ DynamicWhere.ex.Policies.AspNetCore           MapDwPolicyAdmin, claims adapter, 
 Namespace of every public type:
 
 ```
-DynamicWhere.ex.Source                    Extension (all core extension methods)
+DynamicWhere.ex.Source                    Extension (all core extension methods), DwDates, DwDateOptions (date formats, 3.1.0)
 DynamicWhere.ex.Classes.Core              Condition ConditionGroup ConditionSet OrderBy GroupBy AggregateBy PageBy
 DynamicWhere.ex.Classes.Complex           Filter Segment Summary
 DynamicWhere.ex.Classes.Result            FilterResult<T> SegmentResult<T> SummaryResult
@@ -349,12 +349,14 @@ JsonElement String                its string
 JsonElement Number                the raw token as sent ("1.50" stays "1.50")
 JsonElement True / False          "true" / "false"
 JsonElement Array / Object        the raw JSON text
-other IFormattable                ToString(null, InvariantCulture): 12.5 -> "12.5", Guid -> "D" form, enum -> member name,
-                                  DateTime -> "MM/dd/yyyy HH:mm:ss"
+DateTime                          "yyyy-MM-ddTHH:mm:ss.FFFFFFF", no zone marker (3.1.0; was "MM/dd/yyyy HH:mm:ss")
+DateTimeOffset                    "yyyy-MM-ddTHH:mm:ss.FFFFFFFzzz" (3.1.0)
+DateOnly                          "yyyy-MM-dd" (3.1.0)
+other IFormattable                ToString(null, InvariantCulture): 12.5 -> "12.5", Guid -> "D" form, enum -> member name
 anything else                     ToString()
 ```
 
-Then checked per DataType. A failed check throws `InvalidFormat`.
+Then checked per DataType. A failed check throws `InvalidFormat` — or, for a date, `AmbiguousDateFormat`.
 
 ```
 DataType   Check                                                    Send
@@ -364,8 +366,8 @@ Guid       Guid.TryParse                                            any Guid for
 Number     TryParse as byte/short/int/long/float/double/decimal     a JSON number or numeric string: 12, -3.5, "15.5", "1e3"
            (server culture)
 Boolean    bool.TryParse                                            true / false as JSON booleans or strings in any case; 1 and 0 fail
-DateTime   invariant culture, as the member's own date type (3.1.0) ISO 8601: "2024-06-15T14:30:00", or with Z / an offset
-Date       invariant culture, as the member's own date type (3.1.0) ISO 8601 date: "2024-06-15"; the time is dropped on both sides
+DateTime   ISO 8601 / year-first / a declared format (3.1.0)       ISO 8601: "2024-06-15T14:30:00", or with Z / an offset
+Date       ISO 8601 / year-first / a declared format (3.1.0)       ISO 8601 date: "2024-06-15"; the time is dropped on both sides
 ```
 
 - **Null:** a null element is `""`. Text and Enum compare with the empty string; every other DataType throws
@@ -374,13 +376,22 @@ Date       invariant culture, as the member's own date type (3.1.0) ISO 8601 dat
   `"Infinity"` passes the culture TryParse, then throws `System.Linq.Dynamic.Core.Exceptions.ParseException`
   when the query is built. Send invariant literals without separators.
 - **Date / DateTime (3.1.0 rewrote this):** the predicate is built from the member's own type.
-  - Values are parsed with **InvariantCulture** and re-emitted in round-trip form, so a filter means the same day
-    on every host. The invariant culture reads a slash date **month-first**: `"15/09/2026"` is refused with
-    `InvalidFormat`, but `"01/09/2026"` is silently 9 January, and so is `"01.09.2026"` — any day of 12 or less.
-    Send ISO 8601 (`"2026-09-01"`), which reads the same under every culture.
-  - Validation reads the value exactly as the builder does — invariant culture, the member's own date type — so the
-    server's culture decides nothing and a value that passes validation always builds. An unreadable value is
-    `InvalidFormat` at validation.
+  - **Which texts are dates (3.1.0).** Read against explicit formats, never the lenient parser; the server's culture
+    and calendar decide nothing.
+    - Always accepted: ISO 8601 — `"2026-09-01"` (also `"2026-9-1"`), optionally `T` or a space and a time
+      (`"12:30"`, `"12:30:15"`, `"12:30:15.123"`), optionally `Z` or an offset (`"+03:00"`) — and year-first dates
+      `"2026/09/01"`, `"2026.09.01"` with the same optional time.
+    - A numeric date that leads with a day or a month — `"01/09/2026"`, `"15/09/2026"`, `"09/15/2026"`,
+      `"01.09.2026"`, `"01-09-2026"`, `"1/9/26"` — throws `AmbiguousDateFormat` whatever its numbers, with the field
+      as `LogicException.Subject`. By shape, not value: refusing only the values with two readings would fail on
+      the 5th of the month and pass on the 15th.
+    - Anything else is `InvalidFormat`, including `"12:00"`, `"1/9"`, `"Sep 2026"`, `"1 September 2026"` — which
+      the lenient parser used to accept as today at noon, 9 January of this year, and 1 September.
+    - A deployment declares a local form once at startup, and it is read with the invariant culture alongside ISO:
+      `DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))` makes `"01/09/2026"` 1 September everywhere. See
+      "Date formats" below.
+  - Validation and the builder read a value with the same reader and the member's own type, so a value that passes
+    validation always builds.
   - A `DateTimeOffset` member is compared against a `DateTimeOffset` literal, normalised to UTC; a value carrying
     no zone is read as UTC, so `DataType.Date` names the day the caller wrote. On Npgsql `DataType.Date` becomes
     `date_trunc('day', col AT TIME ZONE 'UTC')`.
@@ -394,15 +405,58 @@ Date       invariant culture, as the member's own date type (3.1.0) ISO 8601 dat
     `FirstOrDefault` and `LastOrDefault` have the member's type (nullable if the member is), and the predicate is
     built exactly as for that member. On Npgsql: `HAVING max(col) > TIMESTAMPTZ '…'`. Count, Sumation and Average
     aliases are never dates and keep the unconditional guard.
+  - A `DateOnly` member (3.1.0) is compared as a day under both date data types, against a `DateOnly(y, m, d)`
+    constructor — never `DateOnly.Parse`, which the runtime evaluates in the host's calendar and reads
+    `"2026-09-01"` as the year 1483 on a Thai server. On Npgsql: `WHERE "Day" = DATE '2026-09-01'`.
   - Before 3.1.0 every comparison on a `DateTimeOffset` member threw — `InvalidOperationException` ("The binary
     operator NotEqual is not defined for the types 'System.DateTimeOffset' and 'System.Object'") on a
-    non-nullable one, `ParseException` on a nullable one — and `DataType.Date` on any nullable date member threw
-    `ParseException` ("No property or field 'Date' exists in type 'DateTime?'").
+    non-nullable one, `ParseException` on a nullable one — `DataType.Date` on any nullable date member threw
+    `ParseException` ("No property or field 'Date' exists in type 'DateTime?'"), and a `DateOnly` member could not
+    be filtered under either date data type.
 - A C# `DateTime` placed in `Values` is formatted invariant (`MM/dd/yyyy HH:mm:ss`) and re-parsed invariantly.
   Pass ISO strings instead. A `DateTimeOffset` in `Values` round-trips the same way.
 - **Enum:** a name that is not a member passes validation and throws `ParseException` when the query is built.
 - In C#, `Values` is `List<object>`: `Values = { "Engineering" }` or `new List<object> { 1, 2 }`. A `List<string>`
   is not assignable.
+
+### Date formats — `DwDates` (3.1.0)
+
+```csharp
+namespace DynamicWhere.ex.Source;
+
+public sealed class DwDateOptions
+{
+    public IList<string> Formats { get; }   // .NET exact formats, read with InvariantCulture; read-only once configured
+    public bool IsFrozen { get; }
+}
+
+public static class DwDates
+{
+    public static DwDateOptions Options { get; }   // frozen; declares nothing until configured
+    public static bool IsConfigured { get; }
+    public static void Configure(DwDateOptions options);
+    public static void Configure(Action<DwDateOptions> configure);
+    public static DwDateOptions Bind(this DwDateOptions options, IConfiguration section);   // extension
+}
+```
+
+```csharp
+DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"));                    // once, at startup
+
+DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWhere:Dates")));
+// appsettings.json: { "DynamicWhere": { "Dates": { "Formats": [ "dd/MM/yyyy", "dd/MM/yyyy HH:mm" ] } } }
+```
+
+- Declared formats are accepted **in addition to** ISO 8601 and year-first dates, which every deployment accepts.
+- `Configure` freezes the options and may be called once; a second call throws `InvalidOperationException`. Every
+  query reads the formats without a lock.
+- Refused at `Configure` with `ArgumentException`: a blank format; a format that cannot read the text it writes;
+  two formats that read one text as different dates — `dd/MM/yyyy` beside `MM/dd/yyyy`, or `yyyy-dd-MM` against
+  ISO. Declare one day/month order.
+- `Bind` refuses a key nothing answers to (`ErrorOnUnknownConfiguration`), so a misspelt `Fromats` fails at startup
+  instead of leaving the defaults in force. It throws `InvalidOperationException` on frozen options.
+- A value still has to match: with `dd/MM/yyyy` declared, `"09/15/2026"` is `AmbiguousDateFormat`.
+- There is no per-condition format. A condition's value is read with the process-wide formats.
 
 ```
 Value count, checked before the format (Condition and Having alike)
@@ -797,6 +851,9 @@ AggregationAlias[<alias>]CannotBeUsedInGroupByFields                   an Alias 
 SummaryOrderField[<field>]MustExistInGroupByFieldsOrAggregateByAliases a Summary order field is neither a group field nor an Alias
 HavingField[<field>]MustExistInAggregateByAliases                      a Having field is not an Alias
 ConditionValuesAreNullOrWhiteSpace                                     defined but never thrown
+AmbiguousDateFormat                                                    a Date / DateTime value that leads with a day or a month
+                                                                       ("01/09/2026") and matches no declared format, or one two
+                                                                       declared formats read differently. Subject = the field. 3.1.0
 SelectTypeMustHaveParameterlessConstructor                             Select<T> / Filter.Selects on a T with no parameterless
                                                                        constructor — a positional record, most often. Also a
                                                                        guarded query where a member carries [DwNoSelect],
@@ -1129,12 +1186,11 @@ Each of these compiles, passes validation, and returns something other than what
    set's `Intersection` is cleared. Clone a shape before reusing it. (Guarded calls work on a clone.)
 5. **Enum names in JSON need `JsonStringEnumConverter`.** Without it the body fails to bind. An omitted enum
    property silently becomes member 0: `Text`, `Equal`, `And`, `Ascending`, `Count`.
-6. **A slash date is read month-first, and a `DateTime` member reads a zoned value as server local time.** Since
-   3.1.0 values are parsed with the invariant culture, so `"01/02/2024"` no longer means different days on
-   different servers — it is 2 January everywhere. A day-first caller gets no error for it: `"15/09/2026"` is
-   refused with `InvalidFormat`, but `"01/09/2026"` quietly becomes 9 January. Separately, a value carrying `Z` or
-   an offset is converted to the host's local time before comparing against a `DateTime` column; a
-   `DateTimeOffset` column normalises to UTC instead. Send ISO 8601, in the convention the column stores.
+6. **A `DateTime` member reads a zoned value as server local time.** A value carrying `Z` or an offset is converted
+   to the host's local time before comparing against a `DateTime` column; a `DateTimeOffset` column normalises to
+   UTC instead. Send ISO 8601 in the convention the column stores. (Before 3.1.0 this trap was worse: dates were
+   parsed in the server's culture, so `"01/02/2024"` meant different days on different servers. A day/month-first
+   date is now refused with `AmbiguousDateFormat` unless the deployment declares its order.)
 7. **`FirstOrDefault` and `LastOrDefault` return the minimum and maximum value**, not the first and last row.
 8. **Each `Order(...)` call replaces the previous ordering.** Put every key in one `List<OrderBy>`.
 9. **Some requests pass validation and then fail in the parser** with `System.Linq.Dynamic.Core.Exceptions.ParseException`:
@@ -4046,9 +4102,12 @@ MemoryCalculationInput
           comparison on a DateTimeOffset member used to throw, and DataType.Date on any nullable date member
           used to throw; both work. The null guard is emitted only for a nullable member, so IsNull / IsNotNull
           on a non-nullable date member answer false / true instead of throwing.
-        - Date values are parsed with InvariantCulture. A value only a host culture could read — "15/09/2026" on
-          a day-first server — is now refused with InvalidFormat. DateTimeOffset values normalise to UTC, and a
-          value with no zone is read as UTC.
+        - A date value must be ISO 8601, year-first, or a format declared through DwDates.Configure. A numeric
+          day/month date such as "01/09/2026" throws the new AmbiguousDateFormat; lenient forms such as "12:00"
+          are InvalidFormat. The server's culture no longer decides anything. DateTimeOffset values normalise to
+          UTC, and a value with no zone is read as UTC. C# date objects in Values are written year-first.
+        - DateOnly members can be filtered; they could not under either date data type.
+        - HAVING on a date alias takes its type from the aggregate, so it works on DateTimeOffset.
         - PageCount on an unpaged result is 1 (0 with no rows) rather than TotalCount.
         - DwCaps.DefaultPageSize (default 0 = off) bounds a guarded query that sends no Page; DwCaps
           .MaxConditionDepth (default 10) bounds how deeply condition groups nest.

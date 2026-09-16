@@ -94,8 +94,9 @@ export default function Page() {
             <td><code>DateTime</code></td>
             <td>
               Full timestamp (date + time), compared as the member&apos;s own type
-              — <code>DateTime</code> or <code>DateTimeOffset</code>, nullable or
-              not.
+              — <code>DateTime</code>, <code>DateTimeOffset</code> or{" "}
+              <code>DateOnly</code>, nullable or not. Values must be in one of the{" "}
+              <a href="#date-formats">date formats</a> below.
             </td>
             <td>
               <code>Equal</code>, <code>NotEqual</code>,{" "}
@@ -110,7 +111,8 @@ export default function Page() {
             <td>
               Date-only — compared via the <code>.Date</code> part of the
               underlying property (<code>.Value.Date</code> on a nullable one),
-              so the time component is ignored.
+              so the time component is ignored. A <code>DateOnly</code> member is
+              already a day and is compared as it is.
             </td>
             <td>
               Same as <code>DateTime</code> (the comparison strips the time
@@ -142,25 +144,14 @@ export default function Page() {
         <code>NotEqual</code> and <code>NotBetween</code> too. A{" "}
         <code>DateTimeOffset</code> member is compared against a{" "}
         <code>DateTimeOffset</code> literal and a <code>DateTime</code> member
-        against a <code>DateTime</code> literal. Before 3.1.0 every comparison on a{" "}
-        <code>DateTimeOffset</code> member threw, and so did <code>Date</code> on any
-        nullable date member — see{" "}
+        against a <code>DateTime</code> literal. A <code>DateOnly</code> member is
+        compared against a <code>DateOnly</code> — as a day under both data types —
+        so on PostgreSQL an <code>Equal</code> becomes{" "}
+        <code>{`WHERE "Day" = DATE '2026-09-01'`}</code>. Before 3.1.0 every
+        comparison on a <code>DateTimeOffset</code> member threw, so did{" "}
+        <code>Date</code> on any nullable date member, and a <code>DateOnly</code>{" "}
+        member could not be filtered at all — see{" "}
         <Link href="/docs/breaking-changes#date-member-type">breaking changes</Link>.
-      </Callout>
-
-      <Callout tone="danger" title="Send dates as ISO 8601">
-        Values are parsed with the <strong>invariant</strong> culture, not the
-        host&apos;s. One it cannot read — a day-first{" "}
-        <code>&quot;15/09/2026&quot;</code> — is refused with{" "}
-        <code>InvalidFormat</code>, and a day-first value whose day is 12 or less is
-        read month-first without complaint: <code>&quot;01/09/2026&quot;</code> is
-        9 January. On a <code>DateTimeOffset</code> member the value is normalized
-        to UTC, and one carrying no zone is read as UTC, so <code>Date</code>{" "}
-        compares the calendar day you wrote. On a <code>DateTime</code> member a
-        value carrying a zone is converted to the host&apos;s local time. Send{" "}
-        <code>&quot;2026-09-15&quot;</code> or{" "}
-        <code>&quot;2026-09-15T12:00:00Z&quot;</code> and none of this bites — see{" "}
-        <Link href="/docs/breaking-changes#date-invariant-culture">breaking changes</Link>.
       </Callout>
 
       <Callout tone="warn" title="Enum storage does not matter; the operator list does">
@@ -173,6 +164,220 @@ export default function Page() {
         against an enum-typed member, whatever the storage. For a{" "}
         <code>string</code> column that merely holds enum names and needs those
         operators, use <code>DataType.Text</code>.
+      </Callout>
+
+      <h2 id="date-formats">Date formats</h2>
+      <p>
+        A <code>Date</code> or <code>DateTime</code> value is read against an
+        explicit list of formats, never the lenient .NET parser — at validation
+        and in the predicate builder alike, as the member&apos;s own{" "}
+        <code>DateTime</code>, <code>DateTimeOffset</code> or{" "}
+        <code>DateOnly</code>. The host&apos;s culture and calendar play no part,
+        so a value is accepted or refused the same way on every server. Every
+        deployment accepts these forms:
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Form</th>
+            <th>Examples</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>ISO&nbsp;8601 date</td>
+            <td>
+              <code>2026-09-01</code> — the month and day may take one or two
+              digits, so <code>2026-9-1</code> too
+            </td>
+          </tr>
+          <tr>
+            <td>… with a time</td>
+            <td>
+              After a <code>T</code> or a space: <code>2026-09-01T12:30</code>,{" "}
+              <code>2026-09-01 12:30:15</code>,{" "}
+              <code>2026-09-01T12:30:15.123</code>
+            </td>
+          </tr>
+          <tr>
+            <td>… with a zone</td>
+            <td>
+              <code>Z</code> or an offset after the time:{" "}
+              <code>2026-09-01T12:30:00Z</code>,{" "}
+              <code>2026-09-01T12:30:00+03:00</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Year-first, with <code>/</code> or <code>.</code></td>
+            <td>
+              <code>2026/09/01</code>, <code>2026.09.01</code>, with the same
+              optional time and zone
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        A C# <code>DateTime</code>, <code>DateTimeOffset</code> or{" "}
+        <code>DateOnly</code> placed in <code>Values</code> is written in one of
+        these forms (see <a href="#value-coercion">Value coercion</a>), so a C#
+        caller is never refused for sending one. Anything else is refused, with
+        one of two codes:
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Value</th>
+            <th>Error Code</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              A numeric date that leads with a day or a month —{" "}
+              <code>01/09/2026</code>, <code>15/09/2026</code>,{" "}
+              <code>09/15/2026</code>, <code>01.09.2026</code>,{" "}
+              <code>01-09-2026</code>, <code>1/9/26</code> — with or without a time
+            </td>
+            <td><code>AmbiguousDateFormat</code></td>
+          </tr>
+          <tr>
+            <td>
+              Anything else, including what the lenient parser used to accept
+              silently: <code>12:00</code> (today at noon), <code>1/9</code> (a day
+              of the current year), <code>Sep 2026</code>,{" "}
+              <code>1 September 2026</code>
+            </td>
+            <td><code>InvalidFormat</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <Callout tone="danger" title="A day-first or month-first date is refused by its shape">
+        <code>AmbiguousDateFormat</code> does not look at the numbers.{" "}
+        <code>&quot;15/09/2026&quot;</code> has only one valid reading and is
+        refused all the same, on purpose: refusing only the values with two
+        readings would fail on the 5th of the month and pass on the 15th, so a
+        client would find out in production instead of on its first request. The
+        field — or the <code>Having</code> alias — is on{" "}
+        <code>LogicException.Subject</code>, as it is for an{" "}
+        <code>InvalidFormat</code> raised by a date value. Send ISO&nbsp;8601 (
+        <code>&quot;2026-09-15&quot;</code>,{" "}
+        <code>&quot;2026-09-15T12:00:00Z&quot;</code>), or declare the form your
+        clients send — see{" "}
+        <Link href="/docs/breaking-changes#date-value-formats">breaking changes</Link>.
+      </Callout>
+
+      <h3 id="declaring-date-formats">Declaring a local format</h3>
+      <p>
+        A deployment whose clients send a local form declares it once, at
+        startup. With <code>dd/MM/yyyy</code> declared,{" "}
+        <code>&quot;01/09/2026&quot;</code> is 1 September on every server.
+      </p>
+      <Code lang="csharp">{`using DynamicWhere.ex.Source;
+
+// A day-first API.
+DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"));
+
+// Or from configuration. A key nothing answers to — "Fromats" — refuses to start.
+DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWhere:Dates")));`}</Code>
+      <Code lang="json">{`{
+  "DynamicWhere": {
+    "Dates": {
+      "Formats": [ "dd/MM/yyyy" ]
+    }
+  }
+}`}</Code>
+      <ul>
+        <li>
+          A format is a .NET exact format string, read with the invariant culture.
+          ISO&nbsp;8601 and year-first dates stay accepted alongside it.
+        </li>
+        <li>
+          Exact means exact: <code>dd/MM/yyyy</code> reads neither{" "}
+          <code>1/9/2026</code> nor <code>01/09/2026 12:30</code>. Declare{" "}
+          <code>d/M/yyyy</code> or <code>dd/MM/yyyy HH:mm</code> beside it if
+          clients send those. A value no declared format reads is refused as
+          before, so <code>09/15/2026</code> sent to a <code>dd/MM/yyyy</code>{" "}
+          deployment is still <code>AmbiguousDateFormat</code>.
+        </li>
+        <li>
+          Two formats that read one text as different dates —{" "}
+          <code>dd/MM/yyyy</code> beside <code>MM/dd/yyyy</code>, or a format that
+          contradicts ISO&nbsp;8601 such as <code>yyyy-dd-MM</code> — are refused
+          when configured, with <code>ArgumentException</code>, rather than left to
+          disagree on a request. So is a blank format.
+        </li>
+        <li>
+          The formats are process-wide and every query reads them without a lock,
+          so they are set once: a second <code>DwDates.Configure</code> call throws{" "}
+          <code>InvalidOperationException</code>.
+        </li>
+      </ul>
+      <table>
+        <thead>
+          <tr>
+            <th>Member (<code>DynamicWhere.ex.Source</code>)</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>DwDates.Configure(Action&lt;DwDateOptions&gt;)</code></td>
+            <td>Fills in a fresh <code>DwDateOptions</code> and configures it.</td>
+          </tr>
+          <tr>
+            <td><code>DwDates.Configure(DwDateOptions)</code></td>
+            <td>
+              Checks and freezes the options and sets them for the process.
+              Throws <code>ArgumentNullException</code> for <code>null</code>;{" "}
+              <code>ArgumentException</code> for a blank format, a format that
+              cannot read the text it writes, or two that read one text as
+              different dates; and <code>InvalidOperationException</code> on a
+              second call.
+            </td>
+          </tr>
+          <tr>
+            <td><code>DwDates.Options</code></td>
+            <td>
+              The <code>DwDateOptions</code> in force. Frozen; declares no formats
+              until a deployment configures some.
+            </td>
+          </tr>
+          <tr>
+            <td><code>DwDates.IsConfigured</code></td>
+            <td><code>true</code> once <code>Configure</code> has succeeded.</td>
+          </tr>
+          <tr>
+            <td><code>DwDateOptions.Formats</code></td>
+            <td>
+              <code>IList&lt;string&gt;</code> — the formats accepted in addition to
+              ISO&nbsp;8601 and year-first dates. Read-only once configured.
+            </td>
+          </tr>
+          <tr>
+            <td><code>DwDateOptions.IsFrozen</code></td>
+            <td>
+              <code>true</code> once the options have been handed to{" "}
+              <code>DwDates.Configure</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>DwDateOptions.Bind(IConfiguration)</code></td>
+            <td>
+              Extension method. Reads <code>Formats</code> from a section and
+              returns the same instance. Throws{" "}
+              <code>InvalidOperationException</code> for a key nothing answers to,
+              or when the options are already frozen.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <Callout tone="warn" title="Zones: DateTimeOffset reads as UTC, DateTime as host local time">
+        On a <code>DateTimeOffset</code> member the value is normalized to UTC, and
+        one carrying no zone is read as UTC, so <code>Date</code> compares the
+        calendar day you wrote. On a <code>DateTime</code> member a value carrying
+        a zone is converted to the host&apos;s local time.
       </Callout>
 
       <h2 id="json-examples">JSON examples per type</h2>
@@ -271,7 +476,20 @@ export default function Page() {
             </td>
           </tr>
           <tr>
-            <td>numeric / <code>IFormattable</code></td>
+            <td>
+              <code>DateTime</code> / <code>DateTimeOffset</code> /{" "}
+              <code>DateOnly</code>
+            </td>
+            <td>
+              Year-first text: <code>&quot;2026-09-01T12:30:00&quot;</code> (no
+              zone marker), <code>&quot;2026-09-01T12:30:00+03:00&quot;</code>,{" "}
+              <code>&quot;2026-09-01&quot;</code>. Before 3.1.0 these took the
+              month-first invariant form, such as{" "}
+              <code>&quot;09/01/2026 12:30:00&quot;</code>, which is now refused.
+            </td>
+          </tr>
+          <tr>
+            <td>numeric / other <code>IFormattable</code></td>
             <td><code>InvariantCulture</code> formatting</td>
           </tr>
           <tr>
@@ -317,6 +535,10 @@ var condition = new Condition
         <li>
           <Link href="/docs/validation/condition">Condition validation →</Link>{" "}
           the rules used when parsing each <code>DataType</code>.
+        </li>
+        <li>
+          <Link href="/docs/errors">Error Codes →</Link>{" "}
+          <code>InvalidFormat</code> and <code>AmbiguousDateFormat</code>.
         </li>
       </ul>
     </DocPage>

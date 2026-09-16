@@ -872,7 +872,7 @@ public static class Extension
         // Apply Having filter on grouped results.
         if (summary.Having != null)
         {
-            string havingFilter = summary.Having.AsHavingString();
+            string havingFilter = summary.Having.AsHavingString(summary.GroupBy!.AliasTypes<T>());
 
             if (!string.IsNullOrWhiteSpace(havingFilter))
             {
@@ -946,7 +946,7 @@ public static class Extension
         // Apply Having filter on grouped results.
         if (summary.Having != null)
         {
-            string havingFilter = summary.Having.AsHavingString();
+            string havingFilter = summary.Having.AsHavingString(summary.GroupBy!.AliasTypes<T>());
 
             if (!string.IsNullOrWhiteSpace(havingFilter))
             {
@@ -1066,7 +1066,7 @@ public static class Extension
         // Apply Having filter on grouped results.
         if (summary.Having != null)
         {
-            string havingFilter = summary.Having.AsHavingString();
+            string havingFilter = summary.Having.AsHavingString(summary.GroupBy!.AliasTypes<T>());
 
             if (!string.IsNullOrWhiteSpace(havingFilter))
             {

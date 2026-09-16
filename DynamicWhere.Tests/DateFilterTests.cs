@@ -1,9 +1,12 @@
+using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
+using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Source;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
 
 namespace DynamicWhere.Tests;
 
@@ -56,6 +59,7 @@ public sealed class DateFilterTests : IDisposable
         new DateRow
         {
             Id = 1,
+            Team = "A",
             At = Noon.AddDays(-2),
             MaybeAt = null,
             When = Noon.UtcDateTime.AddDays(-2),
@@ -64,6 +68,7 @@ public sealed class DateFilterTests : IDisposable
         new DateRow
         {
             Id = 2,
+            Team = "A",
             At = Noon,
             MaybeAt = Noon,
             When = Noon.UtcDateTime,
@@ -72,6 +77,7 @@ public sealed class DateFilterTests : IDisposable
         new DateRow
         {
             Id = 3,
+            Team = "B",
             At = Noon.AddDays(2),
             MaybeAt = Noon.AddDays(2),
             When = Noon.UtcDateTime.AddDays(2),
@@ -215,6 +221,151 @@ public sealed class DateFilterTests : IDisposable
 
     #endregion
 
+    #region Validation reads a date the way the builder does
+
+    /// <summary>Runs <paramref name="body"/> as though the server's culture were <paramref name="name"/>.</summary>
+    private static void OnAHostIn(string name, Action body)
+    {
+        CultureInfo previous = CultureInfo.CurrentCulture;
+
+        CultureInfo.CurrentCulture = new CultureInfo(name);
+
+        try
+        {
+            body();
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+    }
+
+    [Fact]
+    public void A_value_the_invariant_culture_reads_is_not_refused_by_the_hosts()
+    {
+        // Validation used to check the host's culture before the builder parsed invariantly, so a
+        // value had to satisfy both. On a day-first host "09/15/2026" is no date at all, yet it is
+        // exactly what the builder reads — and the filter was refused before it ever got there.
+        OnAHostIn("en-GB", () =>
+            Assert(Cond("When", DataType.DateTime, Operator.GreaterThan, "09/15/2026 00:00:00")));
+    }
+
+    [Fact]
+    public void A_value_only_the_hosts_culture_reads_is_refused_by_validation_itself()
+    {
+        // The other half: "15.09.2026" is a date in de-DE and not in the invariant culture. It used
+        // to pass validation and fail later, in the builder. Refusing it at validation is what makes
+        // the two agree on which values a filter accepts.
+        OnAHostIn("de-DE", () =>
+        {
+            LogicException thrown = Xunit.Assert.Throws<LogicException>(
+                () => Cond("When", DataType.DateTime, Operator.Equal, "15.09.2026 12:00:00").Validate<DateRow>());
+
+            Xunit.Assert.Equal(ErrorCode.InvalidFormat, thrown.Message);
+        });
+    }
+
+    [Fact]
+    public void An_ISO_value_passes_on_every_host()
+    {
+        foreach (string culture in new[] { "en-US", "en-GB", "de-DE", "ar-IQ" })
+        {
+            OnAHostIn(culture, () =>
+                Assert(Cond("At", DataType.Date, Operator.Equal, "2026-09-01"), 2));
+        }
+    }
+
+    #endregion
+
+    #region HAVING on a date alias
+
+    /// <summary>
+    /// Teams A (rows 1, 2) and B (row 3), with the latest and earliest of each date member.
+    /// </summary>
+    private static Summary Latest(Condition having) => new()
+    {
+        GroupBy = new GroupBy
+        {
+            Fields = { "Team" },
+            AggregateBy =
+            {
+                new AggregateBy { Field = "At", Aggregator = Aggregator.Maximum, Alias = "LatestAt" },
+                new AggregateBy { Field = "MaybeAt", Aggregator = Aggregator.Maximum, Alias = "LatestMaybeAt" },
+                new AggregateBy { Field = "When", Aggregator = Aggregator.Minimum, Alias = "EarliestWhen" }
+            }
+        },
+        Having = new ConditionGroup { Conditions = { having } }
+    };
+
+    private static string[] TeamsInMemory(Summary summary) =>
+        Rows().AsQueryable().ToList(summary).Data.Select(row => (string)row.Team).OrderBy(t => t).ToArray();
+
+    [Fact]
+    public void Having_compares_a_DateTimeOffset_alias()
+    {
+        // An alias carries no type, so HAVING used to get the shape a member got before 3.1.0 — a null
+        // guard on a non-nullable DateTimeOffset, which throws — however the member was fixed.
+        Xunit.Assert.Equal(
+            new[] { "B" },
+            TeamsInMemory(Latest(Cond("LatestAt", DataType.DateTime, Operator.GreaterThan, "2026-09-02T00:00:00Z"))));
+    }
+
+    [Fact]
+    public void Having_compares_a_DateTimeOffset_alias_by_day()
+    {
+        Xunit.Assert.Equal(
+            new[] { "A" },
+            TeamsInMemory(Latest(Cond("LatestAt", DataType.Date, Operator.Equal, "2026-09-01"))));
+    }
+
+    [Fact]
+    public void Having_guards_an_alias_over_a_nullable_member()
+    {
+        Xunit.Assert.Equal(
+            new[] { "B" },
+            TeamsInMemory(Latest(Cond("LatestMaybeAt", DataType.DateTime, Operator.NotEqual, "2026-09-01T12:00:00Z"))));
+    }
+
+    [Fact]
+    public void Having_on_a_DateTime_alias_runs_on_the_provider_too()
+    {
+        // Only the DateTime aggregate: SQLite refuses to take Max of a DateTimeOffset at all, which is
+        // the provider's limit and says nothing about the HAVING predicate.
+        Summary summary = new()
+        {
+            GroupBy = new GroupBy
+            {
+                Fields = { "Team" },
+                AggregateBy =
+                {
+                    new AggregateBy { Field = "When", Aggregator = Aggregator.Minimum, Alias = "EarliestWhen" }
+                }
+            },
+            Having = new ConditionGroup
+            {
+                Conditions = { Cond("EarliestWhen", DataType.Date, Operator.Equal, "2026-08-30") }
+            }
+        };
+
+        using DateContext context = new(_options);
+
+        SummaryResult onSqlite = context.Rows.ToList(summary);
+
+        Xunit.Assert.Equal(new[] { "A" }, TeamsInMemory(summary));
+        Xunit.Assert.Equal(new[] { "A" }, onSqlite.Data.Select(row => (string)row.Team).ToArray());
+    }
+
+    [Fact]
+    public void A_value_that_is_not_a_date_is_refused_in_having_too()
+    {
+        LogicException thrown = Xunit.Assert.Throws<LogicException>(
+            () => TeamsInMemory(Latest(Cond("LatestAt", DataType.DateTime, Operator.Equal, "15/09/2026"))));
+
+        Xunit.Assert.Equal(ErrorCode.InvalidFormat, thrown.Message);
+    }
+
+    #endregion
+
     #region Refusals
 
     [Fact]
@@ -263,6 +414,8 @@ public sealed class DateFilterTests : IDisposable
 public class DateRow
 {
     public int Id { get; set; }
+
+    public string Team { get; set; } = string.Empty;
 
     public DateTimeOffset At { get; set; }
 

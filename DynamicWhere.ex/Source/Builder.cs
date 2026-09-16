@@ -1,6 +1,5 @@
 ﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
-using System.Globalization;
 
 namespace DynamicWhere.ex.Source;
 
@@ -317,7 +316,7 @@ internal static class Builder
         // An unknown member type keeps the guard: a HAVING alias can be anything, and the shape that
         // has shipped for it is the one its callers already depend on.
         bool nullable = memberType is null || nullableOf is not null || !memberType.IsValueType;
-        bool offset = (nullableOf ?? memberType) == typeof(DateTimeOffset);
+        bool offset = DateValue.IsOffset(memberType);
         bool byDay = dataType == DataType.Date;
 
         string member = nullableOf is not null ? $"{field}.Value" : field;
@@ -326,7 +325,12 @@ internal static class Builder
 
         string Literal(string value)
         {
-            string parsed = offset ? OffsetLiteral(value) : LocalLiteral(value);
+            // The same reader validation uses, so a value it accepted is one this can build.
+            if (!DateValue.TryCanonical(value, memberType, out string parsed))
+            {
+                throw new LogicException(ErrorCode.InvalidFormat);
+            }
+
             string call = offset
                 ? $"DateTimeOffset.Parse(\"{parsed}\")"
                 : $"DateTime.Parse(\"{parsed}\")";
@@ -372,55 +376,6 @@ internal static class Builder
 
         throw new LogicException(
             $"Unsupported combination of DataType '{dataType}' and Operator '{_operator}'.");
-    }
-
-    /// <summary>
-    /// Reads a value as an instant and writes it back as UTC, for a <c>DateTimeOffset</c> member.
-    /// </summary>
-    /// <remarks>
-    /// <c>AssumeUniversal</c> so a value carrying no zone means the day the caller wrote rather than
-    /// the day it happens to be on the server, and <c>AdjustToUniversal</c> so a value carrying one
-    /// is the same instant with a zero offset. Both matter to <c>DataType.Date</c>, where the offset
-    /// decides which calendar day <c>.Date</c> reports.
-    /// </remarks>
-    /// <exception cref="LogicException">
-    /// Thrown with <c>InvalidFormat</c> when the value is not a date the invariant culture reads.
-    /// </exception>
-    private static string OffsetLiteral(string value)
-    {
-        if (!DateTimeOffset.TryParse(
-                value,
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-                out DateTimeOffset parsed))
-        {
-            throw new LogicException(ErrorCode.InvalidFormat);
-        }
-
-        return parsed.ToString("o", CultureInfo.InvariantCulture);
-    }
-
-    /// <summary>
-    /// Reads a value for a <c>DateTime</c> member and writes it back without a zone marker.
-    /// </summary>
-    /// <remarks>
-    /// The default styles keep what the shipped behaviour did with a zoned value: it is converted to
-    /// the host's local time, which is the reading a <c>timestamp without time zone</c> column is
-    /// compared against. Writing it back with no marker is what stops the emitted literal from being
-    /// converted a second time when the predicate is parsed.
-    /// </remarks>
-    /// <exception cref="LogicException">
-    /// Thrown with <c>InvalidFormat</c> when the value is not a date the invariant culture reads.
-    /// </exception>
-    private static string LocalLiteral(string value)
-    {
-        if (!DateTime.TryParse(
-                value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsed))
-        {
-            throw new LogicException(ErrorCode.InvalidFormat);
-        }
-
-        return parsed.ToString("yyyy-MM-ddTHH:mm:ss.fffffff", CultureInfo.InvariantCulture);
     }
 
     /// <summary>

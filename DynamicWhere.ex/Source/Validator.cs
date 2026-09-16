@@ -148,8 +148,12 @@ internal static class Validator
 
             case DataType.Date:
             case DataType.DateTime:
-                // For date/datetime fields, each value must be a valid date/time format.
-                if (normalized.Any(value => !DateTime.TryParse(value, out _)))
+                // Read exactly as the predicate builder will read it — the invariant culture, and
+                // the member's own date type — so validation cannot accept a value the builder then
+                // refuses, or refuse one it could build. This used to check the host's culture.
+                Type memberType = CacheReflection.GetFieldType(typeof(T), condition.Field);
+
+                if (normalized.Any(value => !DateValue.TryCanonical(value, memberType, out _)))
                 {
                     throw new LogicException(ErrorCode.InvalidFormat);
                 }
@@ -566,17 +570,9 @@ internal static class Validator
         // Validate Having if provided – each condition field must reference an AggregateBy alias.
         if (summary.Having != null)
         {
-            var validAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var agg in summary.GroupBy.AggregateBy)
-            {
-                if (!string.IsNullOrWhiteSpace(agg.Alias))
-                {
-                    validAliases.Add(agg.Alias);
-                }
-            }
-
-            ValidateHavingConditionGroup(summary.Having, validAliases);
+            // Each alias with the type it stands for, so a date condition on one is read the way the
+            // HAVING predicate will compare it.
+            ValidateHavingConditionGroup(summary.Having, summary.GroupBy.AliasTypes<T>());
         }
     }
 
@@ -585,8 +581,9 @@ internal static class Validator
     /// ensuring all condition fields reference valid aggregate-by aliases.
     /// </summary>
     /// <param name="group">The <see cref="ConditionGroup"/> to validate.</param>
-    /// <param name="validAliases">The set of valid aggregate-by alias names.</param>
-    private static void ValidateHavingConditionGroup(ConditionGroup group, HashSet<string> validAliases)
+    /// <param name="validAliases">Every valid aggregate-by alias, with the type it stands for.</param>
+    private static void ValidateHavingConditionGroup(
+        ConditionGroup group, IReadOnlyDictionary<string, Type?> validAliases)
     {
         // Validate structure (duplicate sort values, etc.).
         group.Validate();
@@ -609,8 +606,9 @@ internal static class Validator
     /// The field must reference a valid aggregate-by alias rather than an entity property.
     /// </summary>
     /// <param name="condition">The <see cref="Condition"/> to validate.</param>
-    /// <param name="validAliases">The set of valid aggregate-by alias names.</param>
-    private static void ValidateHavingCondition(Condition condition, HashSet<string> validAliases)
+    /// <param name="validAliases">Every valid aggregate-by alias, with the type it stands for.</param>
+    private static void ValidateHavingCondition(
+        Condition condition, IReadOnlyDictionary<string, Type?> validAliases)
     {
         if (condition == null)
         {
@@ -625,7 +623,7 @@ internal static class Validator
         }
 
         // The field must reference a valid AggregateBy alias.
-        if (!validAliases.Contains(condition.Field))
+        if (!validAliases.TryGetValue(condition.Field, out Type? aliasType))
         {
             throw new LogicException(ErrorCode.HavingFieldMustExistInAggregateByAlias(condition.Field));
         }
@@ -703,7 +701,8 @@ internal static class Validator
 
             case DataType.Date:
             case DataType.DateTime:
-                if (normalized.Any(v => !DateTime.TryParse(v, out _)))
+                // The reader the HAVING predicate uses, with the type the alias stands for.
+                if (normalized.Any(v => !DateValue.TryCanonical(v, aliasType, out _)))
                 {
                     throw new LogicException(ErrorCode.InvalidFormat);
                 }

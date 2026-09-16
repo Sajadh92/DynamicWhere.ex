@@ -364,8 +364,8 @@ Guid       Guid.TryParse                                            any Guid for
 Number     TryParse as byte/short/int/long/float/double/decimal     a JSON number or numeric string: 12, -3.5, "15.5", "1e3"
            (server culture)
 Boolean    bool.TryParse                                            true / false as JSON booleans or strings in any case; 1 and 0 fail
-DateTime   DateTime.TryParse (server culture)                       ISO 8601 without zone: "2024-06-15T14:30:00"
-Date       DateTime.TryParse (server culture)                       ISO 8601 date: "2024-06-15"; the time is dropped on both sides
+DateTime   invariant culture, as the member's own date type (3.1.0) ISO 8601: "2024-06-15T14:30:00", or with Z / an offset
+Date       invariant culture, as the member's own date type (3.1.0) ISO 8601 date: "2024-06-15"; the time is dropped on both sides
 ```
 
 - **Null:** a null element is `""`. Text and Enum compare with the empty string; every other DataType throws
@@ -378,8 +378,9 @@ Date       DateTime.TryParse (server culture)                       ISO 8601 dat
     on every host. The invariant culture reads a slash date **month-first**: `"15/09/2026"` is refused with
     `InvalidFormat`, but `"01/09/2026"` is silently 9 January, and so is `"01.09.2026"` — any day of 12 or less.
     Send ISO 8601 (`"2026-09-01"`), which reads the same under every culture.
-  - Validation still checks the value in the host's culture first, then the builder parses it invariantly, so on a
-    non-invariant host a value must satisfy both. ISO 8601 always does; either failure is `InvalidFormat`.
+  - Validation reads the value exactly as the builder does — invariant culture, the member's own date type — so the
+    server's culture decides nothing and a value that passes validation always builds. An unreadable value is
+    `InvalidFormat` at validation.
   - A `DateTimeOffset` member is compared against a `DateTimeOffset` literal, normalised to UTC; a value carrying
     no zone is read as UTC, so `DataType.Date` names the day the caller wrote. On Npgsql `DataType.Date` becomes
     `date_trunc('day', col AT TIME ZONE 'UTC')`.
@@ -389,8 +390,10 @@ Date       DateTime.TryParse (server culture)                       ISO 8601 dat
   - A nullable member is unwrapped under its guard (`f.Value`, `f.Value.Date`); a non-nullable member gets no
     guard at all, and `IsNull` / `IsNotNull` answer `false` / `true` — `WHERE FALSE` and no predicate on Npgsql,
     for `DateTime` and `DateTimeOffset` alike.
-  - `Having` names an alias, not a member, so a date condition there keeps the pre-3.1.0 shape: a null guard and a
-    `DateTime` literal.
+  - `Having` names an alias, so the type comes from the aggregate it stands for: `Minimum`, `Maximum`,
+    `FirstOrDefault` and `LastOrDefault` have the member's type (nullable if the member is), and the predicate is
+    built exactly as for that member. On Npgsql: `HAVING max(col) > TIMESTAMPTZ '…'`. Count, Sumation and Average
+    aliases are never dates and keep the unconditional guard.
   - Before 3.1.0 every comparison on a `DateTimeOffset` member threw — `InvalidOperationException` ("The binary
     operator NotEqual is not defined for the types 'System.DateTimeOffset' and 'System.Object'") on a
     non-nullable one, `ParseException` on a nullable one — and `DataType.Date` on any nullable date member threw

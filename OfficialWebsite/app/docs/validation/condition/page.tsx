@@ -81,25 +81,25 @@ export default function Page() {
           </tr>
           <tr>
             <td>
-              <code>Date</code> / <code>DateTime</code> values must parse as{" "}
-              <code>DateTime</code> in the host&apos;s culture — and again, when the
-              predicate is built, in the invariant culture
+              <code>Date</code> / <code>DateTime</code> values must parse in the
+              invariant culture, as the member&apos;s own <code>DateTime</code> or{" "}
+              <code>DateTimeOffset</code>
             </td>
             <td><code>InvalidFormat</code></td>
           </tr>
         </tbody>
       </table>
 
-      <Callout tone="warn" title="Date values are read twice">
-        Validation parses a date value with the host&apos;s culture. Since 3.1.0 the
-        predicate builder parses it a second time with the invariant culture, for
-        the member&apos;s own type, and refuses what that pass cannot read with the
-        same <code>InvalidFormat</code> — so on a day-first host{" "}
-        <code>&quot;15/09/2026&quot;</code> passes validation and is refused a moment
-        later, and <code>&quot;01/09/2026&quot;</code> passes both and means 9
-        January. ISO&nbsp;8601 (<code>&quot;2026-09-15&quot;</code>,{" "}
-        <code>&quot;2026-09-15T12:00:00Z&quot;</code>) reads the same in both passes
-        on every host. See{" "}
+      <Callout tone="warn" title="A date value is read the way the predicate will read it">
+        Validation reads a date value exactly as the predicate builder does: with the
+        invariant culture, as the member&apos;s own <code>DateTime</code> or{" "}
+        <code>DateTimeOffset</code>. The server&apos;s culture plays no part, so a
+        value is accepted or refused the same way on every host, and a value that
+        passes validation is one the builder can use. The invariant culture reads a
+        slash date month-first: <code>&quot;15/09/2026&quot;</code> is refused, and{" "}
+        <code>&quot;01/09/2026&quot;</code> is 9 January. Send ISO&nbsp;8601 (
+        <code>&quot;2026-09-15&quot;</code>,{" "}
+        <code>&quot;2026-09-15T12:00:00Z&quot;</code>). See{" "}
         <Link href="/docs/breaking-changes#date-invariant-culture">breaking changes</Link>.
       </Callout>
 

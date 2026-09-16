@@ -326,8 +326,13 @@ export default function Page() {
         </li>
         <li>
           A <code>Having</code> condition names an aggregate alias rather than a
-          member, so there is no type to read: it keeps the guard and the{" "}
-          <code>DateTime</code> literal.
+          member, so the type comes from what the alias stands for: a{" "}
+          <code>Minimum</code>, <code>Maximum</code>, <code>FirstOrDefault</code> or{" "}
+          <code>LastOrDefault</code> returns one of the values it read, so it has that
+          member&apos;s type — nullable if the member is. On PostgreSQL a{" "}
+          <code>Having</code> on <code>Maximum</code> of a <code>timestamptz</code>{" "}
+          column becomes{" "}
+          <code>{`HAVING max(col) > TIMESTAMPTZ '…'`}</code>.
         </li>
       </ul>
       <Callout tone="danger" title="Fixed: DateTimeOffset members were unusable">
@@ -374,8 +379,9 @@ export default function Page() {
 
       <h2 id="date-invariant-culture">15. Date Values Are Parsed with the Invariant Culture</h2>
       <p>
-        Condition values for the two date types are now parsed by the builder with{" "}
-        <code>CultureInfo.InvariantCulture</code> and re-emitted in round-trip form.
+        Condition values for the two date types are now parsed with{" "}
+        <code>CultureInfo.InvariantCulture</code> and re-emitted in round-trip form —
+        at validation and in the builder alike, as the member&apos;s own date type.
         The shipped predicate used to carry your raw text into a{" "}
         <code>DateTime.Parse</code> that the runtime evaluated in the host&apos;s
         culture, so the same filter meant different days on two servers.

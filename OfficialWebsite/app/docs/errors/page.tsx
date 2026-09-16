@@ -182,9 +182,11 @@ export default function Page() {
             <td><code>InvalidFormat</code></td>
             <td>
               Value doesn't parse for declared <code>DataType</code>. A{" "}
-              <code>Date</code> / <code>DateTime</code> value is parsed twice — at
-              validation in the host&apos;s culture, and again when the predicate
-              is built in the invariant culture — and failing either raises this
+              <code>Date</code> / <code>DateTime</code> value is read with the
+              invariant culture, as the member&apos;s own date type — the same
+              reading at validation and when the predicate is built — so a
+              host-specific form such as <code>15/09/2026</code> raises this on
+              every server
             </td>
           </tr>
           <tr>

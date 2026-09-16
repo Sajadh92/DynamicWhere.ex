@@ -113,8 +113,8 @@ Since 3.1.0 the predicate is built from the member's own CLR type, which is what
 
 | | What the library does |
 |---|---|
-| Value parsing | **Invariant culture**, re-emitted in round-trip form, so a filter means the same day on every host. The invariant culture reads a slash date **month-first**: `15/09/2026` is refused with `InvalidFormat`, but `01/09/2026` is silently 9 January. Validation still checks the value in the host's culture first, so on a non-invariant host it must satisfy both. Send ISO 8601 (`2026-09-01`), which always does |
-| `HAVING` | Names an alias rather than a member, so a date condition there keeps the older shape: a null guard and a `DateTime` literal |
+| Value parsing | **Invariant culture**, re-emitted in round-trip form, so a filter means the same day on every host. The invariant culture reads a slash date **month-first**: `15/09/2026` is refused with `InvalidFormat`, but `01/09/2026` is silently 9 January. Validation reads the value exactly as the builder will, so the server's culture decides nothing. Send ISO 8601 (`2026-09-01`) |
+| `HAVING` | Names an alias, so the type comes from the aggregate behind it: `Minimum`, `Maximum`, `FirstOrDefault` and `LastOrDefault` carry the member's type, nullable if the member is, and the predicate is built as for that member. On Npgsql, `HAVING max(col) > TIMESTAMPTZ '…'` |
 | `DateTimeOffset` member | Compared against a `DateTimeOffset` literal normalised to UTC. A value carrying no zone is read as UTC, so `Date` names the day the caller wrote. On Npgsql `Date` becomes `date_trunc('day', col AT TIME ZONE 'UTC')` |
 | `DateTime` member | Compared against a `DateTime` literal. A value carrying `Z` or an offset converts to the host's local time first, as it always has — send it in the convention the column stores |
 | Nullable member | Guarded with `field != null` and unwrapped under that guard (`field.Value`, `field.Value.Date`). A null row therefore fails `NotEqual` and `NotBetween`, which is deliberate |

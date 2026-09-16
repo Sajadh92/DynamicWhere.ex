@@ -142,6 +142,11 @@ public static class DwPolicy
             await stores[i].PrepareAsync(context, ct).ConfigureAwait(false);
         }
 
+        // Recorded even when no store pinned anything. With attributes alone there is nothing to
+        // read, but the guarded surface refuses a context that never came through here, so that a
+        // deployment behaves the same before and after it gains a store.
+        context.MarkPrepared();
+
         return context;
     }
 

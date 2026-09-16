@@ -1,5 +1,7 @@
+using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
+using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Resolution;
 
 namespace DynamicWhere.ex.Policies.Source;
@@ -32,7 +34,7 @@ public static class PolicyExtensions
     /// </example>
     public static PolicyQueryable<T> ApplyPolicy<T>(this IQueryable<T> query, DwPolicyContext context)
         where T : class =>
-        ApplyPolicy(query, context, DwPolicy.Options, DwPolicy.Resolver);
+        ApplyPolicy(query, RequirePrepared(context), DwPolicy.Options, DwPolicy.Resolver);
 
     /// <summary>
     /// Attaches a caller to an in-memory sequence.
@@ -53,7 +55,7 @@ public static class PolicyExtensions
         where T : class =>
         ApplyPolicy(
             query?.AsQueryable() ?? throw new ArgumentNullException(nameof(query)),
-            context,
+            RequirePrepared(context),
             DwPolicy.Options,
             DwPolicy.Resolver);
 
@@ -101,5 +103,40 @@ public static class PolicyExtensions
         }
 
         return new PolicyQueryable<T>(query, context, resolver, options);
+    }
+
+    /// <summary>
+    /// Refuses a context that never went through <c>DwPolicy.PrepareAsync</c>.
+    /// </summary>
+    /// <remarks>
+    /// A store provider already refuses one, because it has no pinned snapshot to answer from. With
+    /// attributes alone nothing refused it, so the same missing call was a failure in one deployment
+    /// and silence in another — and the deployment where it was silent is the one that later adds a
+    /// store and starts refusing in production. Preparation is the ceremony that says which caller
+    /// this is; a query that skipped it is refused wherever it runs.
+    /// <para>
+    /// Only on the overloads that read <see cref="DwPolicy"/>, because that is where
+    /// <c>PrepareAsync</c> is the documented ceremony. A host composing its own options and resolver
+    /// owns preparation itself, and a store it hands in still refuses an unprepared context.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="PolicyException">Thrown with <c>PolicyContextNotPrepared</c>.</exception>
+    private static DwPolicyContext RequirePrepared(DwPolicyContext context)
+    {
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        if (!context.IsPrepared)
+        {
+            throw new PolicyException(
+                PolicyErrorCode.PolicyContextNotPrepared,
+                "*",
+                PolicyFeature.None,
+                DwPolicy.Options.Tier);
+        }
+
+        return context;
     }
 }

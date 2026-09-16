@@ -27,8 +27,17 @@ public class ApplyPolicyTests
         new() { Id = 2, Name = "Bo", NationalId = "BBB", Salary = 200m, InternalNotes = "n2" }
     }.AsQueryable();
 
+    /// <summary>
+    /// A caller, prepared. The guarded surface refuses a context that never went through
+    /// <c>PrepareAsync</c>, which with no store configured does nothing except record that the
+    /// ceremony happened — the point being that a deployment behaves the same before and after it
+    /// gains one.
+    /// </summary>
     private static DwPolicyContext Caller() =>
-        new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
+        DwPolicy.PrepareAsync(new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1"))
+            .AsTask()
+            .GetAwaiter()
+            .GetResult();
 
     private static DwPolicyOptions Posture(DwTier tier) => new() { Tier = tier };
 
@@ -187,6 +196,47 @@ public class ApplyPolicyTests
         // A policy layer that does nothing until someone remembers to switch it on is worse than
         // none at all: the attributes in the source read as though they are already in force.
         FilterResult<SecuredEmployee> result = People().ApplyPolicy(Caller()).ToList(new Filter());
+
+        Assert.All(result.Data, row => Assert.Equal(string.Empty, row.NationalId));
+    }
+
+    [Fact]
+    public void A_context_that_was_never_prepared_is_refused()
+    {
+        // A store provider always refused one. With attributes alone nothing did, so the same
+        // missing call was a failure in one deployment and silence in another — and the silent one
+        // is the deployment that later adds a store and starts refusing in production.
+        DwPolicyContext raw = new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
+
+        PolicyException thrown = Assert.Throws<PolicyException>(
+            () => People().ApplyPolicy(raw).ToList(new Filter()));
+
+        Assert.Equal(PolicyErrorCode.PolicyContextNotPrepared, thrown.ErrorCode);
+    }
+
+    [Fact]
+    public void An_unprepared_in_memory_query_is_refused_the_same_way()
+    {
+        DwPolicyContext raw = new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
+
+        PolicyException thrown = Assert.Throws<PolicyException>(
+            () => People().ToList().ApplyPolicy(raw).ToList(new Filter()));
+
+        Assert.Equal(PolicyErrorCode.PolicyContextNotPrepared, thrown.ErrorCode);
+    }
+
+    [Fact]
+    public void Preparation_is_recorded_even_when_no_store_is_configured()
+    {
+        DwPolicyContext prepared = DwPolicy
+            .PrepareAsync(new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1"))
+            .AsTask()
+            .GetAwaiter()
+            .GetResult();
+
+        Assert.True(prepared.IsPrepared);
+
+        FilterResult<SecuredEmployee> result = People().ApplyPolicy(prepared).ToList(new Filter());
 
         Assert.All(result.Data, row => Assert.Equal(string.Empty, row.NationalId));
     }

@@ -2085,6 +2085,7 @@ internal static class FilterSanitizer
             if (!string.Equals(canonicalPath, spoken, StringComparison.Ordinal))
             {
                 _spoken[canonicalPath] = spoken;
+                _trace.RecordSpelling(canonicalPath, spoken);
             }
         }
 

@@ -90,7 +90,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         Filter sanitized = Sanitize(filter, trace);
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             FilterResult<T> result = Guarded().ToList(sanitized, getQueryString);
 
@@ -115,7 +115,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         Filter sanitized = Sanitize(filter, trace);
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             FilterResult<T> result = await Guarded().ToListAsync(sanitized, getQueryString);
 
@@ -140,7 +140,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         Filter sanitized = Sanitize(filter, trace);
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             FilterResult<dynamic> result = Guarded().ToListDynamic(sanitized, getQueryString);
 
@@ -170,7 +170,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         Filter sanitized = Sanitize(filter, trace);
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             FilterResult<dynamic> result = await Guarded().ToListAsyncDynamic(sanitized, getQueryString);
 
@@ -202,7 +202,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         Summary sanitized = Sanitize(summary, trace);
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             SummaryResult result = Guarded().ToList(sanitized, getQueryString);
 
@@ -244,7 +244,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         Summary sanitized = Sanitize(summary, trace);
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             SummaryResult result = await Guarded().ToListAsync(sanitized, getQueryString);
 
@@ -288,7 +288,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         LastTrace = trace;
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             SegmentResult<T> result = await Guarded().ToListAsync(sanitized);
 
@@ -310,7 +310,7 @@ public sealed class PolicyQueryable<T> where T : class
     {
         Filter sanitized = SanitizeClause(new Filter { Selects = fields });
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             return Chain(Scoped(sanitized).Select(sanitized.Selects!));
         }
@@ -325,7 +325,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         Filter sanitized = SanitizeClause(new Filter { Selects = fields });
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             return Scoped(sanitized).SelectDynamic(sanitized.Selects!);
         }
@@ -345,7 +345,7 @@ public sealed class PolicyQueryable<T> where T : class
         // The whole group, not Conditions[0]. Once a forced predicate is injected, index zero is
         // the library's own term and the caller's condition has moved into a subgroup -- taking the
         // first condition would silently drop what the caller actually asked for.
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             return Chain(Scoped(sanitized));
         }
@@ -358,7 +358,7 @@ public sealed class PolicyQueryable<T> where T : class
     {
         Filter sanitized = SanitizeClause(new Filter { ConditionGroup = group });
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             return Chain(Scoped(sanitized));
         }
@@ -376,7 +376,7 @@ public sealed class PolicyQueryable<T> where T : class
     {
         Filter sanitized = SanitizeClause(new Filter { Orders = orders });
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             return Chain(Scoped(sanitized).Order(sanitized.Orders!));
         }
@@ -389,7 +389,7 @@ public sealed class PolicyQueryable<T> where T : class
     {
         Filter sanitized = SanitizeClause(new Filter { Page = page });
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             return Chain(Scoped(sanitized).Page(sanitized.Page!));
         }
@@ -416,7 +416,7 @@ public sealed class PolicyQueryable<T> where T : class
         // what this returns, as it always did, or sends a Summary, which carries a page.
         sanitized.Page = null;
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             return WithoutGroupSize(Guarded().Summary(sanitized), sanitized);
         }
@@ -430,7 +430,7 @@ public sealed class PolicyQueryable<T> where T : class
         PolicyTrace trace = NewTrace();
         Filter sanitized = Sanitize(filter, trace);
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             return Chain(Guarded().Filter(sanitized));
         }
@@ -446,7 +446,7 @@ public sealed class PolicyQueryable<T> where T : class
         PolicyTrace trace = NewTrace();
         Filter sanitized = Sanitize(filter, trace);
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             return Guarded().FilterDynamic(sanitized);
         }
@@ -461,7 +461,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         Summary sanitized = Sanitize(summary, NewTrace());
 
-        using (PolicyScope.Enter(_context))
+        using (PolicyScope.Enter(_context, LastTrace))
         {
             return WithoutGroupSize(Guarded().Summary(sanitized), sanitized);
         }

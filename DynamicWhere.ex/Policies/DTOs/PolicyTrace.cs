@@ -14,6 +14,11 @@ namespace DynamicWhere.ex.Policies.DTOs;
 public sealed class PolicyTrace
 {
     private readonly List<PolicyDecision> _decisions = new();
+
+    // The name the caller wrote for a canonical path, where the two differ. Not part of the record:
+    // a refusal raised after sanitization — a date the query engine cannot read — reads it so that
+    // it names the field as the caller did, rather than the internal path an alias exists to hide.
+    private readonly Dictionary<string, string> _spoken = new(StringComparer.Ordinal);
     private readonly ReadOnlyCollection<PolicyDecision> _view;
 
     /// <summary>
@@ -58,4 +63,11 @@ public sealed class PolicyTrace
 
         _decisions.Add(decision);
     }
+
+    /// <summary>Remembers that the caller reached a canonical path by writing another name.</summary>
+    internal void RecordSpelling(string canonicalPath, string spoken) => _spoken[canonicalPath] = spoken;
+
+    /// <summary>The name the caller wrote for a path, or the path itself when they wrote that.</summary>
+    internal string Spoken(string fieldPath) =>
+        _spoken.TryGetValue(fieldPath, out string? spoken) ? spoken : fieldPath;
 }

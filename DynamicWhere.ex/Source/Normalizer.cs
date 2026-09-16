@@ -42,6 +42,14 @@ internal static class Normalizer
                 JsonValueKind.Null => string.Empty,
                 _ => je.GetRawText()
             },
+            // Dates before the general IFormattable case. Its invariant form is month-first —
+            // "09/01/2026 12:00:00" — which is exactly the shape a date value is refused for, so a C#
+            // caller placing a DateTime in Values would be refused for sending an unambiguous value.
+            // Year-first text reads the same everywhere. A DateTime keeps no zone marker, as it had
+            // none before; a DateTimeOffset keeps its offset.
+            DateTime dateTime => dateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFF", CultureInfo.InvariantCulture),
+            DateTimeOffset offset => offset.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz", CultureInfo.InvariantCulture),
+            DateOnly day => day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
             _ => value.ToString() ?? string.Empty,
         };

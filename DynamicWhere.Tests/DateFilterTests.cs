@@ -241,27 +241,35 @@ public sealed class DateFilterTests : IDisposable
     }
 
     [Fact]
-    public void A_value_the_invariant_culture_reads_is_not_refused_by_the_hosts()
+    public void The_hosts_culture_decides_nothing_about_a_date_value()
     {
-        // Validation used to check the host's culture before the builder parsed invariantly, so a
-        // value had to satisfy both. On a day-first host "09/15/2026" is no date at all, yet it is
-        // exactly what the builder reads — and the filter was refused before it ever got there.
-        OnAHostIn("en-GB", () =>
-            Assert(Cond("When", DataType.DateTime, Operator.GreaterThan, "09/15/2026 00:00:00")));
+        // Validation used to check the host's culture before the builder parsed invariantly, so the
+        // values a filter accepted were whatever two cultures agreed on. A day/month-first value is
+        // now refused the same way on a month-first and a day-first host alike.
+        foreach (string culture in new[] { "en-US", "en-GB", "de-DE" })
+        {
+            OnAHostIn(culture, () =>
+            {
+                LogicException thrown = Xunit.Assert.Throws<LogicException>(
+                    () => Cond("When", DataType.DateTime, Operator.GreaterThan, "09/15/2026 00:00:00").Validate<DateRow>());
+
+                Xunit.Assert.Equal(ErrorCode.AmbiguousDateFormat, thrown.Message);
+            });
+        }
     }
 
     [Fact]
-    public void A_value_only_the_hosts_culture_reads_is_refused_by_validation_itself()
+    public void Validation_refuses_what_the_builder_would_refuse()
     {
-        // The other half: "15.09.2026" is a date in de-DE and not in the invariant culture. It used
-        // to pass validation and fail later, in the builder. Refusing it at validation is what makes
-        // the two agree on which values a filter accepts.
+        // "15.09.2026" is a date in de-DE. It used to pass validation there and fail later, in the
+        // builder. The refusal now comes from validation itself, under the code the builder uses.
         OnAHostIn("de-DE", () =>
         {
             LogicException thrown = Xunit.Assert.Throws<LogicException>(
                 () => Cond("When", DataType.DateTime, Operator.Equal, "15.09.2026 12:00:00").Validate<DateRow>());
 
-            Xunit.Assert.Equal(ErrorCode.InvalidFormat, thrown.Message);
+            Xunit.Assert.Equal(ErrorCode.AmbiguousDateFormat, thrown.Message);
+            Xunit.Assert.Equal("When", thrown.Subject);
         });
     }
 
@@ -356,12 +364,16 @@ public sealed class DateFilterTests : IDisposable
     }
 
     [Fact]
-    public void A_value_that_is_not_a_date_is_refused_in_having_too()
+    public void Having_reads_a_date_value_with_the_same_rules()
     {
-        LogicException thrown = Xunit.Assert.Throws<LogicException>(
+        LogicException ambiguous = Xunit.Assert.Throws<LogicException>(
             () => TeamsInMemory(Latest(Cond("LatestAt", DataType.DateTime, Operator.Equal, "15/09/2026"))));
 
-        Xunit.Assert.Equal(ErrorCode.InvalidFormat, thrown.Message);
+        LogicException invalid = Xunit.Assert.Throws<LogicException>(
+            () => TeamsInMemory(Latest(Cond("LatestAt", DataType.DateTime, Operator.Equal, "not-a-date"))));
+
+        Xunit.Assert.Equal(ErrorCode.AmbiguousDateFormat, ambiguous.Message);
+        Xunit.Assert.Equal(ErrorCode.InvalidFormat, invalid.Message);
     }
 
     #endregion
@@ -378,15 +390,20 @@ public sealed class DateFilterTests : IDisposable
     }
 
     [Fact]
-    public void A_date_value_in_a_host_specific_format_is_refused_with_InvalidFormat()
+    public void A_day_or_month_first_value_is_refused_as_ambiguous()
     {
-        // Parsed with the invariant culture, so a filter means the same day on every server. The
-        // shipped builder carried the caller's text into a DateTime.Parse the runtime read in the
-        // host's culture, which made "01.09.2026" a date on one machine and an error on another.
-        LogicException thrown = Xunit.Assert.Throws<LogicException>(
-            () => InMemory(Cond("At", DataType.DateTime, Operator.Equal, "15/09/2026 12:00:00")));
+        // The shipped builder carried the caller's text into a DateTime.Parse the runtime read in the
+        // host's culture, which made "01/09/2026" 1 September on one server and 9 January on another.
+        // Nothing in the text says which number is the day, so it is refused rather than guessed —
+        // even where only one reading is a valid date, so a client finds out on its first request
+        // rather than on the first date whose day is twelve or less.
+        foreach (string value in new[] { "01/09/2026", "15/09/2026 12:00:00", "09/15/2026", "01.09.2026", "01-09-2026" })
+        {
+            LogicException thrown = Xunit.Assert.Throws<LogicException>(
+                () => InMemory(Cond("At", DataType.DateTime, Operator.Equal, value)));
 
-        Xunit.Assert.Equal(ErrorCode.InvalidFormat, thrown.Message);
+            Xunit.Assert.Equal(ErrorCode.AmbiguousDateFormat, thrown.Message);
+        }
     }
 
     [Fact]

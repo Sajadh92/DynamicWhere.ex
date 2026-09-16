@@ -182,4 +182,16 @@ internal static class ErrorCode
     /// </remarks>
     public static string SelectTypeMustHaveParameterlessConstructor =>
         "SelectTypeMustHaveParameterlessConstructor";
+
+    /// <summary>
+    /// Indicates a date value whose day and month cannot be told apart.
+    /// </summary>
+    /// <remarks>
+    /// Raised for a numeric date that leads with a day or a month — <c>01/09/2026</c>,
+    /// <c>15.09.2026</c> — when no accepted format reads it, and for a value two accepted formats read
+    /// as different dates. Distinct from <see cref="InvalidFormat"/> because the fix is different: the
+    /// value is a date, and the caller either sends ISO 8601 or the deployment declares the order it
+    /// uses through <c>DwDates.Configure</c>. <see cref="LogicException.Subject"/> carries the field.
+    /// </remarks>
+    public static string AmbiguousDateFormat => "AmbiguousDateFormat";
 }

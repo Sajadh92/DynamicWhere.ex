@@ -316,8 +316,10 @@ internal static class Builder
         // An unknown member type keeps the guard: a HAVING alias can be anything, and the shape that
         // has shipped for it is the one its callers already depend on.
         bool nullable = memberType is null || nullableOf is not null || !memberType.IsValueType;
-        bool offset = DateValue.IsOffset(memberType);
-        bool byDay = dataType == DataType.Date;
+        DateValue.Kind kind = DateValue.KindOf(memberType);
+
+        // A DateOnly is already a day, and has no .Date to ask for.
+        bool byDay = dataType == DataType.Date && kind != DateValue.Kind.DateOnly;
 
         string member = nullableOf is not null ? $"{field}.Value" : field;
         string access = byDay ? $"{member}.Date" : member;
@@ -326,14 +328,18 @@ internal static class Builder
         string Literal(string value)
         {
             // The same reader validation uses, so a value it accepted is one this can build.
-            if (!DateValue.TryCanonical(value, memberType, out string parsed))
-            {
-                throw new LogicException(ErrorCode.InvalidFormat);
-            }
+            string parsed = DateValue.Read(value, memberType, field);
 
-            string call = offset
-                ? $"DateTimeOffset.Parse(\"{parsed}\")"
-                : $"DateTime.Parse(\"{parsed}\")";
+            string call = kind switch
+            {
+                // A constructor, not DateOnly.Parse: the runtime evaluates the literal in the host's
+                // culture, and DateOnly.Parse reads "2026-09-01" as the year 1483 on a Thai server and
+                // refuses it on a Saudi one. DateTime.Parse and DateTimeOffset.Parse recognise round-trip
+                // text under every calendar, so those two stay as they are.
+                DateValue.Kind.DateOnly => $"DateOnly({DateOnlyArguments(parsed)})",
+                DateValue.Kind.Offset => $"DateTimeOffset.Parse(\"{parsed}\")",
+                _ => $"DateTime.Parse(\"{parsed}\")"
+            };
 
             return byDay ? $"{call}.Date" : call;
         }
@@ -376,6 +382,16 @@ internal static class Builder
 
         throw new LogicException(
             $"Unsupported combination of DataType '{dataType}' and Operator '{_operator}'.");
+    }
+
+    /// <summary>Turns <c>yyyy-MM-dd</c> into the three arguments of the <c>DateOnly</c> constructor.</summary>
+    private static string DateOnlyArguments(string day)
+    {
+        string[] parts = day.Split('-');
+
+        return $"{int.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture)}, " +
+               $"{int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture)}, " +
+               $"{int.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture)}";
     }
 
     /// <summary>

@@ -153,9 +153,9 @@ internal static class Validator
                 // refuses, or refuse one it could build. This used to check the host's culture.
                 Type memberType = CacheReflection.GetFieldType(typeof(T), condition.Field);
 
-                if (normalized.Any(value => !DateValue.TryCanonical(value, memberType, out _)))
+                foreach (string value in normalized)
                 {
-                    throw new LogicException(ErrorCode.InvalidFormat);
+                    DateValue.Read(value, memberType, condition.Field);
                 }
                 break;
         }
@@ -702,9 +702,9 @@ internal static class Validator
             case DataType.Date:
             case DataType.DateTime:
                 // The reader the HAVING predicate uses, with the type the alias stands for.
-                if (normalized.Any(v => !DateValue.TryCanonical(v, aliasType, out _)))
+                foreach (string value in normalized)
                 {
-                    throw new LogicException(ErrorCode.InvalidFormat);
+                    DateValue.Read(value, aliasType, condition.Field);
                 }
                 break;
         }

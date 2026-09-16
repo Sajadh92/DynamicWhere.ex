@@ -186,6 +186,30 @@ public class DateFormatTests
         Assert.Throws<ArgumentException>(() => swapped.Freeze());
     }
 
+    [Theory]
+    [InlineData("dd/MM")]
+    [InlineData("MM-dd HH:mm")]
+    [InlineData("HH:mm")]
+    [InlineData("t")]
+    public void A_format_with_no_year_is_refused_when_declared(string format)
+    {
+        // The parser completes a missing year from the clock, and a missing date from today, so the
+        // same value would name a different date depending on when the query runs.
+        DwDateOptions yearless = new();
+
+        yearless.Formats.Add(format);
+
+        ArgumentException thrown = Assert.Throws<ArgumentException>(() => yearless.Freeze());
+
+        Assert.Contains("no year", thrown.Message);
+    }
+
+    [Theory]
+    [InlineData("yyyy-MM", "2026-09", "2026-09-01T00:00:00.0000000")]
+    [InlineData("dd/MM/yy", "01/09/26", "2026-09-01T00:00:00.0000000")]
+    public void A_format_with_a_year_reads_the_same_date_whenever_it_runs(string format, string value, string read) =>
+        Assert.Equal(read, Read(value, typeof(DateTime), Declaring(format)));
+
     [Fact]
     public void A_blank_format_is_refused_when_declared()
     {
@@ -236,6 +260,32 @@ public class DateFormatTests
             .GetSection("DynamicWhere:Dates");
 
         Assert.Throws<InvalidOperationException>(() => new DwDateOptions().Bind(section));
+    }
+
+    [Theory]
+    [InlineData("DynamicWhere:Dates:Formats")]
+    [InlineData("DynamicWhere:Dates")]
+    public void A_single_value_where_the_list_belongs_refuses_to_bind(string key)
+    {
+        // The binder raises nothing for it and binds nothing from it, which is the same silent fall
+        // back to the defaults that refusing an unknown key exists to prevent.
+        IConfiguration section = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { [key] = "dd/MM/yyyy" })
+            .Build()
+            .GetSection("DynamicWhere:Dates");
+
+        InvalidOperationException thrown =
+            Assert.Throws<InvalidOperationException>(() => new DwDateOptions().Bind(section));
+
+        Assert.Contains("DynamicWhere:Dates:Formats", thrown.Message);
+    }
+
+    [Fact]
+    public void An_empty_section_binds_nothing_and_refuses_nothing()
+    {
+        IConfiguration section = new ConfigurationBuilder().Build().GetSection("DynamicWhere:Dates");
+
+        Assert.Empty(new DwDateOptions().Bind(section).Formats);
     }
 
     #endregion

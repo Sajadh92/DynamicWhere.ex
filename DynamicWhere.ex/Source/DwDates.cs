@@ -41,8 +41,8 @@ public sealed class DwDateOptions
     /// Checks every declared format and prevents any further change.
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// Thrown when a format is blank, cannot read the text it writes, or reads text another accepted
-    /// format also reads as a different date.
+    /// Thrown when a format is blank, cannot read the text it writes, carries no year, or reads text
+    /// another accepted format also reads as a different date.
     /// </exception>
     internal void Freeze()
     {
@@ -51,31 +51,50 @@ public sealed class DwDateOptions
             return;
         }
 
-        foreach (string format in _formats)
+        // One copy, checked and then kept, so a format added while this runs can neither be frozen
+        // in unchecked nor change what was checked.
+        string[] declared = _formats.ToArray();
+
+        foreach (string format in declared)
         {
             if (string.IsNullOrWhiteSpace(format))
             {
                 throw new ArgumentException("A date format cannot be blank.", nameof(Formats));
             }
 
-            string written = Probe.ToString(format, CultureInfo.InvariantCulture);
-
-            if (!DateTimeOffset.TryParseExact(
-                    written, format, CultureInfo.InvariantCulture, DateValue.Universal, out _))
+            foreach (DateTimeOffset probe in Probes)
             {
-                throw new ArgumentException(
-                    $"The date format '{format}' cannot read the text it writes ('{written}'), so no " +
-                    "value could ever match it.",
-                    nameof(Formats));
+                string written = probe.ToString(format, CultureInfo.InvariantCulture);
+
+                if (!DateTimeOffset.TryParseExact(
+                        written, format, CultureInfo.InvariantCulture, DateValue.Universal,
+                        out DateTimeOffset read))
+                {
+                    throw new ArgumentException(
+                        $"The date format '{format}' cannot read the text it writes ('{written}'), so " +
+                        "no value could ever match it.",
+                        nameof(Formats));
+                }
+
+                // A format with no year is completed from the clock: "dd/MM" reads the current year
+                // and "HH:mm" today, so the same value names a different date depending on when the
+                // query runs. That is the guess this whole mechanism exists to refuse.
+                if (read.Year != probe.Year)
+                {
+                    throw new ArgumentException(
+                        $"The date format '{format}' carries no year, so '{written}' would be read in " +
+                        "whichever year the query happens to run. Declare a format with a year.",
+                        nameof(Formats));
+                }
             }
         }
 
         // Two formats that read one text as two dates would make a request's meaning depend on which
         // was tried first. Probed with a date whose day and month are both twelve or less and
         // different from each other, which is exactly the text a day/month swap can misread.
-        string[] everything = DateValue.BuiltInFormats.Concat(_formats).ToArray();
+        string[] everything = DateValue.BuiltInFormats.Concat(declared).ToArray();
 
-        foreach (string format in _formats)
+        foreach (string format in declared)
         {
             string written = Probe.ToString(format, CultureInfo.InvariantCulture);
 
@@ -102,11 +121,24 @@ public sealed class DwDateOptions
             }
         }
 
-        _frozen = new ReadOnlyCollection<string>(_formats.ToArray());
+        _frozen = new ReadOnlyCollection<string>(declared);
     }
 
     /// <summary>3 February 2026, 04:05:06.7 — every field distinct, day and month both twelve or less.</summary>
     private static readonly DateTimeOffset Probe = new(2026, 2, 3, 4, 5, 6, 700, TimeSpan.Zero);
+
+    /// <summary>
+    /// <see cref="Probe"/> and a date in another year, both inside the two-digit-year window.
+    /// </summary>
+    /// <remarks>
+    /// Two years because a format with no year reads the current one, and the process may be running
+    /// in the year of either probe — never in both.
+    /// </remarks>
+    private static readonly DateTimeOffset[] Probes =
+    {
+        Probe,
+        new(2019, 11, 28, 16, 45, 30, 250, TimeSpan.Zero)
+    };
 }
 
 /// <summary>
@@ -188,8 +220,9 @@ public static class DwDates
     /// <returns>The same instance, for chaining into <see cref="Configure(DwDateOptions)"/>.</returns>
     /// <exception cref="ArgumentNullException">Thrown when either argument is null.</exception>
     /// <exception cref="InvalidOperationException">
-    /// Thrown when the options are frozen, or when the section names a key nothing answers to — so a
-    /// misspelt <c>Fromats</c> refuses to start rather than leaving the deployment on the defaults.
+    /// Thrown when the options are frozen, when the section names a key nothing answers to — so a
+    /// misspelt <c>Fromats</c> refuses to start rather than leaving the deployment on the defaults —
+    /// or when a single value stands where the list of formats belongs.
     /// </exception>
     public static DwDateOptions Bind(this DwDateOptions options, IConfiguration section)
     {
@@ -206,6 +239,18 @@ public static class DwDates
         if (options.IsFrozen)
         {
             throw new InvalidOperationException("Date options cannot be changed once configured.");
+        }
+
+        // A value where the list belongs binds nothing and raises nothing: "Formats": "dd/MM/yyyy"
+        // — the likeliest way to write one format by hand, and the only way an environment variable
+        // can — would leave the deployment on the defaults exactly as a misspelt key would.
+        IConfigurationSection formats = section.GetSection(nameof(DwDateOptions.Formats));
+
+        if ((section as IConfigurationSection)?.Value is not null || formats.Value is not null)
+        {
+            throw new InvalidOperationException(
+                $"'{formats.Path}' is a list of date formats, not a single value. Write each format " +
+                $"as an element: \"Formats\": [ \"dd/MM/yyyy\" ], or {formats.Path}:0 as a key.");
         }
 
         section.Bind(options, binder => binder.ErrorOnUnknownConfiguration = true);

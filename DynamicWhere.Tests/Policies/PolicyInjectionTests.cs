@@ -404,7 +404,14 @@ public class PolicyInjectionTests
     [Fact]
     public void The_composable_group_applies_the_scope()
     {
-        int groups = Handle()
+        // The k-anonymity floor is switched off here so that what is asserted is the scope. With
+        // the default floor of five, the one group the scope leaves is below it and the floor
+        // removes it too — which is its own test, in PolicyGroupFloorTests.
+        DwPolicyOptions options = new();
+
+        options.Caps.MinGroupSize = 1;
+
+        int groups = Books().AsQueryable().ApplyPolicy(Tenant(), options, Attributes())
             .Group(new GroupBy { Fields = new List<string> { "Number" } })
             .ToDynamicList()
             .Count;

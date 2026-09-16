@@ -9,6 +9,7 @@ using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Source;
 using Microsoft.EntityFrameworkCore;
+using System.Linq.Dynamic.Core;
 
 namespace DynamicWhere.ex.Policies.Source;
 
@@ -397,6 +398,12 @@ public sealed class PolicyQueryable<T> where T : class
     /// <summary>Groups and aggregates, unless the policy refuses a key or an aggregate.</summary>
     /// <param name="groupBy">The grouping to apply.</param>
     /// <exception cref="PolicyException">Thrown when the policy refuses a key or an aggregated field.</exception>
+    /// <remarks>
+    /// Runs through the summary pipeline rather than core <c>Group</c>. The sanitizer adds the group
+    /// floor's count and the <c>HAVING</c> that enforces it, and core <c>Group</c> takes no
+    /// <c>Having</c> — so grouping directly here would hand back exactly the small groups the floor
+    /// exists to suppress, with the floor's own count sitting in them as a column.
+    /// </remarks>
     public IQueryable Group(GroupBy groupBy)
     {
         RefuseUnmaterialized(nameof(Group), "ToList(Summary)");
@@ -405,7 +412,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         using (PolicyScope.Enter(_context))
         {
-            return Scoped(sanitized.ConditionGroup).Group(sanitized.GroupBy!);
+            return WithoutGroupSize(Guarded().Summary(sanitized), sanitized);
         }
     }
 
@@ -450,8 +457,42 @@ public sealed class PolicyQueryable<T> where T : class
 
         using (PolicyScope.Enter(_context))
         {
-            return Guarded().Summary(sanitized);
+            return WithoutGroupSize(Guarded().Summary(sanitized), sanitized);
         }
+    }
+
+    /// <summary>
+    /// Projects the group floor's own count back out of a composable result.
+    /// </summary>
+    /// <param name="grouped">The grouped query, as the summary pipeline built it.</param>
+    /// <param name="sanitized">The summary that ran, carrying the caller's keys and aliases.</param>
+    /// <returns>The query projected onto what the caller actually asked for.</returns>
+    /// <remarks>
+    /// The terminal methods drop the column while they transform the materialized rows. A composable
+    /// call has no such pass, so without this the caller receives a column the library added for
+    /// itself — one they could order by, page on, or hand to a client as data.
+    /// <para>
+    /// Group keys are named by their path with the dots removed, which is what the grouping
+    /// projection emits, and the aggregates by their aliases.
+    /// </para>
+    /// </remarks>
+    private static IQueryable WithoutGroupSize(IQueryable grouped, Summary sanitized)
+    {
+        if (sanitized.GroupBy is not { } groupBy || !groupBy.AggregateBy.Any(IsGroupSize))
+        {
+            return grouped;
+        }
+
+        IEnumerable<string> columns = groupBy.Fields
+            .Select(field => field.Replace(".", string.Empty))
+            .Concat(groupBy.AggregateBy
+                .Where(aggregate => !IsGroupSize(aggregate))
+                .Select(aggregate => aggregate.Alias!));
+
+        return grouped.Select($"new ({string.Join(", ", columns)})");
+
+        static bool IsGroupSize(AggregateBy aggregate) =>
+            string.Equals(aggregate.Alias, GroupFloor.SizeAlias, StringComparison.OrdinalIgnoreCase);
     }
 
     // ------------------------------------------------------------------------ internals

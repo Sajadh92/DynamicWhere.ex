@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "Cache Architecture",
   description:
-    "The six internal components of the DynamicWhere.ex reflection cache and which one is the public API.",
+    "The six classes behind the DynamicWhere.ex reflection cache and which one is the public API.",
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/cache/architecture/" },
 };
 
@@ -37,7 +37,7 @@ export default function Page() {
           </tr>
           <tr>
             <td><code>CacheDatabase</code></td>
-            <td>Thread-safe <code>ConcurrentDictionary</code> stores &amp; per-entry access tracking (timestamps for LRU, hit counts for LFU).</td>
+            <td>Thread-safe <code>ConcurrentDictionary</code> stores &amp; per-entry access tracking (timestamps for LRU, access counts for LFU).</td>
           </tr>
           <tr>
             <td><code>CacheEviction</code></td>
@@ -49,7 +49,7 @@ export default function Page() {
           </tr>
           <tr>
             <td><code>CacheCalculator</code></td>
-            <td>Actual memory measurement — walks live cache entries to produce a real byte-level <code>CacheMemoryUsage</code> snapshot.</td>
+            <td>Memory estimation — walks live cache entries and sizes them from fixed constants to produce a <code>CacheMemoryUsage</code> snapshot. Nothing is measured from the GC.</td>
           </tr>
           <tr>
             <td><code>CacheExpose</code></td>
@@ -59,15 +59,21 @@ export default function Page() {
       </table>
 
       <Callout tone="info">
-        <strong><code>CacheExpose</code> is the only public surface.</strong>{" "}
-        The other five types live in internal namespaces and may change without
-        notice. Treat <code>CacheExpose</code> as the stable contract.
+        <strong><code>CacheExpose</code> is the only class you call.</strong>{" "}
+        The other five are <code>internal</code> classes inside that same
+        public namespace and may change without notice. The rest of the public
+        surface — 16 types in all — is data you pass in or read back:{" "}
+        <code>CacheOptions</code>, the two enums, and the result types.
       </Callout>
 
       <h2 id="namespaces">Namespaces</h2>
-      <p>The public surface lives in two namespaces:</p>
+      <p>The public surface lives in six namespaces:</p>
       <Code lang="csharp">{`using DynamicWhere.ex.Optimization.Cache.Source;   // CacheExpose
-using DynamicWhere.ex.Optimization.Cache.Config;   // CacheOptions, CacheEvictionStrategy, CacheMemoryType`}</Code>
+using DynamicWhere.ex.Optimization.Cache.Config;   // CacheOptions
+using DynamicWhere.ex.Optimization.Cache.Enums;    // CacheEvictionStrategy, CacheMemoryType
+using DynamicWhere.ex.Optimization.Cache.DTOs;     // CacheStatistics, CacheConfiguration, CacheMemoryUsage, ...
+using DynamicWhere.ex.Optimization.Cache.Input;    // HealthAlertsInput, CacheFullCheckInput, ...
+using DynamicWhere.ex.Optimization.Cache.Output;   // CacheCounts, TrackingCounts, CacheDatabases`}</Code>
 
       <h2 id="flow">Flow of a cached lookup</h2>
       <p>
@@ -77,9 +83,9 @@ using DynamicWhere.ex.Optimization.Cache.Config;   // CacheOptions, CacheEvictio
       </p>
       <ol>
         <li><code>CacheReflection</code> receives the lookup request.</li>
-        <li>It asks <code>CacheDatabase</code> for the cached path — a hit returns immediately and records an access for LRU/LFU tracking.</li>
-        <li>On miss, <code>CacheReflection</code> performs the real reflection, validates the path, normalises the casing, then writes the result back into <code>CacheDatabase</code>.</li>
-        <li>If the store now exceeds <code>MaxCacheSize</code>, <code>CacheEviction</code> runs the configured algorithm to bring it back under threshold.</li>
+        <li>It records an access under the active strategy — a timestamp for LRU, a counter for LFU, nothing for FIFO — then asks <code>CacheDatabase</code> for the cached path. A hit returns immediately.</li>
+        <li>On a miss, <code>CacheEviction</code> runs first: if the store already holds more than <code>MaxCacheSize</code> entries, the configured algorithm trims it.</li>
+        <li><code>CacheReflection</code> then performs the real reflection, validates the path, normalises the casing, and writes the result into <code>CacheDatabase</code>. The eviction pass runs before that write, so a store settles at <code>MaxCacheSize</code> + 1 entries.</li>
         <li><code>CacheReporting</code> and <code>CacheCalculator</code> are read-only consumers of <code>CacheDatabase</code> — they never mutate cache state.</li>
       </ol>
 

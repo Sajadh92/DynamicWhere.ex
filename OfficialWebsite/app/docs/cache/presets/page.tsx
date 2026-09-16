@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "Cache Presets",
   description:
-    "The six built-in CacheOptions presets — Default, ForHighMemoryEnvironment, ForLowMemoryEnvironment, ForDevelopment, ForHighFrequencyAccess, ForTemporalAccess.",
+    "The five built-in CacheOptions factories — ForHighMemoryEnvironment, ForLowMemoryEnvironment, ForDevelopment, ForHighFrequencyAccess, ForTemporalAccess — plus the default new CacheOptions().",
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/cache/presets/" },
 };
 
@@ -16,13 +16,14 @@ export default function Page() {
     <DocPage pathname="/docs/cache/presets">
       <h1>Cache Presets</h1>
       <p>
-        <code>CacheOptions</code> ships with six factory presets that cover the
-        common deployment shapes. Each one returns a fully-populated{" "}
+        <code>CacheOptions</code> ships with five static factories that cover
+        the common deployment shapes, on top of the default{" "}
+        <code>new CacheOptions()</code>. Each factory returns a fully-populated{" "}
         <code>CacheOptions</code> instance that you pass straight to{" "}
         <code>CacheExpose.Configure(...)</code>.
       </p>
 
-      <h2 id="table">All six presets</h2>
+      <h2 id="table">The five factories and the default</h2>
       <table>
         <thead>
           <tr>
@@ -35,7 +36,7 @@ export default function Page() {
         </thead>
         <tbody>
           <tr>
-            <td><strong>Default</strong></td>
+            <td><code>new CacheOptions()</code></td>
             <td>1000</td>
             <td><code>LRU</code></td>
             <td>25%</td>
@@ -88,8 +89,9 @@ export default function Page() {
       <h2 id="usage">Per-preset usage</h2>
 
       <h3 id="default">Default</h3>
-      <Code lang="csharp">{`// Default — equivalent to "do nothing", but explicit
-CacheExpose.Configure(CacheOptions.Default);`}</Code>
+      <Code lang="csharp">{`// Default — equivalent to "do nothing", but explicit.
+// There is no CacheOptions.Default: the default is the constructor.
+CacheExpose.Configure(new CacheOptions());`}</Code>
 
       <h3 id="high-memory">ForHighMemoryEnvironment</h3>
       <Code lang="csharp">{`// Big servers with plenty of RAM — keep a large working set

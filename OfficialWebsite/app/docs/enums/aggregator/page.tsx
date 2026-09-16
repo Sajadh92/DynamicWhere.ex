@@ -77,13 +77,19 @@ export default function Page() {
           </tr>
           <tr>
             <td><code>FirstOrDefault</code></td>
-            <td>First value in the group.</td>
+            <td>
+              <strong>Smallest</strong> value in the group — the values are ordered
+              ascending and the first is taken, not the first row.
+            </td>
             <td>Required</td>
             <td>No</td>
           </tr>
           <tr>
             <td><code>LastOrDefault</code></td>
-            <td>Last value in the group.</td>
+            <td>
+              <strong>Largest</strong> value in the group — the values are ordered
+              descending and the first is taken, not the last row.
+            </td>
             <td>Required</td>
             <td>No</td>
           </tr>
@@ -93,22 +99,32 @@ export default function Page() {
       <Callout tone="warn" title="Numeric-only constraints">
         <code>Sumation</code> and <code>Average</code> only accept numeric
         fields. <code>Minimum</code> and <code>Maximum</code> reject{" "}
-        <code>Boolean</code> fields specifically. Violations throw{" "}
-        <code>UnsupportedAggregatorForType(agg, type)</code>.
+        <code>Boolean</code> fields specifically. Violations throw a{" "}
+        <code>LogicException</code> whose message is{" "}
+        <code>Aggregator[&lt;agg&gt;]IsNotSupportedForFieldType[&lt;type&gt;]</code>.
       </Callout>
 
       <h2 id="validation">Validation rules</h2>
+      <p>
+        A broken rule throws <code>LogicException</code>. There is no error-code
+        property — the string below <em>is</em> the exception message.
+      </p>
       <table>
         <thead>
           <tr>
             <th>Rule</th>
-            <th>Error code</th>
+            <th>Message</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td><code>Alias</code> must be non-empty and contain no dots.</td>
-            <td><code>InvalidAlias</code></td>
+            <td>
+              <code>Alias</code> must be a plain identifier: a letter (any script) or{" "}
+              <code>_</code>, then letters, digits or <code>_</code>. It is emitted
+              verbatim into the generated projection, so no spaces, dots, hyphens or
+              leading digits.
+            </td>
+            <td><code>AggregationMustHasValidAlias</code></td>
           </tr>
           <tr>
             <td>Aliases must be unique within an <code>AggregateBy</code> list.</td>
@@ -116,23 +132,31 @@ export default function Page() {
           </tr>
           <tr>
             <td>An alias cannot match any <code>GroupBy.Fields</code> entry.</td>
-            <td><code>AggregationAliasCannotBeGroupByField(alias)</code></td>
+            <td><code>AggregationAlias[&lt;alias&gt;]CannotBeUsedInGroupByFields</code></td>
           </tr>
           <tr>
-            <td>Aggregation field must be a simple type (not complex / navigation).</td>
+            <td>
+              Aggregation field must be a simple type. A navigation — including a
+              collection navigation, whose element type is what gets checked — lands
+              here.
+            </td>
             <td><code>AggregationFieldMustBeSimpleType</code></td>
           </tr>
           <tr>
-            <td>Aggregation field cannot be a collection.</td>
+            <td>
+              Aggregation field cannot be a collection. Because the element type is
+              what gets checked, this only fires for a collection of collections — a
+              plain collection navigation reports the row above instead.
+            </td>
             <td><code>AggregationFieldCannotBeCollectionType</code></td>
           </tr>
           <tr>
             <td><code>Sumation</code> / <code>Average</code> on a non-numeric field.</td>
-            <td><code>UnsupportedAggregatorForType(agg, type)</code></td>
+            <td><code>Aggregator[&lt;agg&gt;]IsNotSupportedForFieldType[&lt;type&gt;]</code></td>
           </tr>
           <tr>
             <td><code>Minimum</code> / <code>Maximum</code> on a <code>Boolean</code> field.</td>
-            <td><code>UnsupportedAggregatorForType(agg, type)</code></td>
+            <td><code>Aggregator[&lt;agg&gt;]IsNotSupportedForFieldType[&lt;type&gt;]</code></td>
           </tr>
         </tbody>
       </table>

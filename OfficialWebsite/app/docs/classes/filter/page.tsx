@@ -18,7 +18,7 @@ export default function Page() {
       <p>
         A <code>Filter</code> is the most common top-level shape. It combines filtering,
         projection, ordering, and pagination in a single object, and is the input to{" "}
-        <Link href="/docs/extensions/to-list-async-filter"><code>ToListAsyncFilter</code></Link>{" "}
+        <Link href="/docs/extensions/to-list-async-filter"><code>ToListAsync&lt;T&gt;(Filter)</code></Link>{" "}
         and its dynamic / sync siblings.
       </p>
 
@@ -127,10 +127,10 @@ FilterResult<Customer> result = await dbContext.Customers.ToListAsync(filter);`}
           <Link href="/docs/classes/filter-result">FilterResult&lt;T&gt; →</Link> the return shape.
         </li>
         <li>
-          <Link href="/docs/extensions/to-list-async-filter">ToListAsyncFilter →</Link>
+          <Link href="/docs/extensions/to-list-async-filter">ToListAsync&lt;T&gt;(Filter) →</Link>
         </li>
         <li>
-          <Link href="/docs/extensions/to-list-async-dynamic-filter">ToListAsyncDynamicFilter →</Link> for projection to <code>dynamic</code>.
+          <Link href="/docs/extensions/to-list-async-dynamic-filter">ToListAsyncDynamic&lt;T&gt;(Filter) →</Link> for projection to <code>dynamic</code>.
         </li>
         <li>
           <Link href="/docs/examples/filter">Filter example →</Link>

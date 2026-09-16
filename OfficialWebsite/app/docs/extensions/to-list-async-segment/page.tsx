@@ -38,7 +38,7 @@ export default function Page() {
       <Code lang="csharp">{`public static Task<SegmentResult<T>> ToListAsync<T>(
     this IQueryable<T> query,
     Segment segment)
-    where T : class, new()`}</Code>
+    where T : class`}</Code>
 
       <table>
         <thead>
@@ -66,8 +66,9 @@ export default function Page() {
       <ul>
         <li>
           For each <code>ConditionSet</code> (in <code>Sort</code> order):
-          apply its <code>ConditionGroup</code> as a <code>Where</code>, then
-          materialize that set into memory.
+          apply its <code>ConditionGroup</code> as a <code>Where</code>, apply{" "}
+          <code>Selects</code> if it is not null, then materialize that set into
+          memory.
         </li>
         <li>
           Apply set operations between consecutive results using the next set's{" "}
@@ -82,7 +83,10 @@ export default function Page() {
           Apply <code>Page</code> on the combined in-memory result.
         </li>
         <li>
-          Optionally project via <code>Selects</code> before returning.
+          <code>Selects</code> is projected per set, <strong>before</strong> the
+          set operations — never on the combined result. Ordering therefore runs
+          after projection, so an order field that was not selected sorts on its
+          default value.
         </li>
       </ul>
 
@@ -224,6 +228,20 @@ SegmentResult<Product> result = await dbContext.Products.ToListAsync(segment);`}
         <code>(Electronics) UNION (Price &lt; 20) EXCEPT (Inactive)</code> →
         order → paginate.
       </p>
+
+      <Callout tone="warn">
+        The set operations run in memory using <code>T</code>&apos;s default
+        equality, which for an ordinary entity class is reference equality.
+        Because <code>Selects</code> makes every set build fresh <code>T</code>{" "}
+        instances, no two sets ever share an instance:{" "}
+        <code>Intersect</code> returns nothing, <code>Except</code> removes
+        nothing, and <code>Union</code> keeps duplicates and inflates{" "}
+        <code>TotalCount</code>. The same is true of an{" "}
+        <code>AsNoTracking()</code> query even without <code>Selects</code>. For
+        the logic above to hold, use a tracking query from a single{" "}
+        <code>DbContext</code> with no <code>Selects</code>, or override{" "}
+        <code>Equals</code> / <code>GetHashCode</code> on <code>T</code>.
+      </Callout>
 
       <Code lang="json">{`{
   "pageNumber": 1,

@@ -78,8 +78,24 @@ export default function Page() {
         </tbody>
       </table>
       <p>
-        Every cap is frozen at startup, refuses a value below one, and reports
-        through the trace with its own error code.
+        Every cap is frozen at startup and reports through the trace. Most refuse
+        a value below one; <code>DefaultFieldCost</code> also accepts{" "}
+        <code>0</code>, which is the posture for a model that weighs its few
+        expensive fields and wants the rest free.
+      </p>
+      <p>
+        They do not all refuse alike, and the error code says which fired.{" "}
+        <code>MaxPageSize</code>, <code>MaxConditions</code>,{" "}
+        <code>MaxOrderFields</code>, <code>MaxNavigationDepth</code> and{" "}
+        <code>MaxAuditEvents</code> share <code>CapExceeded</code>, naming the
+        cap in <code>SourceOrigin</code>. <code>MaxQueryCost</code> is the one
+        with a code of its own, <code>QueryCostExceeded</code>, because an
+        operator reading a log needs to know which of the two refused: raising
+        the wrong one changes nothing. The three schema caps never throw at all —
+        a depth is clamped, a cycle is pruned, and <code>MaxSchemaFields</code>{" "}
+        truncates and reports <code>truncated</code> — and{" "}
+        <code>MinGroupSize</code> suppresses groups rather than refusing the
+        query.
       </p>
       <p>
         <code>MinGroupSize</code> is the one that starts <em>unset</em> rather
@@ -101,10 +117,21 @@ export default function Page() {
     .WithSubject(DwSubjectKind.User, userId);`}</Code>
 
       <h2 id="validate">Startup validation</h2>
-      <Code lang="csharp">{`PolicyModelReport report = DwPolicy.ValidateModel(typeof(Employee), typeof(Customer));
+      <Code lang="csharp">{`// Throws an InvalidOperationException listing every error, so reaching the
+// next line already means the model is sound. Do not test report.Errors here:
+// it is always empty by the time you can read it.
+PolicyModelReport report = DwPolicy.ValidateModel(typeof(Employee), typeof(Customer));
 
-foreach (var warning in report.Warnings) logger.LogWarning("{W}", warning);
-if (report.Errors.Count > 0) throw new InvalidOperationException("Policy model invalid.");`}</Code>
+foreach (var warning in report.Warnings) logger.LogWarning("{W}", warning);`}</Code>
+      <p>
+        <code>PolicyModelValidator.Inspect</code> is the same check without the
+        throw, for a health endpoint or a report that wants to list the errors
+        rather than fail on the first one.
+      </p>
+      <Code lang="csharp">{`PolicyModelReport inspected =
+    PolicyModelValidator.Inspect(new[] { typeof(Employee), typeof(Customer) });
+
+foreach (var error in inspected.Errors) logger.LogError("{E}", error);`}</Code>
       <p>
         Reported as a list rather than thrown one at a time, so a model is fixed
         in one pass instead of one exception per restart. Errors cover
@@ -217,7 +244,7 @@ if (report.Errors.Count > 0) throw new InvalidOperationException("Policy model i
       <table>
         <thead><tr><th>Code</th><th>Raised when</th></tr></thead>
         <tbody>
-          <tr><td><code>FieldDeniedForWhere</code> … <code>FieldDeniedForSegment</code> (1–6)</td><td>A field is refused for that feature, in the <code>Strict</code> tier.</td></tr>
+          <tr><td><code>FieldDeniedForWhere</code> … <code>FieldDeniedForSegment</code> (1–6)</td><td>A field is refused for that feature. <code>Where</code>, <code>Group</code>, <code>Aggregate</code> and <code>Segment</code> throw in <strong>both</strong> tiers, because dropping one of those would widen the result set or answer a different question. Only <code>Order</code> and <code>Select</code> are tier-dependent: the <code>Convenience</code> tier drops the clause instead.</td></tr>
           <tr><td><code>AllSelectsDenied</code> (7)</td><td>Every requested field was denied.</td></tr>
           <tr><td><code>OperatorNotAllowed</code> (8)</td><td>An operator outside the permitted set.</td></tr>
           <tr><td><code>CapExceeded</code> (9)</td><td>A cap above was exceeded.</td></tr>
@@ -226,10 +253,10 @@ if (report.Errors.Count > 0) throw new InvalidOperationException("Policy model i
           <tr><td><code>MissingContextValue</code> (12)</td><td>A forced predicate needed a context value that was absent.</td></tr>
           <tr><td><code>AmbiguousFieldName</code> (13)</td><td>A name could mean more than one field.</td></tr>
           <tr><td><code>QueryStringDenied</code> (14)</td><td><code>getQueryString</code> in the <code>Strict</code> tier.</td></tr>
-          <tr><td><code>AmbiguousGroupKey</code> (15)</td><td>A group key could mean more than one field.</td></tr>
+          <tr><td><code>AmbiguousGroupKey</code> (15)</td><td>Two groups of a summary share a key once their key values were transformed, so their aggregates cannot be added together without inventing a figure.</td></tr>
           <tr><td><code>TransformRequiresMaterialization</code> (16)</td><td>A transform on a query the caller materializes itself.</td></tr>
-          <tr><td><code>StoreUnavailable</code> (17)</td><td>The store failed under <code>FailClosed</code>.</td></tr>
-          <tr><td><code>PolicyContextNotPrepared</code> (18)</td><td><code>PrepareAsync</code> was never called.</td></tr>
+          <tr><td><code>StoreUnavailable</code> (17)</td><td>The store failed under <code>FailClosed</code>, or the context&apos;s pinned snapshot is older than <code>MaxSnapshotAge</code>.</td></tr>
+          <tr><td><code>PolicyContextNotPrepared</code> (18)</td><td><code>PrepareAsync</code> was never called, or the caller gained a <code>User</code> subject after it was.</td></tr>
           <tr><td><code>QueryCostExceeded</code> (19)</td><td>The query cost budget was exceeded.</td></tr>
           <tr><td><code>GroupTooSmall</code> (20)</td><td>A summary already uses the alias the group floor reserves.</td></tr>
           <tr><td><code>MissingHashSalt</code> (21)</td><td>A field masks to a hash and no salt was configured.</td></tr>

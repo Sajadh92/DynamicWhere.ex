@@ -1487,7 +1487,7 @@ A context carries the snapshot it was served, and the staleness ceiling measures
 | `[DwCost(weight)]` | member | Charge the member against the query budget |
 | `[DwAudit(features)]` | member | Record every use to `IDwAuditSink` |
 
-All six transform attributes also carry `AllowAggregate` and `MinGroupSize`. Every policy attribute carries `Overridable`, which defaults to **false**.
+All six transform attributes also carry `AllowAggregate` and `MinGroupSize`. Every attribute except `[DwEntity]` derives from `DwPolicyAttribute` and so carries `Overridable`, which defaults to **false**. It decides nothing on `[DwOperators]`, whose lists are intersected, or on `[DwForceWhere]`, whose predicates are collected — no rule can widen either, with or without the flag.
 
 ### Precedence
 
@@ -1537,9 +1537,9 @@ DwPolicy.Configure(policyOptions, provider);
 | `FailClosed` | Refuse the query with `StoreUnavailable` |
 | `StaticOnly` | Fall back to attributes alone |
 
-`MaxSnapshotAge` (15 minutes by default) is the ceiling on all three: once the snapshot in hand is older than it, every mode escalates to `FailClosed` and every guarded query is refused with `StoreUnavailable`. The age is renewed by a successful `RefreshAsync`, and also by a `RefreshInterval` poll that reads back the version already being served — a poll that confirms the snapshot is current counts as a load, so a healthy store nobody writes to keeps answering. A provider built with `autoRefresh: false` polls for nothing and renews on neither, so such a host must call `RefreshAsync` itself more often than `MaxSnapshotAge`.
+`MaxSnapshotAge` (15 minutes by default) is the ceiling, and it is checked after the mode: a snapshot older than it refuses the query with `StoreUnavailable` even when nothing has failed. `StaticOnly` is the one escape, and only once the provider is already degraded — it has returned to attributes alone by then and never reaches the check. The age is renewed by a successful `RefreshAsync`, and also by a `RefreshInterval` poll that reads back the version already being served — a poll that confirms the snapshot is current counts as a load, so a healthy store nobody writes to keeps answering. A provider built with `autoRefresh: false` polls for nothing and renews on neither, so such a host must call `RefreshAsync` itself more often than `MaxSnapshotAge`.
 
-A rule can never target a field the source code seals — refused in `PolicyRule`'s constructor, so it holds for every store and for the admin API alike.
+A rule can never win anything a sealed attribute decides: resolution ranks `SealedAttribute` above every dynamic level, and that is the guarantee. Writing such a rule is refused earlier as a courtesy — every store's `UpsertAsync` and `POST /rules` call `SealedFields.Refuse` — but only when the store was handed a type resolver, since the check needs a `Type` and a store holds a name. Without one the write is accepted and the rule simply loses at resolution.
 
 ### Hiding a value you still want to group by
 

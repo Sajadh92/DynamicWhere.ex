@@ -40,16 +40,24 @@ export default function Page() {
         expiry that does not happen.
       </p>
       <Callout tone="warn" title="Bad rules are refused at the boundary">
-        Validation lives in the <code>PolicyRule</code> constructor itself, so every
-        store and the admin API get the same refusals. A rule naming a sealed
-        field is rejected on write, not ignored on read.
+        A malformed rule — an unknown subject kind, a validity window that closes
+        before it opens, an effect with no feature to apply it to — is refused by
+        the <code>PolicyRule</code> constructor itself, so every store and the
+        admin API get the same refusals. The sealed-field refusal is separate:{" "}
+        <code>SealedFields.Refuse</code>, called by each store&apos;s{" "}
+        <code>UpsertAsync</code> and by <code>POST /rules</code>. It needs a way
+        to turn the rule&apos;s entity name into a <code>Type</code>, so a store
+        built without that resolver accepts the rule instead of rejecting it —
+        which costs nothing, because a sealed attribute outranks it at resolution
+        time regardless. Hand the store a resolver and the operator is told on
+        write rather than left with a rule that quietly never applies.
       </Callout>
 
       <h2 id="zones">Two zones</h2>
       <table>
         <thead><tr><th>Zone</th><th>Holds</th><th>Lifetime</th></tr></thead>
         <tbody>
-          <tr><td><strong>Broad</strong></td><td>Global, tenant and role rules</td><td>Cached and shared across requests</td></tr>
+          <tr><td><strong>Broad</strong></td><td>Global, tenant, role and custom rules — everything but a user rule</td><td>Cached and shared across requests</td></tr>
           <tr><td><strong>Narrow</strong></td><td>Per-user rules</td><td>Loaded for the identities on one context</td></tr>
         </tbody>
       </table>
@@ -88,9 +96,14 @@ export default function Page() {
         </tbody>
       </table>
       <p>
-        All three are bounded by the ceiling. A startup load failure always
-        throws, whatever the mode: an application that has never loaded a policy
-        has no last known good to serve.
+        The ceiling is checked after the mode, so it binds{" "}
+        <code>LastKnownGood</code> and a healthy provider alike: a snapshot older
+        than <code>MaxSnapshotAge</code> refuses the query even when nothing has
+        failed. <code>StaticOnly</code> is the one exception, and only once the
+        provider is already degraded — it has fallen back to attributes by then
+        and never reaches the check. A startup load failure always throws,
+        whatever the mode: an application that has never loaded a policy has no
+        last known good to serve.
       </p>
 
       <h2 id="refresh">Refresh</h2>
@@ -104,7 +117,7 @@ export default function Page() {
 {
     Console.WriteLine(provider.Version);      // snapshot version
     Console.WriteLine(provider.Age);          // how old it is
-    Console.WriteLine(provider.IsDegraded);   // serving last known good
+    Console.WriteLine(provider.IsDegraded);   // the last refresh or poll failed
     Console.WriteLine(provider.LastError);    // why
 }`}</Code>
 

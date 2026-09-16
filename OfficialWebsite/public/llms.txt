@@ -1113,6 +1113,11 @@ Each of these compiles, passes validation, and returns something other than what
 14. **A null inside `Values` is the empty string, not NULL.** Test for NULL with `IsNull` / `IsNotNull` and no values.
 15. **`Page` does not order.** Paging without `Orders` returns whatever order the database chooses; always send an
     order with a page.
+16. **Validation is not one pass before the query.** Each clause is checked as it is composed, so some invalid input is
+    refused only after the database has been hit: `ToListDynamic` / `ToListAsyncDynamic` run the `COUNT` query before
+    `Orders`, `Page` and `Selects` are validated, and `ToListAsync(Segment)` loads every condition set before it
+    validates `Orders`, `Page` and `Selects`. The `LogicException` is the same one either way; the round trip is not
+    undone.
 
 ---
 

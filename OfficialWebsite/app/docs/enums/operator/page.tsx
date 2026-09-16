@@ -26,10 +26,13 @@ export default function Page() {
       <h2 id="value-counts">Required values at a glance</h2>
       <p>
         Each operator expects a specific number of entries in{" "}
-        <code>Condition.Values</code>. Sending the wrong count throws a
-        validation error (<code>RequiredOneValue</code>,{" "}
-        <code>RequiredTwoValue</code>, <code>RequiredValues</code>, or{" "}
-        <code>NotRequiredValues</code>).
+        <code>Condition.Values</code>. Sending the wrong count throws a{" "}
+        <code>LogicException</code> whose message is one of{" "}
+        <code>ConditionWithOperator[&lt;op&gt;]MustHasOnlyOneValue</code>,{" "}
+        <code>ConditionWithOperator[Between-NotBetween]MustHasOnlyTwoValues</code>,{" "}
+        <code>ConditionWithOperator[In-IIn-NotIn-INotIn]MustHasOneOrMoreValues</code>, or{" "}
+        <code>ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues</code>. There is
+        no error-code property — the string is the message.
       </p>
       <table>
         <thead>
@@ -49,7 +52,9 @@ export default function Page() {
             <td><strong>1</strong></td>
             <td>
               All equality, contains, starts-with, ends-with, and ordered
-              comparisons (24 operators total).
+              comparisons (20 operators total — the 28 minus the two null
+              checks, the two range checks, and the four <code>In</code>{" "}
+              variants).
             </td>
           </tr>
           <tr>
@@ -283,7 +288,7 @@ export default function Page() {
 
       <Callout tone="warn">
         Sending any value with <code>IsNull</code> / <code>IsNotNull</code>{" "}
-        throws <code>NotRequiredValues</code>. Send an empty array:{" "}
+        throws <code>ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues</code>. Send an empty array:{" "}
         <code>"values": []</code>.
       </Callout>
 
@@ -324,7 +329,7 @@ export default function Page() {
         </li>
         <li>
           <Link href="/docs/validation/condition">Condition validation →</Link>{" "}
-          the exact error codes thrown on count mismatches.
+          the exact messages thrown on count mismatches.
         </li>
         <li>
           <Link href="/docs/errors">Error codes →</Link> full reference.

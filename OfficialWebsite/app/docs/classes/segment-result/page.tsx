@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "SegmentResult<T>",
   description:
-    "The result wrapper returned by ToListAsyncSegment — inherits every property from FilterResult<T>.",
+    "The result wrapper returned by ToListAsync<T>(Segment) — inherits every property from FilterResult<T>.",
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/segment-result/" },
 };
 
@@ -17,11 +17,12 @@ export default function Page() {
       <h1>SegmentResult&lt;T&gt;</h1>
       <p>
         <code>SegmentResult&lt;T&gt;</code> is the return shape of{" "}
-        <Link href="/docs/extensions/to-list-async-segment"><code>ToListAsyncSegment</code></Link>.
+        <Link href="/docs/extensions/to-list-async-segment"><code>ToListAsync&lt;T&gt;(Segment)</code></Link>.
         It <em>inherits</em> every property from{" "}
         <Link href="/docs/classes/filter-result"><code>FilterResult&lt;T&gt;</code></Link> — there
         are no additional members. The separate type exists only to distinguish results that came
-        from a segment query (UNION / INTERSECT / EXCEPT) from those that came from a plain filter.
+        from a segment query (Union / Intersect / Except, applied in memory) from those that came
+        from a plain filter.
       </p>
 
       <h2 id="properties">Inherited properties</h2>
@@ -77,7 +78,11 @@ export default function Page() {
             <td>
               <code>List&lt;T&gt;</code>
             </td>
-            <td>The result entities — already de-duplicated by the set operations.</td>
+            <td>
+              The result entities. The set operations de-duplicate only when they can
+              match rows — that is, with no <code>Selects</code> and a tracking query,
+              where every set hands back the same instances.
+            </td>
           </tr>
           <tr>
             <td>
@@ -87,11 +92,34 @@ export default function Page() {
               <code>string?</code>
             </td>
             <td>
-              Generated SQL (when <code>getQueryString: true</code> is passed).
+              Always <code>null</code> here: the <code>Segment</code> overload takes no{" "}
+              <code>getQueryString</code> argument and never fills this in.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>Policy</code>
+            </td>
+            <td>
+              <code>PolicyTrace?</code>
+            </td>
+            <td>
+              What the policy layer did to this query.{" "}
+              <code>null</code> unless the query went through{" "}
+              <Link href="/docs/policies"><code>ApplyPolicy</code></Link>.
             </td>
           </tr>
         </tbody>
       </table>
+
+      <Callout tone="warn">
+        The sets are loaded one query each and combined <strong>in memory</strong> with
+        LINQ&apos;s <code>Union</code> / <code>Intersect</code> / <code>Except</code>, which
+        compare by reference. Adding <code>Selects</code> projects each set into fresh
+        objects first, so nothing matches across sets: <code>Intersect</code> returns
+        nothing, <code>Except</code> removes nothing, and <code>Union</code> keeps
+        duplicates.
+      </Callout>
 
       <Callout tone="info">
         Because <code>SegmentResult&lt;T&gt;</code> inherits <code>FilterResult&lt;T&gt;</code>,
@@ -99,7 +127,7 @@ export default function Page() {
       </Callout>
 
       <h2 id="csharp-example">C# usage</h2>
-      <Code lang="csharp">{`SegmentResult<Customer> result = await dbContext.Customers.ToListAsyncSegment(segment);
+      <Code lang="csharp">{`SegmentResult<Customer> result = await dbContext.Customers.ToListAsync(segment);
 
 Console.WriteLine($"page {result.PageNumber} of {result.PageCount}");
 Console.WriteLine($"{result.TotalCount} total matches");
@@ -119,7 +147,8 @@ foreach (var customer in result.Data)
     { "id": 7, "name": "John Doe" },
     { "id": 12, "name": "Aisha Khan" }
   ],
-  "queryString": null
+  "queryString": null,
+  "policy": null
 }`}</Code>
 
       <h2 id="see-also">See also</h2>
@@ -131,7 +160,7 @@ foreach (var customer in result.Data)
           <Link href="/docs/classes/filter-result">FilterResult&lt;T&gt; →</Link> the base type.
         </li>
         <li>
-          <Link href="/docs/extensions/to-list-async-segment">ToListAsyncSegment →</Link>
+          <Link href="/docs/extensions/to-list-async-segment">ToListAsync&lt;T&gt;(Segment) →</Link>
         </li>
       </ul>
     </DocPage>

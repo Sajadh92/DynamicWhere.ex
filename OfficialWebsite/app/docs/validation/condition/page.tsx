@@ -60,8 +60,12 @@ export default function Page() {
             <td><code>RequiredOneValue(&#123;Operator&#125;)</code></td>
           </tr>
           <tr>
-            <td>Values must not be null/whitespace</td>
-            <td><code>InvalidValue</code></td>
+            <td>
+              A null value normalizes to an empty string — accepted by{" "}
+              <code>Text</code> and <code>Enum</code>, rejected by every other{" "}
+              <code>DataType</code>
+            </td>
+            <td><code>InvalidFormat</code></td>
           </tr>
           <tr>
             <td><code>Guid</code> values must parse as <code>Guid</code></td>
@@ -104,7 +108,11 @@ export default function Page() {
       <Callout tone="info">
         Operator/value arity is enforced before any value is parsed. A missing
         value for <code>Between</code> raises <code>RequiredTwoValue</code>{" "}
-        regardless of whether the (missing) value would have parsed.
+        regardless of whether the (missing) value would have parsed. There is no
+        separate &quot;value is null or whitespace&quot; failure:{" "}
+        <code>InvalidValue</code> (
+        <code>ConditionValuesAreNullOrWhiteSpace</code>) is defined but never
+        thrown.
       </Callout>
     </DocPage>
   );

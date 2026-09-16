@@ -165,9 +165,12 @@ export default function Page() {
       <h2 id="materialization">Materialization</h2>
       <p>
         Execute the composed query and return a paginated result — typed,
-        dynamic, summary, or segment. The async overloads call EF Core's{" "}
-        <code>CountAsync</code> and <code>ToListAsync</code> /{" "}
-        <code>ToDynamicListAsync</code> under the hood.
+        dynamic, summary, or segment. The two <code>Filter</code> async
+        terminals count with EF Core&apos;s <code>CountAsync</code> and read
+        with <code>ToListAsync</code> / <code>ToDynamicListAsync</code>;{" "}
+        <code>ToListAsync(Summary)</code> counts synchronously and only awaits
+        the read, and <code>ToListAsync(Segment)</code> counts in memory after
+        the set operations.
       </p>
       <table>
         <thead>
@@ -242,18 +245,36 @@ export default function Page() {
 
       <h2 id="in-memory">In-memory overloads</h2>
       <p>
-        The <code>ToList</code> / <code>ToListDynamic</code> (Filter and
-        Summary) extensions also expose <code>IEnumerable&lt;T&gt;</code>{" "}
-        overloads. These wrap the collection with{" "}
+        Exactly three of the terminals also expose an{" "}
+        <code>IEnumerable&lt;T&gt;</code> overload —{" "}
+        <code>ToList(Filter)</code>, <code>ToListDynamic(Filter)</code> and{" "}
+        <code>ToList(Summary)</code>. These wrap the collection with{" "}
         <code>AsQueryable()</code> and delegate to the typed overload — handy
-        for unit tests and in-process pipelines.
+        for unit tests and in-process pipelines. Nothing else has one: there is
+        no <code>ToListDynamic(Summary)</code>, and no async or composable
+        method works on an <code>IEnumerable&lt;T&gt;</code> source. Counting
+        those three, the library ships <strong>21</strong> extension methods.
       </p>
 
       <Callout tone="note">
-        Pass <code>getQueryString: true</code> to any materialization call to
-        capture the generated SQL on the result. This requires an active EF
-        Core provider; pure <code>IEnumerable&lt;T&gt;</code> use may not
-        support <code>.ToQueryString()</code>.
+        Pass <code>getQueryString: true</code> to any <code>Filter</code> or{" "}
+        <code>Summary</code> materialization call to capture the generated SQL
+        on the result. <code>.ToListAsync&lt;T&gt;(Segment)</code> takes no such
+        parameter, so <code>SegmentResult&lt;T&gt;.QueryString</code> is always{" "}
+        <code>null</code>. The call reaches EF Core&apos;s{" "}
+        <code>.ToQueryString()</code>, so on a non-EF Core source the property
+        holds a placeholder sentence rather than SQL.
+      </Callout>
+
+      <Callout tone="note">
+        Every one of the 21 begins by asking the policy layer whether this type
+        may be queried at all. A type marked{" "}
+        <code>[DwEntity(RequirePolicy = true)]</code> throws{" "}
+        <code>PolicyException</code> with <code>PolicyRequired</code> when it is
+        reached through any of them without{" "}
+        <Link href="/docs/policies"><code>ApplyPolicy</code></Link>. Plain LINQ
+        on the same <code>DbSet</code> is not intercepted — the guard covers
+        this library&apos;s methods, not Entity Framework Core&apos;s.
       </Callout>
 
       <h2 id="next">Next steps</h2>

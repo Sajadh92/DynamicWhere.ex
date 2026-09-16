@@ -35,7 +35,7 @@ export default function Page() {
       <h2 id="enumerable">IEnumerable&lt;T&gt; overload</h2>
       <p>In-memory variant for summary operations.</p>
       <Code lang="csharp">{`public static SummaryResult ToList<T>(
-    this IEnumerable<T> source,
+    this IEnumerable<T> query,
     Summary summary,
     bool getQueryString = false)
     where T : class`}</Code>
@@ -88,7 +88,8 @@ export default function Page() {
       <Callout tone="note">
         Passing <code>getQueryString: true</code> calls{" "}
         <code>.ToQueryString()</code>, which requires an active EF Core
-        provider; pure in-memory usage may not support it.
+        provider. On an in-memory source it does not fail — it returns a
+        placeholder sentence where the SQL would be.
       </Callout>
 
       <h2 id="returns">Returns</h2>

@@ -65,7 +65,7 @@ export default function Page() {
     AggregateBy = new List<AggregateBy>
     {
         new AggregateBy { Aggregator = Aggregator.Count, Alias = "Total" },
-        new AggregateBy { Field = "Amount", Aggregator = Aggregator.Sum, Alias = "Revenue" }
+        new AggregateBy { Field = "Amount", Aggregator = Aggregator.Sumation, Alias = "Revenue" }
     }
 };`}</Code>
 
@@ -74,7 +74,7 @@ export default function Page() {
   "fields": ["Country", "Status"],
   "aggregateBy": [
     { "aggregator": "Count", "alias": "Total" },
-    { "field": "Amount", "aggregator": "Sum", "alias": "Revenue" }
+    { "field": "Amount", "aggregator": "Sumation", "alias": "Revenue" }
   ]
 }`}</Code>
 

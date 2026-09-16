@@ -87,7 +87,7 @@ export default function Page() {
                 <code>AggregateBy</code>
               </Link>
             </td>
-            <td>One aggregation (Count / Sum / Min / Max / Avg) with an alias.</td>
+            <td>One aggregation (Count / Sumation / Minimum / Maximum / Average) with an alias.</td>
           </tr>
           <tr>
             <td>
@@ -154,7 +154,7 @@ export default function Page() {
               </Link>
             </td>
             <td>
-              <code>ToListFilter</code> / <code>ToListAsyncFilter</code> / dynamic variants.
+              <code>ToList&lt;T&gt;(Filter)</code> / <code>ToListAsync&lt;T&gt;(Filter)</code> / dynamic variants.
             </td>
           </tr>
           <tr>
@@ -164,7 +164,7 @@ export default function Page() {
               </Link>
             </td>
             <td>
-              <code>ToListAsyncSegment</code>.
+              <code>ToListAsync&lt;T&gt;(Segment)</code>.
             </td>
           </tr>
           <tr>
@@ -174,7 +174,7 @@ export default function Page() {
               </Link>
             </td>
             <td>
-              <code>ToListSummary</code> / <code>ToListAsyncSummary</code>.
+              <code>ToList&lt;T&gt;(Summary)</code> / <code>ToListAsync&lt;T&gt;(Summary)</code>.
             </td>
           </tr>
         </tbody>

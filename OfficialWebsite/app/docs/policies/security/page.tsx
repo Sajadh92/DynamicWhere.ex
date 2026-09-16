@@ -136,8 +136,8 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         <thead><tr><th>Attack</th><th>Control</th></tr></thead>
         <tbody>
           <tr>
-            <td>An unguarded call on a type that requires a policy</td>
-            <td><code>[DwEntity(RequirePolicy = true)]</code> throws rather than returning rows</td>
+            <td>An unguarded DynamicWhere call on a type that requires a policy</td>
+            <td><code>[DwEntity(RequirePolicy = true)]</code> throws <code>PolicyRequired</code> rather than returning rows. Only this library&apos;s own extension methods run the check, so plain EF Core or LINQ against the <code>DbSet</code> is not intercepted — the flag closes the hole in <em>this</em> API, not every route to the table.</td>
           </tr>
           <tr>
             <td>An empty policy store</td>
@@ -152,7 +152,7 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         <li>Leave <code>MinGroupSize</code> alone unless you have a reason; setting it to 1 is a decision, not a default.</li>
         <li>Prefer <code>Tokenize</code> over <code>Hash</code> where you can run a durable vault: neither hides equality, but only one of them can be undone by a leaked constant.</li>
         <li>Run <code>DwPolicy.ValidateModel(...)</code> at startup and treat its warnings as a checklist.</li>
-        <li>Put <code>[DwEntity(RequirePolicy = true)]</code> on anything sensitive, so a missed guard fails loudly.</li>
+        <li>Put <code>[DwEntity(RequirePolicy = true)]</code> on anything sensitive, so a DynamicWhere call that forgets <code>ApplyPolicy</code> fails loudly.</li>
         <li>Prefer <code>[DwOperators]</code> over allowing free filtering on a protected field.</li>
       </ul>
     </DocPage>

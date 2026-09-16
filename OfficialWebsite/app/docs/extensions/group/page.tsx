@@ -63,7 +63,9 @@ export default function Page() {
           <code>GroupByFieldCannotBeCollectionType</code>.
         </li>
         <li>
-          Aggregation alias must not be empty and must not contain dots —{" "}
+          Aggregation alias must be an identifier — a letter or{" "}
+          <code>_</code>, then letters, digits or <code>_</code>. Spaces, dots,
+          hyphens and a leading digit all fail —{" "}
           <code>InvalidAlias</code>.
         </li>
         <li>
@@ -110,7 +112,7 @@ export default function Page() {
       <h2 id="example">Example</h2>
       <Code lang="csharp">{`var groupBy = new GroupBy
 {
-    Fields = new List<string> { "Category" },
+    Fields = new List<string> { "Category.Name" },
     AggregateBy = new List<AggregateBy>
     {
         new AggregateBy { Field = null,    Alias = "TotalCount", Aggregator = Aggregator.Count },
@@ -122,7 +124,7 @@ export default function Page() {
 var grouped = dbContext.Products.Group(groupBy);`}</Code>
 
       <Code lang="json">{`{
-  "fields": ["Category"],
+  "fields": ["Category.Name"],
   "aggregateBy": [
     { "field": null,    "alias": "TotalCount", "aggregator": "Count" },
     { "field": "Price", "alias": "AvgPrice",   "aggregator": "Average" },

@@ -44,7 +44,12 @@ DwPolicy.Configure(options, provider);`}</Code>
 
 // A new context per read: the provider polls on a background timer, and a
 // context shared with request threads would be used concurrently.
-var store = new EfPolicyStore(() => new DwPolicyDbContext(policyDbOptions));
+//
+// The second argument turns a rule's entity name into a Type. Without it the
+// store cannot run its sealed-field check on a write and accepts the rule.
+var store = new EfPolicyStore(
+    () => new DwPolicyDbContext(policyDbOptions),
+    DwPolicy.Options.Entities.Resolve);
 
 var provider = await StorePolicyProvider.CreateAsync(store, options);
 
@@ -60,20 +65,26 @@ DwPolicy.Configure(options, provider);`}</Code>
         registration and any design-time factory.
       </Callout>
 
-      <p>Two tables, on their own migration history:</p>
+      <p>Three tables, on their own migration history:</p>
       <table>
         <thead><tr><th>Table</th><th>Holds</th></tr></thead>
         <tbody>
           <tr><td><code>DwPolicyRules</code></td><td>One row per rule, indexed by entity and field, and by subject.</td></tr>
           <tr><td><code>DwPolicyVersion</code></td><td>A single row carrying the snapshot version.</td></tr>
+          <tr><td><code>DwPolicyTokens</code></td><td>The <code>EfTokenVault</code> mapping, one row per tokenized value.</td></tr>
         </tbody>
       </table>
 
-      <h2 id="serialization">One serializer, three stores</h2>
+      <h2 id="serialization">Two serializers, three stores</h2>
       <p>
-        <code>PolicyPayload</code> is the only place a rule payload is read or
-        written. Neither provider parses JSON of its own, because three parsers
-        would become three standards. Every enumeration is written and read{" "}
+        <code>PolicyRuleDocument</code> is the only place a whole rule is read or
+        written, the EF <code>Detail</code> column included.{" "}
+        <code>PolicyPayload</code> sits under it and handles one thing: the
+        transform object. Neither provider parses JSON of its own, because three
+        parsers would become three standards — and the rule carries a forced
+        predicate, an alias and two operator lists that a serializer can drop in
+        silence, turning a tenant scope into a rule that is still listed and no
+        longer applies. Every enumeration is written and read{" "}
         <strong>by name</strong>, in JSON and in a database column alike: the zero
         member of several enumerations is the permissive one, so an unparsed
         value must not read as a plausible-looking default.

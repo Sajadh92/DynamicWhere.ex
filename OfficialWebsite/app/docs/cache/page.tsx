@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "Cache & Optimization — Reflection cache, FIFO / LRU / LFU eviction",
   description:
-    "Tune the DynamicWhere.ex reflection cache for high-throughput EF Core workloads. Thread-safe stores, FIFO / LRU / LFU eviction strategies, six tuned presets, monitoring hooks, and warmup APIs.",
+    "Tune the DynamicWhere.ex reflection cache for high-throughput EF Core workloads. Thread-safe stores, FIFO / LRU / LFU eviction strategies, five tuned presets, monitoring hooks, and warmup APIs.",
   keywords: [
     "EF Core reflection cache",
     "DynamicWhere cache tuning",
@@ -26,7 +26,7 @@ export default function Page() {
         metadata, validated property paths, collection element types — so that
         repeated queries never pay the reflection cost twice. The entire cache
         subsystem is <strong>thread-safe</strong>, fully configurable, and
-        exposed through a single public class: <code>CacheExpose</code>.
+        driven from a single static entry point: <code>CacheExpose</code>.
       </p>
 
       <h2 id="motivation">Why a reflection cache?</h2>
@@ -57,7 +57,7 @@ export default function Page() {
       <p>
         Reflection results are split across three independent stores so that
         eviction in one does not invalidate the others. Each store has its own
-        size limit, hit counters, and eviction state.
+        size limit, access-tracking records, and eviction pass.
       </p>
       <table>
         <thead>
@@ -113,7 +113,7 @@ export default function Page() {
         <tbody>
           <tr>
             <td><code>FIFO</code></td>
-            <td>Oldest entries first — order of insertion.</td>
+            <td>Whatever the store enumerates first — a <code>ConcurrentDictionary</code> keeps no insertion order, so these are not the oldest entries.</td>
           </tr>
           <tr>
             <td><code>LRU</code></td>
@@ -121,7 +121,7 @@ export default function Page() {
           </tr>
           <tr>
             <td><code>LFU</code></td>
-            <td>Least frequently used — entries with the lowest hit count.</td>
+            <td>Least frequently used — entries with the lowest access count.</td>
           </tr>
         </tbody>
       </table>
@@ -137,6 +137,7 @@ export default function Page() {
       <h2 id="public-api">Quick example</h2>
       <Code lang="csharp">{`using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Optimization.Cache.Config;
+using DynamicWhere.ex.Optimization.Cache.DTOs;
 
 // Pick a preset that matches your environment
 CacheExpose.Configure(CacheOptions.ForHighMemoryEnvironment());
@@ -151,7 +152,7 @@ CacheStatistics stats = CacheExpose.GetCacheStatistics();`}</Code>
       <ul>
         <li>
           <Link href="/docs/cache/architecture"><strong>Architecture →</strong></Link>{" "}
-          the six internal components and the public surface.
+          the six cache classes and the public surface.
         </li>
         <li>
           <Link href="/docs/cache/stores"><strong>Stores →</strong></Link>{" "}
@@ -175,7 +176,7 @@ CacheStatistics stats = CacheExpose.GetCacheStatistics();`}</Code>
         </li>
         <li>
           <Link href="/docs/cache/presets"><strong>Presets →</strong></Link>{" "}
-          the six built-in <code>CacheOptions</code> factories.
+          the five built-in <code>CacheOptions</code> factories.
         </li>
       </ul>
     </DocPage>

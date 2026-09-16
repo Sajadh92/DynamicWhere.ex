@@ -20,7 +20,7 @@ export default function Page() {
         DynamicWhere.ex maintains for reflection metadata. It's the handle you
         pass to <code>CacheExpose.ClearCache(...)</code> or{" "}
         <code>CacheExpose.IsCacheFull(...)</code> to operate on one store at a
-        time. It lives in <code>DynamicWhere.ex.Optimization.Cache.Config</code>.
+        time. It lives in <code>DynamicWhere.ex.Optimization.Cache.Enums</code>.
       </p>
 
       <h2 id="values">Values</h2>
@@ -96,7 +96,7 @@ export default function Page() {
 
       <p>Clear one store:</p>
       <Code lang="csharp">{`using DynamicWhere.ex.Optimization.Cache.Source;
-using DynamicWhere.ex.Optimization.Cache.Config;
+using DynamicWhere.ex.Optimization.Cache.Enums;
 
 CacheExpose.ClearCache(CacheMemoryType.PropertyPath);`}</Code>
 
@@ -109,8 +109,9 @@ CacheExpose.ClearCache(CacheMemoryType.PropertyPath);`}</Code>
       <h2 id="monitoring">Monitoring</h2>
       <p>
         Per-store statistics surface through the reporting APIs — every report
-        enumerates all three values of this enum so you can see hit/miss rates,
-        memory footprint, and eviction counts independently.
+        enumerates all three values of this enum so you can see entry counts,
+        tracking records, and estimated memory independently. There are no hit,
+        miss or eviction counters anywhere in the cache API.
       </p>
       <Code lang="csharp">{`var stats = CacheExpose.GetCacheStatistics();
 var memory = CacheExpose.GetMemoryUsage();

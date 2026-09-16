@@ -30,7 +30,7 @@ export default function Page() {
     this IQueryable<T> query,
     Filter filter,
     bool getQueryString = false)
-    where T : class, new()`}</Code>
+    where T : class`}</Code>
 
       <h2 id="enumerable">IEnumerable&lt;T&gt; overload</h2>
       <p>
@@ -38,10 +38,10 @@ export default function Page() {
         then delegates to the typed overload.
       </p>
       <Code lang="csharp">{`public static FilterResult<T> ToList<T>(
-    this IEnumerable<T> source,
+    this IEnumerable<T> query,
     Filter filter,
     bool getQueryString = false)
-    where T : class, new()`}</Code>
+    where T : class`}</Code>
 
       <table>
         <thead>
@@ -93,8 +93,9 @@ export default function Page() {
       <Callout tone="note">
         Passing <code>getQueryString: true</code> calls{" "}
         <code>.ToQueryString()</code>, which requires an active EF Core
-        database provider. Pure in-memory <code>IEnumerable&lt;T&gt;</code>{" "}
-        usage may not support this.
+        database provider. On an in-memory <code>IEnumerable&lt;T&gt;</code> it
+        does not fail — it returns a placeholder sentence where the SQL would
+        be.
       </Callout>
 
       <h2 id="returns">Returns</h2>

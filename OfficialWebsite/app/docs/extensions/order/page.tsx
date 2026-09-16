@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import DocPage from "@/components/DocPage";
+import Callout from "@/components/Callout";
 import { Code } from "@/components/Code";
 
 export const metadata: Metadata = {
@@ -132,7 +133,7 @@ export default function Page() {
         <code>Sequence contains no elements</code>.
       </p>
 
-      <Code lang="csharp">{`// Products sorted by their cheapest line item, cheapest product first
+      <Code lang="csharp">{`// Orders sorted by their cheapest line item, cheapest order first
 var ordered = dbContext.Orders.Order(new OrderBy
 {
     Sort = 1,
@@ -165,6 +166,12 @@ var ordered = dbContext.Orders.Order(new OrderBy
   { "sort": 1, "field": "LastName",  "direction": "Ascending" },
   { "sort": 2, "field": "FirstName", "direction": "Ascending" }
 ]`}</Code>
+
+      <Callout tone="warn">
+        Each call <strong>replaces</strong> the previous ordering rather than
+        adding to it, so two <code>Order(...)</code> calls leave only the second
+        in effect. Put every key in one <code>List&lt;OrderBy&gt;</code>.
+      </Callout>
 
       <h2 id="see-also">See also</h2>
       <ul>

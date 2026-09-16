@@ -16,8 +16,8 @@ export default function Page() {
     <DocPage pathname="/docs/policies/attributes">
       <h1>Policy Attributes</h1>
       <p>
-        The compile-time half of the feature. Every attribute below is{" "}
-        <strong>sealed by default</strong> — no runtime rule can lift it unless
+        The compile-time half of the feature. Every field-level attribute below
+        is <strong>sealed by default</strong> — no runtime rule can lift it unless
         you write <code>Overridable = true</code>. See{" "}
         <Link href="/docs/policies/precedence">Precedence</Link>.
       </p>
@@ -36,6 +36,9 @@ export default function Page() {
         Without it, a code path that never calls <code>ApplyPolicy</code> returns
         everything, and nothing complains. With it, the omission is a startup-
         loud failure on the first call rather than a silent disclosure.
+        <strong>Only this library&apos;s own extension methods run the check</strong>,
+        so plain EF Core or LINQ against the <code>DbSet</code> is not intercepted
+        and returns rows as it always did.
       </Callout>
 
       <h2 id="access">Access control</h2>
@@ -88,7 +91,7 @@ public string Department { get; set; }`}</Code>
       <table>
         <thead><tr><th>Attribute</th><th>Effect</th></tr></thead>
         <tbody>
-          <tr><td><code>[DwMask(strategy)]</code></td><td>Obscure the value. Eight strategies.</td></tr>
+          <tr><td><code>[DwMask(strategy)]</code></td><td>Obscure the value. Nine strategies.</td></tr>
           <tr><td><code>[DwMutate(typeof(T))]</code></td><td>Hand the value to your own <code>IValueTransformer</code>.</td></tr>
           <tr><td><code>[DwDefault]</code> / <code>[DwDefault("v")]</code></td><td>Replace with the type default or a constant.</td></tr>
           <tr><td><code>[DwGeneralize(mode)]</code></td><td>Reduce precision, keeping the type.</td></tr>
@@ -116,9 +119,17 @@ public string Department { get; set; }`}</Code>
 
       <h2 id="overridable">Overridable</h2>
       <p>
-        Every policy attribute carries <code>Overridable</code>, which defaults
-        to <strong>false</strong>. One attribute can be sealed while another on
-        the same member is replaceable.
+        Every field-level policy attribute carries <code>Overridable</code>, which
+        defaults to <strong>false</strong>. One attribute can be sealed while
+        another on the same member is replaceable.
+      </p>
+      <p>
+        Two exceptions. The type-level <code>[DwEntity]</code> derives from{" "}
+        <code>Attribute</code> rather than the policy base and has no{" "}
+        <code>Overridable</code> at all. And the flag decides nothing on{" "}
+        <code>[DwOperators]</code> or <code>[DwForceWhere]</code>, because those
+        two are intersected and collected rather than elected — see{" "}
+        <Link href="/docs/policies/precedence">Precedence</Link>.
       </p>
       <Code lang="csharp">{`// The mask is absolute; the description is a suggestion an operator may change.
 [DwMask(MaskStrategy.Full)]

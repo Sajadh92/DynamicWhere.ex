@@ -171,7 +171,9 @@ export default function Page() {
       <h2 id="returns">Returns</h2>
       <p>
         <code>IQueryable</code> — a dynamic projected query where each element
-        is an anonymous object.
+        is an instance of a runtime-generated class deriving from{" "}
+        <code>System.Linq.Dynamic.Core.DynamicClass</code>, with real public
+        properties.
       </p>
 
       <h2 id="examples">Examples</h2>

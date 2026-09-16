@@ -29,7 +29,7 @@ export default function Page() {
     this IQueryable<T> query,
     Filter filter,
     bool getQueryString = false)
-    where T : class, new()`}</Code>
+    where T : class`}</Code>
 
       <table>
         <thead>

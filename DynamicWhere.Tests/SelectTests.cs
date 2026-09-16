@@ -445,7 +445,7 @@ public class SelectTests : SalesTestBase
             () => new List<Positional> { new(1, "a") }.AsQueryable().Select(["Id"]).ToDynamicList());
 
         Assert.Equal(ErrorCode.SelectTypeMustHaveParameterlessConstructor, thrown.Message);
-        Assert.Equal(typeof(Positional).FullName, thrown.Subject);
+        Assert.Equal(nameof(Positional), thrown.Subject);
     }
 
     #endregion

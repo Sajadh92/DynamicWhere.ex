@@ -62,8 +62,10 @@ public static class Extension
         // Requirement: T must have a parameterless constructor.
         if (typeof(T).GetConstructor(Type.EmptyTypes) is null)
         {
+            // The short name, as the old sentence had: Subject is meant for an error envelope, and a
+            // namespace tells a client how the server is laid out without helping it fix the request.
             throw new LogicException(
-                ErrorCode.SelectTypeMustHaveParameterlessConstructor, typeof(T).FullName);
+                ErrorCode.SelectTypeMustHaveParameterlessConstructor, typeof(T).Name);
         }
 
         // Build the strongly-typed projection expression.

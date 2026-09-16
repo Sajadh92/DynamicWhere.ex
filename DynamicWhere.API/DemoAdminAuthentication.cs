@@ -19,6 +19,12 @@ namespace DynamicWhere.API;
 /// A deployment replaces this with its own scheme — JWT bearer, cookies, mutual TLS — and keeps the
 /// shape: an authenticated principal carrying the role the authorization policies name.
 /// </para>
+/// <para>
+/// It authenticates nobody outside Development. The credential is a constant in a public repository,
+/// and the store behind these endpoints is live and writable, so honouring it in a deployed copy of
+/// this demo would hand the rules every caller is held to to anyone who has read this file. There the
+/// admin endpoints answer 401 until a real scheme takes this one's place.
+/// </para>
 /// </remarks>
 public sealed class DemoAdminAuthentication : AuthenticationHandler<AuthenticationSchemeOptions>
 {
@@ -33,12 +39,16 @@ public sealed class DemoAdminAuthentication : AuthenticationHandler<Authenticati
 
     private const string Secret = "demo";
 
+    private readonly IHostEnvironment _environment;
+
     public DemoAdminAuthentication(
         IOptionsMonitor<AuthenticationSchemeOptions> options,
         ILoggerFactory logger,
-        UrlEncoder encoder)
+        UrlEncoder encoder,
+        IHostEnvironment environment)
         : base(options, logger, encoder)
     {
+        _environment = environment;
     }
 
     /// <summary>
@@ -52,6 +62,12 @@ public sealed class DemoAdminAuthentication : AuthenticationHandler<Authenticati
     /// </remarks>
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        // Development only: see the remarks on the class.
+        if (!_environment.IsDevelopment())
+        {
+            return Task.FromResult(AuthenticateResult.NoResult());
+        }
+
         if (!Request.Headers.TryGetValue(Header, out var value))
         {
             return Task.FromResult(AuthenticateResult.NoResult());

@@ -65,7 +65,7 @@ builder.Services.AddSingleton<IDwPolicyWritableStore>(sp => sp.GetRequiredServic
 // A header stands in for whatever a real deployment authenticates with. It is a scheme rather than
 // a bare assertion because authorization that fails with no scheme registered cannot challenge: the
 // caller would see a 500 where a 401 belongs, and the policy layer would be handed a principal that
-// is nobody. See DemoAdminAuthentication.
+// is nobody. It honours the header in Development only; see DemoAdminAuthentication.
 builder.Services
     .AddAuthentication(DemoAdminAuthentication.SchemeName)
     .AddScheme<AuthenticationSchemeOptions, DemoAdminAuthentication>(

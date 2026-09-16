@@ -10,7 +10,7 @@ import CopyBlock from "./CopyBlock";
 export const metadata: Metadata = {
   title: "For AI agents — the whole library in one file",
   description:
-    "A single plain-text reference covering every shape, enum, method, policy attribute and trap in DynamicWhere.ex. Paste it into Claude, Copilot, Cursor or Codex, or point the agent at doc.dynamicwhere.com/llms.txt.",
+    "A single plain-text reference covering every shape, enum, method, error string, policy attribute, cache setting and trap in DynamicWhere.ex, plus the JSON on the wire. Paste it into Claude, Copilot, Cursor or Codex, or point the agent at doc.dynamicwhere.com/llms.txt.",
   keywords: [
     "llms.txt",
     "AI coding agent reference",
@@ -44,9 +44,11 @@ export default function Page() {
         at once, in plain text, with the exact spellings.
       </p>
       <p>
-        So there is one file. It covers every shape, every enum member, every
-        extension method, the full policy layer, and the traps that produce code
-        which compiles and is quietly wrong.
+        So there is one file, in thirty-five sections. It carries every public type
+        and member of the four packages, the behaviour behind them, the JSON a
+        client sends and receives, every error string, and the traps that produce
+        code which compiles and is quietly wrong. An agent that reads it needs no
+        other page here.
       </p>
 
       <h2 id="use">How to use it</h2>
@@ -68,38 +70,57 @@ DynamicWhere.ex code. It is the complete API surface.`}</Code>
       <h2 id="contents">What is in it</h2>
       <ul>
         <li>
-          <strong>Shapes.</strong> Exact field names for{" "}
+          <strong>Shapes and results.</strong> Every property of{" "}
           <code>Condition</code>, <code>ConditionGroup</code>,{" "}
           <code>ConditionSet</code>, <code>OrderBy</code>, <code>GroupBy</code>,{" "}
           <code>AggregateBy</code>, <code>PageBy</code>, <code>Filter</code>,{" "}
-          <code>Segment</code>, <code>Summary</code> and the three result types.
+          <code>Segment</code> and <code>Summary</code> with its type and default,
+          and what each member of the three result types holds.
         </li>
         <li>
-          <strong>Enums, verbatim.</strong> Every member of every enum, including
-          the case-insensitive <code>I</code> variants and the one-<code>m</code>{" "}
-          spelling of <code>Sumation</code> — the two things a model guesses wrong
-          most often.
+          <strong>Enums, verbatim, with their numbers</strong> — the numbers a JSON
+          body must send when the host registers no string enum converter —
+          including the case-insensitive <code>I</code> variants and the one-
+          <code>m</code> spelling of <code>Sumation</code>.
         </li>
         <li>
-          <strong>All seventeen extension methods</strong> with their real
-          signatures, and which ones have no synchronous form.
+          <strong>All twenty-one extension methods</strong> with their real
+          signatures, what each one validates, and which have no synchronous or
+          in-memory form. Plus the generated predicate for every operator, value
+          coercion per <code>DataType</code>, and how field paths resolve.
         </li>
         <li>
-          <strong>The policy layer.</strong> All eighteen attributes with their
-          parameters, the six precedence levels, blocked-action semantics per
-          tier, the transform chain order, the caps and their defaults, the
-          configuration section, the admin endpoints and all twenty-two policy
-          error codes.
+          <strong>The JSON on the wire.</strong> Which body binds to which shape,
+          casing and enum converters, how <code>values</code> must be typed, the
+          result envelope, what rows look like per method, and copy-paste recipes.
         </li>
         <li>
-          <strong>Ten traps</strong> that produce silently wrong code, each with
-          the reason. A mask without <code>[DwNoOrder]</code> leaking through
-          sorting is the one an agent reproduces most often, because the attribute
-          reads as sufficient on its own.
+          <strong>Validation and errors.</strong> Every rule in the order it is
+          checked, all twenty-seven error strings with what raises them, and the
+          other exception types a caller can receive.
         </li>
         <li>
-          <strong>Worked examples</strong> for a filter, a summary, a segment and a
-          fully protected entity.
+          <strong>The policy layer.</strong> All twenty-two attributes with their
+          parameters, the six precedence levels, enforcement tier by tier, the
+          transform chain with the exact output of every mask and generalize mode,
+          the group floor, dynamic rules and stores, the admin API, and all
+          twenty-two policy error codes.
+        </li>
+        <li>
+          <strong>The reflection cache.</strong> Every <code>CacheExpose</code>{" "}
+          member, the options and their ranges, the presets, and what eviction
+          actually does.
+        </li>
+        <li>
+          <strong>Forty-seven traps</strong> that produce silently wrong code:
+          fifteen for the query engine, thirty-two for policies. A mask without{" "}
+          <code>[DwNoOrder]</code> leaking through sorting is the one an agent
+          reproduces most often, because the attribute reads as sufficient on its
+          own.
+        </li>
+        <li>
+          <strong>Worked examples</strong> for a filter, a summary, a segment, an
+          endpoint, a fully protected entity and the policy wiring around it.
         </li>
       </ul>
 
@@ -115,11 +136,12 @@ DynamicWhere.ex code. It is the complete API surface.`}</Code>
       <CopyBlock text={text} lines={lines} />
 
       <Callout tone="warn" title="It says what the library does, not what it should do">
-        The reference is generated against version 3.0.0 and states behaviour,
-        including the parts that are deliberately blunt — that neither hashing nor
-        tokenization hides equality, for instance. If an agent proposes a design
-        this file says is unsafe, the file is the one to trust. For the reasoning
-        behind any rule, the human pages carry it: start at{" "}
+        The reference is generated against version 3.0.0 from the source, and
+        checked by running the library, so it states behaviour — including the
+        parts that are deliberately blunt, such as neither hashing nor
+        tokenization hiding equality. Where a page in these docs disagrees with it,
+        the file is the one to trust. For the reasoning behind a rule, the human
+        pages carry it: start at{" "}
         <Link href="/docs/policies/use-cases">Use cases</Link> or{" "}
         <Link href="/docs/policies/security">Security</Link>.
       </Callout>

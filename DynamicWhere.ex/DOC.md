@@ -1645,7 +1645,7 @@ Options are frozen at startup. Every cap refuses a value below one, except `Defa
 | Method | Route | Purpose |
 |---|---|---|
 | `POST` | `/schema` | Fields for a filter UI. Sealed fields are absent |
-| `GET` | `/rules?subject=` | List rules |
+| `GET` | `/rules?subject=` | List rules. The filter is `Kind[:Key]` — `Role:auditor`, not a bare key. Omit it for every enabled broad rule; a user's rules live in the narrow zone and need `User:{key}` |
 | `POST` | `/rules` | Upsert. Sealed fields are rejected |
 | `DELETE` | `/rules/{id}` | Delete |
 | `POST` | `/explain` | The decision chain: what won, what it overrode, what was ignored |

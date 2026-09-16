@@ -44,7 +44,7 @@ export default function Page() {
         <thead><tr><th>Method</th><th>Route</th><th>Auth</th><th>Purpose</th></tr></thead>
         <tbody>
           <tr><td><code>POST</code></td><td><code>/schema</code></td><td>Read</td><td>Fields for a filter UI: labels, groups, order, allowed values, cost. Takes <code>paths</code> and <code>depth</code>.</td></tr>
-          <tr><td><code>GET</code></td><td><code>/rules?subject=</code></td><td>Read</td><td>List rules.</td></tr>
+          <tr><td><code>GET</code></td><td><code>/rules?subject=</code></td><td>Read</td><td>List rules. The filter is <code>Kind[:Key]</code> — <code>Role:auditor</code>, not a bare key. Omitted, it lists every enabled broad rule; a user&apos;s rules need <code>User:{"{key}"}</code>.</td></tr>
           <tr><td><code>POST</code></td><td><code>/rules</code></td><td>Write</td><td>Upsert a rule. The body cannot carry a transform, operator lists, a forced predicate or facts — those go through <code>IDwPolicyWritableStore.UpsertAsync</code>.</td></tr>
           <tr><td><code>DELETE</code></td><td><code>/rules/{"{id}"}</code></td><td>Write</td><td>Delete a rule.</td></tr>
           <tr><td><code>POST</code></td><td><code>/explain</code></td><td>Read</td><td>The decision chain for one field, or for every field of the entity when none is named.</td></tr>

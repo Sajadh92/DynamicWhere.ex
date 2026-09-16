@@ -1,4 +1,5 @@
-﻿using DynamicWhere.API.Data;
+﻿using DynamicWhere.API;
+using DynamicWhere.API.Data;
 using DynamicWhere.API.Models;
 using DynamicWhere.ex.Optimization.Cache.Config;
 using DynamicWhere.ex.Optimization.Cache.Enums;
@@ -8,8 +9,10 @@ using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.AspNetCore;
 using DynamicWhere.ex.Policies.EntityFrameworkCore;
 using DynamicWhere.ex.Policies.Resolution;
+using DynamicWhere.ex.Policies.Storage;
 using DynamicWhere.ex.Policies.Tokens;
 using DynamicWhere.ex.Policies.Validation;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Swashbuckle.AspNetCore.SwaggerUI;
@@ -46,13 +49,35 @@ var policyDbOptions = new DbContextOptionsBuilder<DwPolicyDbContext>()
 builder.Services.AddDbContext<DwPolicyDbContext>(options =>
     options.UseNpgsql(dataSource, sql => sql.MigrationsAssembly(PolicyStoreContextFactory.MigrationsAssembly)));
 
+// The same store instance enforcement reads, registered where MapDwPolicyAdmin looks for it: the
+// endpoints resolve it from the request's services, so a store handed only to DwPolicy.Configure
+// leaves GET /rules answering 501 while the rules it cannot list are being enforced on every query.
+// A new context per read, because the provider's background timer reads the store too.
+// The resolver is what lets UpsertAsync refuse a rule aimed at a sealed field; it is read lazily
+// because the options are not configured until after the host is built.
+builder.Services.AddSingleton(_ => new EfPolicyStore(
+    () => new DwPolicyDbContext(policyDbOptions),
+    name => DwPolicy.Options.Entities.Resolve(name)));
+
+builder.Services.AddSingleton<IDwPolicyStore>(sp => sp.GetRequiredService<EfPolicyStore>());
+builder.Services.AddSingleton<IDwPolicyWritableStore>(sp => sp.GetRequiredService<EfPolicyStore>());
+
+// A header stands in for whatever a real deployment authenticates with. It is a scheme rather than
+// a bare assertion because authorization that fails with no scheme registered cannot challenge: the
+// caller would see a 500 where a 401 belongs, and the policy layer would be handed a principal that
+// is nobody. See DemoAdminAuthentication.
+builder.Services
+    .AddAuthentication(DemoAdminAuthentication.SchemeName)
+    .AddScheme<AuthenticationSchemeOptions, DemoAdminAuthentication>(
+        DemoAdminAuthentication.SchemeName, configureOptions: null);
+
 // MapDwPolicyAdmin refuses to mount without both of these by name — there is deliberately no
-// default, because POST /rules changes what every caller may see. This demo gates them on a header
-// so Swagger can drive them; a real deployment would require a role or a scope here instead.
+// default, because POST /rules changes what every caller may see. A deployment names its own role
+// or scope here; the shape is the same.
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("DwPolicyRead", policy => policy.RequireAssertion(HasAdminHeader));
-    options.AddPolicy("DwPolicyWrite", policy => policy.RequireAssertion(HasAdminHeader));
+    options.AddPolicy("DwPolicyRead", policy => policy.RequireRole(DemoAdminAuthentication.Role));
+    options.AddPolicy("DwPolicyWrite", policy => policy.RequireRole(DemoAdminAuthentication.Role));
 });
 
 // Configure DynamicWhere cache
@@ -123,7 +148,9 @@ using (var scope = app.Services.CreateScope())
         var policyContext = services.GetRequiredService<DwPolicyDbContext>();
         await policyContext.Database.MigrateAsync();
 
-        await ConfigureDynamicWherePoliciesAsync(policyDbOptions, services.GetRequiredService<ILogger<Program>>());
+        await ConfigureDynamicWherePoliciesAsync(
+            services.GetRequiredService<EfPolicyStore>(),
+            services.GetRequiredService<ILogger<Program>>());
 
         // The admin demo controller opens its own short-lived contexts rather than sharing a scoped
         // one, because the store is also read by the provider's background refresh timer.
@@ -156,6 +183,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseAuthentication();
 app.UseAuthorization();
 
 // Drains whatever a request recorded against its context to the configured sink, once, at the end
@@ -176,23 +204,9 @@ app.MapDwPolicyAdmin(options =>
 
 app.Run();
 
-// --------------------------------------------------
-// Helper: policy administration authorization
-// --------------------------------------------------
-
-// Deliberately not AllowAnonymousAccess. That escape hatch exists for a deployment where something
-// in front of the application authorizes, and using it in a sample would teach the wrong shape for
-// an endpoint that rewrites what every caller may see.
-static bool HasAdminHeader(Microsoft.AspNetCore.Authorization.AuthorizationHandlerContext context)
-{
-    if (context.Resource is not HttpContext http)
-    {
-        return false;
-    }
-
-    return http.Request.Headers.TryGetValue("X-Dw-Admin", out var value)
-        && string.Equals(value, "demo", StringComparison.Ordinal);
-}
+// Deliberately not AllowAnonymousAccess on MapDwPolicyAdmin. That escape hatch exists for a
+// deployment where something in front of the application authorizes, and using it in a sample would
+// teach the wrong shape for an endpoint that rewrites what every caller may see.
 
 // --------------------------------------------------
 // Helper: DynamicWhere policy configuration
@@ -201,8 +215,7 @@ static bool HasAdminHeader(Microsoft.AspNetCore.Authorization.AuthorizationHandl
 // Called once, at startup. DwPolicy.Configure refuses a second call: the tier is read by every
 // request thread without synchronization, and a posture that can change mid-flight is one that can
 // be relaxed by a code path nobody expected to be security-relevant.
-static async Task ConfigureDynamicWherePoliciesAsync(
-    DbContextOptions<DwPolicyDbContext> policyDbOptions, ILogger logger)
+static async Task ConfigureDynamicWherePoliciesAsync(EfPolicyStore store, ILogger logger)
 {
     if (DwPolicy.IsConfigured)
     {
@@ -262,10 +275,6 @@ static async Task ConfigureDynamicWherePoliciesAsync(
         throw new InvalidOperationException(
             "The policy model does not validate. See the errors above.");
     }
-
-    // A new context per read: the store is polled on a background timer and a pooled context shared
-    // with request threads would be used concurrently.
-    var store = new EfPolicyStore(() => new DwPolicyDbContext(policyDbOptions));
 
     StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(store, options);
 

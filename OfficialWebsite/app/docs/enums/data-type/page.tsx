@@ -137,11 +137,15 @@ export default function Page() {
 
       <Callout tone="warn" title="How the two date types build their predicate">
         <code>DateTime</code> and <code>Date</code> read the member&apos;s CLR type
-        before building the predicate. The null guard is emitted only for a member
-        that can be null, so on a non-nullable member <code>IsNull</code> answers{" "}
-        <code>false</code> and <code>IsNotNull</code> answers <code>true</code>. On a
-        nullable one the guard wraps the whole comparison, so a null row fails{" "}
-        <code>NotEqual</code> and <code>NotBetween</code> too. A{" "}
+        before building the predicate. The null guard is emitted only where the
+        value can be null, so on a non-nullable member of the entity itself{" "}
+        <code>IsNull</code> answers <code>false</code> and <code>IsNotNull</code>{" "}
+        answers <code>true</code>. On a nullable one the guard wraps the whole
+        comparison, so a null row fails <code>NotEqual</code> and{" "}
+        <code>NotBetween</code> too. Reached through a navigation —{" "}
+        <code>Approval.ApprovedAt</code> — the navigation is guarded instead, and{" "}
+        <code>IsNull</code> / <code>IsNotNull</code> ask whether it is there: the
+        provider reads the member of a missing approval as NULL. A{" "}
         <code>DateTimeOffset</code> member is compared against a{" "}
         <code>DateTimeOffset</code> literal and a <code>DateTime</code> member
         against a <code>DateTime</code> literal. A <code>DateOnly</code> member is
@@ -204,7 +208,16 @@ export default function Page() {
             <td>
               <code>Z</code> or an offset after the time:{" "}
               <code>2026-09-01T12:30:00Z</code>,{" "}
-              <code>2026-09-01T12:30:00+03:00</code>
+              <code>2026-09-01T12:30:00+03:00</code>, <code>+0300</code>,{" "}
+              <code>+03</code>
+            </td>
+          </tr>
+          <tr>
+            <td>… as other systems write it</td>
+            <td>
+              A lowercase <code>t</code> or <code>z</code>, a comma before the
+              fraction, and a fraction of more than seven digits — Go and Java
+              write nine — which is cut to the seven a <code>DateTime</code> holds
             </td>
           </tr>
           <tr>
@@ -259,7 +272,8 @@ export default function Page() {
         readings would fail on the 5th of the month and pass on the 15th, so a
         client would find out in production instead of on its first request. The
         field — or the <code>Having</code> alias — is on{" "}
-        <code>LogicException.Subject</code>, as it is for an{" "}
+        <code>LogicException.Subject</code>, named as the caller wrote it even
+        under a <code>[DwAlias]</code>, as it is for an{" "}
         <code>InvalidFormat</code> raised by a date value. Send ISO&nbsp;8601 (
         <code>&quot;2026-09-15&quot;</code>,{" "}
         <code>&quot;2026-09-15T12:00:00Z&quot;</code>), or declare the form your
@@ -316,6 +330,16 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
           as <code>yyyy-MM</code>, is accepted and reads the 1st.
         </li>
         <li>
+          So are a malformed format; a format that reads part of what it writes
+          back differently — <code>dd/MM/yyyy hh:mm</code>, a 12-hour clock with no{" "}
+          <code>tt</code>, reads 4 PM as 4 AM; a format with a day but no month
+          — <code>dd/mm/yyyy</code>, where <code>mm</code> is minutes; and two
+          formats that put the day and the month in opposite orders even in
+          different shapes, since <code>dd/MM/yyyy HH:mm</code> beside{" "}
+          <code>MM/dd/yyyy</code> would read <code>01/09/2026 00:00</code> as 1
+          September and <code>01/09/2026</code> as 9 January.
+        </li>
+        <li>
           The formats are process-wide and every query reads them without a lock,
           so they are set once: a second <code>DwDates.Configure</code> call throws{" "}
           <code>InvalidOperationException</code>.
@@ -338,9 +362,10 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
             <td>
               Checks and freezes the options and sets them for the process.
               Throws <code>ArgumentNullException</code> for <code>null</code>;{" "}
-              <code>ArgumentException</code> for a blank format, a format that
-              cannot read the text it writes, a format with no year, or two that
-              read one text as different dates; and{" "}
+              <code>ArgumentException</code> for a blank or malformed format, a
+              format that cannot read back what it writes, a format with no year or
+              with a day but no month, two that read one text as different dates,
+              or two that put the day and the month in opposite orders; and{" "}
               <code>InvalidOperationException</code> on a second call.
             </td>
           </tr>
@@ -387,7 +412,11 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
       <Callout tone="warn" title="Zones: DateTimeOffset reads as UTC, DateTime as host local time">
         On a <code>DateTimeOffset</code> member the value is normalized to UTC, and
         one carrying no zone is read as UTC, so <code>Date</code> compares the
-        calendar day you wrote. On a <code>DateTime</code> member a value carrying
+        calendar day you wrote — send a day comparison without a zone. The
+        member&apos;s own day is the provider&apos;s: its UTC day on PostgreSQL,
+        but the day in its stored offset in memory, so a row at{" "}
+        <code>2026-09-01T01:00+03:00</code> is 31 August on one and 1 September
+        on the other. On a <code>DateTime</code> member a value carrying
         a zone is converted to the host&apos;s local time. A C#{" "}
         <code>DateTime</code> placed in <code>Values</code> is written with no zone
         whatever its <code>Kind</code>, so on a <code>DateTimeOffset</code> member{" "}

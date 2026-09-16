@@ -358,7 +358,7 @@ public string FullTextNotes { get; set; } = string.Empty;`}</Code>
           <tr>
             <td><code>AllowAggregate = true</code></td>
             <td>a floor left in place</td>
-            <td>a group of one returns the exact value under any aggregate — which needs the global <code>DwCaps.MinGroupSize</code> (5 by default) to have been switched off, or a per-field floor of 1</td>
+            <td>a group of one returns the exact value under any aggregate — which needs the global <code>DwCaps.MinGroupSize</code> (5 by default) to have been switched off (set to 1), with no per-field floor above 1 — the larger of the two applies</td>
           </tr>
           <tr>
             <td>a mask on a filterable field</td>

@@ -80,7 +80,9 @@ export default function Page() {
         </tbody>
       </table>
       <p>
-        Every cap is frozen at startup and reports through the trace. Most refuse
+        Every cap is frozen at startup, and a cap that refuses records it in the
+        trace; <code>DefaultPageSize</code>, which refuses nothing, records
+        nothing. Most refuse
         a value below one. Two accept <code>0</code> and refuse only a negative
         value: <code>DefaultFieldCost</code>, which is the posture for a model
         that weighs its few expensive fields and wants the rest free, and{" "}

@@ -216,13 +216,13 @@ PageCount     (int)Math.Ceiling((double)TotalCount / PageSize), or 1 when no Pag
               on FilterResult, SummaryResult and SegmentResult alike. Before 3.1.0 an unpaged Filter or Summary
               reported PageCount = TotalCount (one page per row) and an unpaged Segment with sets reported 0.
               Unpaged, PageNumber and PageSize stay 0 — except on a guarded query when DwCaps.DefaultPageSize is
-              set, which gives it page 1 at that size (section 18)
+              set, which gives it page 1 at min(DefaultPageSize, MaxPageSize) (section 12)
 Data          the page. Typed rows are whole T objects even with Selects: unselected members keep constructor defaults
 QueryString   with getQueryString: true, EF Core ToQueryString() of the data query (after order, page and projection;
               never the count query), otherwise null. Always null for Segment, which has no such parameter.
               On a non-EF source it holds the text "The given 'IQueryable' does not support generation of query strings."
               Under ApplyPolicy in the Strict tier, getQueryString: true throws QueryStringDenied
-Policy        PolicyTrace written by the ApplyPolicy terminals (section 18); null otherwise
+Policy        PolicyTrace written by the ApplyPolicy terminals (section 21); null otherwise
 ```
 
 ---
@@ -286,9 +286,9 @@ bool / bool?                             Boolean
 Guid / Guid?                             Guid
 DateTime                                 DateTime    exact instant comparison
 DateTime                                 Date        compares .Date on both sides
-DateTime?                                DateTime    Date on DateTime? throws ParseException ("No property or field 'Date'
-                                                     exists in type 'DateTime?'"); filter a nullable date with a
-                                                     DateTime range instead
+DateTime? / DateTimeOffset / DateTimeOffset? / DateOnly / DateOnly?
+                                         DateTime    also Date; the predicate is built from the member's type
+                                                     (3.1.0; before it, DataType.Date on DateTime? threw)
 enum (stored as int or as string)        Enum        Equal NotEqual In NotIn IsNull IsNotNull; value by member name (any
                                                      case) or by number. Contains/StartsWith/EndsWith on an enum-typed
                                                      member throw ParseException ("No applicable method 'Contains' exists
@@ -322,7 +322,7 @@ V by DataType   Text, Guid, Enum    "v"                 Number, Boolean   v (unq
                                     where the member is nullable
 ```
 
-- Every operator except IsNull / IsNotNull starts with `f != null &&`, **for a member that can be null**. Negated
+- Every operator except IsNull / IsNotNull starts with `f != null &&`. Negated
   operators (NotEqual, NotIn, NotContains, NotBetween …) therefore never return rows whose member is null.
 - The date types are the exception: since 3.1.0 they resolve the member's type first and emit the guard only
   where the member is actually nullable (section 4, Date / DateTime). Every other DataType still guards
@@ -379,12 +379,15 @@ Date       ISO 8601 / year-first / a declared format (3.1.0)       ISO 8601 date
   - **Which texts are dates (3.1.0).** Read against explicit formats, never the lenient parser; the server's culture
     and calendar decide nothing.
     - Always accepted: ISO 8601 — `"2026-09-01"` (also `"2026-9-1"`), optionally `T` or a space and a time
-      (`"12:30"`, `"12:30:15"`, `"12:30:15.123"`), optionally `Z` or an offset (`"+03:00"`) — and year-first dates
-      `"2026/09/01"`, `"2026.09.01"` with the same optional time.
+      (`"12:30"`, `"12:30:15"`, `"12:30:15.123"`), optionally `Z` or an offset (`"+03:00"`, `"+0300"`, `"+03"`) — and
+      year-first dates `"2026/09/01"`, `"2026.09.01"` with the same optional time. A lowercase `t` or `z` and a comma
+      before the fraction are accepted, and a fraction longer than seven digits (Go and Java write nine) is cut to
+      seven, the 100 ns a `DateTime` holds.
     - A numeric date that leads with a day or a month — `"01/09/2026"`, `"15/09/2026"`, `"09/15/2026"`,
       `"01.09.2026"`, `"01-09-2026"`, `"1/9/26"` — throws `AmbiguousDateFormat` whatever its numbers, with the field
-      as `LogicException.Subject`. By shape, not value: refusing only the values with two readings would fail on
-      the 5th of the month and pass on the 15th.
+      as `LogicException.Subject` (under `ApplyPolicy`, the name the caller wrote, so an alias is not undone). By
+      shape, not value: refusing only the values with two readings would fail on the 5th of the month and pass on
+      the 15th.
     - Anything else is `InvalidFormat`, including `"12:00"`, `"1/9"`, `"Sep 2026"`, `"1 September 2026"` — which
       the lenient parser used to accept as today at noon, 9 January of this year, and 1 September.
     - A deployment declares a local form once at startup, and it is read with the invariant culture alongside ISO:
@@ -395,12 +398,18 @@ Date       ISO 8601 / year-first / a declared format (3.1.0)       ISO 8601 date
   - A `DateTimeOffset` member is compared against a `DateTimeOffset` literal, normalised to UTC; a value carrying
     no zone is read as UTC, so `DataType.Date` names the day the caller wrote. On Npgsql `DataType.Date` becomes
     `date_trunc('day', col AT TIME ZONE 'UTC')`.
+    - The member's day under `DataType.Date` is the provider's: its UTC day on PostgreSQL, where `timestamptz` keeps
+      no offset, but the day in its own offset in memory (and on a provider that stores the offset, such as SQL
+      Server `datetimeoffset`). A row at `2026-09-01T01:00+03:00` is 31 August on PostgreSQL and 1 September in
+      memory. The value's day is always its UTC day, so send a date with no zone for a day comparison.
   - A `DateTime` member is compared against a `DateTime` literal and keeps the older time-zone behaviour: a value
     with `Z` or an offset converts to server local time first (on a +03:00 server `"2024-01-01T10:00:00Z"`
     compares as 13:00). Send it in the convention the column stores.
-  - A nullable member is unwrapped under its guard (`f.Value`, `f.Value.Date`); a non-nullable member gets no
-    guard at all, and `IsNull` / `IsNotNull` answer `false` / `true` — `WHERE FALSE` and no predicate on Npgsql,
-    for `DateTime` and `DateTimeOffset` alike.
+  - A nullable member is unwrapped under its guard (`f.Value`, `f.Value.Date`). A non-nullable member on the entity
+    itself gets no guard, and `IsNull` / `IsNotNull` answer `false` / `true` — `WHERE FALSE` and no predicate on
+    Npgsql, for `DateTime` and `DateTimeOffset` alike. Reached through a navigation (`Approval.ApprovedAt`), each
+    navigation is guarded instead (`Approval != null && …`), and `IsNull` / `IsNotNull` test the navigation: a
+    provider reads the member of a missing approval as NULL, and 3.0.0 answered by it the same way.
   - `Having` names an alias, so the type comes from the aggregate it stands for: `Minimum`, `Maximum`,
     `FirstOrDefault` and `LastOrDefault` have the member's type (nullable if the member is), and the predicate is
     built exactly as for that member. On Npgsql: `HAVING max(col) > TIMESTAMPTZ '…'`. Count, Sumation and Average
@@ -453,11 +462,19 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
 - Declared formats are accepted **in addition to** ISO 8601 and year-first dates, which every deployment accepts.
 - `Configure` freezes the options and may be called once; a second call throws `InvalidOperationException`. Every
   query reads the formats without a lock.
-- Refused at `Configure` with `ArgumentException`: a blank format; a format that cannot read the text it writes;
-  a format with no year — `dd/MM`, `HH:mm`, `t` — which the parser would complete from the clock, so the same value
-  would name a different date depending on when the query ran; two formats that read one text as different
-  dates — `dd/MM/yyyy` beside `MM/dd/yyyy`, or `yyyy-dd-MM` against ISO. Declare one day/month order. A format with
-  a year but no day, such as `yyyy-MM`, is accepted and reads the 1st.
+- Refused at `Configure` with `ArgumentException`:
+  - a blank or malformed format (`"'dd/MM/yyyy"`, `"q"`);
+  - a format that cannot read back the text it writes, or reads a part of it back differently — `dd/MM/yyyy hh:mm`,
+    a 12-hour clock with no `tt`, reads 4 PM as 4 AM;
+  - a format with no year — `dd/MM`, `HH:mm`, `t` — which the parser would complete from the clock, so the same
+    value would name a different date depending on when the query ran;
+  - a format with a day but no month — `dd/mm/yyyy`, where `mm` is minutes;
+  - two formats that read one text as different dates — `dd/MM/yyyy` beside `MM/dd/yyyy`, or `yyyy-dd-MM` against
+    ISO;
+  - two formats that lead with the day and the month in opposite orders, even in different shapes —
+    `dd/MM/yyyy HH:mm` beside `MM/dd/yyyy` would make `"01/09/2026 00:00"` 1 September and `"01/09/2026"`
+    9 January. Declare one day/month order.
+  - A format with a year but no day, such as `yyyy-MM`, is accepted and reads the 1st.
 - `Bind` throws `InvalidOperationException`, at startup instead of leaving the defaults in force, for a key
   nothing answers to (`ErrorOnUnknownConfiguration`) such as a misspelt `Fromats`, and for a single value where the
   list belongs: `"Formats": "dd/MM/yyyy"`, or one environment variable `DynamicWhere__Dates__Formats`. Write
@@ -572,7 +589,7 @@ method on `IEnumerable<T>`, names such as `ToListFilter` / `ToListAsyncSegment`,
 ### Rules for every method
 
 - The first statement is the `[DwEntity(RequirePolicy = true)]` guard: on such a T, a call outside `ApplyPolicy`
-  throws `PolicyException` `PolicyRequired` (section 12). Then null arguments throw `ArgumentNullException`, then
+  throws `PolicyException` `PolicyRequired` (section 13). Then null arguments throw `ArgumentNullException`, then
   the validation rules of section 8 throw `LogicException`.
 - Composable methods validate and build when called, not when enumerated, so a bad field throws at the call.
 - The async terminals are `async` methods: every exception, validation included, surfaces at `await`.
@@ -593,7 +610,7 @@ products.Select(["Id", "Name", "Category.Name", "OrderItems.Quantity"]) builds
 
 - Errors: `fields` empty → `MustHasFields`; a null or blank entry → `ArgumentNullException`; an unknown path →
   `ConditionMustHasValidFieldName`; no public parameterless constructor on T →
-  `LogicException("SelectTypeMustHaveParameterlessConstructor")` with `Subject = typeof(T).FullName` (checked at
+  `LogicException("SelectTypeMustHaveParameterlessConstructor")` with `Subject = typeof(T).Name` (checked at
   run time; the constraint is only `class`). Before 3.1.0 that message was an English sentence carrying the type
   name inside it.
 - Rows are whole T objects. An unselected member keeps what T's parameterless constructor gives it: initializers
@@ -822,8 +839,9 @@ LastOrDefault   Select(f).OrderByDescending(it).FirstOrDefault()   any simple ty
 A broken rule throws `LogicException` (`DynamicWhere.ex.Exceptions`). The error string is `Message`; there is no
 separate code property. Two constructors: `LogicException(string message)` and, since 3.1.0,
 `LogicException(string message, string? subject)`, whose `Subject` carries what the refusal is about — a type
-name, a field — so the message stays one of the fixed strings a caller matches on. `PolicyException` derives from
-it, so catch `PolicyException` first.
+name, a field — so the message stays one of the fixed strings a caller matches on. Under `ApplyPolicy` a field is
+named as the caller wrote it, so a `[DwAlias]` name is never replaced by the member behind it. `PolicyException`
+derives from it, so catch `PolicyException` first.
 
 ### Every core error string
 
@@ -864,7 +882,7 @@ AmbiguousDateFormat                                                    a Date / 
 SelectTypeMustHaveParameterlessConstructor                             Select<T> / Filter.Selects on a T with no parameterless
                                                                        constructor — a positional record, most often. Also a
                                                                        guarded query where a member carries [DwNoSelect],
-                                                                       because deny-select projects. Subject = T.FullName.
+                                                                       because deny-select projects. Subject = T.Name.
                                                                        3.1.0; before it, an English sentence
 Unsupported combination of DataType '<DataType>' and Operator '<Operator>'.     a pair outside the section 4 table
 ```
@@ -882,7 +900,7 @@ NullReferenceException         a null element inside Conditions, SubConditionGro
 PolicyException                PolicyRequired from the [DwEntity(RequirePolicy = true)] guard; every refusal under ApplyPolicy
 ParseException                 System.Linq.Dynamic.Core.Exceptions.ParseException for input that passes validation but not
                                the parser: "1,000", "NaN", an enum name that is not a member, Contains on an enum-typed
-                               member, Date on DateTime?, a Where on a collection of simple values
+                               member, a Where on a collection of simple values
 InvalidOperationException      async terminal on a non-EF source; typed Select through a reference navigation in memory;
                                two group fields ending in the same segment; ordering by a non-comparable type in memory
 EF Core / provider exceptions  unwrapped (for example SQLite NotSupportedException for ORDER BY on decimal)
@@ -1201,7 +1219,7 @@ Each of these compiles, passes validation, and returns something other than what
 7. **`FirstOrDefault` and `LastOrDefault` return the minimum and maximum value**, not the first and last row.
 8. **Each `Order(...)` call replaces the previous ordering.** Put every key in one `List<OrderBy>`.
 9. **Some requests pass validation and then fail in the parser** with `System.Linq.Dynamic.Core.Exceptions.ParseException`:
-   `DataType.Date` on a `DateTime?` member, `Contains` / `StartsWith` / `EndsWith` on an enum-typed member, a `Where`
+   `Contains` / `StartsWith` / `EndsWith` on an enum-typed member, a `Where`
    directly on a `List<string>`, a Number value with a thousands separator or `NaN`, an enum name that is not a member.
    Treat `ParseException` as a 400 too.
 10. **Summary column names collide silently.** Two group fields ending in the same segment (`Name`, `Category.Name`)
@@ -1290,7 +1308,7 @@ Strict getQueryString check → clone the request → resolve names and aliases 
     and a store it hands in still refuses an unprepared context itself.
   - A store provider's own two refusals sit behind that check: no attachment, and a `User` subject added after
     preparation.
-  - `ForSimulation()` of a prepared context is prepared.
+  - The simulator's copy of a prepared context is prepared too.
 
 ### DwPolicy
 
@@ -1382,9 +1400,9 @@ HashSalt          string; supply via user secrets, an environment variable or a 
 StoreFailure      "LastKnownGood" | "FailClosed" | "StaticOnly"
 MaxSnapshotAge    TimeSpan "hh:mm:ss", e.g. "00:15:00"
 RefreshInterval   TimeSpan "hh:mm:ss", e.g. "00:00:30"
-Caps:MaxPageSize  Caps:MaxConditions  Caps:MaxOrderFields  Caps:MaxNavigationDepth  Caps:MaxQueryCost
-Caps:DefaultFieldCost  Caps:MaxAuditEvents  Caps:MinGroupSize  Caps:SchemaDepth  Caps:SchemaCycleLimit
-Caps:MaxSchemaFields                                                        integers
+Caps:MaxPageSize  Caps:DefaultPageSize  Caps:MaxConditions  Caps:MaxConditionDepth  Caps:MaxOrderFields
+Caps:MaxNavigationDepth  Caps:MaxQueryCost  Caps:DefaultFieldCost  Caps:MaxAuditEvents  Caps:MinGroupSize
+Caps:SchemaDepth  Caps:SchemaCycleLimit  Caps:MaxSchemaFields                integers
 ```
 
 ```jsonc
@@ -1542,7 +1560,7 @@ DwSubjectKind   Global=0  Tenant=1  Role=2  User=3  Custom=4
   - Calling `PrepareAsync` again replaces what was pinned.
 - A context serves the one snapshot pinned at `PrepareAsync`. Once it is older than `MaxSnapshotAge`, store-backed queries throw `StoreUnavailable`, so never cache contexts across requests.
 - Queries may share one context concurrently, because the audit buffer is locked. Subjects and values are not synchronized: finish building before querying.
-- There is no public `IsPrepared`, correlation id or attachment API.
+- There is no public correlation id or attachment API; `IsPrepared` (3.1.0) says only that `PrepareAsync` ran.
 
 ---
 
@@ -1559,7 +1577,7 @@ PolicyExtensions                                                          static
   where T : class; any null argument → ArgumentNullException
 ```
 
-- `ApplyPolicy` only builds the handle. It resolves no policy and checks no preparation; refusals come from the method called on the handle.
+- `ApplyPolicy` builds the handle and resolves no policy. The two overloads that read `DwPolicy` refuse an unprepared context at the call, with `PolicyContextNotPrepared` (3.1.0); the four-argument overload checks nothing. Every other refusal comes from the method called on the handle.
 - A resolver built with `new PolicyResolver(...)` for the four-argument overload does not include `AttributePolicyProvider`. Add `new AttributePolicyProvider()` yourself, or attributes are ignored.
 
 ### PolicyQueryable<T>
@@ -1999,8 +2017,8 @@ field denied for Segment used anywhere in a Segment          throw             t
 Segment condition on a field denied for Select               allowed           throw    FieldDeniedForSegment
 [DwRequireWhere] not satisfied                               throw             throw    RequiredFilterMissing
 ContextValue missing or null                                 throw             throw    MissingContextValue
-MaxConditions / MaxOrderFields / MaxPageSize /
-  MaxNavigationDepth exceeded                                throw             throw    CapExceeded
+MaxConditions / MaxConditionDepth / MaxOrderFields /
+  MaxPageSize / MaxNavigationDepth exceeded                  throw             throw    CapExceeded
 total cost above MaxQueryCost                                throw             throw    QueryCostExceeded
 getQueryString: true                                         SQL returned      throw    QueryStringDenied
 ```
@@ -2984,7 +3002,7 @@ long Version   bool IsDegraded   DateTimeOffset LoadedAt   TimeSpan Age   Except
 - **`CreateAsync`** runs the first `LoadAsync` without catching it. Any failure throws, whatever `StoreFailure` is, and no provider is created.
 - **Settings source:** `StoreFailure`, `MaxSnapshotAge` and `RefreshInterval` come from the `options` passed to `CreateAsync`, not from `DwPolicy.Options`. Pass the same instance to `DwPolicy.Configure`.
 - **`DwPolicy.Configure(options, provider)`** always adds `AttributePolicyProvider` as well. `DwPolicy.StoreProviders` lists store providers in the order they were passed.
-- **`DwPolicy.PrepareAsync(context, ct)`** calls each store provider's `PrepareAsync` in order. With no store configured it does nothing.
+- **`DwPolicy.PrepareAsync(context, ct)`** calls each store provider's `PrepareAsync` in order, then sets `IsPrepared`. With no store configured it reads nothing, but still sets `IsPrepared`.
 - **`PrepareAsync`:**
   - Loads the narrow zone for the context's User identities, skipped when there are none.
   - Pins onto the context the current snapshot, the provider's `LoadedAt`, the narrow zone, and the identities it read. Preparing again replaces the pin.
@@ -3026,7 +3044,7 @@ StaticOnly     no store fragments; ceiling not checked              ceiling appl
   - It subscribes to `WatchAsync` when that returns non-null. If opening the watch throws, it polls only.
   - It always polls `GetVersionAsync` every `RefreshInterval`. The first poll comes one interval after start.
   - It calls `RefreshAsync` only when the reported version differs from the version being served. A lower version also counts as different.
-  - A poll whose version matches renews the snapshot without reloading: it stamps the load time and clears the degraded flag.
+  - A poll whose version matches renews the snapshot without reloading: it stamps the load time (as of when it asked) and clears the degraded flag — unless a refresh or poll failed while its read was in flight, in which case it reloads instead (3.1.0).
 - **Degraded state:**
   - A failed poll sets `IsDegraded` and leaves `LastError` alone. A failed reload sets both.
   - Cleared by a successful `RefreshAsync`, and by a poll that reads back the version being served.
@@ -3063,7 +3081,7 @@ DwPolicyContext caller = await DwPolicy.PrepareAsync(new DwPolicyContext().WithS
 ## 27. Redis package — DynamicWhere.ex.Policies.Redis
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.0.0, StackExchange.Redis 2.8.24   namespace DynamicWhere.ex.Policies.Redis
+net6.0   dependencies: DynamicWhere.ex 3.1.0, StackExchange.Redis 2.8.24   namespace DynamicWhere.ex.Policies.Redis
 
 new RedisPolicyStore(IConnectionMultiplexer redis, string? prefix = null, Func<string, Type?>? resolveType = null)
     : IDwPolicyWritableStore
@@ -3115,7 +3133,7 @@ DwPolicy.Configure(options, await StorePolicyProvider.CreateAsync(store, options
 ## 28. Entity Framework Core package — DynamicWhere.ex.Policies.EntityFrameworkCore
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.0.0, Microsoft.EntityFrameworkCore.Relational 6.0.22
+net6.0   dependencies: DynamicWhere.ex 3.1.0, Microsoft.EntityFrameworkCore.Relational 6.0.22
 namespace DynamicWhere.ex.Policies.EntityFrameworkCore      no raw SQL; any EF Core relational provider; ships no migrations
 
 new EfPolicyStore(Func<DbContext> contexts, Func<string, Type?>? resolveType = null)    : IDwPolicyWritableStore
@@ -3198,7 +3216,7 @@ EfTokenVault:
 ## 29. ASP.NET Core package — DynamicWhere.ex.Policies.AspNetCore
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.0.0, FrameworkReference Microsoft.AspNetCore.App
+net6.0   dependencies: DynamicWhere.ex 3.1.0, FrameworkReference Microsoft.AspNetCore.App
 namespace DynamicWhere.ex.Policies.AspNetCore
 ```
 
@@ -3418,12 +3436,14 @@ PolicyException : LogicException                                   namespace Dyn
   PolicyException(PolicyErrorCode errorCode, string fieldPath, PolicyFeature feature, DwTier tier)
   ErrorCode     : PolicyErrorCode     branch on this
   Code          : string              ErrorCode.ToString(), for logs and JSON
-  FieldPath     : string              the name the caller wrote; "*" for the whole request; the entity's short type name
-                                      for PolicyRequired, StoreUnavailable and PolicyContextNotPrepared; the transformed
-                                      paths joined by ", " for TransformRequiresMaterialization and AmbiguousGroupKey
-  Feature       : PolicyFeature
-  Tier          : DwTier              the tier in force; always Strict for PolicyRequired, StoreUnavailable and
-                                      PolicyContextNotPrepared
+  FieldPath     : string              the name the caller wrote; "*" for the whole request, including the
+                                      PolicyContextNotPrepared ApplyPolicy raises; the entity's short type name for
+                                      PolicyRequired, StoreUnavailable and a store provider's PolicyContextNotPrepared;
+                                      the transformed paths joined by ", " for TransformRequiresMaterialization and
+                                      AmbiguousGroupKey
+  Feature       : PolicyFeature       None for ApplyPolicy's PolicyContextNotPrepared; All for a store provider's refusals
+  Tier          : DwTier              the tier in force; always Strict for PolicyRequired, StoreUnavailable and a store
+                                      provider's PolicyContextNotPrepared (ApplyPolicy's carries the configured tier)
   RuleId        : string? { init; }   the rule that decided, when exactly one source decided
   SourceOrigin  : string? { init; }   the attribute, rule, cap or reason that decided, e.g.
                                       "MaxPageSize cap (1000), request had 1001"
@@ -3448,8 +3468,9 @@ through `PolicySimulator` or in dry run to see the decisions).
                                       a Segment condition on a field the caller may not Select
 7   AllSelectsDenied                  Convenience dropped every requested select (FieldPath "*")                recorded
 8   OperatorNotAllowed                an operator outside the field's allowed set ([DwOperators], rules)        recorded
-9   CapExceeded                       MaxPageSize, MaxConditions, MaxOrderFields or MaxNavigationDepth           recorded, except the
-                                      exceeded; or the context already holds MaxAuditEvents undrained events    audit buffer: throws
+9   CapExceeded                       MaxPageSize, MaxConditions, MaxConditionDepth, MaxOrderFields or           recorded, except the
+                                      MaxNavigationDepth exceeded; or the context already holds MaxAuditEvents  audit buffer: throws
+                                      undrained events
 10  PolicyRequired                    a DynamicWhere extension method called on a                               throws
                                       [DwEntity(RequirePolicy = true)] type outside ApplyPolicy
 11  RequiredFilterMissing             a [DwRequireWhere] field has no AND-reachable condition using one of      recorded
@@ -3608,9 +3629,10 @@ Read before generating policy attributes.
 7. **Neither `Hash` nor `Tokenize` hides equality.** A caller who writes a value and reads it back learns
    its stand-in. `Hash` emits 64 hex characters and `Tokenize` 32, so switching strategies changes the
    column width.
-8. **Prepare the context once per request.** `PolicyContextNotPrepared` is raised only when a store
-   provider is configured; with attributes alone `PrepareAsync` does nothing. Adding a `User` subject
-   after preparation also raises it.
+8. **Prepare the context once per request.** Since 3.1.0 `ApplyPolicy(context)` raises
+   `PolicyContextNotPrepared` for a context that skipped `PrepareAsync`, with or without a store; with
+   attributes alone `PrepareAsync` reads nothing but records that it ran. With a store, adding a `User`
+   subject after preparation also raises it.
 9. **Transforms rewrite the returned instances**, which were loaded `AsNoTracking`. Never attach and save
    them. `AsUnguardedQueryable()` output is never transformed.
 10. **The group floor removes rows; it never refuses.** It applies to every guarded summary by default
@@ -4108,18 +4130,20 @@ MemoryCalculationInput
 ### History
 
 ```
-3.1.0   Date comparisons rebuilt, two new caps, one new error code, and preparation enforced everywhere.
+3.1.0   Date comparisons rebuilt, two new caps, two new error codes, and preparation enforced with or without a store.
         - DataType.Date / DataType.DateTime resolve the member's type before building the predicate. Every
           comparison on a DateTimeOffset member used to throw, and DataType.Date on any nullable date member
-          used to throw; both work. The null guard is emitted only for a nullable member, so IsNull / IsNotNull
-          on a non-nullable date member answer false / true instead of throwing.
+          used to throw; both work. The null guard is emitted only where the value can be null: IsNull / IsNotNull
+          on a non-nullable date member of the entity answer false / true instead of throwing, and through a
+          navigation they test the navigation.
         - A date value must be ISO 8601, year-first, or a format declared through DwDates.Configure. A numeric
           day/month date such as "01/09/2026" throws the new AmbiguousDateFormat; lenient forms such as "12:00"
           are InvalidFormat. The server's culture no longer decides anything. DateTimeOffset values normalise to
           UTC, and a value with no zone is read as UTC. C# date objects in Values are written year-first.
         - DateOnly members can be filtered; they could not under either date data type.
         - HAVING on a date alias takes its type from the aggregate, so it works on DateTimeOffset.
-        - PageCount on an unpaged result is 1 (0 with no rows) rather than TotalCount.
+        - PageCount on an unpaged result is 1 (0 with no rows), rather than TotalCount, or 0 for a Segment with
+          condition sets.
         - DwCaps.DefaultPageSize (default 0 = off) bounds a guarded query that sends no Page; DwCaps
           .MaxConditionDepth (default 10) bounds how deeply condition groups nest.
         - ErrorCode.SelectTypeMustHaveParameterlessConstructor replaces the English sentence a Select on an

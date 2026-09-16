@@ -113,8 +113,8 @@ Since 3.1.0 the predicate is built from the member's own CLR type, which is what
 
 | | What the library does |
 |---|---|
-| Accepted texts | **ISO 8601** (`2026-09-01`, optionally `T` or a space and a time, a fraction, `Z` or an offset) and **year-first** dates (`2026/09/01`, `2026.09.01`), on every deployment. A numeric date that leads with a day or a month — `01/09/2026`, `15.09.2026` — is refused with `AmbiguousDateFormat` whatever its numbers, so a client finds out on its first request rather than on the fifth of the month. Anything else, including `12:00` and `Sep 2026`, is `InvalidFormat`. The server's culture and calendar decide nothing |
-| Declared formats | A deployment whose clients send a local form declares it once: `DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))`, or bound from `DynamicWhere:Dates:Formats` (a list; a single value there refuses to bind). Two formats that read one text differently are refused at configuration, and so is a format with no year, which the parser would complete from the clock |
+| Accepted texts | **ISO 8601** (`2026-09-01`, optionally `T` or a space and a time, a fraction, `Z` or an offset such as `+03:00`, `+0300` or `+03`; a lowercase `t`/`z`, a comma before the fraction, and fractions beyond seven digits are accepted too) and **year-first** dates (`2026/09/01`, `2026.09.01`), on every deployment. A numeric date that leads with a day or a month — `01/09/2026`, `15.09.2026` — is refused with `AmbiguousDateFormat` whatever its numbers, so a client finds out on its first request rather than on the fifth of the month. Anything else, including `12:00` and `Sep 2026`, is `InvalidFormat`. The server's culture and calendar decide nothing |
+| Declared formats | A deployment whose clients send a local form declares it once: `DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))`, or bound from `DynamicWhere:Dates:Formats` (a list; a single value there refuses to bind). Two formats that read one text differently, or that put the day and month in opposite orders, are refused at configuration, and so is a format that is malformed, cannot read back what it writes (`hh` without `tt`), has no year, or has a day but no month |
 | `DateOnly` member | Compared as a day under both date data types, against a `DateOnly(y, m, d)` constructor. On Npgsql, `WHERE "Day" = DATE '2026-09-01'` |
 | `HAVING` | Names an alias, so the type comes from the aggregate behind it: `Minimum`, `Maximum`, `FirstOrDefault` and `LastOrDefault` carry the member's type, nullable if the member is, and the predicate is built as for that member. On Npgsql, `HAVING max(col) > TIMESTAMPTZ '…'` |
 | `DateTimeOffset` member | Compared against a `DateTimeOffset` literal normalised to UTC. A value carrying no zone is read as UTC, so `Date` names the day the caller wrote. On Npgsql `Date` becomes `date_trunc('day', col AT TIME ZONE 'UTC')` |
@@ -411,7 +411,7 @@ Combines filtering → grouping → having → ordering → pagination for aggre
 |----------|------|-------------|
 | `PageNumber` | `int` | Current page (0 when no pagination) |
 | `PageSize` | `int` | Page size (0 when no pagination) |
-| `PageCount` | `int` | Total pages. `1` when no page was requested (`0` with no rows) — before 3.1.0 an unpaged filter or summary reported one page per row, and an unpaged segment reported none |
+| `PageCount` | `int` | Total pages. `1` when no page was requested (`0` with no rows) — before 3.1.0 an unpaged filter or summary reported one page per row, and an unpaged segment with condition sets reported none |
 | `TotalCount` | `int` | Total matching records |
 | `Data` | `List<T>` | The result entities |
 | `QueryString` | `string?` | Generated SQL (when `getQueryString: true`) |
@@ -426,7 +426,7 @@ Inherits all properties from `FilterResult<T>`. Returned by segment operations.
 |----------|------|-------------|
 | `PageNumber` | `int` | Current page (0 when no pagination) |
 | `PageSize` | `int` | Page size (0 when no pagination) |
-| `PageCount` | `int` | Total pages. `1` when no page was requested (`0` with no rows) — before 3.1.0 an unpaged filter or summary reported one page per row, and an unpaged segment reported none |
+| `PageCount` | `int` | Total pages. `1` when no page was requested (`0` with no rows) — before 3.1.0 an unpaged filter or summary reported one page per row, and an unpaged segment with condition sets reported none |
 | `TotalCount` | `int` | Total grouped records |
 | `Data` | `List<dynamic>` | Dynamic objects with group keys + aggregation values |
 | `QueryString` | `string?` | Generated SQL (when `getQueryString: true`) |
@@ -1666,7 +1666,7 @@ Options are frozen at startup. Every cap refuses a value below one, except two t
 | `GET` | `/rules?subject=` | List rules. The filter is `Kind[:Key]` — `Role:auditor`, not a bare key. Omit it for every enabled broad rule; a user's rules live in the narrow zone and need `User:{key}` |
 | `POST` | `/rules` | Upsert. Sealed fields are rejected |
 | `DELETE` | `/rules/{id}` | Delete |
-| `POST` | `/explain` | The decision chain: what won, what it overrode, what was ignored |
+| `POST` | `/explain` | The decision chain: what won, what it overrode, what tied with it |
 | `POST` | `/simulate` | The sanitized clause, without executing or auditing |
 | `GET` | `/health` | Snapshot version, age, degraded state, last error |
 
@@ -1944,7 +1944,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `InvalidPageSize` | `PageSizeMustBeGreaterThanZero` | PageSize ≤ 0 |
 | `MustHaveFields` | `MustHasFields` | Empty fields list in Select |
 | `InvalidFormat` | `InvalidFormat` | Value doesn't parse for declared DataType. For a date: not ISO 8601, year-first, or a declared format |
-| `AmbiguousDateFormat` | `AmbiguousDateFormat` | A date value that leads with a day or a month (`01/09/2026`) and matches no declared format. `LogicException.Subject` carries the field |
+| `AmbiguousDateFormat` | `AmbiguousDateFormat` | A date value that leads with a day or a month (`01/09/2026`) and matches no declared format. `LogicException.Subject` carries the field, as the caller wrote it |
 | `SelectTypeMustHaveParameterlessConstructor` | `SelectTypeMustHaveParameterlessConstructor` | `Select<T>` or `Filter.Selects` on a `T` the projection cannot construct. `LogicException.Subject` carries the type's full name |
 | `InvalidAlias` | `AggregationMustHasValidAlias` | Alias is not a plain identifier — empty, or carrying a dot, comma, space, or dash |
 | `GroupByMustHaveFields` | `GroupByMustHasAtLeastOneField` | GroupBy with no fields |
@@ -1967,7 +1967,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 ### ⚠️ Breaking Points
 
 1. **Parameterless Constructor Required for Select Projection**
-   `Select<T>(fields)` requires `T` to have a parameterless (default) constructor. If `T` does not have one — a positional record, most often — a `LogicException` is thrown whose `Message` is the stable code `SelectTypeMustHaveParameterlessConstructor` and whose `Subject` carries `typeof(T).FullName`. Before 3.1.0 that message was an English sentence with the type name inside it. Most EF Core entity classes have parameterless constructors by default. A guarded query reaches the same refusal when a member carries `[DwNoSelect]`, because deny-select projects.
+   `Select<T>(fields)` requires `T` to have a parameterless (default) constructor. If `T` does not have one — a positional record, most often — a `LogicException` is thrown whose `Message` is the stable code `SelectTypeMustHaveParameterlessConstructor` and whose `Subject` carries `typeof(T).Name`. Before 3.1.0 that message was an English sentence with the type name inside it. Most EF Core entity classes have parameterless constructors by default. A guarded query reaches the same refusal when a member carries `[DwNoSelect]`, because deny-select projects.
 
 2. **Segment Operations are Async-Only**
    `ToListAsync<T>(Segment)` is the only entry point for segment queries. There is no synchronous `ToList<T>(Segment)` variant. Each `ConditionSet` is materialized independently into memory, then set operations are performed in-memory.

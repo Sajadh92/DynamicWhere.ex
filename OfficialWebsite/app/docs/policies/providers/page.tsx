@@ -47,9 +47,12 @@ DwPolicy.Configure(options, provider);`}</Code>
 //
 // The second argument turns a rule's entity name into a Type. Without it the
 // store cannot run its sealed-field check on a write and accepts the rule.
+// A lambda, not DwPolicy.Options.Entities.Resolve: a method group binds the
+// options in force now, which before Configure are the empty defaults, so
+// every rule would pass the check.
 var store = new EfPolicyStore(
     () => new DwPolicyDbContext(policyDbOptions),
-    DwPolicy.Options.Entities.Resolve);
+    name => DwPolicy.Options.Entities.Resolve(name));
 
 var provider = await StorePolicyProvider.CreateAsync(store, options);
 

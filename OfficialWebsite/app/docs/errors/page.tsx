@@ -91,7 +91,7 @@ export default function Page() {
         <code>{`Select projection requires a parameterless constructor on type '{T}'.`}</code>{" "}
         Its <code>Message</code> is now the stable code{" "}
         <code>SelectTypeMustHaveParameterlessConstructor</code>, and the type&apos;s
-        full name moved to a new property on the exception,{" "}
+        name moved to a new property on the exception,{" "}
         <code>LogicException.Subject</code> (<code>string?</code>). Any middleware
         matching on that old sentence — or reading the type name out of it — needs
         updating. See{" "}
@@ -287,7 +287,7 @@ export default function Page() {
             <td>
               <code>Select&lt;T&gt;</code> or <code>Filter.Selects</code> on a{" "}
               <code>T</code> the projection cannot construct — a positional record,
-              most often. The type&apos;s full name is on{" "}
+              most often. The type&apos;s name is on{" "}
               <code>Subject</code>, not in the message. Also reached by a typed
               guarded query whose policy denies a field for <code>Select</code>,
               since the deny synthesizes a projection
@@ -309,11 +309,13 @@ export default function Page() {
         <code>LogicException(string message, string? subject)</code> — and the
         matching read-only property <code>Subject</code> (<code>string?</code>).
         It carries what a refusal is <em>about</em> where the code alone does not
-        say: the rejected type&apos;s <code>FullName</code> on{" "}
+        say: the rejected type&apos;s <code>Name</code> on{" "}
         <code>SelectTypeMustHaveParameterlessConstructor</code>, and the field —
         or the <code>Having</code> alias — on <code>AmbiguousDateFormat</code> and
         on an <code>InvalidFormat</code> raised by a <code>Date</code> or{" "}
-        <code>DateTime</code> value. It is <code>null</code> for every other code,
+        <code>DateTime</code> value. Under <code>ApplyPolicy</code> the field is
+        named as the caller wrote it, so a <code>[DwAlias]</code> name is never
+        swapped for the member it hides. It is <code>null</code> for every other code,
         including <code>InvalidFormat</code> on a <code>Guid</code>,{" "}
         <code>Number</code> or <code>Boolean</code> value; the parameterized codes
         already interpolate their operator, alias, aggregator, type, or field name
@@ -327,7 +329,7 @@ export default function Page() {
       <Code lang="csharp">{`catch (LogicException ex)
 {
     // ex.Message   -> "SelectTypeMustHaveParameterlessConstructor"
-    // ex.Subject   -> "MyApp.Dtos.CustomerRow"
+    // ex.Subject   -> "CustomerRow"
     //
     // ex.Message   -> "AmbiguousDateFormat"
     // ex.Subject   -> "CreatedAt"

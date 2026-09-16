@@ -49,7 +49,7 @@ export default function Page() {
         parameterless (default) constructor. If <code>T</code> does not have one, a{" "}
         <code>LogicException</code> is thrown, with{" "}
         <code>SelectTypeMustHaveParameterlessConstructor</code> as its{" "}
-        <code>Message</code> and the type&apos;s full name on{" "}
+        <code>Message</code> and the type&apos;s name on{" "}
         <code>Subject</code> — see point&nbsp;17 for what that message used to be.
         Most EF Core entity classes have parameterless constructors by default.
       </p>
@@ -499,7 +499,7 @@ export default function Page() {
         — which a caller could not match on, because the type name was
         interpolated into it. The <code>Message</code> is now the fixed
         code <code>SelectTypeMustHaveParameterlessConstructor</code>, and the
-        type&apos;s full name rides on a new property,{" "}
+        type&apos;s name rides on a new property,{" "}
         <code>LogicException.Subject</code> (<code>string?</code>).{" "}
         <code>LogicException</code> gained a second constructor for it,{" "}
         <code>LogicException(string message, string? subject)</code>.

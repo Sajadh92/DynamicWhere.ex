@@ -138,7 +138,7 @@ export default function Page() {
         one, a <code>LogicException</code> is thrown whose <code>Message</code>{" "}
         is the stable code{" "}
         <code>SelectTypeMustHaveParameterlessConstructor</code> and whose{" "}
-        <code>Subject</code> is <code>T</code>&apos;s full name. Before 3.1.0 the
+        <code>Subject</code> is <code>T</code>&apos;s name. Before 3.1.0 the
         message was an English sentence with the type name inside it — see{" "}
         <Link href="/docs/breaking-changes#select-code">breaking changes</Link>.
         Most EF Core entity classes have parameterless constructors by default.

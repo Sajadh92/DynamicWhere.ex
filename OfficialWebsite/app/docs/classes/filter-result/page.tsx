@@ -129,7 +129,8 @@ export default function Page() {
       <Callout tone="info" title="A guarded query may be paged for you">
         On a guarded query, a deployment that sets{" "}
         <Link href="/docs/policies/configuration"><code>DwCaps.DefaultPageSize</code></Link>{" "}
-        gives a request with no <code>Page</code> page <code>1</code> at that size, so{" "}
+        gives a request with no <code>Page</code> page <code>1</code> at that size,
+        capped at <code>MaxPageSize</code>, so{" "}
         <code>PageNumber</code>, <code>PageSize</code> and <code>PageCount</code> come
         back as for any paged request. It never replaces a page the caller sent.
       </Callout>

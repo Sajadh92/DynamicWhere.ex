@@ -105,7 +105,7 @@ Specifies the logical data type of a condition value. The library uses this to c
 | `Boolean` | `true` / `false` | `Equal`, `NotEqual`, `IsNull`, `IsNotNull` |
 | `DateTime` | Full timestamp | `Equal`, `NotEqual`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `NotBetween`, `IsNull`, `IsNotNull` |
 | `Date` | Date-only (compared via `.Date`) | Same as `DateTime` (compares `.Date` part only) |
-| `Enum` | Enum stored as string | `Equal`, `NotEqual`, `Contains`, `NotContains`, `StartsWith`, `EndsWith`, `NotStartsWith`, `NotEndsWith`, `In`, `NotIn`, `IsNull`, `IsNotNull` |
+| `Enum` | An enum member, named or numbered. The column may store either | `Equal`, `NotEqual`, `In`, `NotIn`, `IsNull`, `IsNotNull`. The string operators (`Contains`, `StartsWith`, `EndsWith` and their negations) pass validation but throw `ParseException` against an enum-typed member — they work only where the mapped property is itself a `string`, which is `Text`'s job |
 
 ---
 
@@ -192,8 +192,8 @@ Aggregation function applied inside a `GroupBy`.
 | `Average` | Average of values | Required | **Yes** |
 | `Minimum` | Minimum value | Required | No (except `Boolean`) |
 | `Maximum` | Maximum value | Required | No (except `Boolean`) |
-| `FirstOrDefault` | First value | Required | No |
-| `LastOrDefault` | Last value | Required | No |
+| `FirstOrDefault` | Smallest value (the field is ordered ascending, not taken in row order) | Required | No |
+| `LastOrDefault` | Largest value (the field is ordered descending, not taken in row order) | Required | No |
 
 ---
 
@@ -686,7 +686,7 @@ Async-only segment operation. Executes each `ConditionSet` independently, then a
 | `In` / `IIn` / `NotIn` / `INotIn` require 1+ values | `RequiredValues` |
 | `IsNull` / `IsNotNull` require 0 values | `NotRequiredValues` |
 | All other operators require exactly 1 value | `RequiredOneValue({Operator})` |
-| Values must not be null/whitespace | `InvalidValue` |
+| A null or blank value is **not** refused as such: it normalizes to `""`, which `Text` and `Enum` accept and every other DataType rejects on parsing | `InvalidFormat` — `ErrorCode.InvalidValue` exists but is never thrown |
 | `Guid` values must parse as `Guid` | `InvalidFormat` |
 | `Number` values must parse as a numeric type | `InvalidFormat` |
 | `Boolean` values must parse as `bool` | `InvalidFormat` |
@@ -706,12 +706,12 @@ Async-only segment operation. Executes each `ConditionSet` independently, then a
 | Must have at least one field | `GroupByMustHaveFields` |
 | Fields must be unique (case-insensitive) | `GroupByFieldsMustBeUnique` |
 | Fields cannot be complex/navigation types | `GroupByFieldCannotBeComplexType` |
-| Fields cannot be collection types | `GroupByFieldCannotBeCollectionType` |
+| Fields cannot be a collection **of collections** — the element type is what is checked, so an ordinary collection of entities reports `GroupByFieldCannotBeComplexType` instead | `GroupByFieldCannotBeCollectionType` |
 | Aggregation alias must be a plain identifier (letters, digits, underscores; not starting with a digit) | `InvalidAlias` |
 | Aggregation aliases must be unique | `AggregationAliasesMustBeUnique` |
 | Aggregation alias cannot match a GroupBy field | `AggregationAliasCannotBeGroupByField({alias})` |
 | Aggregation field must be a simple type | `AggregationFieldMustBeSimpleType` |
-| Aggregation field cannot be a collection | `AggregationFieldCannotBeCollectionType` |
+| Aggregation field cannot be a collection **of collections** — the element type is what is checked, so an ordinary collection reports `AggregationFieldMustBeSimpleType` instead | `AggregationFieldCannotBeCollectionType` |
 | `Sumation` / `Average` only work on numeric fields | `UnsupportedAggregatorForType({agg},{type})` |
 | `Minimum` / `Maximum` do not work on `Boolean` | `UnsupportedAggregatorForType({agg},{type})` |
 
@@ -1537,6 +1537,8 @@ DwPolicy.Configure(policyOptions, provider);
 | `FailClosed` | Refuse the query with `StoreUnavailable` |
 | `StaticOnly` | Fall back to attributes alone |
 
+`MaxSnapshotAge` (15 minutes by default) is the ceiling on all three: once the snapshot in hand is older than it, every mode escalates to `FailClosed` and every guarded query is refused with `StoreUnavailable`. The age is renewed by a successful `RefreshAsync`, and also by a `RefreshInterval` poll that reads back the version already being served — a poll that confirms the snapshot is current counts as a load, so a healthy store nobody writes to keeps answering. A provider built with `autoRefresh: false` polls for nothing and renews on neither, so such a host must call `RefreshAsync` itself more often than `MaxSnapshotAge`.
+
 A rule can never target a field the source code seals — refused in `PolicyRule`'s constructor, so it holds for every store and for the admin API alike.
 
 ### Hiding a value you still want to group by
@@ -1569,7 +1571,7 @@ new DwPolicyOptions
 
 | | `Hash` | `Tokenize` |
 |---|---|---|
-| Output | 32 hex characters | 32 hex characters |
+| Output | 64 hex characters (HMAC-SHA256) | 32 hex characters (16 random bytes) |
 | Derived from the value | yes | no |
 | Reversed by | holding the salt | reading the vault |
 | A weak secret | brute-forced offline | does not exist |
@@ -1601,7 +1603,7 @@ equality and no setting removes it. A field that cannot accept it wants `Fixed`,
 Two halves, and neither works alone:
 
 1. **Aggregating a transformed field is denied by default.** Opt in with `AllowAggregate = true`.
-2. **`MinGroupSize` suppresses any group smaller than *k*.** Groups below the floor are removed from the result, not refused.
+2. **`MinGroupSize` suppresses any group smaller than *k*.** Groups below the floor are removed from the result, not refused. It applies to `ToList`/`ToListAsync` over a `Summary` and to the composable `Group(GroupBy)` and `Summary(Summary)` alike — the composable pair runs its sanitized summary through the same pipeline, and re-projects afterwards so the floor's own counting column never reaches the caller.
 
 ```csharp
 [DwGeneralize(GeneralizeMode.Round, Step = 5000, AllowAggregate = true, MinGroupSize = 5)]
@@ -1638,7 +1640,7 @@ Options are frozen at startup. Every cap refuses a value below one, except `Defa
 
 ### Administration
 
-`app.MapDwPolicyAdmin(...)` mounts seven endpoints under `/dw-policies`. It **refuses to map without both `ReadPolicy` and `WritePolicy` named** — there is no default, and it fails at startup rather than on the first request.
+`app.MapDwPolicyAdmin(...)` mounts seven endpoints under `/dw-policies`, which is `DwPolicyAdminOptions.RoutePrefix`'s default and not a fixed path — set `o.RoutePrefix` to mount them anywhere. It **refuses to map without both `ReadPolicy` and `WritePolicy` named** — there is no default, and it fails at startup rather than on the first request.
 
 | Method | Route | Purpose |
 |---|---|---|
@@ -1915,7 +1917,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `SubConditionsGroupsUniqueSort` | `AnyListOfSubConditionsGroupsMustHasUniqueSortValue` | Duplicate Sort in SubConditionGroups |
 | `RequiredIntersection` | `ConditionsSetOfIndex[1-N]MustHasIntersection` | Missing Intersection on set index 1+ |
 | `InvalidField` | `ConditionMustHasValidFieldName` | Empty or invalid field name |
-| `InvalidValue` | `ConditionValuesAreNullOrWhiteSpace` | Null/whitespace value |
+| `InvalidValue` | `ConditionValuesAreNullOrWhiteSpace` | Defined and never thrown. A null value normalizes to `""` and is judged by the DataType like any other string |
 | `RequiredValues` | `ConditionWithOperator[In-IIn-NotIn-INotIn]MustHasOneOrMoreValues` | In/NotIn with 0 values |
 | `NotRequiredValues` | `ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues` | IsNull with values |
 | `RequiredTwoValue` | `ConditionWithOperator[Between-NotBetween]MustHasOnlyTwoValues` | Between without exactly 2 values |
@@ -1928,9 +1930,9 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `GroupByMustHaveFields` | `GroupByMustHasAtLeastOneField` | GroupBy with no fields |
 | `GroupByFieldsMustBeUnique` | `GroupByFieldsMustBeUnique` | Duplicate GroupBy fields |
 | `GroupByFieldCannotBeComplexType` | `GroupByFieldCannotBeComplexType` | Non-simple GroupBy field |
-| `GroupByFieldCannotBeCollection` | `GroupByFieldCannotBeCollectionType` | Collection GroupBy field |
+| `GroupByFieldCannotBeCollection` | `GroupByFieldCannotBeCollectionType` | GroupBy field ending on a collection of collections |
 | `AggregationFieldMustBeSimpleType` | `AggregationFieldMustBeSimpleType` | Complex aggregation field |
-| `AggregationFieldCannotBeCollection` | `AggregationFieldCannotBeCollectionType` | Collection aggregation field |
+| `AggregationFieldCannotBeCollection` | `AggregationFieldCannotBeCollectionType` | Aggregation field ending on a collection of collections |
 | `AggregationAliasesMustBeUnique` | `AggregationAliasesMustBeUnique` | Duplicate aliases |
 | `AggregationAliasCannotBeGroupByField(alias)` | `AggregationAlias[{alias}]CannotBeUsedInGroupByFields` | Alias clashes with field |
 | `UnsupportedAggregatorForType(agg, type)` | `Aggregator[{agg}]IsNotSupportedForFieldType[{type}]` | Invalid aggregator for type |
@@ -1953,11 +1955,11 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 3. **Case-Insensitive Operators use `.ToLower()`**
    All `I*` operators (e.g., `IContains`, `IEqual`) normalize both sides via `.ToLower()`. This works correctly with SQL Server (`COLLATE` is typically case-insensitive), but be aware of potential performance or behavior differences on case-sensitive database collations (e.g., PostgreSQL with `C` locale).
 
-4. **Enum Filtering Requires String Storage**
-   The `Enum` data type assumes enum values are stored as strings (not integers) in the database. If your database stores enums as integers, use `DataType.Number` instead.
+4. **`DataType.Enum` Reads the Member Name, Whatever the Storage**
+   A value is matched by member name (any case) or by number, and EF Core translates it for an `int` column as readily as for a `string` one — the storage is not what decides. What the type does decide is the operator list: `Equal`, `NotEqual`, `In`, `NotIn`, `IsNull` and `IsNotNull` only. `Contains` / `StartsWith` / `EndsWith` against an enum-typed member throw `ParseException` (`No applicable method 'Contains' exists in type '<Enum>'`) under either storage. Use `DataType.Text` for a `string` column that merely holds enum names and needs those operators.
 
 5. **Having Clause Fields Reference Aliases, Not Entity Properties**
-   In a `Summary`, the `Having.ConditionGroup.Conditions[].Field` must match an `AggregateBy.Alias`, not an entity property path.
+   `Summary.Having` is itself the `ConditionGroup`, so the path is `Having.Conditions[].Field` (and the same inside its `SubConditionGroups`). Each of those fields must match an `AggregateBy.Alias`, not an entity property path.
 
 6. **GroupBy Flattens Dotted Field Names in Results**
    Dotted `GroupBy` fields (e.g., `Category.Name`) produce flattened alias keys in the dynamic result objects (e.g., `CategoryName`). Order fields in `Summary.Orders` should use the dotted form; the library handles alias mapping internally.

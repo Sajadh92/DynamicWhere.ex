@@ -15,8 +15,9 @@ A powerful, versatile library for dynamically composing complex **filter, sort, 
 ### Using an AI coding agent?
 
 Point it at **[doc.dynamicwhere.com/llms.txt](https://doc.dynamicwhere.com/llms.txt)** — the entire API
-surface in one plain-text file: every shape and field name, every enum member verbatim, all seventeen
-methods, the whole policy layer, and the traps that produce code which compiles and is quietly wrong.
+surface in one plain-text file: every public type and member of the four packages, the JSON on the wire,
+every error string, the whole policy layer, the cache, and the traps that produce code which compiles and
+is quietly wrong.
 
 ```text
 Read https://doc.dynamicwhere.com/llms.txt before writing any
@@ -34,10 +35,10 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 
 - **JSON in → `IQueryable<T>` out.** No string LINQ. No manual expression trees.
 - **Three composable shapes** — `Filter`, `Segment`, `Summary` — cover where, set operations, and group-by reporting.
-- **Seventeen extension methods** on `IQueryable<T>` and `IEnumerable<T>`.
+- **Twenty-one extension methods** on `IQueryable<T>` and `IEnumerable<T>`.
 - **Nested navigation** through references and collections, with auto-wrapped `.Any()` lambdas where needed.
 - **Heterogeneous `Condition.Values`** — pass raw numbers, booleans, strings; normalized per `DataType`.
-- **Thread-safe reflection cache** with FIFO / LRU / LFU eviction and six tuned presets.
+- **Thread-safe reflection cache** with FIFO / LRU / LFU eviction and five tuned presets.
 - **Field-level policies** *(new in 3.0)* — decide per caller what may be filtered, sorted, selected, grouped, aggregated and seen. Opt-in: nothing enforces until you ask.
 - **Free Forever.** Targets .NET 6, 7, 8, 9, 10.
 
@@ -61,6 +62,9 @@ Dependencies (restored automatically):
 |---------|--------:|
 | `Microsoft.EntityFrameworkCore` | `6.0.22` |
 | `System.Linq.Dynamic.Core` | `1.6.7` |
+| `Microsoft.Extensions.Configuration.Abstractions` | `6.0.0` |
+| `Microsoft.Extensions.Configuration.Binder` | `6.0.0` |
+| `Microsoft.Extensions.DependencyInjection.Abstractions` | `6.0.0` |
 
 ---
 
@@ -126,7 +130,7 @@ That's the whole loop. Full walk-through in **[Quick Start](https://doc.dynamicw
 | **[`Segment`](https://doc.dynamicwhere.com/docs/classes/segment)** | set1 ∪/∩/∖ set2 ∪/∩/∖ set3 → order → page | UNION / INTERSECT / EXCEPT across multiple condition sets |
 | **[`Summary`](https://doc.dynamicwhere.com/docs/classes/summary)** | where → group → having → order → page | Aggregate reporting (`GROUP BY` + `SUM` / `AVG` / `COUNT` …) |
 
-### Seventeen extension methods
+### Twenty-one extension methods
 
 Projection, filtering, composition, and materialization on `IQueryable<T>` and `IEnumerable<T>`:
 
@@ -296,11 +300,11 @@ Neither closes equality, and that is the point of both: the same value maps to t
 
 ## Reflection cache
 
-A thread-safe `ConcurrentDictionary`-backed cache across three stores (TypeProperties · PropertyPath · CollectionElementType) eliminates reflection overhead on repeated queries. Three eviction strategies and six tuned presets:
+A thread-safe `ConcurrentDictionary`-backed cache across three stores (TypeProperties · PropertyPath · CollectionElementType) eliminates reflection overhead on repeated queries. Three eviction strategies, and five preset factories beside the default:
 
 | Preset | MaxSize | Eviction | Use case |
 |--------|--------:|:--------:|----------|
-| `Default` | 1000 | LRU | General purpose |
+| `new CacheOptions()` | 1000 | LRU | General purpose |
 | `ForHighMemoryEnvironment()` | 5000 | LRU | Servers with ample RAM |
 | `ForLowMemoryEnvironment()`  | 250  | LFU | Constrained environments |
 | `ForDevelopment()` | 100 | FIFO | Testing & debugging |
@@ -363,7 +367,7 @@ The complete reference — every enum, class, extension method, validation rule,
 
 - **New: field-level policies.** A layer that decides what each caller may filter, sort, select, group, aggregate and see — attributes for the compile-time half, an optional store for the runtime half. See [above](#field-level-policies).
 - **New: three companion packages.** `Policies.Redis` and `Policies.EntityFrameworkCore` hold rules; `Policies.AspNetCore` mounts the admin API, explain, simulate and health, and refuses to map without a named authorization policy.
-- **No breaking changes.** The 2.x API is untouched. `FilterResult<T>` and `SummaryResult` each gain one nullable `Policy` property, null when the query was not guarded. Nothing enforces until you opt in.
+- **No API breaks.** The 2.x API is untouched and nothing enforces until you opt in. `FilterResult<T>` and `SummaryResult` each gain one nullable `Policy` property, null when the query was not guarded. Two things to know: the package takes three new `Microsoft.Extensions.*` dependencies, and `PolicyException` derives from `LogicException`, so an existing `catch (LogicException)` now also receives policy refusals.
 - **Worth knowing before you turn it on:** gating costs nothing measurable, but transforming every row of a large result costs about 1.6x in time and 7x in allocations, because each value is rebuilt after materialization rather than in SQL. `MinGroupSize` ships **on at 5**, so a guarded summary suppresses groups under five until you say otherwise — see [Security](https://doc.dynamicwhere.com/docs/policies/security) and [Configuration](https://doc.dynamicwhere.com/docs/policies/configuration).
 
 ## Version 2.1.5 highlights
@@ -388,8 +392,8 @@ The complete reference — every enum, class, extension method, validation rule,
 
 ## Version 2.1.0 highlights
 
-- **Heterogeneous `Condition.Values`** — `List<object>` with type-safe coercion. Send raw numbers and booleans without quoting. Backward-compatible with `List<string>` callers.
-- **Six tuned cache presets** — pick `ForHighMemory`, `ForLowMemory`, `ForDevelopment`, `ForHighFrequencyAccess`, `ForTemporalAccess`, or the default.
+- **Heterogeneous `Condition.Values`** — `List<object>` with type-safe coercion. Send raw numbers and booleans without quoting. JSON callers are unaffected; C# code assigning a `List<string>` no longer compiles.
+- **Five tuned cache presets** — pick `ForHighMemoryEnvironment`, `ForLowMemoryEnvironment`, `ForDevelopment`, `ForHighFrequencyAccess`, `ForTemporalAccess`, or the default `new CacheOptions()`.
 - **Official documentation site** launched at `doc.dynamicwhere.com`.
 
 See **[Breaking Changes & Known Limitations](https://doc.dynamicwhere.com/docs/breaking-changes)** for the complete migration / caveat list.
@@ -398,9 +402,9 @@ See **[Breaking Changes & Known Limitations](https://doc.dynamicwhere.com/docs/b
 
 ## Compatibility
 
-- **.NET:** 6, 7, 8, 9
+- **.NET:** 6, 7, 8, 9, 10
 - **EF Core providers:** SQL Server, PostgreSQL (Npgsql), MySQL (Pomelo), SQLite — anything that supports `ToQueryString()` for the optional `getQueryString: true` flag.
-- **Enum storage:** assumed stored as strings. Use `DataType.Number` if your column stores integers.
+- **Enum storage:** either. `DataType.Enum` matches by member name (any case) or by number, and translates against an `int` column as readily as a `string` one. What it does not do is the string operators: `Contains` and friends throw against an enum-typed member, so a `string` column that merely holds enum names wants `DataType.Text`.
 - **Case-insensitive operators:** emit `.ToLower()` on both sides. Works well on SQL Server's default collation; watch for case-sensitive PostgreSQL `C` locale.
 
 ---

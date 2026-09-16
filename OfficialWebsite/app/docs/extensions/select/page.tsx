@@ -126,7 +126,8 @@ export default function Page() {
         </li>
         <li>
           <code>T</code> must have a parameterless constructor — checked at run
-          time, not by a type constraint.
+          time, not by a type constraint —{" "}
+          <code>SelectTypeMustHaveParameterlessConstructor</code>.
         </li>
       </ul>
 
@@ -134,9 +135,14 @@ export default function Page() {
         <strong>Parameterless constructor required.</strong>{" "}
         <code>.Select&lt;T&gt;(fields)</code> requires <code>T</code> to have a
         parameterless (default) constructor. If <code>T</code> does not have
-        one, a <code>LogicException</code> is thrown. Most EF Core entity
-        classes have parameterless constructors by default. If your type does
-        not, use{" "}
+        one, a <code>LogicException</code> is thrown whose <code>Message</code>{" "}
+        is the stable code{" "}
+        <code>SelectTypeMustHaveParameterlessConstructor</code> and whose{" "}
+        <code>Subject</code> is <code>T</code>&apos;s full name. Before 3.1.0 the
+        message was an English sentence with the type name inside it — see{" "}
+        <Link href="/docs/breaking-changes#select-code">breaking changes</Link>.
+        Most EF Core entity classes have parameterless constructors by default.
+        If your type does not, use{" "}
         <Link href="/docs/extensions/select-dynamic">
           <code>.SelectDynamic&lt;T&gt;</code>
         </Link>{" "}

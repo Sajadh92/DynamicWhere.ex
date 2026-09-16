@@ -92,7 +92,11 @@ export default function Page() {
           </tr>
           <tr>
             <td><code>DateTime</code></td>
-            <td>Full timestamp (date + time).</td>
+            <td>
+              Full timestamp (date + time), compared as the member&apos;s own type
+              — <code>DateTime</code> or <code>DateTimeOffset</code>, nullable or
+              not.
+            </td>
             <td>
               <code>Equal</code>, <code>NotEqual</code>,{" "}
               <code>GreaterThan</code>, <code>GreaterThanOrEqual</code>,{" "}
@@ -105,7 +109,8 @@ export default function Page() {
             <td><code>Date</code></td>
             <td>
               Date-only — compared via the <code>.Date</code> part of the
-              underlying property, so the time component is ignored.
+              underlying property (<code>.Value.Date</code> on a nullable one),
+              so the time component is ignored.
             </td>
             <td>
               Same as <code>DateTime</code> (the comparison strips the time
@@ -115,25 +120,59 @@ export default function Page() {
           <tr>
             <td><code>Enum</code></td>
             <td>
-              Enum stored as a <strong>string</strong> in the database (not as
-              an integer).
+              An enum member, matched by name (any case) or by number. The column
+              may store either.
             </td>
             <td>
-              <code>Equal</code>, <code>NotEqual</code>, <code>Contains</code>,{" "}
-              <code>NotContains</code>, <code>StartsWith</code>,{" "}
-              <code>EndsWith</code>, <code>NotStartsWith</code>,{" "}
-              <code>NotEndsWith</code>, <code>In</code>, <code>NotIn</code>,{" "}
-              <code>IsNull</code>, <code>IsNotNull</code>.
+              <code>Equal</code>, <code>NotEqual</code>, <code>In</code>,{" "}
+              <code>NotIn</code>, <code>IsNull</code>, <code>IsNotNull</code>. The
+              string operators pass validation but throw{" "}
+              <code>ParseException</code> on an enum-typed member.
             </td>
           </tr>
         </tbody>
       </table>
 
-      <Callout tone="warn" title="Enum storage matters">
-        <code>DataType.Enum</code> assumes enum values are stored as strings.
-        If your EF Core configuration persists enums as integers (the default),
-        filter with <code>DataType.Number</code> instead and send the numeric
-        underlying value.
+      <Callout tone="warn" title="How the two date types build their predicate">
+        <code>DateTime</code> and <code>Date</code> read the member&apos;s CLR type
+        before building the predicate. The null guard is emitted only for a member
+        that can be null, so on a non-nullable member <code>IsNull</code> answers{" "}
+        <code>false</code> and <code>IsNotNull</code> answers <code>true</code>. On a
+        nullable one the guard wraps the whole comparison, so a null row fails{" "}
+        <code>NotEqual</code> and <code>NotBetween</code> too. A{" "}
+        <code>DateTimeOffset</code> member is compared against a{" "}
+        <code>DateTimeOffset</code> literal and a <code>DateTime</code> member
+        against a <code>DateTime</code> literal. Before 3.1.0 every comparison on a{" "}
+        <code>DateTimeOffset</code> member threw, and so did <code>Date</code> on any
+        nullable date member — see{" "}
+        <Link href="/docs/breaking-changes#date-member-type">breaking changes</Link>.
+      </Callout>
+
+      <Callout tone="danger" title="Send dates as ISO 8601">
+        Values are parsed with the <strong>invariant</strong> culture, not the
+        host&apos;s. One it cannot read — a day-first{" "}
+        <code>&quot;15/09/2026&quot;</code> — is refused with{" "}
+        <code>InvalidFormat</code>, and a day-first value whose day is 12 or less is
+        read month-first without complaint: <code>&quot;01/09/2026&quot;</code> is
+        9 January. On a <code>DateTimeOffset</code> member the value is normalized
+        to UTC, and one carrying no zone is read as UTC, so <code>Date</code>{" "}
+        compares the calendar day you wrote. On a <code>DateTime</code> member a
+        value carrying a zone is converted to the host&apos;s local time. Send{" "}
+        <code>&quot;2026-09-15&quot;</code> or{" "}
+        <code>&quot;2026-09-15T12:00:00Z&quot;</code> and none of this bites — see{" "}
+        <Link href="/docs/breaking-changes#date-invariant-culture">breaking changes</Link>.
+      </Callout>
+
+      <Callout tone="warn" title="Enum storage does not matter; the operator list does">
+        <code>DataType.Enum</code> matches a member by name or by number, and EF
+        Core translates it for an integer column as readily as for a string one.
+        What the type decides is which operators work: <code>Contains</code>,{" "}
+        <code>StartsWith</code>, <code>EndsWith</code> and their negations are
+        accepted by validation and then throw <code>ParseException</code>{" "}
+        (&ldquo;No applicable method &apos;Contains&apos; exists in type&rdquo;)
+        against an enum-typed member, whatever the storage. For a{" "}
+        <code>string</code> column that merely holds enum names and needs those
+        operators, use <code>DataType.Text</code>.
       </Callout>
 
       <h2 id="json-examples">JSON examples per type</h2>

@@ -120,7 +120,11 @@ export default function Page() {
         </li>
         <li>
           <code>Date</code> / <code>DateTime</code> values must parse as{" "}
-          <code>DateTime</code> — <code>InvalidFormat</code>.
+          <code>DateTime</code> — <code>InvalidFormat</code>. The predicate builder
+          then parses them again with the invariant culture, as the member&apos;s
+          own <code>DateTime</code> or <code>DateTimeOffset</code>, and refuses what
+          it cannot read with the same code: send ISO&nbsp;8601. See{" "}
+          <Link href="/docs/validation/condition">Condition validation</Link>.
         </li>
         <li>
           The <code>DataType</code> / <code>Operator</code> pair must be one the

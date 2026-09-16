@@ -96,7 +96,7 @@ DynamicWhere.ex code. It is the complete API surface.`}</Code>
         </li>
         <li>
           <strong>Validation and errors.</strong> Every rule in the order it is
-          checked, all twenty-seven error strings with what raises them, and the
+          checked, all twenty-eight error strings with what raises them, and the
           other exception types a caller can receive.
         </li>
         <li>
@@ -136,7 +136,7 @@ DynamicWhere.ex code. It is the complete API surface.`}</Code>
       <CopyBlock text={text} lines={lines} />
 
       <Callout tone="warn" title="It says what the library does, not what it should do">
-        The reference is generated against version 3.0.0 from the source, and
+        The reference is generated against version 3.1.0 from the source, and
         checked by running the library, so it states behaviour — including the
         parts that are deliberately blunt, such as neither hashing nor
         tokenization hiding equality. Where a page in these docs disagrees with it,

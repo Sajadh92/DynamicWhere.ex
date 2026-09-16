@@ -286,6 +286,17 @@ export default function Page() {
         </tbody>
       </table>
 
+      <Callout tone="info" title="On a date member that cannot be null">
+        With <code>DataType.Date</code> or <code>DataType.DateTime</code>, the
+        library reads the member&apos;s type first. A non-nullable{" "}
+        <code>DateTime</code> or <code>DateTimeOffset</code> can never be null, so{" "}
+        <code>IsNull</code> answers the constant <code>false</code> — no rows — and{" "}
+        <code>IsNotNull</code> the constant <code>true</code> — every row. On
+        PostgreSQL that is <code>WHERE FALSE</code> and no predicate at all. On a
+        nullable date member they test the column as usual. See{" "}
+        <Link href="/docs/breaking-changes#date-member-type">breaking changes</Link>.
+      </Callout>
+
       <Callout tone="warn">
         Sending any value with <code>IsNull</code> / <code>IsNotNull</code>{" "}
         throws <code>ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues</code>. Send an empty array:{" "}

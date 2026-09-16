@@ -4,7 +4,7 @@
 > opt-in field-level policy layer that decides what each caller may filter, sort, select, group,
 > aggregate and see, and a reflection cache that needs no setup.
 >
-> Version 3.0.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
+> Version 3.1.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
 > Docs: https://doc.dynamicwhere.com · Source: https://github.com/Sajadh92/DynamicWhere.ex
 
 This file is the whole library in one pass: every public type and member of the four packages, the
@@ -14,7 +14,7 @@ library. No other page is needed; where another page disagrees with this file, t
 Where a name is not in this file, it does not exist — do not invent members.
 
 ```
-dotnet add package DynamicWhere.ex --version 3.0.0
+dotnet add package DynamicWhere.ex --version 3.1.0
 dotnet add package DynamicWhere.ex.Policies.Redis                 # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.EntityFrameworkCore   # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.AspNetCore            # optional, same version as the core
@@ -212,8 +212,11 @@ PageNumber    Page.PageNumber; 0 when Page is null
 PageSize      Page.PageSize; 0 when Page is null
 TotalCount    counted before paging: rows matching the where (Filter), groups left after Having (Summary),
               rows left after the set operations (Segment)
-PageCount     (int)Math.Ceiling((double)TotalCount / (PageSize == 0 ? 1 : PageSize)) — equals TotalCount when Page is null.
-              A Segment with condition sets and no Page reports PageNumber = PageSize = PageCount = 0
+PageCount     (int)Math.Ceiling((double)TotalCount / PageSize), or 1 when no Page was sent (0 with no rows),
+              on FilterResult, SummaryResult and SegmentResult alike. Before 3.1.0 an unpaged Filter or Summary
+              reported PageCount = TotalCount (one page per row) and an unpaged Segment with sets reported 0.
+              Unpaged, PageNumber and PageSize stay 0 — except on a guarded query when DwCaps.DefaultPageSize is
+              set, which gives it page 1 at that size (section 18)
 Data          the page. Typed rows are whole T objects even with Selects: unselected members keep constructor defaults
 QueryString   with getQueryString: true, EF Core ToQueryString() of the data query (after order, page and projection;
               never the count query), otherwise null. Always null for Segment, which has no such parameter.
@@ -313,13 +316,19 @@ NotBetween                       f != null && (f < V1 || f > V2)
 IsNull / IsNotNull               f == null                           f != null
 
 V by DataType   Text, Guid, Enum    "v"                 Number, Boolean   v (unquoted)
-                DateTime            DateTime.Parse("v")
-                Date                DateTime.Parse("v").Date, with f.Date in place of f
+                DateTime            DateTime.Parse("canonical") for a DateTime member;
+                                    DateTimeOffset.Parse("canonical") for a DateTimeOffset member
+                Date                the same call with .Date on both sides; f becomes f.Date, or f.Value.Date
+                                    where the member is nullable
 ```
 
-- Every operator except IsNull / IsNotNull starts with `f != null &&`. Negated operators (NotEqual, NotIn,
-  NotContains, NotBetween …) therefore never return rows whose member is null.
-- IsNull on a non-nullable value member matches nothing; IsNotNull matches everything.
+- Every operator except IsNull / IsNotNull starts with `f != null &&`, **for a member that can be null**. Negated
+  operators (NotEqual, NotIn, NotContains, NotBetween …) therefore never return rows whose member is null.
+- The date types are the exception: since 3.1.0 they resolve the member's type first and emit the guard only
+  where the member is actually nullable (section 4, Date / DateTime). Every other DataType still guards
+  unconditionally.
+- IsNull on a non-nullable value member matches nothing; IsNotNull matches everything. On a date member the
+  predicate is now the constant `false` / `true` rather than a comparison with null.
 - Values are trimmed; `\` and `"` are escaped. A value matches literally and cannot close the literal or inject
   predicate text. Values are inlined as literals, not SQL parameters.
 - `Between` with V1 > V2 matches nothing; `NotBetween` with V1 > V2 matches every non-null row.
@@ -364,13 +373,30 @@ Date       DateTime.TryParse (server culture)                       ISO 8601 dat
 - **Number:** the token is embedded unquoted exactly as sent. A thousands separator (`"1,000"`) or `"NaN"` /
   `"Infinity"` passes the culture TryParse, then throws `System.Linq.Dynamic.Core.Exceptions.ParseException`
   when the query is built. Send invariant literals without separators.
-- **Date / DateTime:** the check and `DateTime.Parse` both use the server's current culture, so `"01/02/2024"`
-  means 1 February on a day-first culture and 2 January on en-US. Nothing converts to UTC: a trailing `Z` or an
-  offset makes `DateTime.Parse` return server local time before comparing (on a +03:00 server
-  `"2024-01-01T10:00:00Z"` compares as 13:00). Send ISO 8601 without a zone, in the convention the column stores.
-- A C# `DateTime` placed in `Values` is formatted invariant (`MM/dd/yyyy HH:mm:ss`) and re-parsed in the server
-  culture. Pass ISO strings instead. The value side is always a `DateTime`; there is no DateOnly, TimeOnly or
-  DateTimeOffset form.
+- **Date / DateTime (3.1.0 rewrote this):** the predicate is built from the member's own type.
+  - Values are parsed with **InvariantCulture** and re-emitted in round-trip form, so a filter means the same day
+    on every host. The invariant culture reads a slash date **month-first**: `"15/09/2026"` is refused with
+    `InvalidFormat`, but `"01/09/2026"` is silently 9 January, and so is `"01.09.2026"` — any day of 12 or less.
+    Send ISO 8601 (`"2026-09-01"`), which reads the same under every culture.
+  - Validation still checks the value in the host's culture first, then the builder parses it invariantly, so on a
+    non-invariant host a value must satisfy both. ISO 8601 always does; either failure is `InvalidFormat`.
+  - A `DateTimeOffset` member is compared against a `DateTimeOffset` literal, normalised to UTC; a value carrying
+    no zone is read as UTC, so `DataType.Date` names the day the caller wrote. On Npgsql `DataType.Date` becomes
+    `date_trunc('day', col AT TIME ZONE 'UTC')`.
+  - A `DateTime` member is compared against a `DateTime` literal and keeps the older time-zone behaviour: a value
+    with `Z` or an offset converts to server local time first (on a +03:00 server `"2024-01-01T10:00:00Z"`
+    compares as 13:00). Send it in the convention the column stores.
+  - A nullable member is unwrapped under its guard (`f.Value`, `f.Value.Date`); a non-nullable member gets no
+    guard at all, and `IsNull` / `IsNotNull` answer `false` / `true` — `WHERE FALSE` and no predicate on Npgsql,
+    for `DateTime` and `DateTimeOffset` alike.
+  - `Having` names an alias, not a member, so a date condition there keeps the pre-3.1.0 shape: a null guard and a
+    `DateTime` literal.
+  - Before 3.1.0 every comparison on a `DateTimeOffset` member threw — `InvalidOperationException` ("The binary
+    operator NotEqual is not defined for the types 'System.DateTimeOffset' and 'System.Object'") on a
+    non-nullable one, `ParseException` on a nullable one — and `DataType.Date` on any nullable date member threw
+    `ParseException` ("No property or field 'Date' exists in type 'DateTime?'").
+- A C# `DateTime` placed in `Values` is formatted invariant (`MM/dd/yyyy HH:mm:ss`) and re-parsed invariantly.
+  Pass ISO strings instead. A `DateTimeOffset` in `Values` round-trips the same way.
 - **Enum:** a name that is not a member passes validation and throws `ParseException` when the query is built.
 - In C#, `Values` is `List<object>`: `Values = { "Engineering" }` or `new List<object> { 1, 2 }`. A `List<string>`
   is not assignable.
@@ -503,8 +529,9 @@ products.Select(["Id", "Name", "Category.Name", "OrderItems.Quantity"]) builds
 
 - Errors: `fields` empty → `MustHasFields`; a null or blank entry → `ArgumentNullException`; an unknown path →
   `ConditionMustHasValidFieldName`; no public parameterless constructor on T →
-  `LogicException("Select projection requires a parameterless constructor on type '<T>'.")` (checked at run time;
-  the constraint is only `class`).
+  `LogicException("SelectTypeMustHaveParameterlessConstructor")` with `Subject = typeof(T).FullName` (checked at
+  run time; the constraint is only `class`). Before 3.1.0 that message was an English sentence carrying the type
+  name inside it.
 - Rows are whole T objects. An unselected member keeps what T's parameterless constructor gives it: initializers
   run (`= string.Empty` stays `""`, `= new List<X>()` stays empty), everything else is default. Serialized, every
   member appears.
@@ -728,9 +755,11 @@ LastOrDefault   Select(f).OrderByDescending(it).FirstOrDefault()   any simple ty
 
 ## 8. Validation and core error strings
 
-A broken rule throws `LogicException` (`DynamicWhere.ex.Exceptions`). It has one constructor,
-`LogicException(string message)`, and no code property: the error string is `Message`. `PolicyException` derives
-from it, so catch `PolicyException` first.
+A broken rule throws `LogicException` (`DynamicWhere.ex.Exceptions`). The error string is `Message`; there is no
+separate code property. Two constructors: `LogicException(string message)` and, since 3.1.0,
+`LogicException(string message, string? subject)`, whose `Subject` carries what the refusal is about — a type
+name, a field — so the message stays one of the fixed strings a caller matches on. `PolicyException` derives from
+it, so catch `PolicyException` first.
 
 ### Every core error string
 
@@ -765,11 +794,15 @@ AggregationAlias[<alias>]CannotBeUsedInGroupByFields                   an Alias 
 SummaryOrderField[<field>]MustExistInGroupByFieldsOrAggregateByAliases a Summary order field is neither a group field nor an Alias
 HavingField[<field>]MustExistInAggregateByAliases                      a Having field is not an Alias
 ConditionValuesAreNullOrWhiteSpace                                     defined but never thrown
+SelectTypeMustHaveParameterlessConstructor                             Select<T> / Filter.Selects on a T with no parameterless
+                                                                       constructor — a positional record, most often. Also a
+                                                                       guarded query where a member carries [DwNoSelect],
+                                                                       because deny-select projects. Subject = T.FullName.
+                                                                       3.1.0; before it, an English sentence
 Unsupported combination of DataType '<DataType>' and Operator '<Operator>'.     a pair outside the section 4 table
-Select projection requires a parameterless constructor on type '<T>'.            Select<T> / Filter.Selects on a T without one
 ```
 
-The last two are literal messages. Examples: `ConditionWithOperator[Equal]MustHasOnlyOneValue`,
+The last one is a literal message; every other string above is a fixed code. Examples: `ConditionWithOperator[Equal]MustHasOnlyOneValue`,
 `Aggregator[Sumation]IsNotSupportedForFieldType[String]`, `HavingField[UnitPrice]MustExistInAggregateByAliases`.
 
 ### Other exceptions a caller can see
@@ -877,7 +910,7 @@ and enum-typed members and group keys in `data`.
 {
   "pageNumber": 1,      // 0 when the request had no page
   "pageSize": 10,       // 0 when the request had no page
-  "pageCount": 5,       // no page: equals totalCount (a Segment with sets: 0)
+  "pageCount": 5,       // no page: 1, or 0 with no rows
   "totalCount": 42,     // before paging
   "data": [ ],
   "queryString": null,  // SQL only with getQueryString: true
@@ -1093,9 +1126,12 @@ Each of these compiles, passes validation, and returns something other than what
    set's `Intersection` is cleared. Clone a shape before reusing it. (Guarded calls work on a clone.)
 5. **Enum names in JSON need `JsonStringEnumConverter`.** Without it the body fails to bind. An omitted enum
    property silently becomes member 0: `Text`, `Equal`, `And`, `Ascending`, `Count`.
-6. **Dates are parsed in the server's culture and time zone.** A value ending in `Z` or carrying an offset is
-   converted to server local time before comparing, and `"01/02/2024"` means different days on different servers.
-   Send ISO 8601 without a zone.
+6. **A slash date is read month-first, and a `DateTime` member reads a zoned value as server local time.** Since
+   3.1.0 values are parsed with the invariant culture, so `"01/02/2024"` no longer means different days on
+   different servers — it is 2 January everywhere. A day-first caller gets no error for it: `"15/09/2026"` is
+   refused with `InvalidFormat`, but `"01/09/2026"` quietly becomes 9 January. Separately, a value carrying `Z` or
+   an offset is converted to the host's local time before comparing against a `DateTime` column; a
+   `DateTimeOffset` column normalises to UTC instead. Send ISO 8601, in the convention the column stores.
 7. **`FirstOrDefault` and `LastOrDefault` return the minimum and maximum value**, not the first and last row.
 8. **Each `Order(...)` call replaces the previous ordering.** Put every key in one `List<OrderBy>`.
 9. **Some requests pass validation and then fail in the parser** with `System.Linq.Dynamic.Core.Exceptions.ParseException`:
@@ -1179,9 +1215,16 @@ Strict getQueryString check → clone the request → resolve names and aliases 
   - A cap refusal (`CapExceeded`) wins over the cost budget (`QueryCostExceeded`), and both win over field denials.
 - A field path that names nothing on `T` throws `LogicException` from validation, before any policy decision, guarded or not.
 - The `Filter`, `Summary` or `Segment` passed in is never modified. Each guarded call works on a clone.
-- `PrepareAsync` does nothing unless a `StorePolicyProvider` is configured.
-  - With one configured, every query on an unprepared context throws `PolicyContextNotPrepared` (18).
-  - The throw comes from the query method, not from `ApplyPolicy`.
+- `PrepareAsync` reads nothing unless a `StorePolicyProvider` is configured, but it always records that it ran:
+  `DwPolicyContext.IsPrepared` (3.1.0).
+  - Since 3.1.0 `ApplyPolicy(ctx)` — the overloads that read `DwPolicy` — refuse a context that never went through
+    `PrepareAsync` with `PolicyContextNotPrepared` (18), store or no store. Before 3.1.0 only a store provider did,
+    so an attributes-only deployment accepted an unprepared context and would start refusing the day it gained one.
+  - The overload taking explicit `DwPolicyOptions` and `PolicyResolver` does not check: that host owns preparation,
+    and a store it hands in still refuses an unprepared context itself.
+  - A store provider's own two refusals sit behind that check: no attachment, and a `User` subject added after
+    preparation.
+  - `ForSimulation()` of a prepared context is prepared.
 
 ### DwPolicy
 
@@ -1345,9 +1388,15 @@ StoreFailureMode  LastKnownGood=0  FailClosed=1  StaticOnly=2
 ```
 DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperationException, below Min → ArgumentOutOfRangeException
   Cap                  Default  Min  Counts                                                             Refusal
-  MaxPageSize          1000     1    Page.PageSize > cap; a request with no Page is neither paged nor capped   CapExceeded (9)
+  MaxPageSize          1000     1    Page.PageSize > cap; a request with no Page is bounded by DefaultPageSize
+                                     instead, if one is set                                             CapExceeded (9)
+  DefaultPageSize      0        0    3.1.0. 0 = off. When set, a guarded query that sends no Page is given
+                                     PageNumber 1 and PageSize min(DefaultPageSize, MaxPageSize). A Page the
+                                     caller did send is never replaced. Negative → ArgumentOutOfRangeException  refuses nothing
   MaxConditions        50       1    conditions at every nesting depth; Summary: ConditionGroup + Having;
                                      Segment: all condition sets together                               CapExceeded (9)
+  MaxConditionDepth    10       1    3.1.0. How deep SubConditionGroups nest, root group = depth 1. Summary:
+                                     the deeper of ConditionGroup and Having; Segment: each set on its own  CapExceeded (9)
   MaxOrderFields       10       1    Orders.Count                                                       CapExceeded (9)
   MaxNavigationDepth   4        1    dot segments of any path ("A.B.C.D" passes, 5 segments refused) in
                                      conditions, Selects, Orders, GroupBy.Fields, AggregateBy.Field     CapExceeded (9)
@@ -1390,6 +1439,9 @@ DwPolicyContext                                     sealed class
   DwPolicyContext()
   Subjects            : IReadOnlyList<DwSubject>         read-only view, insertion order
   DryRun              : bool     { get; set; }           dry run for this caller only
+  IsPrepared          : bool     { get; }                3.1.0. True once DwPolicy.PrepareAsync has run against it,
+                                                         with or without a store. ApplyPolicy(ctx) refuses a
+                                                         context where this is false
   Purpose             : string?  { get; set; }           matched by purpose-bound rules; copied into audit events
   PendingAuditEvents  : IReadOnlyList<DwAuditEvent>      a copy of the undrained buffer
   WithSubject(DwSubjectKind kind, string identity)       -> DwPolicyContext    mutates this instance, returns this
@@ -3340,8 +3392,9 @@ through `PolicySimulator` or in dry run to see the decisions).
                                       for a type with any transform for this caller
 17  StoreUnavailable                  a FailClosed store provider is degraded, or the context's pinned          throws
                                       snapshot is older than MaxSnapshotAge
-18  PolicyContextNotPrepared          a store provider sees a context it never prepared, or one that gained     throws
-                                      a User subject after it was prepared
+18  PolicyContextNotPrepared          ApplyPolicy(ctx) sees a context that never went through PrepareAsync       throws
+                                      (3.1.0, store or no store), a store provider sees one it never prepared,
+                                      or one that gained a User subject after it was prepared
 19  QueryCostExceeded                 the request's total field cost is above MaxQueryCost (FieldPath "*")      recorded
 20  GroupTooSmall                     the caller used the reserved name "__dwGroupSize" as an alias, Having      throws
                                       field or order field. A small group never raises it: it is suppressed
@@ -3985,6 +4038,21 @@ MemoryCalculationInput
 ### History
 
 ```
+3.1.0   Date comparisons rebuilt, two new caps, one new error code, and preparation enforced everywhere.
+        - DataType.Date / DataType.DateTime resolve the member's type before building the predicate. Every
+          comparison on a DateTimeOffset member used to throw, and DataType.Date on any nullable date member
+          used to throw; both work. The null guard is emitted only for a nullable member, so IsNull / IsNotNull
+          on a non-nullable date member answer false / true instead of throwing.
+        - Date values are parsed with InvariantCulture. A value only a host culture could read — "15/09/2026" on
+          a day-first server — is now refused with InvalidFormat. DateTimeOffset values normalise to UTC, and a
+          value with no zone is read as UTC.
+        - PageCount on an unpaged result is 1 (0 with no rows) rather than TotalCount.
+        - DwCaps.DefaultPageSize (default 0 = off) bounds a guarded query that sends no Page; DwCaps
+          .MaxConditionDepth (default 10) bounds how deeply condition groups nest.
+        - ErrorCode.SelectTypeMustHaveParameterlessConstructor replaces the English sentence a Select on an
+          unconstructible type used to throw; LogicException gained Subject, which carries the type name.
+        - ApplyPolicy(ctx) refuses a context that never went through PrepareAsync, with or without a store
+          configured. DwPolicyContext.IsPrepared is public.
 3.0.0   Field-level policies (sections 12–32) and three companion packages. Additive for 2.x callers:
         - every 2.x signature and the query engine are unchanged;
         - FilterResult<T> and SummaryResult gained Policy : PolicyTrace? (null unless guarded), so JSON output

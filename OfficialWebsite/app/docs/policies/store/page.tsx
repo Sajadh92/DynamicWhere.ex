@@ -73,11 +73,28 @@ export default function Page() {
         .WithSubject(DwSubjectKind.User, userId)
         .WithSubject(DwSubjectKind.Tenant, tenantId));`}</Code>
       <Callout tone="danger" title="An unprepared context is refused, not tolerated">
-        Any store provider that sees one throws{" "}
-        <code>PolicyContextNotPrepared</code>. Falling back to attributes alone
-        would look exactly like a working policy with the dynamic half missing,
-        which is the worst possible failure for this feature.
+        <code>ApplyPolicy(ctx)</code> throws{" "}
+        <code>PolicyContextNotPrepared</code> before a store is consulted at
+        all, and does so whether or not one is configured. Falling back to
+        attributes alone would look exactly like a working policy with the
+        dynamic half missing, which is the worst possible failure for this
+        feature — and the deployment where the missing call was silently
+        tolerated is the one that starts refusing in production the day it gains
+        a store.
       </Callout>
+      <p>
+        That check sits in front of the store&apos;s own two rather than
+        replacing them. A provider still refuses a context it attached no
+        snapshot to, and still refuses one that gained a <code>User</code>{" "}
+        subject after it was prepared. <code>DwPolicyContext.IsPrepared</code>{" "}
+        reports which state a context is in, preparation is recorded even when
+        no store pinned anything to it, and a context copied to{" "}
+        <Link href="/docs/policies/admin">simulate</Link> a prepared caller is
+        prepared. The overload taking an explicit <code>DwPolicyOptions</code>{" "}
+        and <code>PolicyResolver</code> does not check: a host composing its own
+        configuration owns preparation, and a store it hands in refuses an
+        unprepared context by itself.
+      </p>
       <p>
         A context carries the snapshot it was served, and the staleness ceiling
         measures how old <em>that</em> snapshot is — not how fresh the provider

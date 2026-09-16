@@ -60,7 +60,10 @@ export default function Page() {
             <td>
               <code>int</code>
             </td>
-            <td>Total pages.</td>
+            <td>
+              Total pages. <code>1</code> when no <code>Page</code> was sent
+              (<code>0</code> with no rows).
+            </td>
           </tr>
           <tr>
             <td>
@@ -119,6 +122,19 @@ export default function Page() {
         objects first, so nothing matches across sets: <code>Intersect</code> returns
         nothing, <code>Except</code> removes nothing, and <code>Union</code> keeps
         duplicates.
+      </Callout>
+
+      <Callout tone="warn" title="Changed in 3.1.0: an unpaged segment reports one page">
+        Send a <code>Page</code> and <code>PageCount</code> is{" "}
+        <code>Ceiling(TotalCount / PageSize)</code>. Send none and it is{" "}
+        <code>1</code> — the one page the whole result occupies — or{" "}
+        <code>0</code> when nothing matched, the same answer a{" "}
+        <Link href="/docs/classes/filter-result"><code>FilterResult&lt;T&gt;</code></Link>{" "}
+        gives. Before 3.1.0 an unpaged segment with condition sets left{" "}
+        <code>PageCount</code> at <code>0</code> beside a full page of rows, while
+        the same request as a filter reported one page per row.{" "}
+        <code>PageNumber</code> and <code>PageSize</code> still report{" "}
+        <code>0</code> when no page was sent.
       </Callout>
 
       <Callout tone="info">

@@ -18,7 +18,7 @@ export default function Page() {
       <p>
         Every validation failure in DynamicWhere.ex throws a{" "}
         <code>LogicException</code> (which inherits from <code>Exception</code>).
-        The <code>Message</code> property carries one of the 27 stable error strings
+        The <code>Message</code> property carries one of the 28 stable error strings
         listed below, so you can pattern‑match them in middleware and surface
         meaningful problems to API callers.
       </p>
@@ -69,21 +69,34 @@ export default function Page() {
 });`}</Code>
       </Callout>
 
-      <h2 id="all-errors">All 27 error codes</h2>
+      <h2 id="all-errors">All 28 error codes</h2>
       <p>
         Codes wrapped in <code>(parens)</code> are parameterized — the bracketed
         token in the message is replaced at runtime with the offending operator,
         alias, aggregator, type, or field name.
       </p>
       <p>
-        Two further failures carry a literal message rather than one of these
+        One failure still carries a literal message rather than one of these
         codes:{" "}
         <code>{`Unsupported combination of DataType '{type}' and Operator '{op}'.`}</code>{" "}
-        for a pair the predicate builder has no form for, and{" "}
-        <code>{`Select projection requires a parameterless constructor on type '{T}'.`}</code>{" "}
-        for a <code>Select&lt;T&gt;</code> or <code>Filter.Selects</code> whose{" "}
-        <code>T</code> has no parameterless constructor.
+        for a pair the predicate builder has no form for. It is the only one
+        left — the <code>Select</code> projection refusal became the code{" "}
+        <code>SelectTypeMustHaveParameterlessConstructor</code> in 3.1.0.
       </p>
+
+      <Callout tone="danger" title="Changed in 3.1.0">
+        A <code>Select&lt;T&gt;</code> or <code>Filter.Selects</code> whose{" "}
+        <code>T</code> has no parameterless constructor used to throw the English
+        sentence{" "}
+        <code>{`Select projection requires a parameterless constructor on type '{T}'.`}</code>{" "}
+        Its <code>Message</code> is now the stable code{" "}
+        <code>SelectTypeMustHaveParameterlessConstructor</code>, and the type&apos;s
+        full name moved to a new property on the exception,{" "}
+        <code>LogicException.Subject</code> (<code>string?</code>). Any middleware
+        matching on that old sentence — or reading the type name out of it — needs
+        updating. See{" "}
+        <Link href="/docs/breaking-changes#select-code">breaking changes</Link>.
+      </Callout>
 
       <table>
         <thead>
@@ -167,7 +180,12 @@ export default function Page() {
           <tr>
             <td><code>InvalidFormat</code></td>
             <td><code>InvalidFormat</code></td>
-            <td>Value doesn't parse for declared <code>DataType</code></td>
+            <td>
+              Value doesn't parse for declared <code>DataType</code>. A{" "}
+              <code>Date</code> / <code>DateTime</code> value is parsed twice — at
+              validation in the host&apos;s culture, and again when the predicate
+              is built in the invariant culture — and failing either raises this
+            </td>
           </tr>
           <tr>
             <td><code>InvalidAlias</code></td>
@@ -234,6 +252,18 @@ export default function Page() {
             <td><code>{`OrderField[{f}]CannotEndOnCollectionOfComplexElements`}</code></td>
             <td>Order path ends on a collection of entities — sort by a scalar inside it</td>
           </tr>
+          <tr>
+            <td><code>SelectTypeMustHaveParameterlessConstructor</code></td>
+            <td><code>SelectTypeMustHaveParameterlessConstructor</code></td>
+            <td>
+              <code>Select&lt;T&gt;</code> or <code>Filter.Selects</code> on a{" "}
+              <code>T</code> the projection cannot construct — a positional record,
+              most often. The type&apos;s full name is on{" "}
+              <code>Subject</code>, not in the message. Also reached by a typed
+              guarded query whose policy denies a field for <code>Select</code>,
+              since the deny synthesizes a projection
+            </td>
+          </tr>
         </tbody>
       </table>
 
@@ -243,6 +273,30 @@ export default function Page() {
         in your API layer using the <em>Error Code</em> column as the key — the
         Error Code names are also stable.
       </Callout>
+
+      <h2 id="subject">LogicException.Subject</h2>
+      <p>
+        <code>LogicException</code> gained a second constructor in 3.1.0 —{" "}
+        <code>LogicException(string message, string? subject)</code> — and the
+        matching read-only property <code>Subject</code> (<code>string?</code>).
+        It carries what a refusal is <em>about</em> where the code alone does not
+        say: today that is the rejected type&apos;s <code>FullName</code> on{" "}
+        <code>SelectTypeMustHaveParameterlessConstructor</code>. It is{" "}
+        <code>null</code> for every other code, because the parameterized codes
+        already interpolate their operator, alias, aggregator, type, or field name
+        into the message themselves.
+      </p>
+      <p>
+        Keeping the type name out of the message is the point: a code that carried
+        it would be a different string on every type, and neither your middleware
+        nor an error envelope could match on it.
+      </p>
+      <Code lang="csharp">{`catch (LogicException ex)
+{
+    // ex.Message   -> "SelectTypeMustHaveParameterlessConstructor"
+    // ex.Subject   -> "MyApp.Dtos.CustomerRow"  (null for every other code)
+    return Results.BadRequest(new { error = ex.Message, subject = ex.Subject });
+}`}</Code>
 
       <h2 id="related-validation">Where each error lives</h2>
       <p>
@@ -298,7 +352,9 @@ export default function Page() {
         <li>
           <Link href="/docs/extensions/select">Select / SelectDynamic →</Link>{" "}
           <code>MustHaveFields</code>, for an empty <code>Select</code>,{" "}
-          <code>SelectDynamic</code>, or <code>Filter.Selects</code> list.
+          <code>SelectDynamic</code>, or <code>Filter.Selects</code> list, and{" "}
+          <code>SelectTypeMustHaveParameterlessConstructor</code>, for a typed{" "}
+          <code>Select&lt;T&gt;</code> the projection cannot construct.
         </li>
         <li>
           <Link href="/docs/extensions/order">Order →</Link>{" "}

@@ -60,7 +60,11 @@ export default function Page() {
             <td>
               <code>int</code>
             </td>
-            <td>Total pages.</td>
+            <td>
+              Total pages. <code>1</code> when the <code>Summary</code> carried no{" "}
+              <code>Page</code> — an unpaged result is one page of everything —
+              and <code>0</code> when nothing matched.
+            </td>
           </tr>
           <tr>
             <td>
@@ -106,6 +110,15 @@ export default function Page() {
           </tr>
         </tbody>
       </table>
+
+      <Callout tone="danger" title="Changed in 3.1.0">
+        An unpaged <code>PageCount</code> used to equal <code>TotalCount</code>: the
+        calculation divided by a page size of <code>1</code> whenever none was sent, so a
+        200-group result reported 200 pages of one group each. It is now <code>1</code>{" "}
+        — or <code>0</code> when there are no groups. <code>PageNumber</code> and{" "}
+        <code>PageSize</code> are unchanged: both still <code>0</code> when no page was
+        sent.
+      </Callout>
 
       <Callout tone="info" title="Flattened alias keys">
         Each row in <code>Data</code> is a dynamic object whose top-level properties are the

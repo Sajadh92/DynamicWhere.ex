@@ -34,8 +34,10 @@
       <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
       <PackageLicenseExpression>MIT</PackageLicenseExpression>
       <!-- Locked to the core's version; see the note in the Redis package. -->
-      <Version>3.0.0</Version>
-      <PackageReleaseNotes>v3.0.0 — First release. A database-backed policy store for the DynamicWhere.ex field-level policy layer, introduced in DynamicWhere.ex 3.0.0. Works with any EF Core provider; ships DwPolicyDbContext, the rule and version records, and their EF configurations. Passes the same store conformance suite as the in-memory and Redis stores, verified against PostgreSQL.
+      <Version>3.1.0</Version>
+      <PackageReleaseNotes>v3.1.0 — Released in lockstep with DynamicWhere.ex 3.1.0, which it now requires. No API or behaviour change in this package.
+
+v3.0.0 — First release. A database-backed policy store for the DynamicWhere.ex field-level policy layer, introduced in DynamicWhere.ex 3.0.0. Works with any EF Core provider; ships DwPolicyDbContext, the rule and version records, and their EF configurations. Passes the same store conformance suite as the in-memory and Redis stores, verified against PostgreSQL.
 
 THREE TABLES, NOT TWO. Alongside DwPolicyRules and DwPolicyVersion, this release adds DwPolicyTokens and DwPolicyTokenConfiguration — the vault behind MaskStrategy.Tokenize, read by EfTokenVault. A consumer applying the configurations to their own DbContext must apply all three and generate a migration for the new table; a deployment that never tokenizes can leave it out rather than migrating in a table it will never write to. The table holds the scope in the clear and a digest of the value, never the value itself, so it is an index into a secret rather than a searchable copy of the column it protects. Guard it as you would guard that column: reading it turns every token in every result back into what it stands for.
 

@@ -41,14 +41,32 @@
       <Company>Sajjad H. Al-Khafaji</Company>
       <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
       <PackageLicenseExpression>MIT</PackageLicenseExpression>
-      <Version>3.0.0</Version>
+      <Version>3.1.0</Version>
       <PackageProjectUrl>https://doc.dynamicwhere.com</PackageProjectUrl>
       <RepositoryType>git</RepositoryType>
       <RepositoryBranch>master</RepositoryBranch>
       <RepositoryUrl>https://github.com/Sajadh92/DynamicWhere.ex</RepositoryUrl>
       <PackageIcon>icon.png</PackageIcon>
       <PackageReadmeFile>README.md</PackageReadmeFile>
-      <PackageReleaseNotes>v3.0.0 — Field-level policies. A new layer that decides what each caller may filter, sort, select, group, aggregate, and see. Additive: nothing enforces until you opt in, and a project with no policy attributes and no DwPolicy.Configure call behaves exactly as 2.1.5.
+      <PackageReleaseNotes>v3.1.0 — Date comparisons that work on every date member, two new caps, a stable code where a sentence used to be, and preparation enforced whether or not a store is configured.
+
+Fix: comparisons on a DateTimeOffset member threw. The date predicate carried a null guard whether or not the member could be null and compared every date member against a DateTime literal, so any comparison on a non-nullable DateTimeOffset threw InvalidOperationException, one on a nullable DateTimeOffset threw ParseException, and DataType.Date on any nullable date member threw ParseException. The predicate is now built from the member's own type: a null guard only where the member can be null, a literal of the member's type, .Value.Date under the guard on a nullable member, and IsNull / IsNotNull answering false / true on a non-nullable one.
+
+Behaviour change: date values are parsed with the invariant culture and re-emitted in round-trip form, so a filter means the same day on every server. The invariant culture reads a slash date month-first: "15/09/2026" is now refused with InvalidFormat, and "01/09/2026" is read as 9 January without complaint. Send ISO 8601. A DateTimeOffset value is normalised to UTC and a value with no zone is read as UTC. DateTime members keep their previous time-zone behaviour.
+
+Behaviour change: PageCount on an unpaged result is 1, or 0 with no rows, on filter, summary and segment results alike. It used to equal TotalCount for a filter or summary — one page per row — and to be 0 for a segment.
+
+Behaviour change: ApplyPolicy(ctx) refuses a context that never went through DwPolicy.PrepareAsync with PolicyContextNotPrepared, with or without a store configured. Only a store provider used to refuse one, so an attributes-only deployment accepted the missing call and would have started refusing the day it gained a store. DwPolicyContext.IsPrepared is public; the overload taking explicit options and a resolver does not check.
+
+New: DwCaps.DefaultPageSize (default 0, off) gives a guarded query that sends no page a page of that size, bounded by MaxPageSize. MaxPageSize only ever bounded a caller who had already asked for a page, so the request with none returned every row. DwCaps.MaxConditionDepth (default 10) refuses condition groups nested deeper, with CapExceeded, in both tiers.
+
+New: ErrorCode.SelectTypeMustHaveParameterlessConstructor replaces the sentence "Select projection requires a parameterless constructor on type 'X'.", so every validation message but one is a fixed code. LogicException gains Subject, which carries the type name, and a constructor that sets it.
+
+Fix: StorePolicyProvider renews MaxSnapshotAge on a poll that confirms the version it is serving. A healthy store nobody wrote to refused every guarded query one ceiling after its last write.
+
+Fix: the composable PolicyQueryable.Group and .Summary apply the k-anonymity floor. They went straight to the engine past the summary pipeline, returning the small groups ToList(Summary) suppressed.
+
+v3.0.0 — Field-level policies. A new layer that decides what each caller may filter, sort, select, group, aggregate, and see. Additive: nothing enforces until you opt in, and a project with no policy attributes and no DwPolicy.Configure call behaves exactly as 2.1.5.
 
 Entry point: query.ApplyPolicy(ctx) returns a guarded handle. Requests are sanitized before the query is built and results are transformed after they materialize; the query engine itself is unchanged.
 

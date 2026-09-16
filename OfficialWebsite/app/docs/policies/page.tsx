@@ -63,7 +63,8 @@ DwPolicy.Configure(new DwPolicyOptions
     HashSalt = secret,
 });
 
-// Once per request, never once per query.
+// Once per request, never once per query. A context that skipped this is
+// refused: ApplyPolicy throws PolicyContextNotPrepared, store or no store.
 var caller = await DwPolicy.PrepareAsync(
     new DwPolicyContext()
         .WithSubject(DwSubjectKind.User, userId)

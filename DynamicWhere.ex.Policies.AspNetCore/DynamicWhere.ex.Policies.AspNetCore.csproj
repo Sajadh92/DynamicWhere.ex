@@ -31,8 +31,10 @@
     <Company>Sajjad H. Al-Khafaji</Company>
     <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <Version>3.0.0</Version>
-    <PackageReleaseNotes>v3.0.0 — First release. The administrative surface for the DynamicWhere.ex field-level policy layer, introduced in DynamicWhere.ex 3.0.0. MapDwPolicyAdmin mounts schema discovery, rule management, explain, simulate and health, and refuses to map at all without a named authorization policy — there is deliberately no default, and it fails at startup rather than on the first request.
+    <Version>3.1.0</Version>
+    <PackageReleaseNotes>v3.1.0 — Released in lockstep with DynamicWhere.ex 3.1.0, which it now requires. No API or behaviour change in this package.
+
+v3.0.0 — First release. The administrative surface for the DynamicWhere.ex field-level policy layer, introduced in DynamicWhere.ex 3.0.0. MapDwPolicyAdmin mounts schema discovery, rule management, explain, simulate and health, and refuses to map at all without a named authorization policy — there is deliberately no default, and it fails at startup rather than on the first request.
 
 Schema discovery is POST /schema taking { entity, paths, depth }, not a GET with a route parameter. The paths are a list, and a list in a query string needs a separator: a comma is legal in a [DwAlias], so a comma-separated parameter would eventually split a name in half and resolve neither piece. A request describes the entity's own fields plus one level of navigation by default and drills into named subtrees on demand; POST /explain takes the same two parameters because it walks the same field list. Also ships a ClaimsPrincipal to DwPolicyContext adapter and audit-draining middleware. Requires DynamicWhere.ex 3.0.0.</PackageReleaseNotes>
     <PackageProjectUrl>https://doc.dynamicwhere.com</PackageProjectUrl>

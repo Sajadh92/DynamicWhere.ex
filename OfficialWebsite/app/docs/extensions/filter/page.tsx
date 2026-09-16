@@ -85,7 +85,8 @@ export default function Page() {
           When <code>Selects</code> is provided, select runs through{" "}
           <Link href="/docs/extensions/select"><code>.Select&lt;T&gt;</code></Link>
           , so <code>T</code> must have a parameterless constructor — checked at
-          run time, not by a type constraint.
+          run time, not by a type constraint —{" "}
+          <code>SelectTypeMustHaveParameterlessConstructor</code>.
         </li>
       </ul>
 

@@ -82,12 +82,26 @@ export default function Page() {
           <tr>
             <td>
               <code>Date</code> / <code>DateTime</code> values must parse as{" "}
-              <code>DateTime</code>
+              <code>DateTime</code> in the host&apos;s culture — and again, when the
+              predicate is built, in the invariant culture
             </td>
             <td><code>InvalidFormat</code></td>
           </tr>
         </tbody>
       </table>
+
+      <Callout tone="warn" title="Date values are read twice">
+        Validation parses a date value with the host&apos;s culture. Since 3.1.0 the
+        predicate builder parses it a second time with the invariant culture, for
+        the member&apos;s own type, and refuses what that pass cannot read with the
+        same <code>InvalidFormat</code> — so on a day-first host{" "}
+        <code>&quot;15/09/2026&quot;</code> passes validation and is refused a moment
+        later, and <code>&quot;01/09/2026&quot;</code> passes both and means 9
+        January. ISO&nbsp;8601 (<code>&quot;2026-09-15&quot;</code>,{" "}
+        <code>&quot;2026-09-15T12:00:00Z&quot;</code>) reads the same in both passes
+        on every host. See{" "}
+        <Link href="/docs/breaking-changes#date-invariant-culture">breaking changes</Link>.
+      </Callout>
 
       <h2 id="related">Related</h2>
       <ul>

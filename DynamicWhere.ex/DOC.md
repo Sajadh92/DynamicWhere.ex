@@ -1,6 +1,6 @@
 ﻿# DynamicWhere.ex
 
-**Version:** 3.0.0 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** MIT (Free Forever)
+**Version:** 3.1.0 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** MIT (Free Forever)
 
 > A powerful and versatile library for dynamically creating complex filter, sort, paginate, group, aggregate, and set-operation expressions in Entity Framework Core applications — all driven by simple JSON objects from any front-end or API consumer.
 
@@ -31,7 +31,7 @@
 ## Installation
 
 ```bash
-dotnet add package DynamicWhere.ex --version 3.0.0
+dotnet add package DynamicWhere.ex --version 3.1.0
 ```
 
 **Dependencies:**
@@ -103,9 +103,22 @@ Specifies the logical data type of a condition value. The library uses this to c
 | `Guid` | GUID as string | `Equal`, `NotEqual`, `In`, `NotIn`, `IsNull`, `IsNotNull` |
 | `Number` | Numeric value (byte → decimal) | `Equal`, `NotEqual`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `NotBetween`, `In`, `NotIn`, `IsNull`, `IsNotNull` |
 | `Boolean` | `true` / `false` | `Equal`, `NotEqual`, `IsNull`, `IsNotNull` |
-| `DateTime` | Full timestamp | `Equal`, `NotEqual`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `NotBetween`, `IsNull`, `IsNotNull` |
-| `Date` | Date-only (compared via `.Date`) | Same as `DateTime` (compares `.Date` part only) |
+| `DateTime` | Full timestamp. Works on `DateTime` and `DateTimeOffset` members, nullable or not | `Equal`, `NotEqual`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `NotBetween`, `IsNull`, `IsNotNull` |
+| `Date` | Calendar day, compared on both sides | Same as `DateTime` (compares the day only) |
 | `Enum` | An enum member, named or numbered. The column may store either | `Equal`, `NotEqual`, `In`, `NotIn`, `IsNull`, `IsNotNull`. The string operators (`Contains`, `StartsWith`, `EndsWith` and their negations) pass validation but throw `ParseException` against an enum-typed member — they work only where the mapped property is itself a `string`, which is `Text`'s job |
+
+#### How the two date types compare
+
+Since 3.1.0 the predicate is built from the member's own CLR type, which is what makes `DateTimeOffset` work at all — every comparison on one used to throw, and `Date` on any nullable date member threw with it.
+
+| | What the library does |
+|---|---|
+| Value parsing | **Invariant culture**, re-emitted in round-trip form, so a filter means the same day on every host. The invariant culture reads a slash date **month-first**: `15/09/2026` is refused with `InvalidFormat`, but `01/09/2026` is silently 9 January. Validation still checks the value in the host's culture first, so on a non-invariant host it must satisfy both. Send ISO 8601 (`2026-09-01`), which always does |
+| `HAVING` | Names an alias rather than a member, so a date condition there keeps the older shape: a null guard and a `DateTime` literal |
+| `DateTimeOffset` member | Compared against a `DateTimeOffset` literal normalised to UTC. A value carrying no zone is read as UTC, so `Date` names the day the caller wrote. On Npgsql `Date` becomes `date_trunc('day', col AT TIME ZONE 'UTC')` |
+| `DateTime` member | Compared against a `DateTime` literal. A value carrying `Z` or an offset converts to the host's local time first, as it always has — send it in the convention the column stores |
+| Nullable member | Guarded with `field != null` and unwrapped under that guard (`field.Value`, `field.Value.Date`). A null row therefore fails `NotEqual` and `NotBetween`, which is deliberate |
+| Non-nullable member | No guard at all. `IsNull` answers `false` and `IsNotNull` answers `true` — on Npgsql, `WHERE FALSE` and no predicate |
 
 ---
 
@@ -395,7 +408,7 @@ Combines filtering → grouping → having → ordering → pagination for aggre
 |----------|------|-------------|
 | `PageNumber` | `int` | Current page (0 when no pagination) |
 | `PageSize` | `int` | Page size (0 when no pagination) |
-| `PageCount` | `int` | Total pages |
+| `PageCount` | `int` | Total pages. `1` when no page was requested (`0` with no rows) — before 3.1.0 an unpaged filter or summary reported one page per row, and an unpaged segment reported none |
 | `TotalCount` | `int` | Total matching records |
 | `Data` | `List<T>` | The result entities |
 | `QueryString` | `string?` | Generated SQL (when `getQueryString: true`) |
@@ -410,7 +423,7 @@ Inherits all properties from `FilterResult<T>`. Returned by segment operations.
 |----------|------|-------------|
 | `PageNumber` | `int` | Current page (0 when no pagination) |
 | `PageSize` | `int` | Page size (0 when no pagination) |
-| `PageCount` | `int` | Total pages |
+| `PageCount` | `int` | Total pages. `1` when no page was requested (`0` with no rows) — before 3.1.0 an unpaged filter or summary reported one page per row, and an unpaged segment reported none |
 | `TotalCount` | `int` | Total grouped records |
 | `Data` | `List<dynamic>` | Dynamic objects with group keys + aggregation values |
 | `QueryString` | `string?` | Generated SQL (when `getQueryString: true`) |
@@ -690,7 +703,7 @@ Async-only segment operation. Executes each `ConditionSet` independently, then a
 | `Guid` values must parse as `Guid` | `InvalidFormat` |
 | `Number` values must parse as a numeric type | `InvalidFormat` |
 | `Boolean` values must parse as `bool` | `InvalidFormat` |
-| `Date` / `DateTime` values must parse as `DateTime` | `InvalidFormat` |
+| `Date` / `DateTime` values must parse as a date **in the invariant culture** | `InvalidFormat` |
 
 ### ConditionGroup Validation Rules
 
@@ -1462,7 +1475,7 @@ var caller = await DwPolicy.PrepareAsync(
 var result = await db.Employees.ApplyPolicy(caller).ToListAsync(filter);
 ```
 
-A context carries the snapshot it was served, and the staleness ceiling measures how old that snapshot is — which is why it is built once per request rather than reused. An unprepared context is **refused** by any store provider rather than quietly resolving from attributes alone.
+A context carries the snapshot it was served, and the staleness ceiling measures how old that snapshot is — which is why it is built once per request rather than reused. Since 3.1.0 an unprepared context is **refused by `ApplyPolicy` itself**, with `PolicyContextNotPrepared`, whether or not a store is configured: before that only a store provider refused one, so an attributes-only deployment accepted the missing call and would have started refusing the day it gained a store. `DwPolicyContext.IsPrepared` reports it. The overload taking explicit options and a resolver does not check — that host composes its own configuration and owns preparation.
 
 ### Attribute reference
 
@@ -1625,7 +1638,9 @@ new DwPolicyOptions { Caps = { MinGroupSize = 10 } }   // stricter
 | Cap | Default | Meaning |
 |---|---|---|
 | `MaxPageSize` | 1000 | Largest page a caller may request |
+| `DefaultPageSize` | 0 (off) | The page a guarded query is given when it asks for none. `MaxPageSize` only ever read a page the caller sent, so the request with none was the one nothing bounded |
 | `MaxConditions` | 50 | Conditions in one filter |
+| `MaxConditionDepth` | 10 | How deep condition groups may nest, root counted as one. `MaxConditions` bounds the count and says nothing about the shape |
 | `MaxOrderFields` | 10 | Order fields in one query |
 | `MaxNavigationDepth` | 4 | How deep a field path may reach |
 | `MaxQueryCost` | 1000 | Budget consumed by `[DwCost]` weights |
@@ -1636,7 +1651,7 @@ new DwPolicyOptions { Caps = { MinGroupSize = 10 } }   // stricter
 | `MaxSchemaFields` | 2000 | Fields one schema response may carry before it truncates |
 | `MinGroupSize` | 5 | k-anonymity group floor. Set 1 to switch it off |
 
-Options are frozen at startup. Every cap refuses a value below one, except `DefaultFieldCost`, which accepts zero: that is the posture for a model weighing only its few expensive fields and leaving the rest free.
+Options are frozen at startup. Every cap refuses a value below one, except two that accept zero: `DefaultFieldCost`, which is the posture for a model weighing only its few expensive fields and leaving the rest free, and `DefaultPageSize`, where zero means no page is supplied. `DefaultPageSize` is the only one that refuses nothing — it fills a page in rather than rejecting a request that carried none, and is bounded by `MaxPageSize`.
 
 ### Administration
 
@@ -1925,7 +1940,8 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `InvalidPageNumber` | `PageNumberMustBeGreaterThanZero` | PageNumber ≤ 0 |
 | `InvalidPageSize` | `PageSizeMustBeGreaterThanZero` | PageSize ≤ 0 |
 | `MustHaveFields` | `MustHasFields` | Empty fields list in Select |
-| `InvalidFormat` | `InvalidFormat` | Value doesn't parse for declared DataType |
+| `InvalidFormat` | `InvalidFormat` | Value doesn't parse for declared DataType. Date values are read with the invariant culture, so a host-specific form such as `15/09/2026` is refused |
+| `SelectTypeMustHaveParameterlessConstructor` | `SelectTypeMustHaveParameterlessConstructor` | `Select<T>` or `Filter.Selects` on a `T` the projection cannot construct. `LogicException.Subject` carries the type's full name |
 | `InvalidAlias` | `AggregationMustHasValidAlias` | Alias is not a plain identifier — empty, or carrying a dot, comma, space, or dash |
 | `GroupByMustHaveFields` | `GroupByMustHasAtLeastOneField` | GroupBy with no fields |
 | `GroupByFieldsMustBeUnique` | `GroupByFieldsMustBeUnique` | Duplicate GroupBy fields |
@@ -1947,33 +1963,36 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 ### ⚠️ Breaking Points
 
 1. **Parameterless Constructor Required for Select Projection**
-   `Select<T>(fields)` requires `T` to have a parameterless (default) constructor. If `T` does not have one, a `LogicException` is thrown. Most EF Core entity classes have parameterless constructors by default.
+   `Select<T>(fields)` requires `T` to have a parameterless (default) constructor. If `T` does not have one — a positional record, most often — a `LogicException` is thrown whose `Message` is the stable code `SelectTypeMustHaveParameterlessConstructor` and whose `Subject` carries `typeof(T).FullName`. Before 3.1.0 that message was an English sentence with the type name inside it. Most EF Core entity classes have parameterless constructors by default. A guarded query reaches the same refusal when a member carries `[DwNoSelect]`, because deny-select projects.
 
 2. **Segment Operations are Async-Only**
    `ToListAsync<T>(Segment)` is the only entry point for segment queries. There is no synchronous `ToList<T>(Segment)` variant. Each `ConditionSet` is materialized independently into memory, then set operations are performed in-memory.
 
-3. **Case-Insensitive Operators use `.ToLower()`**
+3. **Date Values are Read with the Invariant Culture**
+   Since 3.1.0, `Date` and `DateTime` values are parsed with `InvariantCulture` rather than the server's. A deployment that sent culture-formatted values — `15/09/2026` on a day-first host — now receives `InvalidFormat` where the filter used to run. Worse, a day of 12 or less is not refused at all: the invariant culture reads `01/09/2026` month-first, as 9 January. Send ISO 8601. In exchange, the same filter means the same day on every server, `DateTimeOffset` columns work at all, and a `DateTimeOffset` value is normalised to UTC.
+
+4. **Case-Insensitive Operators use `.ToLower()`**
    All `I*` operators (e.g., `IContains`, `IEqual`) normalize both sides via `.ToLower()`. This works correctly with SQL Server (`COLLATE` is typically case-insensitive), but be aware of potential performance or behavior differences on case-sensitive database collations (e.g., PostgreSQL with `C` locale).
 
-4. **`DataType.Enum` Reads the Member Name, Whatever the Storage**
+5. **`DataType.Enum` Reads the Member Name, Whatever the Storage**
    A value is matched by member name (any case) or by number, and EF Core translates it for an `int` column as readily as for a `string` one — the storage is not what decides. What the type does decide is the operator list: `Equal`, `NotEqual`, `In`, `NotIn`, `IsNull` and `IsNotNull` only. `Contains` / `StartsWith` / `EndsWith` against an enum-typed member throw `ParseException` (`No applicable method 'Contains' exists in type '<Enum>'`) under either storage. Use `DataType.Text` for a `string` column that merely holds enum names and needs those operators.
 
-5. **Having Clause Fields Reference Aliases, Not Entity Properties**
+6. **Having Clause Fields Reference Aliases, Not Entity Properties**
    `Summary.Having` is itself the `ConditionGroup`, so the path is `Having.Conditions[].Field` (and the same inside its `SubConditionGroups`). Each of those fields must match an `AggregateBy.Alias`, not an entity property path.
 
-6. **GroupBy Flattens Dotted Field Names in Results**
+7. **GroupBy Flattens Dotted Field Names in Results**
    Dotted `GroupBy` fields (e.g., `Category.Name`) produce flattened alias keys in the dynamic result objects (e.g., `CategoryName`). Order fields in `Summary.Orders` should use the dotted form; the library handles alias mapping internally.
 
-7. **Collection Navigation Auto-Wraps with `.Any()`**
+8. **Collection Navigation Auto-Wraps with `.Any()`**
    When a condition's `Field` path traverses a collection property, the library automatically inserts `.Any()` lambdas. This means the filter checks if **any** item in the collection matches — there is no built-in `.All()` support.
 
-8. **Thread-Safe Cache, But Configuration Changes are Eventually Consistent**
+9. **Thread-Safe Cache, But Configuration Changes are Eventually Consistent**
    `CacheExpose.Configure()` is thread-safe, but already-in-progress operations may use the previous configuration until they complete.
 
-9. **`getQueryString` Parameter Requires EF Core Provider**
-   Passing `getQueryString: true` to `ToList` / `ToListAsync` calls `.ToQueryString()` which requires an active EF Core database provider. It will fail on pure in-memory `IEnumerable<T>` calls (use the `IEnumerable` overloads which internally call `AsQueryable()` first, but `ToQueryString()` may not be supported).
+10. **`getQueryString` Parameter Requires EF Core Provider**
+   Passing `getQueryString: true` to `ToList` / `ToListAsync` calls `.ToQueryString()`, which needs an active EF Core database provider to produce SQL. On an in-memory `IEnumerable<T>` it does not fail: `QueryString` holds a placeholder sentence where the SQL would be.
 
-10. **`SelectDynamic` / `FilterDynamic` / `ToListDynamic` / `ToListAsyncDynamic` Return Non-Generic Types**
+11. **`SelectDynamic` / `FilterDynamic` / `ToListDynamic` / `ToListAsyncDynamic` Return Non-Generic Types**
     These methods return `IQueryable` or `FilterResult<dynamic>` instead of the strongly-typed equivalents. Downstream code must work with `dynamic` objects. Property names in the dynamic result follow these rules:
     - **Non-dotted paths** (`Name`, `Category`, `OrderItems`, …) are projected as-is — access them by their exact field name at runtime.
     - **Dotted paths through reference navigations** (e.g., `Category.Name`) produce **nested dynamic objects** reflecting the navigation hierarchy — access them as `result.Category.Name`, not as a flat `CategoryName`.
@@ -1981,14 +2000,14 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
     - **Multiple dotted fields** sharing the same root segment (e.g., `Category.Name` + `Category.Id`) are merged into a single nested object: `result.Category.Name` and `result.Category.Id`.
     - **Mixed whole-navigation + sub-field paths**: when both `"Category"` and `"Category.Name"` are requested, the sub-field projection takes precedence and `"Category"` is silently dropped.
 
-11. **All Filter Extensions Apply Order and Page Before the Select Projection**
+12. **All Filter Extensions Apply Order and Page Before the Select Projection**
     All Filter extensions — both typed (`Filter<T>`, `ToList<T>(Filter)`, `ToListAsync<T>(Filter)`) and dynamic (`FilterDynamic<T>`, `ToListDynamic<T>`, `ToListAsyncDynamic<T>`) — apply ordering and pagination on the typed `IQueryable<T>` **before** the select projection. This ensures that field names referenced in `orders` always resolve against the original entity type `T`, regardless of which fields are projected.
 
-12. **Condition Values Become Escaped Literals, Not Query Parameters**
+13. **Condition Values Become Escaped Literals, Not Query Parameters**
     A condition's `Values` are written into the generated dynamic LINQ expression as string literals. Since **2.1.4** they are escaped first — a backslash is doubled and a double quote is backslash-escaped — so any value matches literally, `\` and `"` included, and a value can no longer break out of its literal to alter the predicate. Before 2.1.4 a value ending in `\` threw `ParseException: ')' or ',' expected`, and a crafted value could append predicate logic of its own.
     The literal then reaches the provider as a constant, so EF Core inlines it into the SQL rather than binding a parameter — a `Contains` on `"الثانية\"` renders as `instr(lower("p"."Name"), 'الثانية\') > 0`. EF Core escapes that literal for SQL itself, so this is not a SQL injection path; it does mean each distinct search term produces a distinct statement and its own plan-cache entry.
 
-13. **`AggregateBy.Alias` Must Be a Plain Identifier**
+14. **`AggregateBy.Alias` Must Be a Plain Identifier**
     The alias is emitted verbatim into the generated `Select` projection, so since **2.1.4** it must be a leading letter or underscore followed by letters, digits, or underscores. Letters are matched by Unicode category, so a non-Latin alias such as `"المجموع"` stays valid. Earlier releases only rejected aliases containing a dot, which let an alias holding a comma — `"Total, 1 as Leaked"` — append terms of its own to the projection. Aliases carrying any other separator never parsed, so nothing that worked is rejected.
 
 ---

@@ -17,10 +17,21 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The thirteen points below cover constraints, surprises, and corner cases —
+        The eighteen points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
+      <Callout tone="danger" title="Behaviour changes in 3.1.0">
+        Five behaviours changed in <strong>3.1.0</strong>. Each one fixes a defect,
+        and each one is visible to a caller that depended on the old shape. Date
+        comparisons now read the member&apos;s type before building
+        the predicate (point&nbsp;14) and parse values with the invariant culture
+        (point&nbsp;15); an unpaged <code>PageCount</code> is now <code>1</code>{" "}
+        rather than <code>TotalCount</code> (point&nbsp;16); the{" "}
+        <code>Select</code> constructor refusal carries a stable code instead of an
+        English sentence (point&nbsp;17); and a guarded query is refused unless its
+        context was prepared (point&nbsp;18).
+      </Callout>
       <Callout tone="danger" title="Upgrade to 2.1.4">
         Releases before <strong>2.1.4</strong> did not escape condition values before
         embedding them in the generated expression. A value carrying a{" "}
@@ -35,8 +46,11 @@ export default function Page() {
       <p>
         <code>Select&lt;T&gt;(fields)</code> requires <code>T</code> to have a
         parameterless (default) constructor. If <code>T</code> does not have one, a{" "}
-        <code>LogicException</code> is thrown. Most EF Core entity classes have
-        parameterless constructors by default.
+        <code>LogicException</code> is thrown, with{" "}
+        <code>SelectTypeMustHaveParameterlessConstructor</code> as its{" "}
+        <code>Message</code> and the type&apos;s full name on{" "}
+        <code>Subject</code> — see point&nbsp;17 for what that message used to be.
+        Most EF Core entity classes have parameterless constructors by default.
       </p>
       <Callout tone="danger" title="Hard requirement">
         Records with positional parameters and classes whose only constructor takes
@@ -286,11 +300,200 @@ export default function Page() {
         later. See <Link href="/docs/classes/aggregate-by"><code>AggregateBy</code></Link>.
       </Callout>
 
+      <h2 id="date-member-type">14. Date Comparisons Resolve the Member&apos;s Type</h2>
+      <p>
+        Before <strong>3.1.0</strong> every{" "}
+        <Link href="/docs/enums/data-type"><code>DataType.Date</code></Link> and{" "}
+        <code>DataType.DateTime</code> condition produced the same string per
+        operator, whatever the member actually was — for{" "}
+        <code>GreaterThanOrEqual</code>,{" "}
+        <code>{`{field} != null && {field} >= DateTime.Parse("…")`}</code>. The
+        builder now reads the member&apos;s CLR type first and emits the null guard,
+        the literal, and the <code>.Date</code> access that type can actually take.
+      </p>
+      <ul>
+        <li>
+          The null guard is emitted <strong>only for a member that can be null</strong>.
+        </li>
+        <li>
+          A <code>DateTimeOffset</code> member is compared against a{" "}
+          <code>DateTimeOffset</code> literal; a <code>DateTime</code> member
+          against a <code>DateTime</code> literal.
+        </li>
+        <li>
+          A nullable member is unwrapped with <code>.Value</code> under its guard,
+          so <code>DataType.Date</code> emits <code>{`{field}.Value.Date`}</code>.
+        </li>
+        <li>
+          A <code>Having</code> condition names an aggregate alias rather than a
+          member, so there is no type to read: it keeps the guard and the{" "}
+          <code>DateTime</code> literal.
+        </li>
+      </ul>
+      <Callout tone="danger" title="Fixed: DateTimeOffset members were unusable">
+        Until 3.1.0 <em>every</em> comparison on a <code>DateTimeOffset</code>{" "}
+        member threw. On a non-nullable one the null guard compared a struct against{" "}
+        <code>null</code> and failed with{" "}
+        <code>
+          InvalidOperationException: The binary operator NotEqual is not defined
+          for the types &apos;System.DateTimeOffset&apos; and
+          &apos;System.Object&apos;
+        </code>
+        . On a nullable one the literal was built as the wrong type — for{" "}
+        <code>GreaterThanOrEqual</code>,{" "}
+        <code>
+          ParseException: Operator &apos;&gt;=&apos; incompatible with operand types
+          &apos;DateTimeOffset?&apos; and &apos;DateTime&apos;
+        </code>
+        . And <code>DataType.Date</code> on <em>any</em> nullable date member threw,
+        because a nullable has no <code>.Date</code> — on a <code>DateTime?</code>,{" "}
+        <code>
+          ParseException: No property or field &apos;Date&apos; exists in type
+          &apos;DateTime?&apos;
+        </code>
+        . All of these now work.
+      </Callout>
+      <Callout tone="warn" title="IsNull answers a constant on a non-nullable member">
+        With the guard gone, there is nothing left for{" "}
+        <Link href="/docs/enums/operator"><code>IsNull</code></Link> and{" "}
+        <code>IsNotNull</code> to test on a non-nullable date member, so they answer
+        with the constant the guard already implied: <code>IsNull</code> is{" "}
+        <code>false</code> and <code>IsNotNull</code> is <code>true</code>. On
+        PostgreSQL that reaches the database as <code>WHERE FALSE</code> and, for{" "}
+        <code>IsNotNull</code>, as no predicate at all. On a non-nullable{" "}
+        <code>DateTimeOffset</code>, where both used to throw like every other
+        operator, they now answer.
+      </Callout>
+      <Callout tone="note" title="Unchanged: the guard sits outside the comparison">
+        On a nullable member the guard still wraps the <em>whole</em> comparison,
+        so a null row fails every comparison — including the negative ones. A row
+        whose date is unset does not match <code>NotEqual</code> and does not match{" "}
+        <code>NotBetween</code>. Combine with <code>IsNull</code> under an{" "}
+        <code>Or</code> if you want the unset rows back.
+      </Callout>
+
+      <h2 id="date-invariant-culture">15. Date Values Are Parsed with the Invariant Culture</h2>
+      <p>
+        Condition values for the two date types are now parsed by the builder with{" "}
+        <code>CultureInfo.InvariantCulture</code> and re-emitted in round-trip form.
+        The shipped predicate used to carry your raw text into a{" "}
+        <code>DateTime.Parse</code> that the runtime evaluated in the host&apos;s
+        culture, so the same filter meant different days on two servers.
+      </p>
+      <Callout tone="danger" title="Culture-formatted values are now refused — or silently re-read">
+        A value the invariant culture cannot read is refused with{" "}
+        <Link href="/docs/errors"><code>InvalidFormat</code></Link>. A host that
+        sent day-first values such as <code>&quot;15/09/2026&quot;</code> and
+        happened to run under a day-first culture parsed them before and gets{" "}
+        <code>InvalidFormat</code> now. Worse, a day-first value whose day is 12 or
+        less is <em>not</em> refused: the invariant culture reads it month-first, so{" "}
+        <code>&quot;01/09/2026&quot;</code> — 1 September on that host until now —
+        filters on 9 January without any error. Send ISO&nbsp;8601 —{" "}
+        <code>&quot;2026-09-15&quot;</code>,{" "}
+        <code>&quot;2026-09-15T12:00:00Z&quot;</code>.
+      </Callout>
+      <Callout tone="warn" title="Zones: DateTimeOffset normalizes to UTC, DateTime does not">
+        On a <code>DateTimeOffset</code> member the value is normalized to UTC, and
+        a value carrying no zone is <em>read</em> as UTC — which is what keeps{" "}
+        <code>DataType.Date</code> comparing the calendar day you wrote rather than
+        the day it happens to be on the server. On PostgreSQL{" "}
+        <code>DataType.Date</code> translates to{" "}
+        <code>{`date_trunc('day', col AT TIME ZONE 'UTC')`}</code>.{" "}
+        <code>DateTime</code> members keep the previous behaviour: a value carrying
+        a zone is converted to the host&apos;s local time, which is the reading a{" "}
+        <code>timestamp without time zone</code> column is compared against.
+      </Callout>
+
+      <h2 id="unpaged-page-count">16. <code>PageCount</code> on an Unpaged Result Is <code>1</code></h2>
+      <p>
+        When a <code>Filter</code> or <code>Summary</code> carries no{" "}
+        <code>Page</code>, <code>PageCount</code> is now <code>1</code> — the one
+        page the whole result occupies — and <code>0</code> when nothing matched.
+        It used to equal <code>TotalCount</code>: the calculation divided by a page
+        size of <code>1</code> whenever none was sent, so a 5,000-row result
+        reported 5,000 pages of one row each.
+      </p>
+      <Callout tone="danger" title="Check anything that renders a pager">
+        A client that draws page links straight from <code>PageCount</code> drew one
+        link per row on every unpaged endpoint and now draws a single link. Applies
+        to <Link href="/docs/classes/filter-result"><code>FilterResult&lt;T&gt;</code></Link>{" "}
+        — typed and dynamic, sync and async — to{" "}
+        <Link href="/docs/classes/summary-result"><code>SummaryResult</code></Link>,
+        and to{" "}
+        <Link href="/docs/classes/segment-result"><code>SegmentResult&lt;T&gt;</code></Link>,
+        which used to report <code>0</code> for an unpaged request with condition
+        sets.{" "}
+        <code>PageNumber</code> and{" "}
+        <code>PageSize</code> are unchanged — both still report <code>0</code> when
+        no page was sent.
+      </Callout>
+
+      <h2 id="select-code">17. <code>Select</code>&apos;s Constructor Refusal Is Now a Stable Code</h2>
+      <p>
+        The refusal in point&nbsp;1 used to arrive as an English sentence —{" "}
+        <code>{`Select projection requires a parameterless constructor on type '{T}'.`}</code>{" "}
+        — which a caller could not match on, because the type name was
+        interpolated into it. The <code>Message</code> is now the fixed
+        code <code>SelectTypeMustHaveParameterlessConstructor</code>, and the
+        type&apos;s full name rides on a new property,{" "}
+        <code>LogicException.Subject</code> (<code>string?</code>).{" "}
+        <code>LogicException</code> gained a second constructor for it,{" "}
+        <code>LogicException(string message, string? subject)</code>.
+      </p>
+      <Callout tone="danger" title="Two things to update">
+        Middleware that string-matched the old sentence stops matching, and anything
+        that scraped the type name out of the message must read{" "}
+        <code>Subject</code> instead. The count of stable codes went from 27 to 28,
+        leaving one validation failure whose message is a sentence rather than a
+        code —{" "}
+        <code>{`Unsupported combination of DataType '{type}' and Operator '{op}'.`}</code>{" "}
+        See <Link href="/docs/errors">the error code reference</Link>.
+      </Callout>
+      <Callout tone="note" title="Guarded queries reach it too">
+        A member carrying <code>[DwNoSelect]</code> makes the policy layer
+        synthesize a projection for a query that sent none, so a typed guarded
+        query on a type with no parameterless constructor raises the same code —
+        even though the caller never asked for a <code>Select</code>. The dynamic
+        terminals project through <code>SelectDynamic</code> and are not affected.
+      </Callout>
+
+      <h2 id="policy-prepared">18. A Guarded Query Requires a Prepared Context</h2>
+      <p>
+        A query guarded through{" "}
+        <Link href="/docs/policies"><code>ApplyPolicy</code></Link> whose{" "}
+        <code>DwPolicyContext</code> never went through{" "}
+        <code>DwPolicy.PrepareAsync</code> is refused with a{" "}
+        <code>PolicyException</code> carrying{" "}
+        <code>PolicyContextNotPrepared</code> — whether or not a policy store is
+        configured, and at the <code>ApplyPolicy</code> call itself, before any
+        terminal runs. A store provider already refused one, because it had no pinned
+        snapshot to answer from; with attributes alone nothing refused it, so the
+        same missing call was a failure in one deployment and silence in another.{" "}
+        <code>DwPolicyContext.IsPrepared</code> is public, so you can assert it
+        yourself.
+      </p>
+      <Callout tone="warn" title="The explicit-options overload does not check">
+        The <code>ApplyPolicy</code> overload that takes explicit options and a
+        resolver is exempt: a host composing its own options owns preparation. The
+        check applies to the overloads that read the ambient{" "}
+        <code>DwPolicy</code> configuration, because that is where{" "}
+        <code>PrepareAsync</code> is the documented ceremony. A store handed to the
+        explicit overload still refuses an unprepared context on its own.
+      </Callout>
+
       <h2 id="next">See also</h2>
       <ul>
         <li>
-          <Link href="/docs/errors">Error Codes Reference →</Link> the 27 stable
+          <Link href="/docs/errors">Error Codes Reference →</Link> the 28 stable
           validation messages.
+        </li>
+        <li>
+          <Link href="/docs/enums/data-type"><code>DataType</code> →</Link>{" "}
+          context for points 14 and 15.
+        </li>
+        <li>
+          <Link href="/docs/classes/filter-result"><code>FilterResult&lt;T&gt;</code> →</Link>{" "}
+          context for point 16.
         </li>
         <li>
           <Link href="/docs/cache/configuration">Cache configuration →</Link>{" "}

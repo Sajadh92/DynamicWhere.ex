@@ -58,7 +58,11 @@ export default function Page() {
             <td>
               <code>int</code>
             </td>
-            <td>Total pages.</td>
+            <td>
+              Total pages. <code>1</code> when the query carried no{" "}
+              <code>Page</code> — an unpaged result is one page of everything —
+              and <code>0</code> when nothing matched.
+            </td>
           </tr>
           <tr>
             <td>
@@ -108,9 +112,26 @@ export default function Page() {
       <Callout tone="info">
         When the input <code>Filter</code> has no <code>Page</code>, <code>PageNumber</code>{" "}
         and <code>PageSize</code> come back as <code>0</code> and the full result sits in{" "}
-        <code>Data</code>. <code>PageCount</code> is{" "}
-        <code>Ceiling(TotalCount / (PageSize == 0 ? 1 : PageSize))</code>, so with no paging
-        it equals <code>TotalCount</code> — not <code>1</code>.
+        <code>Data</code>. <code>PageCount</code> is <code>1</code> — the one page the
+        whole result occupies — or <code>0</code> when nothing matched. With a{" "}
+        <code>Page</code>, it is <code>Ceiling(TotalCount / PageSize)</code>.
+      </Callout>
+
+      <Callout tone="danger" title="Changed in 3.1.0">
+        An unpaged <code>PageCount</code> used to equal <code>TotalCount</code>: the
+        calculation divided by a page size of <code>1</code> whenever none was sent, so
+        a 5,000-row result reported 5,000 pages of one row each. A client that draws a
+        pager straight from <code>PageCount</code> now gets one page instead of one per
+        row. <code>PageNumber</code> and <code>PageSize</code> are unchanged — both still{" "}
+        <code>0</code> when no page was sent.
+      </Callout>
+
+      <Callout tone="info" title="A guarded query may be paged for you">
+        On a guarded query, a deployment that sets{" "}
+        <Link href="/docs/policies/configuration"><code>DwCaps.DefaultPageSize</code></Link>{" "}
+        gives a request with no <code>Page</code> page <code>1</code> at that size, so{" "}
+        <code>PageNumber</code>, <code>PageSize</code> and <code>PageCount</code> come
+        back as for any paged request. It never replaces a page the caller sent.
       </Callout>
 
       <h2 id="csharp-example">C# usage</h2>

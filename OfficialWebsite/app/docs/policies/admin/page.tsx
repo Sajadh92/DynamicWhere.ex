@@ -15,7 +15,7 @@ export default function Page() {
   return (
     <DocPage pathname="/docs/policies/admin">
       <h1>Admin API</h1>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.AspNetCore --version 3.0.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.AspNetCore --version 3.1.0`}</Code>
       <Code lang="csharp">{`app.MapDwPolicyAdmin(options =>
 {
     options.RoutePrefix  = "/dw-policies";    // the default; mount it anywhere

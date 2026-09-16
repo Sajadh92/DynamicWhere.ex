@@ -47,13 +47,13 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 ## Install
 
 ```bash
-dotnet add package DynamicWhere.ex --version 3.0.0
+dotnet add package DynamicWhere.ex --version 3.1.0
 ```
 
 Or via Package Manager:
 
 ```powershell
-Install-Package DynamicWhere.ex -Version 3.0.0
+Install-Package DynamicWhere.ex -Version 3.1.0
 ```
 
 Dependencies (restored automatically):
@@ -362,6 +362,18 @@ The complete reference — every enum, class, extension method, validation rule,
 | [Breaking Changes](https://doc.dynamicwhere.com/docs/breaking-changes) | Known limits and migration notes |
 
 ---
+
+## Version 3.1.0 highlights
+
+**Upgrade note — three behaviour changes. Read these before bumping.**
+
+- **Fixed: `DateTimeOffset` columns.** Every comparison on a `DateTimeOffset` member threw, and `DataType.Date` on any nullable date member threw with it. The predicate is now built from the member's own type — a null guard only where the member can be null, a literal of the member's type, `.Value.Date` under the guard — and `IsNull` / `IsNotNull` on a non-nullable date answer `false` / `true`. Verified against Npgsql `timestamptz`.
+- **Changed: date values are read with the invariant culture.** A filter now means the same day on every server. The invariant culture reads a slash date month-first, so `15/09/2026` is refused with `InvalidFormat` — and `01/09/2026` is silently 9 January. **Send ISO 8601** (`2026-09-01`). `DateTimeOffset` values are normalised to UTC.
+- **Changed: an unprepared context is refused everywhere.** `ApplyPolicy(ctx)` throws `PolicyContextNotPrepared` for a context that never went through `DwPolicy.PrepareAsync`, with or without a store configured. An attributes-only deployment used to accept it and would have started refusing the day it gained a store.
+- **Changed: `PageCount` on an unpaged result is `1`** on filter, summary and segment results alike — it was `TotalCount` for the first two and `0` for a segment.
+- **New: `DwCaps.DefaultPageSize`** (off by default) bounds a guarded query that sends no page — `MaxPageSize` only ever bounded a caller who had asked for one. **`DwCaps.MaxConditionDepth`** (default 10) bounds how deeply condition groups nest.
+- **New: a stable code where a sentence was.** `Select` on a type it cannot construct throws `SelectTypeMustHaveParameterlessConstructor`, with the type name on the new `LogicException.Subject`.
+- **Fixed:** a healthy policy store nobody wrote to refused every guarded query fifteen minutes after its last write, and the composable `Group` / `Summary` on a guarded query returned the small groups the k-anonymity floor suppresses.
 
 ## Version 3.0.0 highlights
 

@@ -157,6 +157,22 @@ public class SegmentTests : SalesTestBase
     }
 
     [Fact]
+    public async Task AnUnpagedSegmentReportsOnePageOfEverything()
+    {
+        // Filter and Summary report one page for an unpaged request; a segment with condition sets
+        // left PageCount unset and reported zero pages beside a full page of rows.
+        SegmentResult<Product> result = await Products.ToListAsync(new Segment
+        {
+            ConditionSets = [ActiveSet(), ExpensiveSet(2, Intersection.Union)]
+        });
+
+        Assert.Equal(7, result.TotalCount);
+        Assert.Equal(0, result.PageNumber);
+        Assert.Equal(0, result.PageSize);
+        Assert.Equal(1, result.PageCount);
+    }
+
+    [Fact]
     public async Task OrderingAcrossACollectionPath()
     {
         SegmentResult<Order> result = await Orders.ToListAsync(new Segment

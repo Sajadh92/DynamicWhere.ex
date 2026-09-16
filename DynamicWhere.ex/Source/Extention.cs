@@ -1256,13 +1256,17 @@ public static class Extension
             sresult.PageNumber = segment.Page.PageNumber;
             sresult.PageSize = segment.Page.PageSize;
 
-            sresult.PageCount = sresult.PageSize == 0
-                ? (sresult.TotalCount == 0 ? 0 : 1)
-                : (int)Math.Ceiling((double)sresult.TotalCount / sresult.PageSize);
+            // Validation refuses a page size below one, so the division is always by a real size.
+            sresult.PageCount = (int)Math.Ceiling((double)sresult.TotalCount / sresult.PageSize);
         }
         else
         {
             sresult.Data = data;
+
+            // Unpaged is one page of everything, as it is for a filter and a summary. Left unset it
+            // reported zero pages beside a full page of rows, and the three result types disagreed
+            // about the same request.
+            sresult.PageCount = sresult.TotalCount == 0 ? 0 : 1;
         }
 
         // Return the result.

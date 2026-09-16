@@ -226,13 +226,10 @@ public class ApplyPolicyTests
     }
 
     [Fact]
-    public void Preparation_is_recorded_even_when_no_store_is_configured()
+    public async Task Preparation_is_recorded_even_when_no_store_is_configured()
     {
-        DwPolicyContext prepared = DwPolicy
-            .PrepareAsync(new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1"))
-            .AsTask()
-            .GetAwaiter()
-            .GetResult();
+        DwPolicyContext prepared = await DwPolicy.PrepareAsync(
+            new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1"));
 
         Assert.True(prepared.IsPrepared);
 

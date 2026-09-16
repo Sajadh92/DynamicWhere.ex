@@ -38,6 +38,10 @@ internal static class Builder
     public static string BuildCondition(
         DataType dataType, Operator _operator, string field, List<string> values, Type? memberType = null)
     {
+        // The values as validation saw them. A date is parsed and rebuilt rather than embedded, so it
+        // is read from these: escaping first would hand the reader a backslash validation never saw.
+        List<string> unescaped = values;
+
         // Normalize value tokens by trimming whitespace; validation already happened upstream.
         // Escape them for embedding in a dynamic LINQ string literal — see Escape.
         values = values.Select(v => Escape(v.Trim())).ToList();
@@ -217,13 +221,13 @@ internal static class Builder
             // DATETIME (expect ISO 8601 strings)
             // ----------------------------------------------------------
             case DataType.DateTime:
-                return BuildDate(dataType, _operator, field, values, memberType);
+                return BuildDate(dataType, _operator, field, unescaped, memberType);
 
             // ----------------------------------------------------------
             // DATE (compare by .Date)
             // ----------------------------------------------------------
             case DataType.Date:
-                return BuildDate(dataType, _operator, field, values, memberType);
+                return BuildDate(dataType, _operator, field, unescaped, memberType);
 
             // ----------------------------------------------------------
             // Enum
@@ -323,7 +327,16 @@ internal static class Builder
 
         string member = nullableOf is not null ? $"{field}.Value" : field;
         string access = byDay ? $"{member}.Date" : member;
-        string guard = nullable ? $"{field} != null && " : string.Empty;
+
+        // A member that cannot hold null can still be out of reach. "Approval.ApprovedAt" has no value
+        // for an invoice with no approval, and a provider reads it as NULL: without a guard IsNotNull
+        // would be true for that invoice, and NotEqual's null compensation would return it — a forced
+        // scope included. Each navigation on the way is guarded instead of the member.
+        List<string> reach = nullable ? new List<string>() : Navigations(field);
+
+        string guard = nullable
+            ? $"{field} != null && "
+            : string.Concat(reach.Select(navigation => $"{navigation} != null && "));
 
         string Literal(string value)
         {
@@ -370,19 +383,52 @@ internal static class Builder
             case Operator.NotBetween:
                 return $"{guard}({access} < {Literal(values[0])} || {access} > {Literal(values[1])})";
 
-            // A member that cannot hold null is never null and always not-null. Answering with the
-            // constant is what the dropped guard means, and it is also the only answer the parser
-            // can build: the comparison itself is what throws.
+            // A member that cannot hold null is null exactly when a navigation on its way is, and on
+            // the entity itself it is never null. Comparing the member to null is not an option: the
+            // parser cannot build that comparison, which is what throws.
             case Operator.IsNull:
-                return nullable ? $"{field} == null" : "false";
+                return nullable ? $"{field} == null"
+                    : reach.Count == 0 ? "false"
+                    : $"({string.Join(" || ", reach.Select(navigation => $"{navigation} == null"))})";
 
             case Operator.IsNotNull:
-                return nullable ? $"{field} != null" : "true";
+                return nullable ? $"{field} != null"
+                    : reach.Count == 0 ? "true"
+                    : $"({string.Join(" && ", reach.Select(navigation => $"{navigation} != null"))})";
         }
 
         throw new LogicException(
             $"Unsupported combination of DataType '{dataType}' and Operator '{_operator}'.");
     }
+
+    /// <summary>
+    /// The navigations a member access passes through, outermost first: <c>A</c> and <c>A.B</c> for
+    /// <c>A.B.Member</c>.
+    /// </summary>
+    /// <remarks>
+    /// The parameter a collection step introduces — <c>i1</c> in <c>i1.Approval.ApprovedAt</c>, inside
+    /// the <c>Any</c> the converter writes — is an element of that collection, which a provider never
+    /// yields as null, so it is not one of them.
+    /// </remarks>
+    private static List<string> Navigations(string field)
+    {
+        string[] segments = field.Split('.');
+
+        int first = segments.Length > 1 && IsCollectionParameter(segments[0]) ? 1 : 0;
+
+        List<string> navigations = new();
+
+        for (int end = first + 1; end < segments.Length; end++)
+        {
+            navigations.Add(string.Join(".", segments, 0, end));
+        }
+
+        return navigations;
+    }
+
+    /// <summary>True for <c>i</c> followed by digits, the lambda parameter a collection step is given.</summary>
+    private static bool IsCollectionParameter(string segment) =>
+        segment.Length > 1 && segment[0] == 'i' && segment.Skip(1).All(c => c >= '0' && c <= '9');
 
     /// <summary>Turns <c>yyyy-MM-dd</c> into the three arguments of the <c>DateOnly</c> constructor.</summary>
     private static string DateOnlyArguments(string day)

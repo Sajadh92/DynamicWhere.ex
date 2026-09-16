@@ -237,6 +237,73 @@ public class StoreFailureTests
     }
 
     [Fact]
+    public async Task A_poll_that_confirms_the_version_renews_the_ceiling()
+    {
+        // A store nobody writes to is never reloaded, because the loop reloads on a version change.
+        // Without the poll renewing the stamp, the snapshot's load time freezes and the ceiling
+        // refuses every guarded query once it passes — a healthy store failing closed for no reason.
+        using InMemoryPolicyStore inner = new();
+
+        inner.Seed(Rule());
+
+        PollOnlyStore store = new(inner);
+
+        DwPolicyOptions options = new() { MaxSnapshotAge = TimeSpan.FromMinutes(15) };
+
+        options.RefreshInterval = TimeSpan.FromMilliseconds(20);
+        options.Freeze();
+
+        using StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(store, options);
+
+        // Sixteen minutes on with nothing written. The next poll reads the version the provider is
+        // already serving, which renews the snapshot as much as a reload would: the store was
+        // reachable, and it holds what is being served.
+        provider.Clock = () => DateTimeOffset.UtcNow.AddMinutes(16);
+
+        await WaitFor(() => provider.Age < TimeSpan.FromMinutes(15));
+
+        Assert.True(
+            provider.Age < TimeSpan.FromMinutes(15),
+            "a poll that confirmed the served version did not renew the snapshot");
+
+        DwPolicyContext context = await provider.PrepareAsync(new DwPolicyContext());
+
+        Assert.Single(provider.GetFragments(typeof(Staff), context));
+    }
+
+    [Fact]
+    public async Task A_poll_that_confirms_the_version_clears_the_degraded_flag()
+    {
+        // Nothing is written while the store is away, so its version never moves and no reload is
+        // triggered when it comes back. Until the poll itself clears the flag, FailClosed keeps
+        // refusing a store that is answering again.
+        using InMemoryPolicyStore inner = new();
+
+        inner.Seed(Rule());
+
+        UnreachableStore store = new(inner);
+
+        DwPolicyOptions options = new() { MaxSnapshotAge = TimeSpan.FromHours(1) };
+
+        options.RefreshInterval = TimeSpan.FromMilliseconds(20);
+        options.Freeze();
+
+        using StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(store, options);
+
+        store.Broken = true;
+
+        await WaitFor(() => provider.IsDegraded);
+
+        Assert.True(provider.IsDegraded, "the failed poll was not recorded");
+
+        store.Broken = false;
+
+        await WaitFor(() => !provider.IsDegraded);
+
+        Assert.False(provider.IsDegraded);
+    }
+
+    [Fact]
     public async Task A_context_pinned_too_long_ago_is_refused_even_after_the_provider_refreshed()
     {
         // The ceiling is measured on what this caller is actually being served, not on what the

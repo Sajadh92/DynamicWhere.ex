@@ -199,6 +199,112 @@ public class CapTests
         }
     }
 
+    // ---- the page a caller does not send ---------------------------------------------------
+
+    [Fact]
+    public void An_unpaged_guarded_filter_is_given_the_default_page()
+    {
+        // MaxPageSize reads a page the caller sent, so the request with no page was the one request
+        // no cap applied to: it returned every row while the same request naming that size was
+        // refused.
+        (Filter result, _) = Guard<SecuredEmployee>(
+            new Filter(), DwTier.Strict, caps => caps.DefaultPageSize = 25);
+
+        Assert.NotNull(result.Page);
+        Assert.Equal(1, result.Page!.PageNumber);
+        Assert.Equal(25, result.Page.PageSize);
+    }
+
+    [Fact]
+    public void With_no_default_page_configured_an_unpaged_filter_is_left_alone()
+    {
+        // Off unless a deployment asks for it: a page that appeared on upgrade would truncate an
+        // existing caller's results with nothing to see in the response.
+        (Filter result, _) = Guard<SecuredEmployee>(new Filter(), DwTier.Strict);
+
+        Assert.Null(result.Page);
+    }
+
+    [Fact]
+    public void A_page_the_caller_sent_is_never_replaced_by_the_default()
+    {
+        (Filter result, _) = Guard<SecuredEmployee>(
+            new Filter { Page = new PageBy { PageNumber = 3, PageSize = 10 } },
+            DwTier.Strict,
+            caps => caps.DefaultPageSize = 25);
+
+        Assert.Equal(3, result.Page!.PageNumber);
+        Assert.Equal(10, result.Page.PageSize);
+    }
+
+    [Fact]
+    public void The_default_page_cannot_exceed_the_maximum_page()
+    {
+        // Otherwise the two caps could be configured into contradicting each other, and the default
+        // would hand out a page the same query was not allowed to ask for.
+        (Filter result, _) = Guard<SecuredEmployee>(
+            new Filter(),
+            DwTier.Strict,
+            caps =>
+            {
+                caps.MaxPageSize = 50;
+                caps.DefaultPageSize = 5000;
+            });
+
+        Assert.Equal(50, result.Page!.PageSize);
+    }
+
+    [Fact]
+    public void A_negative_default_page_is_refused_and_zero_means_none() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DwCaps().DefaultPageSize = -1);
+
+    // ---- nesting depth ------------------------------------------------------------------------
+
+    [Fact]
+    public void A_filter_nesting_deeper_than_the_cap_is_refused()
+    {
+        // MaxConditions bounds how many conditions there are and says nothing about their shape:
+        // the planner pays for each parenthesised level, not for the count.
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(Nested(6), DwTier.Strict, caps => caps.MaxConditionDepth = 5));
+
+        Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
+    }
+
+    [Fact]
+    public void A_filter_nesting_exactly_to_the_cap_is_allowed()
+    {
+        // The root group is depth one, so a cap of five allows four levels under it.
+        Guard<SecuredEmployee>(Nested(5), DwTier.Strict, caps => caps.MaxConditionDepth = 5);
+    }
+
+    [Fact]
+    public void Nesting_is_capped_in_the_convenience_tier_as_well()
+    {
+        foreach (DwTier tier in new[] { DwTier.Convenience, DwTier.Strict })
+        {
+            Assert.Throws<PolicyException>(
+                () => Guard<SecuredEmployee>(Nested(6), tier, caps => caps.MaxConditionDepth = 5));
+        }
+    }
+
+    /// <summary>A filter whose groups nest <paramref name="depth"/> levels, counting the root.</summary>
+    private static Filter Nested(int depth)
+    {
+        ConditionGroup root = new() { Conditions = { On("Name") } };
+        ConditionGroup current = root;
+
+        for (int level = 1; level < depth; level++)
+        {
+            ConditionGroup child = new() { Conditions = { On("Name") } };
+
+            current.SubConditionGroups.Add(child);
+            current = child;
+        }
+
+        return new Filter { ConditionGroup = root };
+    }
+
     [Fact]
     public void A_cap_is_checked_before_the_field_policy_is_consulted()
     {

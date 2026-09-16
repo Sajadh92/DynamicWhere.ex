@@ -105,6 +105,10 @@ internal static class FilterSanitizer
         Canonicalize<T>(working, gate);
 
         EnforceCaps(working, gate);
+
+        // After the caps, so a page the caller did write is still refused when it is too large,
+        // and a page the caller did not write is bounded rather than unbounded.
+        working.Page = DefaultPage(working.Page, options);
         EnforceCost(working, gate);
 
         GateConditions(working.ConditionGroup, gate);
@@ -186,6 +190,10 @@ internal static class FilterSanitizer
         CanonicalizeGrouping<T>(working.GroupBy, gate);
 
         EnforceCaps(working, gate);
+
+        // After the caps, so a page the caller did write is still refused when it is too large,
+        // and a page the caller did not write is bounded rather than unbounded.
+        working.Page = DefaultPage(working.Page, options);
         EnforceCost(working, gate);
 
         GateConditions(working.ConditionGroup, gate);
@@ -619,6 +627,10 @@ internal static class FilterSanitizer
         }
 
         EnforceCaps(working, gate);
+
+        // After the caps, so a page the caller did write is still refused when it is too large,
+        // and a page the caller did not write is bounded rather than unbounded.
+        working.Page = DefaultPage(working.Page, options);
         EnforceCost(working, gate);
         GateSegmentParticipation(working, gate);
         GateSegmentInference(working, gate);
@@ -909,6 +921,15 @@ internal static class FilterSanitizer
         }
 
         gate.CheckConditionCount(conditions);
+
+        if (segment.ConditionSets is not null)
+        {
+            foreach (ConditionSet set in segment.ConditionSets)
+            {
+                gate.CheckConditionDepth(Depth(set.ConditionGroup));
+            }
+        }
+
         gate.CheckOrderCount(segment.Orders?.Count ?? 0);
         gate.CheckPage(segment.Page);
 
@@ -916,6 +937,33 @@ internal static class FilterSanitizer
         {
             gate.CheckDepth(field);
         }
+    }
+
+    /// <summary>
+    /// Supplies the page a guarded query was not given, where the deployment configured one.
+    /// </summary>
+    /// <remarks>
+    /// <c>MaxPageSize</c> reads a page the caller sent, so a request with none was the one request
+    /// no cap applied to: it returned the whole table while the same request naming that page size
+    /// was refused. <see cref="DwCaps.DefaultPageSize"/> is off unless a deployment sets it, because
+    /// filling one in changes what an existing caller receives.
+    /// <para>
+    /// Bounded by <c>MaxPageSize</c>, so the two cannot be configured into contradicting each other:
+    /// a default above the maximum would hand out a page the same query could not have asked for.
+    /// </para>
+    /// </remarks>
+    private static PageBy? DefaultPage(PageBy? page, DwPolicyOptions options)
+    {
+        if (page is not null || options.Caps.DefaultPageSize == 0)
+        {
+            return page;
+        }
+
+        return new PageBy
+        {
+            PageNumber = 1,
+            PageSize = Math.Min(options.Caps.DefaultPageSize, options.Caps.MaxPageSize)
+        };
     }
 
     /// <summary>
@@ -934,6 +982,7 @@ internal static class FilterSanitizer
     private static void EnforceCaps(Filter filter, Gate gate)
     {
         gate.CheckConditionCount(CountConditions(filter.ConditionGroup));
+        gate.CheckConditionDepth(Depth(filter.ConditionGroup));
         gate.CheckOrderCount(filter.Orders?.Count ?? 0);
         gate.CheckPage(filter.Page);
 
@@ -967,6 +1016,7 @@ internal static class FilterSanitizer
     private static void EnforceCaps(Summary summary, Gate gate)
     {
         gate.CheckConditionCount(CountConditions(summary.ConditionGroup) + CountConditions(summary.Having));
+        gate.CheckConditionDepth(Math.Max(Depth(summary.ConditionGroup), Depth(summary.Having)));
         gate.CheckOrderCount(summary.Orders?.Count ?? 0);
         gate.CheckPage(summary.Page);
 
@@ -1149,6 +1199,38 @@ internal static class FilterSanitizer
     /// Counting the root group alone would let any budget be evaded by nesting, which is the
     /// cheapest way to rebuild the unbounded join the cap exists to prevent.
     /// </remarks>
+    /// <summary>
+    /// How deep a group tree nests, counting the root as one.
+    /// </summary>
+    /// <remarks>
+    /// Measured rather than counted while walking, because the walk that gates conditions runs after
+    /// the caps and the whole point of a cap is to refuse before that work starts.
+    /// </remarks>
+    private static int Depth(ConditionGroup? group)
+    {
+        if (group is null)
+        {
+            return 0;
+        }
+
+        int deepest = 0;
+
+        if (group.SubConditionGroups is not null)
+        {
+            foreach (ConditionGroup sub in group.SubConditionGroups)
+            {
+                int depth = Depth(sub);
+
+                if (depth > deepest)
+                {
+                    deepest = depth;
+                }
+            }
+        }
+
+        return deepest + 1;
+    }
+
     private static int CountConditions(ConditionGroup? group)
     {
         if (group is null)
@@ -2213,6 +2295,15 @@ internal static class FilterSanitizer
             if (count > _options.Caps.MaxConditions)
             {
                 Raise(Cap("MaxConditions", _options.Caps.MaxConditions, count, WholeClause));
+            }
+        }
+
+        /// <summary>Refuses a filter nesting its groups deeper than the budget allows.</summary>
+        internal void CheckConditionDepth(int depth)
+        {
+            if (depth > _options.Caps.MaxConditionDepth)
+            {
+                Raise(Cap("MaxConditionDepth", _options.Caps.MaxConditionDepth, depth, WholeClause));
             }
         }
 

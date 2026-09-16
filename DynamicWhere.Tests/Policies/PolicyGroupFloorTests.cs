@@ -190,15 +190,11 @@ public class PolicyGroupFloorTests
 
     // ---- the composable grouping surfaces --------------------------------------------------------
 
-    /// <summary>
-    /// The floor is not the terminal path's alone.
-    /// </summary>
-    /// <remarks>
-    /// Composable <c>Group</c> sanitized its argument as a summary — so the floor's count was added
-    /// — and then handed only the grouping to core <c>Group</c>, which takes no <c>Having</c>. The
-    /// predicate was dropped on the floor of the method, and the small groups came back whole to
-    /// any caller who grouped instead of summarising.
-    /// </remarks>
+    // The floor is not the terminal path's alone. Composable Group sanitized its argument as a
+    // summary — so the floor's count was added — and then handed only the grouping to core Group,
+    // which takes no Having. The predicate was dropped on the floor of the method, and the small
+    // groups came back whole to any caller who grouped instead of summarising.
+
     /// <summary>
     /// Six crew: two in Engineering, three in Support, one in Legal, and nothing transformed — the
     /// composable surfaces refuse a type that has any transform, so the floor could not be reached

@@ -117,6 +117,16 @@ export default function Page() {
         nothing in the response to say so.
       </p>
       <p>
+        It applies to a <code>Filter</code>, <code>Summary</code> or{" "}
+        <code>Segment</code> on the composable methods as well as the terminal
+        ones, so the composable <code>Filter</code>, <code>FilterDynamic</code>{" "}
+        and <code>Summary</code> hand back a query that is already paged: page
+        through the request&apos;s <code>Page</code>, not a <code>Page()</code>{" "}
+        chained after it. <code>Where</code>, <code>Order</code>,{" "}
+        <code>Select</code> and <code>Group</code> take no page and are never
+        given one.
+      </p>
+      <p>
         <code>MaxConditionDepth</code> bounds the shape{" "}
         <code>MaxConditions</code> says nothing about: fifty conditions in one
         flat group and fifty nested fifty deep both pass the count, and only the

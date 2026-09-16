@@ -413,8 +413,11 @@ Date       ISO 8601 / year-first / a declared format (3.1.0)       ISO 8601 date
     non-nullable one, `ParseException` on a nullable one — `DataType.Date` on any nullable date member threw
     `ParseException` ("No property or field 'Date' exists in type 'DateTime?'"), and a `DateOnly` member could not
     be filtered under either date data type.
-- A C# `DateTime` placed in `Values` is formatted invariant (`MM/dd/yyyy HH:mm:ss`) and re-parsed invariantly.
-  Pass ISO strings instead. A `DateTimeOffset` in `Values` round-trips the same way.
+- A C# `DateTime`, `DateTimeOffset` or `DateOnly` placed in `Values` is written year-first (the normalizer table
+  above) and then read like any other value; before 3.1.0 it took the month-first invariant form
+  (`MM/dd/yyyy HH:mm:ss`), which is now refused. A `DateTime` is written without a zone marker whatever its
+  `Kind`, so on a `DateTimeOffset` member it reads as UTC: `DateTime.Now` on a +03:00 server names an instant
+  three hours late. Pass a `DateTimeOffset`, or a `DateTime` in UTC, for such a member.
 - **Enum:** a name that is not a member passes validation and throws `ParseException` when the query is built.
 - In C#, `Values` is `List<object>`: `Values = { "Engineering" }` or `new List<object> { 1, 2 }`. A `List<string>`
   is not assignable.
@@ -451,10 +454,14 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
 - `Configure` freezes the options and may be called once; a second call throws `InvalidOperationException`. Every
   query reads the formats without a lock.
 - Refused at `Configure` with `ArgumentException`: a blank format; a format that cannot read the text it writes;
-  two formats that read one text as different dates — `dd/MM/yyyy` beside `MM/dd/yyyy`, or `yyyy-dd-MM` against
-  ISO. Declare one day/month order.
-- `Bind` refuses a key nothing answers to (`ErrorOnUnknownConfiguration`), so a misspelt `Fromats` fails at startup
-  instead of leaving the defaults in force. It throws `InvalidOperationException` on frozen options.
+  a format with no year — `dd/MM`, `HH:mm`, `t` — which the parser would complete from the clock, so the same value
+  would name a different date depending on when the query ran; two formats that read one text as different
+  dates — `dd/MM/yyyy` beside `MM/dd/yyyy`, or `yyyy-dd-MM` against ISO. Declare one day/month order. A format with
+  a year but no day, such as `yyyy-MM`, is accepted and reads the 1st.
+- `Bind` throws `InvalidOperationException`, at startup instead of leaving the defaults in force, for a key
+  nothing answers to (`ErrorOnUnknownConfiguration`) such as a misspelt `Fromats`, and for a single value where the
+  list belongs: `"Formats": "dd/MM/yyyy"`, or one environment variable `DynamicWhere__Dates__Formats`. Write
+  `"Formats": [ "dd/MM/yyyy" ]`, or `DynamicWhere__Dates__Formats__0`. It also throws on frozen options.
 - A value still has to match: with `dd/MM/yyyy` declared, `"09/15/2026"` is `AmbiguousDateFormat`.
 - There is no per-condition format. A condition's value is read with the process-wide formats.
 
@@ -1452,6 +1459,10 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
   DefaultPageSize      0        0    3.1.0. 0 = off. When set, a guarded query that sends no Page is given
                                      PageNumber 1 and PageSize min(DefaultPageSize, MaxPageSize). A Page the
                                      caller did send is never replaced. Negative → ArgumentOutOfRangeException  refuses nothing
+                                     Applies to Filter, Summary and Segment, terminal and composable alike: the
+                                     composable Filter, FilterDynamic and Summary return the query already
+                                     paged, so page through the request's Page, not a chained Page(). Where,
+                                     Order, Select and Group take no page and are never given one.
   MaxConditions        50       1    conditions at every nesting depth; Summary: ConditionGroup + Having;
                                      Segment: all condition sets together                               CapExceeded (9)
   MaxConditionDepth    10       1    3.1.0. How deep SubConditionGroups nest, root group = depth 1. Summary:
@@ -3371,7 +3382,7 @@ DwClaimsOptions
   bool                               AllowAnonymous = false
   string?                            Purpose        = null           copied to DwPolicyContext.Purpose
 ```
-- **Two builders:** `CreateContextAsync` is `FromClaims` followed by `DwPolicy.PrepareAsync`. Use `FromClaims` only when no store is configured.
+- **Two builders:** `CreateContextAsync` is `FromClaims` followed by `DwPolicy.PrepareAsync`. A `FromClaims` context is unprepared, and since 3.1.0 `ApplyPolicy(context)` refuses it with `PolicyContextNotPrepared` whether or not a store is configured: prepare it before querying, or use `CreateContextAsync`. `FromClaims` is for adding to the context before preparing it.
 - **Refusals:**
   - A null principal or options throws `ArgumentNullException`.
   - If `Identity.IsAuthenticated` is not true and `AllowAnonymous` is false, it throws `InvalidOperationException`.

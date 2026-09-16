@@ -278,7 +278,8 @@ export default function Page() {
 // A day-first API.
 DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"));
 
-// Or from configuration. A key nothing answers to — "Fromats" — refuses to start.
+// Or from configuration. A key nothing answers to — "Fromats" — refuses to start,
+// and so does a single value where the list belongs: "Formats": "dd/MM/yyyy".
 DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWhere:Dates")));`}</Code>
       <Code lang="json">{`{
   "DynamicWhere": {
@@ -308,6 +309,13 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
           disagree on a request. So is a blank format.
         </li>
         <li>
+          So is a format with no year — <code>dd/MM</code>, <code>HH:mm</code>,{" "}
+          <code>t</code>. The parser completes a missing year from the clock, and a
+          missing date from today, so the same value would name a different date
+          depending on when the query ran. A format with a year but no day, such
+          as <code>yyyy-MM</code>, is accepted and reads the 1st.
+        </li>
+        <li>
           The formats are process-wide and every query reads them without a lock,
           so they are set once: a second <code>DwDates.Configure</code> call throws{" "}
           <code>InvalidOperationException</code>.
@@ -331,9 +339,9 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
               Checks and freezes the options and sets them for the process.
               Throws <code>ArgumentNullException</code> for <code>null</code>;{" "}
               <code>ArgumentException</code> for a blank format, a format that
-              cannot read the text it writes, or two that read one text as
-              different dates; and <code>InvalidOperationException</code> on a
-              second call.
+              cannot read the text it writes, a format with no year, or two that
+              read one text as different dates; and{" "}
+              <code>InvalidOperationException</code> on a second call.
             </td>
           </tr>
           <tr>
@@ -367,7 +375,10 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
               Extension method. Reads <code>Formats</code> from a section and
               returns the same instance. Throws{" "}
               <code>InvalidOperationException</code> for a key nothing answers to,
-              or when the options are already frozen.
+              for a single value where the list belongs (<code>&quot;Formats&quot;:
+              &quot;dd/MM/yyyy&quot;</code>, or one{" "}
+              <code>DynamicWhere__Dates__Formats</code> environment variable), or
+              when the options are already frozen.
             </td>
           </tr>
         </tbody>
@@ -377,7 +388,12 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
         On a <code>DateTimeOffset</code> member the value is normalized to UTC, and
         one carrying no zone is read as UTC, so <code>Date</code> compares the
         calendar day you wrote. On a <code>DateTime</code> member a value carrying
-        a zone is converted to the host&apos;s local time.
+        a zone is converted to the host&apos;s local time. A C#{" "}
+        <code>DateTime</code> placed in <code>Values</code> is written with no zone
+        whatever its <code>Kind</code>, so on a <code>DateTimeOffset</code> member{" "}
+        <code>DateTime.Now</code> reads as UTC and names an instant off by the
+        host&apos;s offset: pass a <code>DateTimeOffset</code>, or a UTC{" "}
+        <code>DateTime</code>.
       </Callout>
 
       <h2 id="json-examples">JSON examples per type</h2>

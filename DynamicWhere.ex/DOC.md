@@ -114,7 +114,7 @@ Since 3.1.0 the predicate is built from the member's own CLR type, which is what
 | | What the library does |
 |---|---|
 | Accepted texts | **ISO 8601** (`2026-09-01`, optionally `T` or a space and a time, a fraction, `Z` or an offset) and **year-first** dates (`2026/09/01`, `2026.09.01`), on every deployment. A numeric date that leads with a day or a month — `01/09/2026`, `15.09.2026` — is refused with `AmbiguousDateFormat` whatever its numbers, so a client finds out on its first request rather than on the fifth of the month. Anything else, including `12:00` and `Sep 2026`, is `InvalidFormat`. The server's culture and calendar decide nothing |
-| Declared formats | A deployment whose clients send a local form declares it once: `DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))`, or bound from `DynamicWhere:Dates:Formats`. Two formats that read one text differently are refused at configuration |
+| Declared formats | A deployment whose clients send a local form declares it once: `DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))`, or bound from `DynamicWhere:Dates:Formats` (a list; a single value there refuses to bind). Two formats that read one text differently are refused at configuration, and so is a format with no year, which the parser would complete from the clock |
 | `DateOnly` member | Compared as a day under both date data types, against a `DateOnly(y, m, d)` constructor. On Npgsql, `WHERE "Day" = DATE '2026-09-01'` |
 | `HAVING` | Names an alias, so the type comes from the aggregate behind it: `Minimum`, `Maximum`, `FirstOrDefault` and `LastOrDefault` carry the member's type, nullable if the member is, and the predicate is built as for that member. On Npgsql, `HAVING max(col) > TIMESTAMPTZ '…'` |
 | `DateTimeOffset` member | Compared against a `DateTimeOffset` literal normalised to UTC. A value carrying no zone is read as UTC, so `Date` names the day the caller wrote. On Npgsql `Date` becomes `date_trunc('day', col AT TIME ZONE 'UTC')` |
@@ -281,7 +281,7 @@ The library normalizes every element before validation/build:
 | `string` | as-is |
 | `bool` | `"true"` / `"false"` (lowercase) |
 | `JsonElement` (System.Text.Json) | unwrapped by `ValueKind` (`String` → text, `Number` → raw JSON token, `True`/`False` → lowercase) |
-| `DateTime` / `DateTimeOffset` / `DateOnly` | Year-first text: `2026-09-01T12:30:00`, `2026-09-01T12:30:00+03:00`, `2026-09-01`. Before 3.1.0 a `DateTime` became month-first `09/01/2026 12:30:00` |
+| `DateTime` / `DateTimeOffset` / `DateOnly` | Year-first text: `2026-09-01T12:30:00`, `2026-09-01T12:30:00+03:00`, `2026-09-01`. Before 3.1.0 a `DateTime` became month-first `09/01/2026 12:30:00`. A `DateTime` carries no zone whatever its `Kind`, so on a `DateTimeOffset` member it reads as UTC — pass a `DateTimeOffset`, or a UTC `DateTime`, there |
 | numeric / other `IFormattable` | `InvariantCulture` formatting |
 | anything else (`JValue`, etc.) | `value.ToString()` |
 | `null` | `string.Empty` |
@@ -1641,7 +1641,7 @@ new DwPolicyOptions { Caps = { MinGroupSize = 10 } }   // stricter
 | Cap | Default | Meaning |
 |---|---|---|
 | `MaxPageSize` | 1000 | Largest page a caller may request |
-| `DefaultPageSize` | 0 (off) | The page a guarded query is given when it asks for none. `MaxPageSize` only ever read a page the caller sent, so the request with none was the one nothing bounded |
+| `DefaultPageSize` | 0 (off) | The page a guarded query is given when it asks for none. `MaxPageSize` only ever read a page the caller sent, so the request with none was the one nothing bounded. Composable `Filter`, `FilterDynamic` and `Summary` return the query already paged; `Where`, `Order`, `Select` and `Group` take no page and are never given one |
 | `MaxConditions` | 50 | Conditions in one filter |
 | `MaxConditionDepth` | 10 | How deep condition groups may nest, root counted as one. `MaxConditions` bounds the count and says nothing about the shape |
 | `MaxOrderFields` | 10 | Order fields in one query |

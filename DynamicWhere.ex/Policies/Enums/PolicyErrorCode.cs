@@ -120,7 +120,7 @@ public enum PolicyErrorCode
     StoreUnavailable = 17,
 
     /// <summary>
-    /// A guarded query used a context that was never prepared against the policy store.
+    /// A guarded query used a context that was never prepared.
     /// </summary>
     /// <remarks>
     /// A store is read asynchronously and the query path is synchronous, so a caller's user-level
@@ -128,6 +128,10 @@ public enum PolicyErrorCode
     /// that step could only be served from the broad zone, where a denial written for one user
     /// silently does not appear — so it is refused instead. Build the context through
     /// <c>DwPolicy.PrepareAsync</c>, once per request.
+    /// <para>
+    /// Since 3.1.0 <c>ApplyPolicy(context)</c> refuses an unprepared context itself, with or
+    /// without a store, so a deployment that later adds one does not start refusing in production.
+    /// </para>
     /// </remarks>
     PolicyContextNotPrepared = 18,
 

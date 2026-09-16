@@ -41,8 +41,9 @@ public sealed class DwDateOptions
     /// Checks every declared format and prevents any further change.
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// Thrown when a format is blank, cannot read the text it writes, carries no year, or reads text
-    /// another accepted format also reads as a different date.
+    /// Thrown when a format is blank or malformed; cannot read back the text it writes; carries no
+    /// year, or a day but no month; reads text another accepted format also reads as a different
+    /// date; or puts the day and the month in the opposite order to another declared format.
     /// </exception>
     internal void Freeze()
     {
@@ -64,28 +65,7 @@ public sealed class DwDateOptions
 
             foreach (DateTimeOffset probe in Probes)
             {
-                string written = probe.ToString(format, CultureInfo.InvariantCulture);
-
-                if (!DateTimeOffset.TryParseExact(
-                        written, format, CultureInfo.InvariantCulture, DateValue.Universal,
-                        out DateTimeOffset read))
-                {
-                    throw new ArgumentException(
-                        $"The date format '{format}' cannot read the text it writes ('{written}'), so " +
-                        "no value could ever match it.",
-                        nameof(Formats));
-                }
-
-                // A format with no year is completed from the clock: "dd/MM" reads the current year
-                // and "HH:mm" today, so the same value names a different date depending on when the
-                // query runs. That is the guess this whole mechanism exists to refuse.
-                if (read.Year != probe.Year)
-                {
-                    throw new ArgumentException(
-                        $"The date format '{format}' carries no year, so '{written}' would be read in " +
-                        "whichever year the query happens to run. Declare a format with a year.",
-                        nameof(Formats));
-                }
+                ReadsBack(format, probe);
             }
         }
 
@@ -121,24 +101,163 @@ public sealed class DwDateOptions
             }
         }
 
+        // Two formats need not read the same text to disagree. With "dd/MM/yyyy HH:mm" beside
+        // "MM/dd/yyyy", "01/09/2026 00:00" is 1 September and "01/09/2026" is 9 January: one client
+        // gets a different day by leaving out the time. Every declared format that leads with a day or
+        // a month has to lead with the same one.
+        string? dayOrder = null;
+
+        foreach (string format in declared)
+        {
+            bool? dayFirst = DayFirst(format);
+
+            if (dayFirst is null)
+            {
+                continue;
+            }
+
+            if (dayOrder is not null && DayFirst(dayOrder) != dayFirst)
+            {
+                throw new ArgumentException(
+                    $"The date formats '{dayOrder}' and '{format}' put the day and the month in opposite " +
+                    "orders, so the same numbers would name two dates depending on which shape a client " +
+                    "sends. Declare one day/month order.",
+                    nameof(Formats));
+            }
+
+            dayOrder ??= format;
+        }
+
         _frozen = new ReadOnlyCollection<string>(declared);
+    }
+
+    /// <summary>
+    /// Refuses a format that cannot write a date and read the same date back.
+    /// </summary>
+    /// <remarks>
+    /// A part the format writes has to come back as written. <c>hh</c> without <c>tt</c> writes 4 PM
+    /// as <c>04</c> and reads it as 4 AM. A part the format does not write is completed by the parser,
+    /// which is harmless for a missing day or month — they read as the first — and not for a missing
+    /// year, which is taken from the clock: <c>dd/MM</c> names a different date every January, and
+    /// <c>HH:mm</c> every midnight. A day with no month is a typo, most often <c>mm</c> (minutes) for
+    /// <c>MM</c>.
+    /// </remarks>
+    private static void ReadsBack(string format, DateTimeOffset probe)
+    {
+        string written;
+
+        try
+        {
+            written = probe.ToString(format, CultureInfo.InvariantCulture);
+        }
+        catch (FormatException malformed)
+        {
+            throw new ArgumentException(
+                $"'{format}' is not a valid .NET date format: {malformed.Message}", nameof(Formats), malformed);
+        }
+
+        if (!DateTimeOffset.TryParseExact(
+                written, format, CultureInfo.InvariantCulture, DateValue.Universal, out DateTimeOffset read))
+        {
+            throw new ArgumentException(
+                $"The date format '{format}' cannot read the text it writes ('{written}'), so no value " +
+                "could ever match it.",
+                nameof(Formats));
+        }
+
+        bool Writes(Func<DateTimeOffset, DateTimeOffset> change) =>
+            change(probe).ToString(format, CultureInfo.InvariantCulture) != written;
+
+        if (!Writes(date => date.AddYears(1)))
+        {
+            throw new ArgumentException(
+                $"The date format '{format}' carries no year, so '{written}' would be read in whichever " +
+                "year the query happens to run. Declare a format with a year.",
+                nameof(Formats));
+        }
+
+        if (Writes(date => date.AddDays(1)) && !Writes(date => date.AddMonths(1)))
+        {
+            throw new ArgumentException(
+                $"The date format '{format}' carries a day but no month. 'mm' is minutes; the month is 'MM'.",
+                nameof(Formats));
+        }
+
+        (string Part, Func<DateTimeOffset, DateTimeOffset> Change, Func<DateTimeOffset, int> Value)[] parts =
+        {
+            ("year", date => date.AddYears(1), date => date.Year),
+            ("month", date => date.AddMonths(1), date => date.Month),
+            ("day", date => date.AddDays(1), date => date.Day),
+            ("hour", date => date.AddHours(1), date => date.Hour),
+            ("minute", date => date.AddMinutes(1), date => date.Minute),
+            ("second", date => date.AddSeconds(1), date => date.Second)
+        };
+
+        foreach (var (part, change, value) in parts)
+        {
+            if (Writes(change) && value(read) != value(probe))
+            {
+                throw new ArgumentException(
+                    $"The date format '{format}' writes the {part} of {probe:yyyy-MM-dd HH:mm:ss} as " +
+                    $"'{written}' and reads it back as {value(read)}, not {value(probe)}" +
+                    (part == "hour" ? " — 'hh' is a 12-hour clock and needs 'tt'." : "."),
+                    nameof(Formats));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether a format that leads with a day or a month leads with the day; null for one that does
+    /// neither, or writes no numeric day and month.
+    /// </summary>
+    /// <remarks>
+    /// Read from what the format writes for 28 November 2019, where the day, the month and every
+    /// other part are distinct numbers: <c>28</c> and <c>11</c> are found only where the day and the
+    /// month are. A format that writes the year first is left out, because a leading year is what
+    /// makes a date unambiguous in the first place.
+    /// </remarks>
+    private static bool? DayFirst(string format)
+    {
+        string written = OrderProbe.ToString(format, CultureInfo.InvariantCulture);
+
+        int day = written.IndexOf("28", StringComparison.Ordinal);
+        int month = written.IndexOf("11", StringComparison.Ordinal);
+
+        if (day < 0 || month < 0)
+        {
+            return null;
+        }
+
+        int year = written.IndexOf("2019", StringComparison.Ordinal);
+
+        if (year < 0)
+        {
+            year = written.IndexOf("19", StringComparison.Ordinal);
+        }
+
+        if (year >= 0 && year < day && year < month)
+        {
+            return null;
+        }
+
+        return day < month;
     }
 
     /// <summary>3 February 2026, 04:05:06.7 — every field distinct, day and month both twelve or less.</summary>
     private static readonly DateTimeOffset Probe = new(2026, 2, 3, 4, 5, 6, 700, TimeSpan.Zero);
 
     /// <summary>
-    /// <see cref="Probe"/> and a date in another year, both inside the two-digit-year window.
+    /// 28 November 2019, 16:45:30.25 — an afternoon, another year, and a day and month that no other
+    /// part repeats.
     /// </summary>
+    private static readonly DateTimeOffset OrderProbe = new(2019, 11, 28, 16, 45, 30, 250, TimeSpan.Zero);
+
+    /// <summary>Both probes: two years, a morning and an afternoon.</summary>
     /// <remarks>
-    /// Two years because a format with no year reads the current one, and the process may be running
-    /// in the year of either probe — never in both.
+    /// Two years because a format with no year reads the current one and the process may be running
+    /// in either; an afternoon because a 12-hour clock with no designator only fails after noon.
     /// </remarks>
-    private static readonly DateTimeOffset[] Probes =
-    {
-        Probe,
-        new(2019, 11, 28, 16, 45, 30, 250, TimeSpan.Zero)
-    };
+    private static readonly DateTimeOffset[] Probes = { Probe, OrderProbe };
 }
 
 /// <summary>

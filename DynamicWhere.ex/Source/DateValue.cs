@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Policies.Source;
 
 namespace DynamicWhere.ex.Source;
 
@@ -49,10 +50,21 @@ internal static class DateValue
     /// </summary>
     /// <remarks>
     /// Year first, so none can be read two ways. <c>M</c>, <c>d</c> and <c>H</c> take one or two
-    /// digits; the fraction and the zone (<c>Z</c> or an offset) are optional; the time may follow a
-    /// <c>T</c> or a space. What the library writes for a C# date placed in <c>Values</c> is one of these.
+    /// digits; the fraction and the zone (<c>Z</c>, <c>+03:00</c>, <c>+0300</c> or <c>+03</c>) are
+    /// optional; the time may follow a <c>T</c> or a space. What the library writes for a C# date
+    /// placed in <c>Values</c> is one of these. The ISO spellings no exact format can express — a
+    /// lowercase <c>t</c> or <c>z</c>, a comma before the fraction, more than seven fraction digits —
+    /// are rewritten by <see cref="Iso"/> before these are tried.
     /// </remarks>
     internal static readonly string[] BuiltInFormats = Build();
+
+    /// <summary>
+    /// A year-first date and time whose spelling an exact format cannot read as it stands.
+    /// </summary>
+    private static readonly Regex IsoSpelling = new(
+        @"^(?<date>\d{4}[-/.]\d{1,2}[-/.]\d{1,2})(?<separator>[Tt ])(?<time>\d{1,2}:\d{2})" +
+        @"(?::(?<seconds>\d{2})(?:[.,](?<fraction>\d+))?)?(?<zone>[Zz]|[+-]\d{2}(?::?\d{2})?)?$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     /// <summary>
     /// A numeric date that leads with a day or a month: <c>01/09/2026</c>, <c>1.9.26</c>, <c>01-09-2026</c>.
@@ -112,7 +124,7 @@ internal static class DateValue
 
         HashSet<string> readings = new(StringComparer.Ordinal);
 
-        Collect(text, BuiltInFormats, kind, readings);
+        Collect(Iso(text), BuiltInFormats, kind, readings);
 
         foreach (string format in options.Formats)
         {
@@ -124,12 +136,16 @@ internal static class DateValue
             return readings.First();
         }
 
+        // Under a policy the field has been rewritten to its canonical path; the refusal names it the
+        // way the caller did, so an alias is not undone by the error it provokes.
+        string? subject = field is null ? null : PolicyScope.Spoken(field);
+
         if (readings.Count > 1 || DayOrMonthFirst.IsMatch(text))
         {
-            throw new LogicException(ErrorCode.AmbiguousDateFormat, field);
+            throw new LogicException(ErrorCode.AmbiguousDateFormat, subject);
         }
 
-        throw new LogicException(ErrorCode.InvalidFormat, field);
+        throw new LogicException(ErrorCode.InvalidFormat, subject);
     }
 
     /// <summary>
@@ -167,10 +183,44 @@ internal static class DateValue
         }
     }
 
+    /// <summary>
+    /// Rewrites the ISO 8601 spellings the built-in formats cannot read into ones they can.
+    /// </summary>
+    /// <remarks>
+    /// ISO 8601 and RFC 3339 allow a lowercase <c>t</c> and <c>z</c> and a comma before the fraction,
+    /// and put no limit on the fraction's digits: Go and Java write nine. A <c>DateTime</c> holds seven,
+    /// so the rest are dropped, which moves the value by less than 100 nanoseconds. Anything else is
+    /// returned as it came, for the formats to accept or refuse.
+    /// </remarks>
+    private static string Iso(string text)
+    {
+        Match match = IsoSpelling.Match(text);
+
+        if (!match.Success)
+        {
+            return text;
+        }
+
+        string separator = match.Groups["separator"].Value == "t" ? "T" : match.Groups["separator"].Value;
+        string seconds = match.Groups["seconds"].Success ? ":" + match.Groups["seconds"].Value : string.Empty;
+        string fraction = match.Groups["fraction"].Value;
+        string zone = match.Groups["zone"].Value == "z" ? "Z" : match.Groups["zone"].Value;
+
+        if (fraction.Length > 7)
+        {
+            fraction = fraction[..7];
+        }
+
+        return match.Groups["date"].Value + separator + match.Groups["time"].Value + seconds +
+               (fraction.Length > 0 ? "." + fraction : string.Empty) + zone;
+    }
+
     private static string[] Build()
     {
         string[] dates = { "yyyy-M-d", "yyyy/M/d", "yyyy.M.d" };
-        string[] times = { "H:mmK", "H:mm:ss.FFFFFFFK" };
+
+        // K reads Z, +03:00 and +0300; zz reads the hour-only +03 that K refuses. Never both at once.
+        string[] times = { "H:mmK", "H:mm:ss.FFFFFFFK", "H:mmzz", "H:mm:ss.FFFFFFFzz" };
 
         List<string> formats = new();
 

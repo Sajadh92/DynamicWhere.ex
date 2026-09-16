@@ -57,6 +57,9 @@ public class DateFormatTests
     [InlineData("2026-09-01 12:30:15", "2026-09-01T12:30:15.0000000")]
     [InlineData("2026/09/01", "2026-09-01T00:00:00.0000000")]
     [InlineData("2026.09.01", "2026-09-01T00:00:00.0000000")]
+    [InlineData("2026-09-01t12:30:15", "2026-09-01T12:30:15.0000000")]
+    [InlineData("2026-09-01T12:30:15,5", "2026-09-01T12:30:15.5000000")]
+    [InlineData("2026-09-01T12:30:15.123456789", "2026-09-01T12:30:15.1234567")]
     public void ISO_8601_and_year_first_dates_are_accepted(string value, string read) =>
         Assert.Equal(read, Read(value, typeof(DateTime)));
 
@@ -65,6 +68,12 @@ public class DateFormatTests
     [InlineData("2026-09-01T15:00:00+03:00", "2026-09-01T12:00:00.0000000+00:00")]
     [InlineData("2026-09-01T12:00:00.1234567Z", "2026-09-01T12:00:00.1234567+00:00")]
     [InlineData("2026-09-01", "2026-09-01T00:00:00.0000000+00:00")]
+    [InlineData("2026-09-01T15:00:00+0300", "2026-09-01T12:00:00.0000000+00:00")]
+    [InlineData("2026-09-01T15:00:00+03", "2026-09-01T12:00:00.0000000+00:00")]
+    [InlineData("2026-09-01 15:00+03", "2026-09-01T12:00:00.0000000+00:00")]
+    [InlineData("2026-09-01T12:00:00z", "2026-09-01T12:00:00.0000000+00:00")]
+    [InlineData("2026-09-01T15:00:00.123456789+03:00", "2026-09-01T12:00:00.1234567+00:00")]
+    [InlineData("2026-09-01T12:00:00,25Z", "2026-09-01T12:00:00.2500000+00:00")]
     public void A_zone_is_honoured_and_a_DateTimeOffset_reads_as_UTC(string value, string read) =>
         Assert.Equal(read, Read(value, typeof(DateTimeOffset)));
 
@@ -202,6 +211,81 @@ public class DateFormatTests
         ArgumentException thrown = Assert.Throws<ArgumentException>(() => yearless.Freeze());
 
         Assert.Contains("no year", thrown.Message);
+    }
+
+    [Theory]
+    [InlineData("'dd/MM/yyyy")]
+    [InlineData("%")]
+    [InlineData("q")]
+    public void A_malformed_format_is_refused_as_an_argument(string format)
+    {
+        // The parser throws FormatException for these; configuration promises ArgumentException, so
+        // a host catching that one at startup is not surprised by another.
+        DwDateOptions malformed = new();
+
+        malformed.Formats.Add(format);
+
+        Assert.Throws<ArgumentException>(() => malformed.Freeze());
+    }
+
+    [Fact]
+    public void A_twelve_hour_clock_with_no_designator_is_refused_when_declared()
+    {
+        // "hh" writes 4 PM as 04 and reads it back as 4 AM: every afternoon value would filter twelve
+        // hours early.
+        DwDateOptions twelveHour = new();
+
+        twelveHour.Formats.Add("dd/MM/yyyy hh:mm");
+
+        ArgumentException thrown = Assert.Throws<ArgumentException>(() => twelveHour.Freeze());
+
+        Assert.Contains("hour", thrown.Message);
+    }
+
+    [Fact]
+    public void A_twelve_hour_clock_with_its_designator_is_accepted() =>
+        Assert.Equal(
+            "2026-09-01T16:30:00.0000000",
+            Read("01/09/2026 04:30 PM", typeof(DateTime), Declaring("dd/MM/yyyy hh:mm tt")));
+
+    [Fact]
+    public void A_day_with_no_month_is_refused_when_declared()
+    {
+        // "mm" is minutes. "dd/mm/yyyy" reads "01/09/2026" as 1 January at 00:09.
+        DwDateOptions typo = new();
+
+        typo.Formats.Add("dd/mm/yyyy");
+
+        ArgumentException thrown = Assert.Throws<ArgumentException>(() => typo.Freeze());
+
+        Assert.Contains("no month", thrown.Message);
+    }
+
+    [Theory]
+    [InlineData("dd/MM/yyyy HH:mm", "MM/dd/yyyy")]
+    [InlineData("d/M/yy", "M/d/yyyy")]
+    [InlineData("dd.MM.yyyy", "MM/dd/yyyy")]
+    public void Formats_of_different_shapes_must_share_one_day_month_order(string first, string second)
+    {
+        // No text is read by both, so the same-text check passes them — and yet "01/09/2026 00:00"
+        // would be 1 September while "01/09/2026" is 9 January.
+        DwDateOptions mixed = new();
+
+        mixed.Formats.Add(first);
+        mixed.Formats.Add(second);
+
+        ArgumentException thrown = Assert.Throws<ArgumentException>(() => mixed.Freeze());
+
+        Assert.Contains("opposite", thrown.Message);
+    }
+
+    [Fact]
+    public void Formats_of_different_shapes_in_one_order_are_accepted()
+    {
+        DwDateOptions options = Declaring("dd/MM/yyyy", "dd/MM/yyyy HH:mm", "d/M/yy", "dd.MM.yyyy", "dd MMM yyyy");
+
+        Assert.Equal("2026-09-01T00:00:00.0000000", Read("1/9/26", typeof(DateTime), options));
+        Assert.Equal("2026-09-01T00:00:00.0000000", Read("01 Sep 2026", typeof(DateTime), options));
     }
 
     [Theory]

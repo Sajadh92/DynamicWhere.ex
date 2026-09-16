@@ -131,7 +131,7 @@ export default function Page() {
       <h2 id="namespace">Namespace</h2>
       <p>
         All query and shape enums live in <code>DynamicWhere.ex.Enums</code>.
-        Cache enums live in <code>DynamicWhere.ex.Optimization.Cache.Config</code>.
+        Cache enums live in <code>DynamicWhere.ex.Optimization.Cache.Enums</code>.
       </p>
 
       <Callout tone="note">

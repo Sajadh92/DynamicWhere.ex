@@ -24,7 +24,7 @@ export default function Page() {
 
       <h2 id="signature">Signature</h2>
       <Code lang="csharp">{`public static IQueryable<T> Select<T>(this IQueryable<T> query, List<string> fields)
-    where T : class, new()`}</Code>
+    where T : class`}</Code>
 
       <table>
         <thead>
@@ -112,8 +112,8 @@ export default function Page() {
 
       <Callout tone="note">
         For nested entities (reference or collection), the <code>Id</code>{" "}
-        property is always automatically included alongside any requested
-        sub-fields.
+        property is automatically included alongside any requested sub-fields —
+        but only when the nested type actually declares an <code>Id</code>.
       </Callout>
 
       <h2 id="validations">Validations</h2>
@@ -125,7 +125,8 @@ export default function Page() {
           auto-normalized).
         </li>
         <li>
-          <code>T</code> must have a parameterless constructor.
+          <code>T</code> must have a parameterless constructor — checked at run
+          time, not by a type constraint.
         </li>
       </ul>
 

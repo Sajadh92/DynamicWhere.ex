@@ -96,7 +96,10 @@ export default function Page() {
       <h2 id="returns">Returns</h2>
       <p>
         <code>IQueryable</code> — dynamic composed query whose elements are
-        anonymous objects. Projection rules follow{" "}
+        runtime-generated <code>DynamicClass</code> objects. With{" "}
+        <code>Selects</code> null there is nothing to project, so the original{" "}
+        <code>IQueryable&lt;T&gt;</code> is returned and its rows are still{" "}
+        <code>T</code>. Projection rules follow{" "}
         <Link href="/docs/extensions/select-dynamic">
           <code>SelectDynamic</code>
         </Link>{" "}

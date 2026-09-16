@@ -91,10 +91,11 @@ export default function Page() {
         masked. <code>Deny</code> is the stronger effect and wins the election;
         the mask never runs.
       </p>
-      <Code lang="csharp">{`// Salary stays filterable and sortable: Allows() refuses only a denial,
+      <Code lang="csharp">{`// NationalId stays filterable and sortable: Allows() refuses only a denial,
 // so a Mask effect on Select does not remove the field from a WHERE clause.
+// A mask emits text, so it goes on a string member and never on a number.
 [DwMask(MaskStrategy.Full)]
-public decimal Salary { get; set; }`}</Code>
+public string NationalId { get; set; } = string.Empty;`}</Code>
     </DocPage>
   );
 }

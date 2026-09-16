@@ -11,6 +11,7 @@ using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Source;
 using DynamicWhere.ex.Policies.Storage;
+using System.Linq.Dynamic.Core;
 
 namespace DynamicWhere.Tests.Policies;
 
@@ -185,6 +186,119 @@ public class PolicyGroupFloorTests
         // Engineering and Support reach the floor; Legal does not. Both fit on the page.
         Assert.Equal(2, result.Data.Count);
         Assert.Equal(2, result.TotalCount);
+    }
+
+    // ---- the composable grouping surfaces --------------------------------------------------------
+
+    /// <summary>
+    /// The floor is not the terminal path's alone.
+    /// </summary>
+    /// <remarks>
+    /// Composable <c>Group</c> sanitized its argument as a summary — so the floor's count was added
+    /// — and then handed only the grouping to core <c>Group</c>, which takes no <c>Having</c>. The
+    /// predicate was dropped on the floor of the method, and the small groups came back whole to
+    /// any caller who grouped instead of summarising.
+    /// </remarks>
+    /// <summary>
+    /// Six crew: two in Engineering, three in Support, one in Legal, and nothing transformed — the
+    /// composable surfaces refuse a type that has any transform, so the floor could not be reached
+    /// on <see cref="Staffer"/>.
+    /// </summary>
+    private static Crew[] Crews() => new[]
+    {
+        new Crew { Id = 1, Department = "Engineering", Headcount = 1 },
+        new Crew { Id = 2, Department = "Engineering", Headcount = 1 },
+        new Crew { Id = 3, Department = "Support", Headcount = 1 },
+        new Crew { Id = 4, Department = "Support", Headcount = 1 },
+        new Crew { Id = 5, Department = "Support", Headcount = 1 },
+        new Crew { Id = 6, Department = "Legal", Headcount = 1 }
+    };
+
+    private static PolicyQueryable<Crew> CrewQuery(int floor)
+    {
+        DwPolicyOptions options = new();
+
+        options.Caps.MinGroupSize = floor;
+        options.Freeze();
+
+        return Crews().AsQueryable().ApplyPolicy(
+            new DwPolicyContext(),
+            options,
+            new PolicyResolver(new[] { new AttributePolicyProvider() }));
+    }
+
+    [Fact]
+    public void The_composable_group_applies_the_floor()
+    {
+        List<object> rows = CrewQuery(floor: 3)
+            .Group(Grouped().GroupBy!)
+            .ToDynamicList()
+            .Cast<object>()
+            .ToList();
+
+        // Support has three, Engineering two, Legal one.
+        Assert.Single(rows);
+        Assert.Equal("Support", (string)((dynamic)rows[0]).Department);
+    }
+
+    [Fact]
+    public void The_composable_summary_applies_the_floor()
+    {
+        List<object> rows = CrewQuery(floor: 3)
+            .Summary(Grouped())
+            .ToDynamicList()
+            .Cast<object>()
+            .ToList();
+
+        Assert.Single(rows);
+    }
+
+    /// <summary>
+    /// And neither hands the caller the count the floor keeps for itself.
+    /// </summary>
+    /// <remarks>
+    /// The terminal methods drop the column while transforming the materialized rows; a composable
+    /// call has no such pass, so the column reached the caller as data they could order by, page on
+    /// or return to a client — and it counts precisely the rows the floor is hiding.
+    /// </remarks>
+    [Fact]
+    public void The_composable_group_does_not_return_the_floors_own_column()
+    {
+        object row = CrewQuery(floor: 2)
+            .Group(Grouped().GroupBy!)
+            .ToDynamicList()
+            .Cast<object>()
+            .First();
+
+        Assert.DoesNotContain(GroupFloorAlias, Columns(row));
+        Assert.Contains("Department", Columns(row));
+        Assert.Contains("n", Columns(row));
+    }
+
+    [Fact]
+    public void The_composable_summary_does_not_return_the_floors_own_column()
+    {
+        object row = CrewQuery(floor: 2)
+            .Summary(Grouped())
+            .ToDynamicList()
+            .Cast<object>()
+            .First();
+
+        Assert.DoesNotContain(GroupFloorAlias, Columns(row));
+    }
+
+    /// <summary>With no floor in play there is no column to remove and nothing is re-projected.</summary>
+    [Fact]
+    public void With_no_floor_the_composable_group_is_left_alone()
+    {
+        List<object> rows = CrewQuery(floor: 1)
+            .Group(Grouped().GroupBy!)
+            .ToDynamicList()
+            .Cast<object>()
+            .ToList();
+
+        Assert.Equal(3, rows.Count);
+        Assert.DoesNotContain(GroupFloorAlias, Columns(rows[0]));
     }
 
     // ---- the alias the library keeps for itself --------------------------------------------------
@@ -810,6 +924,24 @@ public class PolicyGroupFloorOrderTests
 
         Assert.Empty(result.Data);
     }
+}
+
+/// <summary>
+/// A type with nothing transformed, so the composable grouping surfaces are reachable.
+/// </summary>
+/// <remarks>
+/// <c>Group</c> and <c>Summary</c> on the handle refuse a type that has any transform for the
+/// caller, because they return a query the caller materializes and a transformed value only exists
+/// once the library has materialized it. The floor has nothing to do with transforms, so it needs a
+/// type those methods will actually run on.
+/// </remarks>
+internal class Crew
+{
+    public int Id { get; set; }
+
+    public string Department { get; set; } = string.Empty;
+
+    public int Headcount { get; set; }
 }
 
 /// <summary>A type grouped by a value that is rounded on its way out.</summary>

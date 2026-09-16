@@ -78,26 +78,34 @@ export default function Page() {
         operator variants.
       </Callout>
 
-      <h2 id="enum-string-storage">4. Enum Filtering Requires String Storage</h2>
+      <h2 id="enum-string-storage">4. Enum Filtering Matches the Member Name, Whatever the Column Stores</h2>
       <p>
-        The <code>Enum</code> data type assumes enum values are stored as strings
-        (not integers) in the database. If your database stores enums as integers,
-        use <code>DataType.Number</code> instead.
+        <Link href="/docs/enums/data-type"><code>DataType.Enum</code></Link>{" "}
+        compares the member <em>name</em> you send (<code>&quot;Pending&quot;</code>),
+        and it works whether the column stores names or integers: the dynamic LINQ
+        parser converts the name to the enum value before EF Core translates the
+        comparison. <code>DataType.Enum</code> has no value-format check at all, so
+        nothing is rejected at validation time.
       </p>
-      <Callout tone="danger" title="Pick the right DataType">
-        Configure your EF Core conversion accordingly:{" "}
-        <code>.HasConversion&lt;string&gt;()</code> if you want to filter with{" "}
-        <Link href="/docs/enums/data-type"><code>DataType.Enum</code></Link>, or
-        leave it as the default integer mapping and filter with{" "}
-        <code>DataType.Number</code>. Mismatched configurations either throw{" "}
-        <code>InvalidFormat</code> at validation time or silently return zero rows.
+      <Callout tone="danger" title="Substring operators need a string member">
+        <code>Contains</code>, <code>StartsWith</code> and <code>EndsWith</code>{" "}
+        (and their <code>Not</code> forms) only bind on a member that really is a{" "}
+        <code>string</code>. On an enum-typed member the parser has no such method
+        to bind and throws <code>ParseException</code> from{" "}
+        <code>System.Linq.Dynamic.Core</code> — as does a name that is not a member
+        of the enum. For enums use <code>Equal</code>, <code>NotEqual</code>,{" "}
+        <code>In</code>, <code>NotIn</code>, <code>IsNull</code> or{" "}
+        <code>IsNotNull</code>.
       </Callout>
 
       <h2 id="having-aliases">5. Having Clause Fields Reference Aliases, Not Entity Properties</h2>
       <p>
-        In a <Link href="/docs/classes/summary"><code>Summary</code></Link>, the{" "}
-        <code>Having.ConditionGroup.Conditions[].Field</code> must match an{" "}
-        <code>AggregateBy.Alias</code>, not an entity property path.
+        In a <Link href="/docs/classes/summary"><code>Summary</code></Link>,{" "}
+        <code>Having</code> is itself a{" "}
+        <Link href="/docs/classes/condition-group"><code>ConditionGroup</code></Link>,
+        so the path is <code>Having.Conditions[].Field</code> — and each field in
+        its nested <code>SubConditionGroups</code> as well. Every one of them must
+        match an <code>AggregateBy.Alias</code>, not an entity property path.
       </p>
       <Callout tone="warn" title="Aliases only">
         A <code>Having</code> condition that references an entity property directly
@@ -130,9 +138,13 @@ export default function Page() {
         there is no built‑in <code>.All()</code> support.
       </p>
       <Callout tone="warn" title="No .All() support">
-        If you need universal quantification (every child must match), express it
-        with a negated <code>.Any()</code> condition or split into two filters.
-        See <Link href="/docs/examples/nested-collection">the nested‑collection
+        There is no negated <code>.Any()</code> either. The <code>Not</code>{" "}
+        operators are emitted <em>inside</em> the <code>Any</code> lambda, so{" "}
+        <code>NotEqual</code> on a path through a collection means &quot;some
+        element does not match&quot;, not &quot;no element matches&quot;.
+        Universal quantification has to be expressed outside the library — split
+        it into two queries, or apply it in memory on the materialized result. See{" "}
+        <Link href="/docs/examples/nested-collection">the nested‑collection
         example</Link>.
       </Callout>
 
@@ -277,7 +289,7 @@ export default function Page() {
       <h2 id="next">See also</h2>
       <ul>
         <li>
-          <Link href="/docs/errors">Error Codes Reference →</Link> the 22 stable
+          <Link href="/docs/errors">Error Codes Reference →</Link> the 27 stable
           validation messages.
         </li>
         <li>

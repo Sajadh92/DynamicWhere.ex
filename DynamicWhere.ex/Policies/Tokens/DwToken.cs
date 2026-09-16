@@ -28,10 +28,11 @@ public static class DwToken
     /// can be reproduced by anyone who learns the seed, which would put the mapping back within
     /// reach of someone who never read the vault.
     /// <para>
-    /// The same shape as a hashed mask on purpose. A column that switches from
-    /// <c>MaskStrategy.Hash</c> to <c>MaskStrategy.Tokenize</c> keeps its width and its character
-    /// set, so nothing downstream has to be told; and a caller cannot tell from the output which of
-    /// the two produced it, which is one fact fewer to reason from.
+    /// Lowercase hexadecimal, the same character set a hashed mask emits, so a column that switches
+    /// from <c>MaskStrategy.Hash</c> to <c>MaskStrategy.Tokenize</c> stays hexadecimal and nothing
+    /// downstream has to parse it differently. The width does change: a hash is HMAC-SHA256 and
+    /// therefore 64 characters, a token is 16 random bytes and therefore 32, so a column sized for
+    /// one is not automatically wide enough for the other.
     /// </para>
     /// </remarks>
     public static string New()

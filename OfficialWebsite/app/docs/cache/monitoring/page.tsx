@@ -38,7 +38,7 @@ export default function Page() {
           <tr>
             <td><code>GetCacheStatistics()</code></td>
             <td><code>CacheStatistics</code></td>
-            <td>Per-store entry counts, hit / miss totals, eviction counters.</td>
+            <td>Per-store entry counts, LRU / LFU tracking-record counts, and estimated memory.</td>
           </tr>
           <tr>
             <td><code>GetCacheConfiguration()</code></td>
@@ -48,7 +48,7 @@ export default function Page() {
           <tr>
             <td><code>GetMemoryUsage()</code></td>
             <td><code>CacheMemoryUsage</code></td>
-            <td>Real byte-level memory consumption per store (measured by <code>CacheCalculator</code>).</td>
+            <td>Estimated memory per store — <code>CacheCalculator</code> sizes live entries from fixed constants rather than measuring the GC.</td>
           </tr>
         </tbody>
       </table>
@@ -68,7 +68,7 @@ export default function Page() {
         <tbody>
           <tr>
             <td><code>GeneratePerformanceReport()</code></td>
-            <td>Hit rates, miss rates, eviction frequencies — the throughput view.</td>
+            <td>Configuration, entry counts, utilization, memory and efficiency, then the recommendations.</td>
           </tr>
           <tr>
             <td><code>GenerateCompactStatusReport()</code></td>
@@ -76,11 +76,11 @@ export default function Page() {
           </tr>
           <tr>
             <td><code>GenerateCacheAnalysisReport()</code></td>
-            <td>Deeper analytical view — per-store breakdown, top entries.</td>
+            <td>Deeper analytical view — each store's count against <code>MaxCacheSize</code>, tracking records, eviction size, and memory distribution.</td>
           </tr>
           <tr>
             <td><code>GetQuickHealthSummary()</code></td>
-            <td>One-line health status — green / amber / red.</td>
+            <td>One line: a status icon, the total entry count, and total memory.</td>
           </tr>
         </tbody>
       </table>
@@ -95,9 +95,17 @@ export default function Page() {
       <h2 id="health-alerts">Health alerts</h2>
       <p>
         <code>GenerateHealthAlerts(...)</code> evaluates the cache against a
-        <code>HealthAlertsInput</code> threshold object and returns a list of
-        actionable alerts — for example "TypeProperties store is 95% full" or
-        "Hit rate dropped below 50%."
+        <code>HealthAlertsInput</code> threshold object and returns one string
+        per rule that fires — total memory past the warning or critical
+        threshold, mean utilization at or above 90%, tracking overhead at or
+        above 40%, fewer than 50 entries per MB, or a single store at or above
+        95% of <code>MaxCacheSize</code>. An empty list means no rule fired.
+      </p>
+      <p>
+        Build the input from the active options. A bare{" "}
+        <code>new HealthAlertsInput()</code> leaves <code>Config</code> null,
+        fails <code>IsValid()</code>, and comes back as one "ERROR: Invalid
+        health alerts input parameters" item instead of an evaluation.
       </p>
 
       <h2 id="management">Cache management</h2>
@@ -123,7 +131,7 @@ export default function Page() {
           </tr>
           <tr>
             <td><code>IsCacheFull(CacheMemoryType)</code></td>
-            <td>Returns <code>true</code> when the target store has reached <code>MaxCacheSize</code>.</td>
+            <td>Returns <code>true</code> when the target store holds <em>more</em> than <code>MaxCacheSize</code> entries — the test is strictly greater, not equal.</td>
           </tr>
         </tbody>
       </table>
@@ -135,7 +143,7 @@ export default function Page() {
       </Callout>
 
       <h2 id="full-example">Full example</h2>
-      <p>Every API in one place:</p>
+      <p>The most-used calls in one place:</p>
       <Code lang="csharp">{`// Get structured statistics
 CacheStatistics stats = CacheExpose.GetCacheStatistics();
 CacheConfiguration config = CacheExpose.GetCacheConfiguration();
@@ -150,8 +158,9 @@ string healthSummary = CacheExpose.GetQuickHealthSummary();
 // Monitoring data for dashboards
 Dictionary<string, object> monitoringData = CacheExpose.GenerateMonitoringReport();
 
-// Health alerts
-var alerts = CacheExpose.GenerateHealthAlerts(new HealthAlertsInput { ... });
+// Health alerts — the input needs the active options, or you get one ERROR item back
+var alerts = CacheExpose.GenerateHealthAlerts(
+    HealthAlertsInput.WithDefaults(CacheExpose.GetCacheConfigOptions()));
 
 // Cache management
 CacheExpose.ClearAllCaches();

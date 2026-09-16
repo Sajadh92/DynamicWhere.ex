@@ -18,21 +18,36 @@ export default function Page() {
       <p>
         Every validation failure in DynamicWhere.ex throws a{" "}
         <code>LogicException</code> (which inherits from <code>Exception</code>).
-        The <code>Message</code> property carries one of the 22 stable error strings
+        The <code>Message</code> property carries one of the 27 stable error strings
         listed below, so you can pattern‑match them in middleware and surface
         meaningful problems to API callers.
       </p>
 
       <h2 id="overview">How errors are raised</h2>
       <p>
-        Validation runs eagerly — before any expression tree is built or any SQL is
-        emitted. If your <code>Filter</code>, <code>Segment</code>,{" "}
-        <code>Summary</code>, <code>ConditionGroup</code>, <code>GroupBy</code>, or{" "}
-        <code>PageBy</code> shape is invalid, the corresponding extension method
-        throws synchronously (even on the async overloads, the throw happens before
-        the first <code>await</code>). The thrown type is always{" "}
-        <code>LogicException</code> and the message is always one of the rows in the
-        table below.
+        Validation runs clause by clause while the query is composed, not in a
+        single pass before it. Most shapes — <code>Filter</code>,{" "}
+        <code>ConditionGroup</code>, <code>GroupBy</code>, <code>PageBy</code> —
+        are checked before their part of the query executes, but three entry
+        points reach the database first: <code>ToListDynamic</code> and{" "}
+        <code>ToListAsyncDynamic</code> run the <code>COUNT</code> query before
+        validating <code>Orders</code>, <code>Page</code> and{" "}
+        <code>Selects</code>, and <code>ToListAsync(Segment)</code> queries each
+        condition set before validating the clauses that follow. The async
+        overloads are <code>async</code> methods, so their exceptions surface at
+        the <code>await</code> rather than at the call.
+      </p>
+      <p>
+        <code>LogicException</code> is the usual type, but not the only one a
+        caller sees. A null argument or a blank <code>Selects</code> entry raises{" "}
+        <code>ArgumentNullException</code>; a null element inside{" "}
+        <code>Conditions</code>, <code>SubConditionGroups</code>,{" "}
+        <code>ConditionSets</code> or <code>Orders</code> raises{" "}
+        <code>NullReferenceException</code>; a guarded type raises{" "}
+        <code>PolicyException</code>, which derives from{" "}
+        <code>LogicException</code>; and input that passes validation but not the
+        expression parser raises <code>ParseException</code> from{" "}
+        <code>System.Linq.Dynamic.Core</code>.
       </p>
 
       <Callout tone="info" title="Surfacing errors in an API">
@@ -54,11 +69,20 @@ export default function Page() {
 });`}</Code>
       </Callout>
 
-      <h2 id="all-errors">All 22 error codes</h2>
+      <h2 id="all-errors">All 27 error codes</h2>
       <p>
         Codes wrapped in <code>(parens)</code> are parameterized — the bracketed
         token in the message is replaced at runtime with the offending operator,
         alias, aggregator, type, or field name.
+      </p>
+      <p>
+        Two further failures carry a literal message rather than one of these
+        codes:{" "}
+        <code>{`Unsupported combination of DataType '{type}' and Operator '{op}'.`}</code>{" "}
+        for a pair the predicate builder has no form for, and{" "}
+        <code>{`Select projection requires a parameterless constructor on type '{T}'.`}</code>{" "}
+        for a <code>Select&lt;T&gt;</code> or <code>Filter.Selects</code> whose{" "}
+        <code>T</code> has no parameterless constructor.
       </p>
 
       <table>
@@ -98,7 +122,12 @@ export default function Page() {
           <tr>
             <td><code>InvalidValue</code></td>
             <td><code>ConditionValuesAreNullOrWhiteSpace</code></td>
-            <td>Null / whitespace value</td>
+            <td>
+              Defined but never thrown — a null value normalizes to an empty
+              string, which <code>Text</code> and <code>Enum</code> accept and
+              every other <code>DataType</code> rejects with{" "}
+              <code>InvalidFormat</code>
+            </td>
           </tr>
           <tr>
             <td><code>RequiredValues</code></td>
@@ -143,7 +172,7 @@ export default function Page() {
           <tr>
             <td><code>InvalidAlias</code></td>
             <td><code>AggregationMustHasValidAlias</code></td>
-            <td>Alias is not a plain identifier — empty, or carrying a dot, comma, space, or dash</td>
+            <td>Alias is not a plain identifier — empty, starting with a digit, or carrying any character that is not a letter, digit, or underscore</td>
           </tr>
           <tr>
             <td><code>GroupByMustHaveFields</code></td>
@@ -158,22 +187,22 @@ export default function Page() {
           <tr>
             <td><code>GroupByFieldCannotBeComplexType</code></td>
             <td><code>GroupByFieldCannotBeComplexType</code></td>
-            <td>Non‑simple <code>GroupBy</code> field</td>
+            <td><code>GroupBy</code> field ends on a navigation or on a collection of entities</td>
           </tr>
           <tr>
             <td><code>GroupByFieldCannotBeCollection</code></td>
             <td><code>GroupByFieldCannotBeCollectionType</code></td>
-            <td>Collection <code>GroupBy</code> field</td>
+            <td><code>GroupBy</code> field ends on a collection of collections</td>
           </tr>
           <tr>
             <td><code>AggregationFieldMustBeSimpleType</code></td>
             <td><code>AggregationFieldMustBeSimpleType</code></td>
-            <td>Complex aggregation field</td>
+            <td>Aggregation field ends on a navigation or on a collection of entities</td>
           </tr>
           <tr>
             <td><code>AggregationFieldCannotBeCollection</code></td>
             <td><code>AggregationFieldCannotBeCollectionType</code></td>
-            <td>Collection aggregation field</td>
+            <td>Aggregation field ends on a collection of collections</td>
           </tr>
           <tr>
             <td><code>AggregationAliasesMustBeUnique</code></td>
@@ -223,16 +252,17 @@ export default function Page() {
       <ul>
         <li>
           <Link href="/docs/validation/condition">Condition validation →</Link>{" "}
-          <code>InvalidField</code>, <code>InvalidValue</code>,{" "}
-          <code>RequiredValues</code>, <code>NotRequiredValues</code>,{" "}
-          <code>RequiredTwoValue</code>, <code>RequiredOneValue(op)</code>,{" "}
-          <code>InvalidFormat</code>.
+          <code>InvalidField</code> (also raised for any other blank or
+          unresolvable field path — <code>OrderBy</code>, <code>GroupBy</code>,{" "}
+          <code>AggregateBy</code>, <code>Having</code>,{" "}
+          <code>Summary.Orders</code>), <code>RequiredValues</code>,{" "}
+          <code>NotRequiredValues</code>, <code>RequiredTwoValue</code>,{" "}
+          <code>RequiredOneValue(op)</code>, <code>InvalidFormat</code>.
         </li>
         <li>
           <Link href="/docs/validation/condition-group">ConditionGroup validation →</Link>{" "}
-          <code>SetsUniqueSort</code>, <code>ConditionsUniqueSort</code>,{" "}
-          <code>SubConditionsGroupsUniqueSort</code>,{" "}
-          <code>RequiredIntersection</code>.
+          <code>ConditionsUniqueSort</code>,{" "}
+          <code>SubConditionsGroupsUniqueSort</code>.
         </li>
         <li>
           <Link href="/docs/validation/page">Page validation →</Link>{" "}
@@ -240,27 +270,40 @@ export default function Page() {
         </li>
         <li>
           <Link href="/docs/validation/group-by">GroupBy validation →</Link>{" "}
-          <code>MustHaveFields</code>, <code>GroupByMustHaveFields</code>,{" "}
+          <code>GroupByMustHaveFields</code>,{" "}
           <code>GroupByFieldsMustBeUnique</code>,{" "}
           <code>GroupByFieldCannotBeComplexType</code>,{" "}
-          <code>GroupByFieldCannotBeCollection</code>.
-        </li>
-        <li>
-          <Link href="/docs/validation/summary">Summary validation →</Link>{" "}
-          <code>InvalidAlias</code>,{" "}
+          <code>GroupByFieldCannotBeCollection</code>, and the{" "}
+          <code>AggregateBy</code> codes <code>InvalidAlias</code>,{" "}
           <code>AggregationFieldMustBeSimpleType</code>,{" "}
           <code>AggregationFieldCannotBeCollection</code>,{" "}
           <code>AggregationAliasesMustBeUnique</code>,{" "}
           <code>AggregationAliasCannotBeGroupByField(alias)</code>,{" "}
-          <code>UnsupportedAggregatorForType(agg, type)</code>,{" "}
+          <code>UnsupportedAggregatorForType(agg, type)</code> — all reachable
+          through <Link href="/docs/extensions/group"><code>Group</code></Link>{" "}
+          as well as through <code>Summary</code>.
+        </li>
+        <li>
+          <Link href="/docs/validation/summary">Summary validation →</Link>{" "}
           <code>SummaryOrderFieldMustExistInGroupByOrAggregate(f)</code>,{" "}
-          <code>HavingFieldMustExistInAggregateByAlias(f)</code>.
+          <code>HavingFieldMustExistInAggregateByAlias(f)</code>, plus every
+          GroupBy code above from the nested <code>GroupBy</code>.
         </li>
         <li>
           <Link href="/docs/validation/segment">Segment validation →</Link>{" "}
-          inherits all <code>ConditionGroup</code> + <code>Page</code> errors and
-          additionally enforces <code>RequiredIntersection</code> for sets at index
-          1 and above.
+          <code>SetsUniqueSort</code> and <code>RequiredIntersection</code>, plus
+          the <code>ConditionGroup</code>, <code>Selects</code>,{" "}
+          <code>OrderBy</code> and <code>Page</code> errors of every set it runs.
+        </li>
+        <li>
+          <Link href="/docs/extensions/select">Select / SelectDynamic →</Link>{" "}
+          <code>MustHaveFields</code>, for an empty <code>Select</code>,{" "}
+          <code>SelectDynamic</code>, or <code>Filter.Selects</code> list.
+        </li>
+        <li>
+          <Link href="/docs/extensions/order">Order →</Link>{" "}
+          <code>OrderFieldCannotEndOnComplexCollection(f)</code>, when an order
+          path ends on a collection of entities.
         </li>
       </ul>
 

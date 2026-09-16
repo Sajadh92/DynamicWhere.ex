@@ -216,11 +216,19 @@ public sealed class DwPolicyOptions
     }
 
     /// <summary>
-    /// How often a store with no change notification of its own is polled for a new version.
+    /// How often the store is polled for its version.
     /// </summary>
     /// <remarks>
-    /// Ignored by a store that supplies a watch. The poll is a read of a single version value, which
-    /// is cheap enough to run indefinitely.
+    /// Runs alongside a store's own watch rather than instead of it: a watch gives the latency, and
+    /// the poll bounds a missed notification at one interval. The poll is a read of a single version
+    /// value, which is cheap enough to run indefinitely.
+    /// <para>
+    /// It also renews <see cref="MaxSnapshotAge"/>. A poll that reads back the version already being
+    /// served confirms the snapshot is current, so a store nobody writes to keeps answering; without
+    /// that, a healthy store would refuse every guarded query one ceiling after the last write. Set
+    /// this well below the ceiling, and drive <c>RefreshAsync</c> yourself on a provider built with
+    /// <c>autoRefresh: false</c>.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when the value is zero or negative.

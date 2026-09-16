@@ -74,7 +74,7 @@ var caller = await DwPolicy.PrepareAsync(
 // Then query through the guarded handle instead of the raw IQueryable.
 var result = await db.Employees.ApplyPolicy(caller).ToListAsync(filter);`}</Code>
 
-      <Code lang="csharp">{`[DwEntity(RequirePolicy = true)]        // an unguarded read throws
+      <Code lang="csharp">{`[DwEntity(RequirePolicy = true)]        // an unguarded DynamicWhere read throws
 public class Employee
 {
     [DwMask(MaskStrategy.Email), DwNoOrder]
@@ -107,7 +107,7 @@ public class Employee
 
       <h2 id="where">Where to go next</h2>
       <ul>
-        <li><Link href="/docs/policies/attributes">Attributes</Link> — all eighteen, with what each one does</li>
+        <li><Link href="/docs/policies/attributes">Attributes</Link> — all twenty-two, with what each one does</li>
         <li><Link href="/docs/policies/precedence">Precedence</Link> — six levels, and why attributes are sealed by default</li>
         <li><Link href="/docs/policies/transforms">Transforms &amp; masking</Link> — nine mask strategies and five other transforms</li>
         <li><Link href="/docs/policies/store">Dynamic store</Link> — rules without a redeploy</li>

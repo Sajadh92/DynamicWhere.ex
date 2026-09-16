@@ -20,7 +20,8 @@ export default function Page() {
         <Link href="/docs/extensions/to-list-summary">
           <code>.ToList&lt;T&gt;(Summary)</code>
         </Link>
-        . Uses EF Core's async count/materialization under the hood.
+        . The group count runs synchronously; only the data read is async, via
+        Dynamic LINQ's <code>ToDynamicListAsync()</code>.
       </p>
 
       <h2 id="signature">Signature</h2>
@@ -65,7 +66,10 @@ export default function Page() {
         <li><code>Where</code> applied on the typed query.</li>
         <li><code>Group</code> applied — produces grouped dynamic intermediate.</li>
         <li><code>Having</code> applied — fields must reference aggregate aliases.</li>
-        <li>Async count on the grouped query → <code>TotalCount</code>.</li>
+        <li>
+          <code>Count()</code> on the grouped query → <code>TotalCount</code>.
+          This count is <strong>synchronous</strong>, not awaited.
+        </li>
         <li><code>Order</code> applied on the grouped query.</li>
         <li><code>Page</code> applied on the grouped query.</li>
         <li>Async materialization as <code>List&lt;dynamic&gt;</code>.</li>

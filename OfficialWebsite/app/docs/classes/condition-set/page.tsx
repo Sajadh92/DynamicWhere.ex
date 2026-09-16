@@ -151,7 +151,7 @@ export default function Page() {
           <Link href="/docs/enums/intersection">Intersection enum →</Link>
         </li>
         <li>
-          <Link href="/docs/extensions/to-list-async-segment">ToListAsyncSegment →</Link>
+          <Link href="/docs/extensions/to-list-async-segment">ToListAsync&lt;T&gt;(Segment) →</Link>
         </li>
       </ul>
     </DocPage>

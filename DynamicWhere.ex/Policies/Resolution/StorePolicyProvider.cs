@@ -278,6 +278,11 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
         // this is being honoured on trust nobody has renewed — which is how "the store died six
         // hours ago" becomes "we have been honouring revoked grants all afternoon".
         //
+        // Renewed by a reload, or by a poll that reads back the version being served: both establish
+        // that the store is reachable and that this snapshot is what it holds. A provider built with
+        // autoRefresh: false renews on neither, so such a host has to call RefreshAsync itself,
+        // more often than the ceiling.
+        //
         // Measured against the load time this provider stamped, not the one the store reported. A
         // store's clock is not this library's to trust: running behind it would only fail closed,
         // but running ahead it would make every snapshot look fresh and extend the ceiling without
@@ -472,7 +477,7 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
         }
     }
 
-    /// <summary>Reloads when a poll shows the version has moved.</summary>
+    /// <summary>Reloads when a poll shows the version has moved, and renews the snapshot when it has not.</summary>
     private async Task PollLoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -483,7 +488,13 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
 
                 long version = await _store.GetVersionAsync(ct).ConfigureAwait(false);
 
-                if (version != Current.Version)
+                // A poll that reads back the version already being served is a renewal, not a
+                // no-op: the store was reachable and it holds what this provider is serving, which
+                // is everything a reload would have established. Without counting it, a store
+                // nobody writes to is never reloaded, the load stamp freezes, and the staleness
+                // ceiling refuses every guarded query one MaxSnapshotAge after the last write —
+                // a healthy store failing closed with nothing wrong.
+                if (!Confirm(version))
                 {
                     await Attempt(ct).ConfigureAwait(false);
                 }
@@ -502,6 +513,41 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
                     _degraded = true;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Renews the snapshot when the store still reports the version being served.
+    /// </summary>
+    /// <param name="version">The version the store just reported.</param>
+    /// <returns>True when it matched and the snapshot was renewed; false when a reload is needed.</returns>
+    /// <remarks>
+    /// The comparison and the stamp happen under one lock, so a reload landing between them cannot
+    /// have its own load time overwritten by an older confirmation.
+    /// <para>
+    /// This clears the degraded flag for the same reason it renews the stamp. A store that answers
+    /// a version read is reachable, and a version that matches means nothing has been missed — so
+    /// an instance that failed one poll and has written nothing since stops refusing under
+    /// <see cref="StoreFailureMode.FailClosed"/> as soon as the store answers again, rather than
+    /// waiting for a write that may never come.
+    /// </para>
+    /// </remarks>
+    private bool Confirm(long version)
+    {
+        DateTimeOffset stamp = Clock();
+
+        lock (_swap)
+        {
+            if (_snapshot.Version != version)
+            {
+                return false;
+            }
+
+            _loadedAt = stamp;
+            _degraded = false;
+            _lastError = null;
+
+            return true;
         }
     }
 

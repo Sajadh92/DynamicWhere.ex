@@ -93,9 +93,9 @@ public class PolicyTokenTests
         Assert.NotNull(token);
         Assert.NotEqual("AAA-000123", token);
 
-        // Thirty-two lowercase hexadecimal characters, the same shape a hashed mask emits. A column
-        // that switches between the two strategies keeps its width, and a caller cannot tell from
-        // the output which one produced it.
+        // Thirty-two lowercase hexadecimal characters: 16 random bytes. The character set is the
+        // one a hashed mask emits, so a column that switches strategies stays hexadecimal, but the
+        // width is not shared — a hash is HMAC-SHA256 and twice as long.
         Assert.Equal(32, token!.Length);
         Assert.All(token, c => Assert.True(char.IsDigit(c) || (c is >= 'a' and <= 'f')));
     }

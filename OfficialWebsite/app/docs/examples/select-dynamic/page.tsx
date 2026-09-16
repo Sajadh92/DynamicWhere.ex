@@ -21,19 +21,20 @@ export default function Page() {
         accepts the same field paths as{" "}
         <Link href="/docs/extensions/select"><code>Select</code></Link> but
         projects into a dynamic result whose shape mirrors the path structure.
+        The body is a bare JSON array of strings; inside a{" "}
+        <Link href="/docs/classes/filter"><code>Filter</code></Link> the same
+        list goes under <code>selects</code>.
       </p>
 
       <h2 id="direct-scalars">Direct scalars</h2>
-      <Code lang="json">{`{ "fields": ["Id", "Name", "Price"] }`}</Code>
+      <Code lang="json">{`["Id", "Name", "Price"]`}</Code>
       <p><strong>Response shape:</strong></p>
       <Code lang="json">{`{ "Id": 7, "Name": "Laptop Pro", "Price": 1299.99 }`}</Code>
 
       <h2 id="dotted-reference">
         Dotted path through reference navigation (nested object)
       </h2>
-      <Code lang="json">{`{
-  "fields": ["Id", "Name", "Price", "Category.Name"]
-}`}</Code>
+      <Code lang="json">{`["Id", "Name", "Price", "Category.Name"]`}</Code>
       <p>
         <code>Category.Name</code> produces a nested <code>Category</code>{" "}
         object in the result.
@@ -44,9 +45,7 @@ export default function Page() {
       <h2 id="dotted-collection">
         Dotted path through collection navigation (Select lambda)
       </h2>
-      <Code lang="json">{`{
-  "fields": ["Id", "Name", "Category.Vendors.Id"]
-}`}</Code>
+      <Code lang="json">{`["Id", "Name", "Category.Vendors.Id"]`}</Code>
       <p>
         <code>Category.Vendors</code> is a collection — each element is
         projected via a <code>Select</code> lambda so only <code>Id</code> is
@@ -58,16 +57,12 @@ export default function Page() {
       <h2 id="multi-level">
         Multi-level dotted path (reference → collection → reference)
       </h2>
-      <Code lang="json">{`{
-  "fields": ["Id", "Category.Vendors.Product.Name"]
-}`}</Code>
+      <Code lang="json">{`["Id", "Category.Vendors.Product.Name"]`}</Code>
       <p><strong>Response shape:</strong></p>
       <Code lang="json">{`{ "Id": 7, "Category": { "Vendors": [{ "Product": { "Name": "Laptop Pro" } }] } }`}</Code>
 
       <h2 id="merged">Multiple dotted fields merged under the same root segment</h2>
-      <Code lang="json">{`{
-  "fields": ["Id", "Category.Name", "Category.Id"]
-}`}</Code>
+      <Code lang="json">{`["Id", "Category.Name", "Category.Id"]`}</Code>
       <p>
         <code>Category.Name</code> and <code>Category.Id</code> are merged into
         a single nested <code>Category</code> object.
@@ -76,9 +71,7 @@ export default function Page() {
       <Code lang="json">{`{ "Id": 7, "Category": { "Name": "Electronics", "Id": 5 } }`}</Code>
 
       <h2 id="whole-object">Whole navigation object (non-dotted)</h2>
-      <Code lang="json">{`{
-  "fields": ["Id", "Name", "Category"]
-}`}</Code>
+      <Code lang="json">{`["Id", "Name", "Category"]`}</Code>
       <p>
         <code>Category</code> has no dot → projected as the whole object.
       </p>
@@ -86,16 +79,12 @@ export default function Page() {
       <Code lang="json">{`{ "Id": 7, "Name": "Laptop Pro", "Category": { "Id": 5, "Name": "Electronics" } }`}</Code>
 
       <h2 id="whole-collection">Whole collection (non-dotted)</h2>
-      <Code lang="json">{`{
-  "fields": ["Id", "Name", "OrderItems"]
-}`}</Code>
+      <Code lang="json">{`["Id", "Name", "OrderItems"]`}</Code>
       <p><strong>Response shape:</strong></p>
       <Code lang="json">{`{ "Id": 7, "Name": "Laptop Pro", "OrderItems": [ { "Id": 1, "Quantity": 2 } ] }`}</Code>
 
       <h2 id="deep-reference">Deep nesting through reference navigations</h2>
-      <Code lang="json">{`{
-  "fields": ["Id", "Category.SubCategory.Name"]
-}`}</Code>
+      <Code lang="json">{`["Id", "Category.SubCategory.Name"]`}</Code>
       <p><strong>Response shape:</strong></p>
       <Code lang="json">{`{ "Id": 7, "Category": { "SubCategory": { "Name": "Laptops" } } }`}</Code>
 

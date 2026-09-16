@@ -39,16 +39,17 @@ export default function Page() {
         Your front-end sends a JSON shape that describes <em>what</em> to query.
         DynamicWhere.ex turns that JSON into a safe, validated, EF Core‑native
         <code>IQueryable&lt;T&gt;</code> — including projection, ordering, paging, grouping,
-        having clauses, and even <code>UNION</code> / <code>INTERSECT</code> /{" "}
-        <code>EXCEPT</code> set operations.
+        and having clauses — plus <code>UNION</code> / <code>INTERSECT</code> /{" "}
+        <code>EXCEPT</code> set operations, which run one query per condition set
+        and combine the results in memory.
       </p>
 
       <p>The library exposes three composable shapes:</p>
 
       <ul>
         <li>
-          <Link href="/docs/classes/filter"><code>Filter</code></Link> — where + select +
-          order + page.
+          <Link href="/docs/classes/filter"><code>Filter</code></Link> — where → order →
+          page → select.
         </li>
         <li>
           <Link href="/docs/classes/segment"><code>Segment</code></Link> — multiple
@@ -140,7 +141,15 @@ FilterResult<Customer> result = await dbContext.Customers.ToListAsync(filter);`}
           validates, and what it returns.
         </li>
         <li>
-          <strong>JSON Cookbook</strong> — 13 copy-pasteable end-to-end examples.
+          <strong>Validation</strong> — the rules each shape is checked against
+          before a query is built.
+        </li>
+        <li>
+          <strong>JSON Cookbook</strong> — 12 copy-pasteable end-to-end examples.
+        </li>
+        <li>
+          <strong>Field-Level Policies</strong> — the opt-in layer that decides
+          what each caller may filter, sort, select, group, aggregate and see.
         </li>
         <li>
           <strong>Cache & Optimization</strong> — how the internal reflection cache

@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "FilterResult<T>",
   description:
-    "The strongly-typed result wrapper returned by ToListFilter / ToListAsyncFilter and their dynamic siblings — data plus pagination metadata.",
+    "The strongly-typed result wrapper returned by ToList<T>(Filter) / ToListAsync<T>(Filter) and their dynamic siblings — data plus pagination metadata.",
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/filter-result/" },
 };
 
@@ -18,8 +18,8 @@ export default function Page() {
       <p>
         <code>FilterResult&lt;T&gt;</code> is the strongly-typed wrapper returned by every terminal
         filter extension —{" "}
-        <Link href="/docs/extensions/to-list-filter"><code>ToListFilter</code></Link>,{" "}
-        <Link href="/docs/extensions/to-list-async-filter"><code>ToListAsyncFilter</code></Link>,
+        <Link href="/docs/extensions/to-list-filter"><code>ToList&lt;T&gt;(Filter)</code></Link>,{" "}
+        <Link href="/docs/extensions/to-list-async-filter"><code>ToListAsync&lt;T&gt;(Filter)</code></Link>,
         and the dynamic variants. It contains the result page plus pagination metadata.
       </p>
 
@@ -89,13 +89,28 @@ export default function Page() {
               Generated SQL (when <code>getQueryString: true</code> is passed to the extension).
             </td>
           </tr>
+          <tr>
+            <td>
+              <code>Policy</code>
+            </td>
+            <td>
+              <code>PolicyTrace?</code>
+            </td>
+            <td>
+              What the policy layer did to this query.{" "}
+              <code>null</code> unless the query went through{" "}
+              <Link href="/docs/policies"><code>ApplyPolicy</code></Link>.
+            </td>
+          </tr>
         </tbody>
       </table>
 
       <Callout tone="info">
         When the input <code>Filter</code> has no <code>Page</code>, <code>PageNumber</code>{" "}
-        and <code>PageSize</code> come back as <code>0</code>, and <code>PageCount</code> is{" "}
-        <code>1</code> with the full result in <code>Data</code>.
+        and <code>PageSize</code> come back as <code>0</code> and the full result sits in{" "}
+        <code>Data</code>. <code>PageCount</code> is{" "}
+        <code>Ceiling(TotalCount / (PageSize == 0 ? 1 : PageSize))</code>, so with no paging
+        it equals <code>TotalCount</code> — not <code>1</code>.
       </Callout>
 
       <h2 id="csharp-example">C# usage</h2>
@@ -119,7 +134,8 @@ foreach (var customer in result.Data)
     { "id": 7, "name": "John Doe", "createdAt": "2025-09-14T12:31:00Z" },
     { "id": 8, "name": "Jane Roe", "createdAt": "2025-09-13T08:11:00Z" }
   ],
-  "queryString": null
+  "queryString": null,
+  "policy": null
 }`}</Code>
 
       <h2 id="see-also">See also</h2>
@@ -128,7 +144,7 @@ foreach (var customer in result.Data)
           <Link href="/docs/classes/filter">Filter →</Link>
         </li>
         <li>
-          <Link href="/docs/extensions/to-list-async-filter">ToListAsyncFilter →</Link>
+          <Link href="/docs/extensions/to-list-async-filter">ToListAsync&lt;T&gt;(Filter) →</Link>
         </li>
         <li>
           <Link href="/docs/classes/segment-result">SegmentResult&lt;T&gt; →</Link> inherits this shape.

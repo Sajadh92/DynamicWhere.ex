@@ -20,9 +20,10 @@ export default function Page() {
         consecutive{" "}
         <Link href="/docs/classes/condition-set"><code>ConditionSet</code></Link>{" "}
         results inside a{" "}
-        <Link href="/docs/classes/segment"><code>Segment</code></Link>. It maps
-        onto LINQ's <code>Union</code> / <code>Intersect</code> /{" "}
-        <code>Except</code> and the matching SQL set operators.
+        <Link href="/docs/classes/segment"><code>Segment</code></Link>. Each set
+        runs as its own query and the results are combined <strong>in memory</strong>{" "}
+        with LINQ&apos;s <code>Union</code> / <code>Intersect</code> /{" "}
+        <code>Except</code> — no SQL set operator is generated.
       </p>
 
       <h2 id="values">Values</h2>
@@ -31,7 +32,7 @@ export default function Page() {
           <tr>
             <th>Value</th>
             <th>Description</th>
-            <th>SQL equivalent</th>
+            <th>SQL analogue</th>
           </tr>
         </thead>
         <tbody>
@@ -52,6 +53,15 @@ export default function Page() {
           </tr>
         </tbody>
       </table>
+
+      <Callout tone="warn">
+        Because the combination happens in memory, the three operations compare
+        rows by <em>reference</em>. Setting <code>Segment.Selects</code> projects
+        each set into fresh objects before they are combined, so nothing matches
+        across sets: <code>Intersect</code> returns nothing, <code>Except</code>{" "}
+        removes nothing, and <code>Union</code> stops de-duplicating. Project
+        after the segment instead.
+      </Callout>
 
       <h2 id="ordering">Ordering and the first set</h2>
       <p>

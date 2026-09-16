@@ -27,8 +27,13 @@ export default function Page() {
       <h2 id="values">Values</h2>
       <p>
         Seven logical types. Each row lists every operator the library will
-        accept when paired with that type — using an unsupported operator
-        throws a validation error.
+        accept when paired with that type. An unsupported pairing is not caught
+        by validation: the predicate builder throws a <code>LogicException</code>{" "}
+        reading{" "}
+        <code>
+          Unsupported combination of DataType &apos;&lt;type&gt;&apos; and Operator
+          &apos;&lt;op&gt;&apos;.
+        </code>
       </p>
 
       <table>

@@ -39,7 +39,7 @@ export default function Page() {
         then delegates to the <code>IQueryable&lt;T&gt;</code> overload.
       </p>
       <Code lang="csharp">{`public static FilterResult<dynamic> ToListDynamic<T>(
-    this IEnumerable<T> source,
+    this IEnumerable<T> query,
     Filter filter,
     bool getQueryString = false)
     where T : class`}</Code>

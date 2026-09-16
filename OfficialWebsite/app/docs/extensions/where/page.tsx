@@ -107,9 +107,6 @@ export default function Page() {
           <code>RequiredOneValue({"{Operator}"})</code>.
         </li>
         <li>
-          Values must not be null/whitespace — <code>InvalidValue</code>.
-        </li>
-        <li>
           <code>Guid</code> values must parse as <code>Guid</code> —{" "}
           <code>InvalidFormat</code>.
         </li>
@@ -124,6 +121,14 @@ export default function Page() {
         <li>
           <code>Date</code> / <code>DateTime</code> values must parse as{" "}
           <code>DateTime</code> — <code>InvalidFormat</code>.
+        </li>
+        <li>
+          The <code>DataType</code> / <code>Operator</code> pair must be one the
+          library supports — checked last, when the predicate is built, and
+          reported as{" "}
+          <code>
+            {`Unsupported combination of DataType '<DataType>' and Operator '<Operator>'.`}
+          </code>
         </li>
       </ul>
 

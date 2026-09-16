@@ -74,7 +74,8 @@ using DynamicWhere.ex.Classes.Core;      // Condition, ConditionGroup, OrderBy, 
 using DynamicWhere.ex.Classes.Complex;   // Filter, Segment, Summary
 using DynamicWhere.ex.Enums;             // DataType, Operator, Connector, ...
 using DynamicWhere.ex.Optimization.Cache.Source; // CacheExpose
-using DynamicWhere.ex.Optimization.Cache.Config; // CacheOptions, CacheEvictionStrategy`}</Code>
+using DynamicWhere.ex.Optimization.Cache.Config; // CacheOptions
+using DynamicWhere.ex.Optimization.Cache.Enums;  // CacheEvictionStrategy, CacheMemoryType`}</Code>
 
       <h2 id="verify">Verify the install</h2>
       <p>The fastest sanity check is a one-liner against an existing DbSet:</p>

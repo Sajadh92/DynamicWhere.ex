@@ -1,5 +1,6 @@
 ﻿using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
+using System.Globalization;
 
 namespace DynamicWhere.ex.Source;
 
@@ -28,9 +29,15 @@ internal static class Builder
     /// <param name="_operator">Operator to apply.</param>
     /// <param name="field">Field access expression (e.g., <c>"x.Email"</c>).</param>
     /// <param name="values">Operator values (validated upstream; count depends on <paramref name="_operator"/>).</param>
+    /// <param name="memberType">
+    /// The CLR type of the member the field resolves to, or null where the caller has none to give —
+    /// a <c>HAVING</c> clause names an aggregate alias rather than a member. Only the date types read
+    /// it, and only to decide what a null guard, a literal and <c>.Date</c> have to look like.
+    /// </param>
     /// <returns>Dynamic LINQ predicate snippet.</returns>
     /// <exception cref="LogicException">Thrown if the combination of <paramref name="dataType"/> and <paramref name="_operator"/> is unsupported.</exception>
-    public static string BuildCondition(DataType dataType, Operator _operator, string field, List<string> values)
+    public static string BuildCondition(
+        DataType dataType, Operator _operator, string field, List<string> values, Type? memberType = null)
     {
         // Normalize value tokens by trimming whitespace; validation already happened upstream.
         // Escape them for embedding in a dynamic LINQ string literal — see Escape.
@@ -211,75 +218,13 @@ internal static class Builder
             // DATETIME (expect ISO 8601 strings)
             // ----------------------------------------------------------
             case DataType.DateTime:
-            {
-                switch (_operator)
-                {
-                    case Operator.Equal:
-                        return $"{field} != null && {field} == DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.NotEqual:
-                        return $"{field} != null && {field} != DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.GreaterThan:
-                        return $"{field} != null && {field} > DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.GreaterThanOrEqual:
-                        return $"{field} != null && {field} >= DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.LessThan:
-                        return $"{field} != null && {field} < DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.LessThanOrEqual:
-                        return $"{field} != null && {field} <= DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.Between:
-                        return $"{field} != null && {field} >= DateTime.Parse(\"{values[0]}\") && {field} <= DateTime.Parse(\"{values[1]}\")";
-
-                    case Operator.NotBetween:
-                        return $"{field} != null && ({field} < DateTime.Parse(\"{values[0]}\") || {field} > DateTime.Parse(\"{values[1]}\") )";
-
-                    case Operator.IsNull: return $"{field} == null";
-                    case Operator.IsNotNull: return $"{field} != null";
-                }
-            }
-            break;
+                return BuildDate(dataType, _operator, field, values, memberType);
 
             // ----------------------------------------------------------
             // DATE (compare by .Date)
             // ----------------------------------------------------------
             case DataType.Date:
-            {
-                switch (_operator)
-                {
-                    case Operator.Equal:
-                        return $"{field} != null && {field}.Date == DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.NotEqual:
-                        return $"{field} != null && {field}.Date != DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.GreaterThan:
-                        return $"{field} != null && {field}.Date > DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.GreaterThanOrEqual:
-                        return $"{field} != null && {field}.Date >= DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.LessThan:
-                        return $"{field} != null && {field}.Date < DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.LessThanOrEqual:
-                        return $"{field} != null && {field}.Date <= DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.Between:
-                        return $"{field} != null && {field}.Date >= DateTime.Parse(\"{values[0]}\").Date && {field}.Date <= DateTime.Parse(\"{values[1]}\").Date";
-
-                    case Operator.NotBetween:
-                        return $"{field} != null && ({field}.Date < DateTime.Parse(\"{values[0]}\").Date || {field}.Date > DateTime.Parse(\"{values[1]}\").Date)";
-
-                    case Operator.IsNull: return $"{field} == null";
-                    case Operator.IsNotNull: return $"{field} != null";
-                }
-            }
-            break;
+                return BuildDate(dataType, _operator, field, values, memberType);
 
             // ----------------------------------------------------------
             // Enum
@@ -332,6 +277,150 @@ internal static class Builder
         }
 
         throw new LogicException($"Unsupported combination of DataType '{dataType}' and Operator '{_operator}'.");
+    }
+
+    /// <summary>
+    /// Builds a predicate for <see cref="DataType.DateTime"/> or <see cref="DataType.Date"/>.
+    /// </summary>
+    /// <remarks>
+    /// One method for both date types because the three things that decide the shape are the same in
+    /// each: whether the member can be null, which of the two date types it is, and whether the
+    /// comparison is by instant or by calendar day.
+    /// <para>
+    /// The null guard is emitted only for a member that can actually be null. On a non-nullable
+    /// member it was never merely redundant: System.Linq.Dynamic.Core compares a struct against the
+    /// null constant by looking for an implicit conversion and, finding none, falls through to
+    /// <c>Expression.NotEqual</c>, which throws for <c>DateTimeOffset</c>. <c>DateTime</c> and
+    /// <c>int</c> escape that only because the parser carries an exclusion list that
+    /// <c>DateTimeOffset</c> is not on. Where the guard is dropped, <c>IsNull</c> and
+    /// <c>IsNotNull</c> answer with the constant the guard already implied.
+    /// </para>
+    /// <para>
+    /// The literal is built as the member's own type: <c>DateTimeOffset >= DateTime</c> has no
+    /// signature, so a literal of the wrong type fails even where the guard is right. A nullable
+    /// member is unwrapped with <c>.Value</c> under the guard that protects it, because
+    /// <c>DateTime?</c> has no <c>.Date</c>.
+    /// </para>
+    /// <para>
+    /// Values are parsed here, with the invariant culture, and re-emitted in round-trip form. The
+    /// shipped predicate used to carry the caller's text into a <c>DateTime.Parse</c> the runtime
+    /// evaluated in the host's culture, so the same filter meant different days on two servers.
+    /// A <c>DateTimeOffset</c> is normalised to UTC and a value with no zone is read as UTC, which
+    /// is what keeps a day comparison naming the day the caller wrote.
+    /// </para>
+    /// </remarks>
+    private static string BuildDate(
+        DataType dataType, Operator _operator, string field, List<string> values, Type? memberType)
+    {
+        Type? nullableOf = memberType is null ? null : Nullable.GetUnderlyingType(memberType);
+
+        // An unknown member type keeps the guard: a HAVING alias can be anything, and the shape that
+        // has shipped for it is the one its callers already depend on.
+        bool nullable = memberType is null || nullableOf is not null || !memberType.IsValueType;
+        bool offset = (nullableOf ?? memberType) == typeof(DateTimeOffset);
+        bool byDay = dataType == DataType.Date;
+
+        string member = nullableOf is not null ? $"{field}.Value" : field;
+        string access = byDay ? $"{member}.Date" : member;
+        string guard = nullable ? $"{field} != null && " : string.Empty;
+
+        string Literal(string value)
+        {
+            string parsed = offset ? OffsetLiteral(value) : LocalLiteral(value);
+            string call = offset
+                ? $"DateTimeOffset.Parse(\"{parsed}\")"
+                : $"DateTime.Parse(\"{parsed}\")";
+
+            return byDay ? $"{call}.Date" : call;
+        }
+
+        switch (_operator)
+        {
+            case Operator.Equal:
+                return $"{guard}{access} == {Literal(values[0])}";
+
+            case Operator.NotEqual:
+                return $"{guard}{access} != {Literal(values[0])}";
+
+            case Operator.GreaterThan:
+                return $"{guard}{access} > {Literal(values[0])}";
+
+            case Operator.GreaterThanOrEqual:
+                return $"{guard}{access} >= {Literal(values[0])}";
+
+            case Operator.LessThan:
+                return $"{guard}{access} < {Literal(values[0])}";
+
+            case Operator.LessThanOrEqual:
+                return $"{guard}{access} <= {Literal(values[0])}";
+
+            case Operator.Between:
+                return $"{guard}{access} >= {Literal(values[0])} && {access} <= {Literal(values[1])}";
+
+            case Operator.NotBetween:
+                return $"{guard}({access} < {Literal(values[0])} || {access} > {Literal(values[1])})";
+
+            // A member that cannot hold null is never null and always not-null. Answering with the
+            // constant is what the dropped guard means, and it is also the only answer the parser
+            // can build: the comparison itself is what throws.
+            case Operator.IsNull:
+                return nullable ? $"{field} == null" : "false";
+
+            case Operator.IsNotNull:
+                return nullable ? $"{field} != null" : "true";
+        }
+
+        throw new LogicException(
+            $"Unsupported combination of DataType '{dataType}' and Operator '{_operator}'.");
+    }
+
+    /// <summary>
+    /// Reads a value as an instant and writes it back as UTC, for a <c>DateTimeOffset</c> member.
+    /// </summary>
+    /// <remarks>
+    /// <c>AssumeUniversal</c> so a value carrying no zone means the day the caller wrote rather than
+    /// the day it happens to be on the server, and <c>AdjustToUniversal</c> so a value carrying one
+    /// is the same instant with a zero offset. Both matter to <c>DataType.Date</c>, where the offset
+    /// decides which calendar day <c>.Date</c> reports.
+    /// </remarks>
+    /// <exception cref="LogicException">
+    /// Thrown with <c>InvalidFormat</c> when the value is not a date the invariant culture reads.
+    /// </exception>
+    private static string OffsetLiteral(string value)
+    {
+        if (!DateTimeOffset.TryParse(
+                value,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out DateTimeOffset parsed))
+        {
+            throw new LogicException(ErrorCode.InvalidFormat);
+        }
+
+        return parsed.ToString("o", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Reads a value for a <c>DateTime</c> member and writes it back without a zone marker.
+    /// </summary>
+    /// <remarks>
+    /// The default styles keep what the shipped behaviour did with a zoned value: it is converted to
+    /// the host's local time, which is the reading a <c>timestamp without time zone</c> column is
+    /// compared against. Writing it back with no marker is what stops the emitted literal from being
+    /// converted a second time when the predicate is parsed.
+    /// </remarks>
+    /// <exception cref="LogicException">
+    /// Thrown with <c>InvalidFormat</c> when the value is not a date the invariant culture reads.
+    /// </exception>
+    private static string LocalLiteral(string value)
+    {
+        if (!DateTime.TryParse(
+                value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsed))
+        {
+            throw new LogicException(ErrorCode.InvalidFormat);
+        }
+
+        return parsed.ToString("yyyy-MM-ddTHH:mm:ss.fffffff", CultureInfo.InvariantCulture);
     }
 
     /// <summary>

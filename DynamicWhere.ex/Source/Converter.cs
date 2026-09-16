@@ -428,7 +428,17 @@ internal static class Converter
 
                 conditionAsString = conditionAsString[..^last.Length];
 
-                conditionAsString += Builder.BuildCondition(condition.DataType, condition.Operator, last, Normalizer.Normalize(condition.Values));
+                // The member's own type goes with it: a date predicate cannot be written correctly
+                // without knowing whether the member can be null and which of the two date types it
+                // is. Validation has already resolved the path, so the lookup cannot miss.
+                var member = CacheReflection.FindProperty(type, p)!;
+
+                conditionAsString += Builder.BuildCondition(
+                    condition.DataType,
+                    condition.Operator,
+                    last,
+                    Normalizer.Normalize(condition.Values),
+                    member.PropertyType);
             }
         }
 

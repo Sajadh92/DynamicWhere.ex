@@ -410,6 +410,12 @@ public sealed class PolicyQueryable<T> where T : class
 
         Summary sanitized = Sanitize(new Summary { GroupBy = groupBy }, NewTrace());
 
+        // No page. The sanitizer fills one in from DwCaps.DefaultPageSize for a summary that sent
+        // none, but Group takes no page and no order: what came back would be the first groups in no
+        // particular order, with nothing a caller could pass to reach the rest. The caller pages
+        // what this returns, as it always did, or sends a Summary, which carries a page.
+        sanitized.Page = null;
+
         using (PolicyScope.Enter(_context))
         {
             return WithoutGroupSize(Guarded().Summary(sanitized), sanitized);

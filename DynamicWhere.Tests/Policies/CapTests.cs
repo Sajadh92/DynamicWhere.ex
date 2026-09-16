@@ -288,21 +288,166 @@ public class CapTests
         }
     }
 
-    /// <summary>A filter whose groups nest <paramref name="depth"/> levels, counting the root.</summary>
-    private static Filter Nested(int depth)
+    [Fact]
+    public void A_summary_nesting_its_conditions_deeper_than_the_cap_is_refused()
     {
-        ConditionGroup root = new() { Conditions = { On("Name") } };
+        Summary summary = Counted();
+
+        summary.ConditionGroup = NestedGroup(6, () => On("Name"));
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => GuardSummary(summary, caps => caps.MaxConditionDepth = 5));
+
+        Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
+        Assert.Contains("MaxConditionDepth", exception.SourceOrigin!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_summary_nesting_its_having_deeper_than_the_cap_is_refused()
+    {
+        // HAVING is a second condition tree on the same request. Measuring only the WHERE side
+        // would leave the cap one property away from not applying.
+        Summary summary = Counted();
+
+        summary.Having = NestedGroup(6, OnCount);
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => GuardSummary(summary, caps => caps.MaxConditionDepth = 5));
+
+        Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
+    }
+
+    [Fact]
+    public void A_summary_nesting_each_tree_exactly_to_the_cap_is_allowed()
+    {
+        // The deeper of the two is measured, not their sum.
+        Summary summary = Counted();
+
+        summary.ConditionGroup = NestedGroup(5, () => On("Name"));
+        summary.Having = NestedGroup(5, OnCount);
+
+        GuardSummary(summary, caps => caps.MaxConditionDepth = 5);
+    }
+
+    [Fact]
+    public void A_segment_set_nesting_deeper_than_the_cap_is_refused()
+    {
+        // The shallow first set must not vouch for the deep second one: each set is its own tree.
+        Segment segment = new()
+        {
+            ConditionSets = new List<ConditionSet>
+            {
+                new() { Sort = 1, ConditionGroup = NestedGroup(1, () => On("Name")) },
+                new()
+                {
+                    Sort = 2,
+                    Intersection = Intersection.Union,
+                    ConditionGroup = NestedGroup(6, () => On("Name"))
+                }
+            }
+        };
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => GuardSegment(segment, caps => caps.MaxConditionDepth = 5));
+
+        Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
+        Assert.Contains("MaxConditionDepth", exception.SourceOrigin!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_unpaged_guarded_summary_is_given_the_default_page()
+    {
+        Summary result = GuardSummary(Counted(), caps => caps.DefaultPageSize = 25);
+
+        Assert.Equal(1, result.Page!.PageNumber);
+        Assert.Equal(25, result.Page.PageSize);
+    }
+
+    [Fact]
+    public void An_unpaged_guarded_segment_is_given_the_default_page()
+    {
+        Segment segment = new()
+        {
+            ConditionSets = new List<ConditionSet>
+            {
+                new() { Sort = 1, ConditionGroup = NestedGroup(1, () => On("Name")) }
+            }
+        };
+
+        Segment result = GuardSegment(segment, caps => caps.DefaultPageSize = 25);
+
+        Assert.Equal(1, result.Page!.PageNumber);
+        Assert.Equal(25, result.Page.PageSize);
+    }
+
+    /// <summary>A filter whose groups nest <paramref name="depth"/> levels, counting the root.</summary>
+    private static Filter Nested(int depth) => new() { ConditionGroup = NestedGroup(depth, () => On("Name")) };
+
+    /// <summary>A group tree <paramref name="depth"/> levels deep, counting the root.</summary>
+    private static ConditionGroup NestedGroup(int depth, Func<Condition> condition)
+    {
+        ConditionGroup root = new() { Conditions = { condition() } };
         ConditionGroup current = root;
 
         for (int level = 1; level < depth; level++)
         {
-            ConditionGroup child = new() { Conditions = { On("Name") } };
+            ConditionGroup child = new() { Conditions = { condition() } };
 
             current.SubConditionGroups.Add(child);
             current = child;
         }
 
-        return new Filter { ConditionGroup = root };
+        return root;
+    }
+
+    /// <summary>Employees counted by name, with no floor, so nothing but the caps shapes the result.</summary>
+    private static Summary Counted() => new()
+    {
+        GroupBy = new GroupBy
+        {
+            Fields = new List<string> { "Name" },
+            AggregateBy = new List<AggregateBy>
+            {
+                new() { Field = "Id", Aggregator = Aggregator.Count, Alias = "n" }
+            }
+        }
+    };
+
+    private static Condition OnCount() => new()
+    {
+        Field = "n",
+        DataType = DataType.Number,
+        Operator = Operator.GreaterThan,
+        Values = { 0 }
+    };
+
+    private static Summary GuardSummary(Summary summary, Action<DwCaps> configure)
+    {
+        DwPolicyOptions options = new() { Tier = DwTier.Strict };
+
+        options.Caps.MinGroupSize = 1;
+        configure(options.Caps);
+
+        return FilterSanitizer.Sanitize<SecuredEmployee>(
+            summary,
+            new PolicyResolver(new IDwPolicyProvider[] { new AttributePolicyProvider() }),
+            Caller(),
+            options,
+            new PolicyTrace(DwTier.Strict, dryRun: false));
+    }
+
+    private static Segment GuardSegment(Segment segment, Action<DwCaps> configure)
+    {
+        DwPolicyOptions options = new() { Tier = DwTier.Strict };
+
+        configure(options.Caps);
+
+        return FilterSanitizer.Sanitize<SecuredEmployee>(
+            segment,
+            new PolicyResolver(new IDwPolicyProvider[] { new AttributePolicyProvider() }),
+            Caller(),
+            options,
+            new PolicyTrace(DwTier.Strict, dryRun: false));
     }
 
     [Fact]

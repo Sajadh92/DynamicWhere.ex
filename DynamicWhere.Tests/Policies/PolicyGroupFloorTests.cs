@@ -210,11 +210,12 @@ public class PolicyGroupFloorTests
         new Crew { Id = 6, Department = "Legal", Headcount = 1 }
     };
 
-    private static PolicyQueryable<Crew> CrewQuery(int floor)
+    private static PolicyQueryable<Crew> CrewQuery(int floor, int defaultPageSize = 0)
     {
         DwPolicyOptions options = new();
 
         options.Caps.MinGroupSize = floor;
+        options.Caps.DefaultPageSize = defaultPageSize;
         options.Freeze();
 
         return Crews().AsQueryable().ApplyPolicy(
@@ -295,6 +296,40 @@ public class PolicyGroupFloorTests
 
         Assert.Equal(3, rows.Count);
         Assert.DoesNotContain(GroupFloorAlias, Columns(rows[0]));
+    }
+
+    /// <summary>
+    /// A default page is not imposed on a grouping that has no way to ask for another.
+    /// </summary>
+    /// <remarks>
+    /// Group runs through the summary pipeline, and the sanitizer fills in a page from
+    /// <c>DefaultPageSize</c> for a summary that sent none. Group takes no page and no order, so
+    /// keeping it would return the first groups in no particular order with nothing a caller could
+    /// pass to reach the rest.
+    /// </remarks>
+    [Fact]
+    public void The_composable_group_is_not_cut_to_the_default_page()
+    {
+        List<object> rows = CrewQuery(floor: 1, defaultPageSize: 1)
+            .Group(Grouped().GroupBy!)
+            .ToDynamicList()
+            .Cast<object>()
+            .ToList();
+
+        Assert.Equal(3, rows.Count);
+    }
+
+    /// <summary>A composable summary carries a page slot, so the default page still applies to it.</summary>
+    [Fact]
+    public void The_composable_summary_is_given_the_default_page()
+    {
+        List<object> rows = CrewQuery(floor: 1, defaultPageSize: 1)
+            .Summary(Grouped())
+            .ToDynamicList()
+            .Cast<object>()
+            .ToList();
+
+        Assert.Single(rows);
     }
 
     // ---- the alias the library keeps for itself --------------------------------------------------

@@ -40,6 +40,13 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     private DateTimeOffset _loadedAt;
     private bool _degraded;
     private Exception? _lastError;
+
+    /// <summary>
+    /// Every refresh or poll that has failed, counted under <see cref="_swap"/>. A poll compares it
+    /// across its own read, because a failure recorded while that read was in flight is newer than
+    /// anything the read can confirm.
+    /// </summary>
+    private long _failures;
     private Task? _refreshing;
     private bool _disposed;
 
@@ -344,6 +351,7 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
             {
                 _degraded = true;
                 _lastError = failure;
+                _failures++;
             }
 
             throw;
@@ -486,6 +494,8 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
             {
                 await Task.Delay(_options.RefreshInterval, ct).ConfigureAwait(false);
 
+                (DateTimeOffset asked, long failures) = BeforeRead();
+
                 long version = await _store.GetVersionAsync(ct).ConfigureAwait(false);
 
                 // A poll that reads back the version already being served is a renewal, not a
@@ -494,7 +504,7 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
                 // nobody writes to is never reloaded, the load stamp freezes, and the staleness
                 // ceiling refuses every guarded query one MaxSnapshotAge after the last write —
                 // a healthy store failing closed with nothing wrong.
-                if (!Confirm(version))
+                if (!Confirm(version, asked, failures))
                 {
                     await Attempt(ct).ConfigureAwait(false);
                 }
@@ -511,8 +521,18 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
                 lock (_swap)
                 {
                     _degraded = true;
+                    _failures++;
                 }
             }
+        }
+    }
+
+    /// <summary>What a poll records before it reads the version: when it asked, and the failures so far.</summary>
+    private (DateTimeOffset Asked, long Failures) BeforeRead()
+    {
+        lock (_swap)
+        {
+            return (Clock(), _failures);
         }
     }
 
@@ -520,10 +540,19 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     /// Renews the snapshot when the store still reports the version being served.
     /// </summary>
     /// <param name="version">The version the store just reported.</param>
+    /// <param name="asked">When the poll asked for it, which is as recent as the answer can vouch for.</param>
+    /// <param name="failures">The failure count when the poll asked.</param>
     /// <returns>True when it matched and the snapshot was renewed; false when a reload is needed.</returns>
     /// <remarks>
-    /// The comparison and the stamp happen under one lock, so a reload landing between them cannot
-    /// have its own load time overwritten by an older confirmation.
+    /// Nothing is confirmed when a refresh or poll failed while the read was in flight. The answer
+    /// was read before that failure, perhaps before the very write whose reload failed, so taking it
+    /// as current would clear a <see cref="StoreFailureMode.FailClosed"/> refusal and serve the
+    /// older rules until the next poll. Returning false sends the loop to reload instead, which
+    /// settles it either way.
+    /// <para>
+    /// The stamp is the time of asking, not of answering, and it never moves backwards: a reload
+    /// that landed while the read was in flight keeps its own, later load time.
+    /// </para>
     /// <para>
     /// This clears the degraded flag for the same reason it renews the stamp. A store that answers
     /// a version read is reachable, and a version that matches means nothing has been missed — so
@@ -532,18 +561,20 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     /// waiting for a write that may never come.
     /// </para>
     /// </remarks>
-    private bool Confirm(long version)
+    private bool Confirm(long version, DateTimeOffset asked, long failures)
     {
-        DateTimeOffset stamp = Clock();
-
         lock (_swap)
         {
-            if (_snapshot.Version != version)
+            if (_snapshot.Version != version || _failures != failures)
             {
                 return false;
             }
 
-            _loadedAt = stamp;
+            if (asked > _loadedAt)
+            {
+                _loadedAt = asked;
+            }
+
             _degraded = false;
             _lastError = null;
 

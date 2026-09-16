@@ -62,7 +62,8 @@ public static class Extension
         // Requirement: T must have a parameterless constructor.
         if (typeof(T).GetConstructor(Type.EmptyTypes) is null)
         {
-            throw new LogicException("Select projection requires a parameterless constructor on type '" + typeof(T).Name + "'.");
+            throw new LogicException(
+                ErrorCode.SelectTypeMustHaveParameterlessConstructor, typeof(T).FullName);
         }
 
         // Build the strongly-typed projection expression.
@@ -530,9 +531,12 @@ public static class Extension
         // Calculate the total count of entities before pagination.
         int totalCount = query.Count();
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a FilterResult containing the result data and pagination information.
         return new FilterResult<T>
@@ -609,9 +613,12 @@ public static class Extension
             ? newQuery.SelectDynamic(filter.Selects)
             : newQuery;
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a FilterResult containing the dynamic result data and pagination information.
         return new FilterResult<dynamic>
@@ -723,9 +730,12 @@ public static class Extension
         // Calculate the total count of entities before pagination.
         int totalCount = await query.CountAsync();
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a FilterResult containing the result data and pagination information.
         return new FilterResult<T>
@@ -802,9 +812,12 @@ public static class Extension
             ? newQuery.SelectDynamic(filter.Selects)
             : newQuery;
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a FilterResult containing the dynamic result data and pagination information.
         return new FilterResult<dynamic>
@@ -975,9 +988,12 @@ public static class Extension
             pageSize = summary.Page.PageSize;
         }
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a SummaryResult containing the result data and pagination information.
         return new SummaryResult
@@ -1092,9 +1108,12 @@ public static class Extension
             pageSize = summary.Page.PageSize;
         }
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a SummaryResult containing the result data and pagination information.
         return new SummaryResult
@@ -1237,8 +1256,9 @@ public static class Extension
             sresult.PageNumber = segment.Page.PageNumber;
             sresult.PageSize = segment.Page.PageSize;
 
-            sresult.PageCount = (int)Math.Ceiling((double)sresult.TotalCount /
-                               (sresult.PageSize == 0 ? 1 : sresult.PageSize));
+            sresult.PageCount = sresult.PageSize == 0
+                ? (sresult.TotalCount == 0 ? 0 : 1)
+                : (int)Math.Ceiling((double)sresult.TotalCount / sresult.PageSize);
         }
         else
         {

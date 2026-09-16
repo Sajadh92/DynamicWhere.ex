@@ -436,5 +436,20 @@ public class SelectTests : SalesTestBase
     public void SelectDynamicRejectsEmptyFieldList() =>
         Assert.Throws<LogicException>(() => Products.SelectDynamic([]).ToDynamicList());
 
+    [Fact]
+    public void SelectOnATypeItCannotConstructIsRefusedWithAStableCode()
+    {
+        // The message is the machine-readable half: hosts put it straight into an error envelope's
+        // code, and this one used to be an English sentence with the type name inside it.
+        LogicException thrown = Assert.Throws<LogicException>(
+            () => new List<Positional> { new(1, "a") }.AsQueryable().Select(["Id"]).ToDynamicList());
+
+        Assert.Equal(ErrorCode.SelectTypeMustHaveParameterlessConstructor, thrown.Message);
+        Assert.Equal(typeof(Positional).FullName, thrown.Subject);
+    }
+
     #endregion
 }
+
+/// <summary>A positional record: real members, and no constructor a projection can call.</summary>
+public record Positional(int Id, string Name);

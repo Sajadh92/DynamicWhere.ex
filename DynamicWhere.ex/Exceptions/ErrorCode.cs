@@ -170,4 +170,16 @@ internal static class ErrorCode
     /// </returns>
     public static string HavingFieldMustExistInAggregateByAlias(string fieldName) =>
         $"HavingField[{fieldName}]MustExistInAggregateByAliases";
+
+    /// <summary>
+    /// Indicates that a Select projection was asked for on a type it cannot construct.
+    /// </summary>
+    /// <remarks>
+    /// The projection builds the type and assigns the requested members, so a type with no
+    /// parameterless constructor — a positional record, most often — cannot be projected into. The
+    /// type's name is carried by <see cref="LogicException.Subject"/> rather than inside this string,
+    /// so the message stays one of the fixed codes a caller can match on.
+    /// </remarks>
+    public static string SelectTypeMustHaveParameterlessConstructor =>
+        "SelectTypeMustHaveParameterlessConstructor";
 }

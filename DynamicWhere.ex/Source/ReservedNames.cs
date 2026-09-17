@@ -61,6 +61,6 @@ internal static class ReservedNames
         }
 
         throw new LogicException(
-            $"FieldPath[{propertyPath!.Trim()}]StartsWithReservedName", propertyPath.Split('.')[0].Trim());
+            ErrorCode.StartsWithReservedName(propertyPath!.Trim()), propertyPath.Split('.')[0].Trim());
     }
 }

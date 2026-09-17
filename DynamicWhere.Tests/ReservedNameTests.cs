@@ -187,6 +187,36 @@ public sealed class ReservedNameTests
     }
 
     [Fact]
+    public void An_alias_may_carry_a_name_the_parser_keeps()
+    {
+        // Only the path an alias stands for reaches the parser, so the alias itself may be spelled
+        // however the deployment likes.
+        DwPolicyContext caller = new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
+        Policies.FakePolicyProvider aliased =
+            new Policies.FakePolicyProvider().AddAlias("Id", "New", PolicyLevel.DynamicGlobal);
+        PolicyResolver resolver = new(new IDwPolicyProvider[] { new AttributePolicyProvider(), aliased });
+
+        Filter byAlias = new()
+        {
+            ConditionGroup = new ConditionGroup
+            {
+                Conditions = new List<Condition>
+                {
+                    new()
+                    {
+                        Sort = 1, Field = "New", DataType = DataType.Number, Operator = Operator.Equal,
+                        Values = new List<object> { "1" },
+                    },
+                },
+            },
+        };
+
+        Assert.Single(
+            Rows.ApplyPolicy(caller, new DwPolicyOptions { Tier = DwTier.Convenience }, resolver)
+                .ToList(byAlias).Data);
+    }
+
+    [Fact]
     public void A_default_order_naming_one_fails_the_startup_scan() =>
         Assert.Contains(
             "ReservedOrderRow: DefaultOrder names 'Null', which starts with a name the expression parser "

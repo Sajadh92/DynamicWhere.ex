@@ -210,6 +210,7 @@ public class DateFormatTests
     [InlineData("dd/MM/yyyy HH:mm")]
     [InlineData("yyyy-MM")]
     [InlineData("dd MMM yyyy")]
+    [InlineData("d/M/yy")]
     public void A_format_ISO_8601_does_not_read_is_accepted(string format)
     {
         DwDateOptions options = new();

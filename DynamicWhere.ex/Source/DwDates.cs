@@ -32,11 +32,11 @@ public sealed class DwDateOptions
     /// dates — <c>dd/MM/yyyy</c> beside <c>MM/dd/yyyy</c> — are refused when they are configured
     /// rather than left to disagree on a request.
     /// <para>
-    /// A format that writes its zone as a quoted literal, such as <c>yyyy-MM-dd'T'HH:mm:ss'Z'</c>, is
-    /// not caught there. ISO 8601 reads the same text as a zoned instant and, on a <c>DateTime</c>
-    /// member, converts it to the host's local time, while the declared format reads the digits as
-    /// written; on a host not on UTC the two readings differ, and the value is refused with
-    /// <c>AmbiguousDateFormat</c>. Declare no format that ISO 8601 already reads.
+    /// A format whose own text ISO 8601 or a year-first date already reads is refused as well, because
+    /// declaring it could only change what such a value means. <c>yyyy-MM-dd'T'HH:mm:ss'Z'</c> writes the
+    /// <c>Z</c> as a letter, so it reads 12:00 as a wall time where ISO 8601 reads an instant; on a
+    /// <c>DateTime</c> member the ISO reading converts to the host's local time, so off UTC the two
+    /// disagreed and every such value was refused as <c>AmbiguousDateFormat</c> on that host alone.
     /// </para>
     /// </remarks>
     public IList<string> Formats => _frozen ?? _formats;
@@ -321,8 +321,9 @@ public static class DwDates
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="options"/> is null.</exception>
     /// <exception cref="ArgumentException">
     /// Thrown when a format is blank or not a valid .NET format, cannot read back the text it writes
-    /// (<c>hh</c> without <c>tt</c>), carries no year, or a day but no month; or when two formats read
-    /// one text as different dates or put the day and the month in opposite orders.
+    /// (<c>hh</c> without <c>tt</c>), carries no year, or a day but no month; when two formats read one
+    /// text as different dates or put the day and the month in opposite orders; or when a format writes
+    /// text ISO 8601 or a year-first date already reads.
     /// </exception>
     /// <exception cref="InvalidOperationException">Thrown on a second call.</exception>
     /// <remarks>

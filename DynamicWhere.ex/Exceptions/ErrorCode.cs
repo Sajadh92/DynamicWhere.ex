@@ -194,4 +194,21 @@ internal static class ErrorCode
     /// uses through <c>DwDates.Configure</c>. <see cref="LogicException.Subject"/> carries the field.
     /// </remarks>
     public static string AmbiguousDateFormat => "AmbiguousDateFormat";
+
+    /// <summary>
+    /// Indicates a field path beginning with a name the expression parser keeps for itself.
+    /// </summary>
+    /// <remarks>
+    /// The parser reads its own functions and literals — <c>new</c>, <c>iif</c>, <c>np</c>,
+    /// <c>isnull</c>, <c>is</c>, <c>as</c>, <c>cast</c>, <c>true</c>, <c>false</c> and <c>null</c> — before
+    /// it looks for a member, so a path starting with one never reaches it. Only the first segment is
+    /// affected, and <see cref="LogicException.Subject"/> carries it. Rename the member and map the column
+    /// with <c>[Column]</c>.
+    /// </remarks>
+    /// <param name="propertyPath">The path as the caller wrote it.</param>
+    /// <returns>
+    /// A formatted error message naming the refused path.
+    /// </returns>
+    public static string StartsWithReservedName(string propertyPath) =>
+        $"FieldPath[{propertyPath}]StartsWithReservedName";
 }

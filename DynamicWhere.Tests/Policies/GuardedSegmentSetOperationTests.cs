@@ -115,4 +115,89 @@ public class GuardedSegmentSetOperationTests : IDisposable
         Assert.Equal(expected.Length, result.TotalCount);
         Assert.All(result.Data!, staff => Assert.Equal(string.Empty, staff.NationalId));
     }
+
+    private static DwPolicyContext Tenant(int id) =>
+        new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1").WithValue("TenantId", id);
+
+    /// <summary>
+    /// Two sets over invoices, chosen so that dropping the scope from either set changes the answer.
+    /// </summary>
+    /// <remarks>
+    /// Unscoped, the Union is <c>[1, 3, 4]</c>, the Intersect <c>[1, 4]</c> and the Except
+    /// <c>[1, 2, 4]</c>. A Union reaches past the scope when a set after the first is left unscoped,
+    /// and an Except does when the first is.
+    /// </remarks>
+    private static Segment Invoices(Intersection operation) => operation switch
+    {
+        Intersection.Union => Combine(
+            On("Number", DataType.Text, Operator.Equal, "INV-1"),
+            operation,
+            On("Id", DataType.Number, Operator.GreaterThanOrEqual, 3)),
+        Intersection.Intersect => Combine(
+            On("Id", DataType.Number, Operator.GreaterThanOrEqual, 1),
+            operation,
+            On("Number", DataType.Text, Operator.Equal, "INV-1")),
+        _ => Combine(
+            On("Id", DataType.Number, Operator.GreaterThanOrEqual, 1),
+            operation,
+            On("Number", DataType.Text, Operator.Equal, "INV-3"))
+    };
+
+    /// <summary>
+    /// Invoices carry two forced predicates, a tenant and a soft delete, and every set of a segment
+    /// is scoped by both before the sets are combined in the database.
+    /// </summary>
+    /// <remarks>Tenant 5 owns invoices 1 and 2, and 2 is void; tenant 9 owns 3 and 4.</remarks>
+    [Theory]
+    [InlineData(DwTier.Convenience, 5, Intersection.Union, new[] { 1 })]
+    [InlineData(DwTier.Convenience, 9, Intersection.Union, new[] { 3, 4 })]
+    [InlineData(DwTier.Convenience, 5, Intersection.Intersect, new[] { 1 })]
+    [InlineData(DwTier.Convenience, 9, Intersection.Intersect, new[] { 4 })]
+    [InlineData(DwTier.Convenience, 5, Intersection.Except, new[] { 1 })]
+    [InlineData(DwTier.Convenience, 9, Intersection.Except, new[] { 4 })]
+    [InlineData(DwTier.Strict, 5, Intersection.Union, new[] { 1 })]
+    [InlineData(DwTier.Strict, 9, Intersection.Union, new[] { 3, 4 })]
+    [InlineData(DwTier.Strict, 5, Intersection.Intersect, new[] { 1 })]
+    [InlineData(DwTier.Strict, 9, Intersection.Intersect, new[] { 4 })]
+    [InlineData(DwTier.Strict, 5, Intersection.Except, new[] { 1 })]
+    [InlineData(DwTier.Strict, 9, Intersection.Except, new[] { 4 })]
+    public async Task Every_set_is_scoped_before_the_sets_combine(
+        DwTier tier, int tenant, Intersection operation, int[] expected)
+    {
+        SegmentResult<Invoice> result = await _db.Invoices
+            .ApplyPolicy(Tenant(tenant), Options(tier), Resolver())
+            .ToListAsync(Invoices(operation));
+
+        Assert.Equal(expected, result.Data!.Select(invoice => invoice.Id).OrderBy(id => id));
+        Assert.Equal(expected.Length, result.TotalCount);
+        Assert.All(result.Data!, invoice => Assert.Equal(tenant, invoice.TenantId));
+        Assert.All(result.Data!, invoice => Assert.False(invoice.IsVoid));
+    }
+
+    /// <summary>
+    /// A set that names another tenant outright still reads only the caller's own rows.
+    /// </summary>
+    /// <remarks>
+    /// Unscoped, <c>Number = INV-3</c> is <c>[3]</c> and <c>TenantId = 5</c> is <c>[1, 2]</c>, so the
+    /// Union would hand tenant 9 both of tenant 5's invoices, the void one included.
+    /// </remarks>
+    [Theory]
+    [InlineData(DwTier.Convenience, 9, new[] { 3 })]
+    [InlineData(DwTier.Convenience, 5, new[] { 1 })]
+    [InlineData(DwTier.Strict, 9, new[] { 3 })]
+    [InlineData(DwTier.Strict, 5, new[] { 1 })]
+    public async Task A_set_naming_another_tenant_cannot_widen_the_scope(DwTier tier, int tenant, int[] expected)
+    {
+        Segment segment = Combine(
+            On("Number", DataType.Text, Operator.Equal, "INV-3"),
+            Intersection.Union,
+            On("TenantId", DataType.Number, Operator.Equal, 5));
+
+        SegmentResult<Invoice> result = await _db.Invoices
+            .ApplyPolicy(Tenant(tenant), Options(tier), Resolver())
+            .ToListAsync(segment);
+
+        Assert.Equal(expected, result.Data!.Select(invoice => invoice.Id).OrderBy(id => id));
+        Assert.Equal(expected.Length, result.TotalCount);
+    }
 }

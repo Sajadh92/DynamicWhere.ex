@@ -106,25 +106,25 @@ internal static class Builder
                     case Operator.In:
                     {
                         var ors = values.Select(v => $"{field} == \"{v}\"");
-                        return $"{field} != null && ({string.Join(" || ", ors)})";
+                        return $"{field} != null && ({JoinValues(ors, "||")})";
                     }
 
                     case Operator.IIn:
                     {
                         var ors = values.Select(v => $"{field}.ToLower() == \"{v.ToLower()}\"");
-                        return $"{field} != null && ({string.Join(" || ", ors)})";
+                        return $"{field} != null && ({JoinValues(ors, "||")})";
                     }
 
                     case Operator.NotIn:
                     {
                         var ands = values.Select(v => $"{field} != \"{v}\"");
-                        return $"{field} != null && ({string.Join(" && ", ands)})";
+                        return $"{field} != null && ({JoinValues(ands, "&&")})";
                     }
 
                     case Operator.INotIn:
                     {
                         var ands = values.Select(v => $"{field}.ToLower() != \"{v.ToLower()}\"");
-                        return $"{field} != null && ({string.Join(" && ", ands)})";
+                        return $"{field} != null && ({JoinValues(ands, "&&")})";
                     }
 
                     case Operator.IsNull: return $"{field} == null";
@@ -149,13 +149,13 @@ internal static class Builder
                     case Operator.In:
                     {
                         var ors = values.Select(v => $"{field} == \"{v}\"");
-                        return $"{field} != null && ({string.Join(" || ", ors)})";
+                        return $"{field} != null && ({JoinValues(ors, "||")})";
                     }
 
                     case Operator.NotIn:
                     {
                         var ands = values.Select(v => $"{field} != \"{v}\"");
-                        return $"{field} != null && ({string.Join(" && ", ands)})";
+                        return $"{field} != null && ({JoinValues(ands, "&&")})";
                     }
 
                     case Operator.IsNull: return $"{field} == null";
@@ -181,13 +181,13 @@ internal static class Builder
                     case Operator.In:
                     {
                         var ors = values.Select(v => $"{field} == {v}");
-                        return $"{field} != null && ({string.Join(" || ", ors)})";
+                        return $"{field} != null && ({JoinValues(ors, "||")})";
                     }
 
                     case Operator.NotIn:
                     {
                         var ands = values.Select(v => $"{field} != {v}");
-                        return $"{field} != null && ({string.Join(" && ", ands)})";
+                        return $"{field} != null && ({JoinValues(ands, "&&")})";
                     }
 
                     case Operator.Between:
@@ -263,13 +263,13 @@ internal static class Builder
                     case Operator.In:
                     {
                         var ors = values.Select(v => $"{field} == \"{v}\"");
-                        return $"{field} != null && ({string.Join(" || ", ors)})";
+                        return $"{field} != null && ({JoinValues(ors, "||")})";
                     }
 
                     case Operator.NotIn:
                     {
                         var ands = values.Select(v => $"{field} != \"{v}\"");
-                        return $"{field} != null && ({string.Join(" && ", ands)})";
+                        return $"{field} != null && ({JoinValues(ands, "&&")})";
                     }
 
                     case Operator.IsNull: return $"{field} == null";
@@ -438,6 +438,48 @@ internal static class Builder
         return $"{int.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture)}, " +
                $"{int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture)}, " +
                $"{int.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture)}";
+    }
+
+    /// <summary>
+    /// The most terms a value list is written with as one flat chain.
+    /// </summary>
+    private const int FlatValueTerms = 32;
+
+    /// <summary>
+    /// Joins the per-value terms of an <c>In</c> or <c>NotIn</c> with one operator, grouping a long list
+    /// into a balanced tree.
+    /// </summary>
+    /// <remarks>
+    /// The expression parser reads <c>a || b || c</c> as a chain one level deeper per term, and EF Core
+    /// walks a query tree recursively: a few hundred values overflowed the stack of a request thread
+    /// and ended the process, which no <c>catch</c> can stop. Split in halves, and each half in
+    /// parentheses, ten thousand values nest about nine levels past a flat run instead of ten thousand.
+    /// <para>
+    /// A list no longer than <see cref="FlatValueTerms"/> is written exactly as it was before, so the
+    /// predicate, and the SQL a provider makes of it, is unchanged for every list of that size. The
+    /// terms are all joined by the same operator, so grouping them changes nothing they mean.
+    /// </para>
+    /// </remarks>
+    /// <param name="terms">One comparison per value, in the caller's order.</param>
+    /// <param name="op">The operator joining them: <c>||</c> or <c>&amp;&amp;</c>.</param>
+    /// <returns>The joined terms, without surrounding parentheses.</returns>
+    private static string JoinValues(IEnumerable<string> terms, string op)
+    {
+        List<string> list = terms as List<string> ?? terms.ToList();
+
+        return JoinValues(list, 0, list.Count, op);
+    }
+
+    private static string JoinValues(List<string> terms, int start, int count, string op)
+    {
+        if (count <= FlatValueTerms)
+        {
+            return string.Join($" {op} ", terms.GetRange(start, count));
+        }
+
+        int half = count / 2;
+
+        return $"({JoinValues(terms, start, half, op)}) {op} ({JoinValues(terms, start + half, count - half, op)})";
     }
 
     /// <summary>

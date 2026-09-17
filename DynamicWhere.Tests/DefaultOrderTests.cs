@@ -48,6 +48,35 @@ public class SecretTicket
     public int Secret { get; set; }
 }
 
+/// <summary>A default leading with a collection of entities, which holds no single value to sort by.</summary>
+[DwEntity(DefaultOrder = "Watchers desc, Priority desc, Id")]
+public class WatchedTicket
+{
+    public int Id { get; set; }
+
+    public int Priority { get; set; }
+
+    public List<TicketWatcher> Watchers { get; set; } = new();
+}
+
+public class TicketWatcher
+{
+    public int Id { get; set; }
+
+    public int WatchedTicketId { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>A default reaching through a collection to a value, which the core sorts by its smallest or largest.</summary>
+[DwEntity(DefaultOrder = "Watchers.Name desc, Id")]
+public class ReachingTicket
+{
+    public int Id { get; set; }
+
+    public List<TicketWatcher> Watchers { get; set; } = new();
+}
+
 /// <summary>A type that declares no default, and so is never ordered by one.</summary>
 public class PlainTicket
 {
@@ -69,6 +98,8 @@ public sealed class TicketContext : DbContext
     public DbSet<SecretTicket> SecretTickets => Set<SecretTicket>();
 
     public DbSet<PlainTicket> PlainTickets => Set<PlainTicket>();
+
+    public DbSet<WatchedTicket> WatchedTickets => Set<WatchedTicket>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder options) => options.UseSqlite(_connection);
 }
@@ -106,6 +137,7 @@ public sealed class DefaultOrderTests : IDisposable
             _db.SloppyTickets.Add(new SloppyTicket { Id = i + 1, Priority = priorities[i] });
             _db.SecretTickets.Add(new SecretTicket { Id = i + 1, Secret = priorities[i] });
             _db.PlainTickets.Add(new PlainTicket { Id = 6 - (i + 1), Priority = priorities[i] });
+            _db.WatchedTickets.Add(new WatchedTicket { Id = i + 1, Priority = priorities[i] });
         }
 
         _db.SaveChanges();
@@ -306,6 +338,27 @@ public sealed class DefaultOrderTests : IDisposable
         Assert.Equal(new[] { "SloppyTicket: DefaultOrder entry 'Id sideways' is not a field optionally followed by asc or desc, so guarded queries skip it." }, report.Errors);
         Assert.Equal(new[] { "SloppyTicket: DefaultOrder names 'Missing', which SloppyTicket does not have, so guarded queries skip it." }, report.Warnings);
         Assert.Empty(PolicyModelValidator.Inspect(new[] { typeof(Ticket), typeof(PlainTicket) }).Errors);
+    }
+
+    [Theory]
+    [InlineData(DwTier.Convenience)]
+    [InlineData(DwTier.Strict)]
+    public void A_field_no_query_can_order_by_is_skipped_and_reported_at_startup(DwTier tier)
+    {
+        // Ordering by a collection of entities is refused by the core, so a default naming one would
+        // refuse every guarded query that took it. A path through a collection to a value is sorted by
+        // the core's aggregate, so it stays.
+        Assert.Equal(
+            ByDefault,
+            _db.WatchedTickets.ApplyPolicy(Caller(), Options(tier), Resolver()).ToList(new Filter()).Data.Select(row => row.Id));
+
+        Assert.Equal(new[] { "Priority", "Id" }, DefaultOrder.For(typeof(WatchedTicket)).Select(entry => entry.Field));
+        Assert.Equal(new[] { "Watchers.Name", "Id" }, DefaultOrder.For(typeof(ReachingTicket)).Select(entry => entry.Field));
+
+        Assert.Equal(
+            new[] { "WatchedTicket: DefaultOrder names 'Watchers', which no query can order by, so guarded queries skip it." },
+            PolicyModelValidator.Inspect(new[] { typeof(WatchedTicket) }).Errors);
+        Assert.Empty(PolicyModelValidator.Inspect(new[] { typeof(ReachingTicket) }).Errors);
     }
 
     [Theory]

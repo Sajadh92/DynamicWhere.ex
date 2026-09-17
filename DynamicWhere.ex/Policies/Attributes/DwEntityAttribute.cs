@@ -40,8 +40,9 @@ public sealed class DwEntityAttribute : Attribute
     /// as the key, or rows sharing the leading values can still change places between pages.
     /// <para>
     /// Nothing is ordered that this property does not name. An entry naming a field the type does not
-    /// have, or one that is not a field and a direction, is skipped rather than refused, and
-    /// <c>PolicyModelValidator</c> reports it. A field the caller may not order by is left out as well,
+    /// have, one that is not a field and a direction, or one no query can order by, such as a
+    /// collection of entities, is skipped rather than refused, and <c>PolicyModelValidator</c> reports
+    /// it. A field the caller may not order by is left out as well,
     /// and the trace records it: ordering by it would rank rows by a value the caller is not allowed to
     /// see. A field denied for ordering by its own attributes fails the startup scan.
     /// </para>

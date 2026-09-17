@@ -117,13 +117,14 @@ public static class PolicyModelValidator
     /// A guarded query never fails over a default order, so this scan is the only place a mistake in one is
     /// said out loud. An entry that is not a field and a direction is an error, because the author
     /// meant something by it; a field the type does not have is a warning, because a model shared
-    /// across types can name one on purpose; and a field the type's own attributes deny for ordering
-    /// is an error, because every caller would have it left out and the order would never be the one
-    /// declared.
+    /// across types can name one on purpose; a field no query can order by, such as a collection of
+    /// entities, is an error, because it can never be applied; and a field the type's own attributes
+    /// deny for ordering is an error, because every caller would have it left out and the order would
+    /// never be the one declared.
     /// </remarks>
     private static void CheckDefaultOrder(Type type, List<string> errors, List<string> warnings)
     {
-        (List<string> malformed, List<string> unknown) = DefaultOrder.Problems(type);
+        (List<string> malformed, List<string> unknown, List<string> unorderable) = DefaultOrder.Problems(type);
 
         foreach (string entry in malformed)
         {
@@ -135,6 +136,11 @@ public static class PolicyModelValidator
         foreach (string field in unknown)
         {
             warnings.Add($"{type.Name}: DefaultOrder names '{field}', which {type.Name} does not have, so guarded queries skip it.");
+        }
+
+        foreach (string field in unorderable)
+        {
+            errors.Add($"{type.Name}: DefaultOrder names '{field}', which no query can order by, so guarded queries skip it.");
         }
 
         IReadOnlyList<DefaultOrder.Entry> entries = DefaultOrder.For(type);

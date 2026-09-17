@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
 using System.Linq.Expressions;
+using System.Reflection;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Policies.Attributes;
+using DynamicWhere.ex.Source;
 
 namespace DynamicWhere.ex.Policies.Source;
 
@@ -14,9 +16,10 @@ namespace DynamicWhere.ex.Policies.Source;
 /// </summary>
 /// <remarks>
 /// Nothing is ever ordered by a default the type's own code did not declare. An entry naming a field
-/// the type does not have is skipped, as is an entry that is not a field and a direction, so a
-/// default can make a query stable but can never make one fail; <c>PolicyModelValidator</c> reports
-/// both at startup.
+/// the type does not have is skipped, as is an entry that is not a field and a direction, and one the
+/// core refuses to order by, such as a collection of entities. So a default can make a query stable
+/// but can never make the library refuse one; <c>PolicyModelValidator</c> reports all three at
+/// startup.
 /// <para>
 /// Only the sanitizer applies one, and only with the fields this caller may order by: ordering by any
 /// other would rank rows by a value the caller is not allowed to see. The core never reads the
@@ -42,6 +45,12 @@ internal static class DefaultOrder
     }
 
     private static readonly ConcurrentDictionary<Type, IReadOnlyList<Entry>> Declared = new();
+
+    /// <summary>The core's own conversion of an order clause, which refuses what it cannot sort by.</summary>
+    private static readonly MethodInfo OrderAsString = typeof(Converter)
+        .GetMethods(BindingFlags.Public | BindingFlags.Static)
+        .Single(method => method.Name == nameof(Converter.AsString)
+                          && method.GetParameters()[0].ParameterType == typeof(OrderBy));
 
     /// <summary>The usable entries a type declares, or none.</summary>
     internal static IReadOnlyList<Entry> For(Type type) => Declared.GetOrAdd(type, Read);
@@ -77,13 +86,15 @@ internal static class DefaultOrder
     }
 
     /// <summary>
-    /// Everything wrong with a type's declared default: entries that cannot be read, which are errors,
-    /// and fields the type does not have, which are skipped and so only warnings.
+    /// Everything wrong with a type's declared default: entries that cannot be read and fields no query
+    /// can order by, which are errors, and fields the type does not have, which are skipped and so only
+    /// warnings.
     /// </summary>
-    internal static (List<string> Malformed, List<string> Unknown) Problems(Type type)
+    internal static (List<string> Malformed, List<string> Unknown, List<string> Unorderable) Problems(Type type)
     {
         List<string> malformed = new();
         List<string> unknown = new();
+        List<string> unorderable = new();
 
         foreach (string part in Parts(type))
         {
@@ -91,13 +102,17 @@ internal static class DefaultOrder
             {
                 malformed.Add(part.Trim());
             }
-            else if (Canonical(type, field) is null)
+            else if (Canonical(type, field) is not { } canonical)
             {
                 unknown.Add(field);
             }
+            else if (!Orderable(type, canonical))
+            {
+                unorderable.Add(field);
+            }
         }
 
-        return (malformed, unknown);
+        return (malformed, unknown, unorderable);
     }
 
     private static IReadOnlyList<Entry> Read(Type type)
@@ -108,6 +123,7 @@ internal static class DefaultOrder
         {
             if (!TryParse(part, out string field, out Direction direction)
                 || Canonical(type, field) is not { } canonical
+                || !Orderable(type, canonical)
                 || entries.Exists(entry => string.Equals(entry.Field, canonical, StringComparison.OrdinalIgnoreCase)))
             {
                 continue;
@@ -172,6 +188,28 @@ internal static class DefaultOrder
         catch (LogicException)
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// True when the core would build an order for the field, as it would for a caller who sent it.
+    /// </summary>
+    /// <remarks>
+    /// Asked of the core's own conversion rather than a copy of its rules, so the two cannot drift. It
+    /// refuses a path that ends on a collection of entities, which holds no single value to compare,
+    /// and sorts a path through a collection to a value by that value's smallest or largest.
+    /// </remarks>
+    private static bool Orderable(Type type, string field)
+    {
+        try
+        {
+            OrderAsString.MakeGenericMethod(type).Invoke(null, new object[] { new OrderBy { Field = field } });
+
+            return true;
+        }
+        catch (TargetInvocationException invocation) when (invocation.InnerException is LogicException)
+        {
+            return false;
         }
     }
 }

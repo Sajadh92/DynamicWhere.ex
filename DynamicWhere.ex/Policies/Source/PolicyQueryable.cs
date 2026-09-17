@@ -495,7 +495,7 @@ public sealed class PolicyQueryable<T> where T : class
                 .Where(aggregate => !IsGroupSize(aggregate))
                 .Select(aggregate => aggregate.Alias!));
 
-        return grouped.Select($"new ({string.Join(", ", columns)})");
+        return grouped.Select(DynamicLinq.Config, $"new ({string.Join(", ", columns)})");
 
         static bool IsGroupSize(AggregateBy aggregate) =>
             string.Equals(aggregate.Alias, GroupFloor.SizeAlias, StringComparison.OrdinalIgnoreCase);

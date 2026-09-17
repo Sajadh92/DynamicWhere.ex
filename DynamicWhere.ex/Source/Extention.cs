@@ -141,7 +141,7 @@ public static class Extension
         string selector = Converter.BuildDynamicSelectString(fields, typeof(T));
 
         // Apply the string-based Dynamic LINQ select and return the non-generic IQueryable.
-        return query.Select(selector);
+        return query.Select(DynamicLinq.Config, selector);
     }
 
     /// <summary>
@@ -178,7 +178,7 @@ public static class Extension
         }
 
         // Apply the filter to the query and return the result.
-        return query.Where(where);
+        return query.Where(DynamicLinq.Config, where);
     }
 
     /// <summary>
@@ -215,7 +215,7 @@ public static class Extension
         }
 
         // Apply the filter to the query and return the result.
-        return query.Where(where);
+        return query.Where(DynamicLinq.Config, where);
     }
 
     /// <summary>
@@ -254,7 +254,7 @@ public static class Extension
         var (groupByString, selectString) = groupBy.AsString<T>();
 
         // Apply GroupBy and Select using dynamic LINQ.
-        return query.GroupBy(groupByString).Select(selectString);
+        return query.GroupBy(DynamicLinq.Config, groupByString).Select(DynamicLinq.Config, selectString);
     }
 
     /// <summary>
@@ -291,7 +291,7 @@ public static class Extension
         }
 
         // Apply the ordering to the query and return the result.
-        return query.OrderBy(orderBy);
+        return query.OrderBy(DynamicLinq.Config, orderBy);
     }
 
     /// <summary>
@@ -333,7 +333,7 @@ public static class Extension
         }
 
         // Apply the ordering to the query and return the result.
-        return query.OrderBy(orderBy);
+        return query.OrderBy(DynamicLinq.Config, orderBy);
     }
 
     /// <summary>
@@ -878,7 +878,7 @@ public static class Extension
 
             if (!string.IsNullOrWhiteSpace(havingFilter))
             {
-                result = result.Where(havingFilter);
+                result = result.Where(DynamicLinq.Config, havingFilter);
             }
         }
 
@@ -893,7 +893,7 @@ public static class Extension
 
             if (!string.IsNullOrWhiteSpace(orderBy))
             {
-                result = result.OrderBy(orderBy);
+                result = result.OrderBy(DynamicLinq.Config, orderBy);
             }
         }
 
@@ -952,7 +952,7 @@ public static class Extension
 
             if (!string.IsNullOrWhiteSpace(havingFilter))
             {
-                result = result.Where(havingFilter);
+                result = result.Where(DynamicLinq.Config, havingFilter);
             }
         }
 
@@ -973,7 +973,7 @@ public static class Extension
 
             if (!string.IsNullOrWhiteSpace(orderBy))
             {
-                newResult = newResult.OrderBy(orderBy);
+                newResult = newResult.OrderBy(DynamicLinq.Config, orderBy);
             }
         }
 
@@ -1072,7 +1072,7 @@ public static class Extension
 
             if (!string.IsNullOrWhiteSpace(havingFilter))
             {
-                result = result.Where(havingFilter);
+                result = result.Where(DynamicLinq.Config, havingFilter);
             }
         }
 
@@ -1093,7 +1093,7 @@ public static class Extension
 
             if (!string.IsNullOrWhiteSpace(orderBy))
             {
-                newResult = newResult.OrderBy(orderBy);
+                newResult = newResult.OrderBy(DynamicLinq.Config, orderBy);
             }
         }
 

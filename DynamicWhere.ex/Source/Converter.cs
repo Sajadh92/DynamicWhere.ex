@@ -563,8 +563,9 @@ internal static class Converter
                 Aggregator.Average => $"Average({aggregate.Field})",
                 Aggregator.Minimum => $"Min({aggregate.Field})",
                 Aggregator.Maximum => $"Max({aggregate.Field})",
-                Aggregator.FirstOrDefault => $"Select({aggregate.Field}).OrderBy(it).FirstOrDefault()",
-                Aggregator.LastOrDefault => $"Select({aggregate.Field}).OrderByDescending(it).FirstOrDefault()",
+                // $ is the current element; the library parses with the "it" keyword switched off.
+                Aggregator.FirstOrDefault => $"Select({aggregate.Field}).OrderBy($).FirstOrDefault()",
+                Aggregator.LastOrDefault => $"Select({aggregate.Field}).OrderByDescending($).FirstOrDefault()",
                 _ => throw new LogicException(ErrorCode.UnsupportedAggregatorForType(
                     aggregate.Aggregator.ToString(),
                     "Unknown"))

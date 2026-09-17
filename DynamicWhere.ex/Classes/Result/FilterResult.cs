@@ -39,7 +39,9 @@ public class FilterResult<T>
     public string? QueryString { get; set; }
 
     /// <summary>
-    /// What the policy did to this query, or null when the query was not guarded.
+    /// What the policy did to this query. Null when the query was not guarded, and when
+    /// <c>DwPolicyOptions.IncludeTraceInResult</c> keeps the trace off the result, as it does by default
+    /// under the strict tier.
     /// </summary>
     /// <remarks>
     /// A dropped field leaves nothing behind in the data, so this is the only way a caller can tell

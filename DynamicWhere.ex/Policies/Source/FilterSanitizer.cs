@@ -61,10 +61,11 @@ internal static class FilterSanitizer
     /// <returns>A sanitized copy, safe to hand to the existing pipeline.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     /// <exception cref="LogicException">
-    /// Thrown when a field path names nothing on <typeparamref name="T"/>. A field that does not
-    /// exist has no policy, so it fails as validation before any policy decision is reached — and
-    /// it fails identically whether the query is guarded or not, so the error discloses nothing
-    /// about which fields a caller may see.
+    /// Thrown under the convenience tier, or in a dry run, when a field path names nothing on
+    /// <typeparamref name="T"/>. A field that does not exist has no policy, so it fails as validation
+    /// before any policy decision is reached, with the error an unguarded query would give. Under the
+    /// strict tier it is refused with the same code as a denied field instead, so the refusal does not
+    /// tell a caller whether the field exists.
     /// </exception>
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
     internal static Filter Sanitize<T>(
@@ -1928,9 +1929,11 @@ internal static class FilterSanitizer
     /// two aliases collide, and when one aliased type is reachable by two navigations.
     /// </para>
     /// <para>
-    /// A name matching nothing is handed to <c>Validate&lt;T&gt;()</c> unchanged, so it fails with
-    /// the error an unguarded query would give. A caller therefore cannot probe for which fields
-    /// exist by watching how the policy layer refuses them.
+    /// A name matching nothing is handed to <c>Validate&lt;T&gt;()</c> unchanged under the convenience
+    /// tier and in a dry run, so it fails with the error an unguarded query would give. Under the
+    /// strict tier it is marked unknown instead, and refused at the same step and with the same code
+    /// as a field the caller may not use. A caller therefore cannot probe for which fields exist by
+    /// watching how the policy layer refuses them.
     /// </para>
     /// </remarks>
     /// <typeparam name="T">The entity type being queried.</typeparam>
@@ -1938,7 +1941,7 @@ internal static class FilterSanitizer
     /// <param name="gate">The per-query state, carrying the type's alias map.</param>
     /// <returns>The canonical field path.</returns>
     /// <exception cref="PolicyException">Thrown when the name could mean more than one field.</exception>
-    /// <exception cref="LogicException">Thrown when the name names nothing.</exception>
+    /// <exception cref="LogicException">Thrown when the name names nothing, outside the strict tier.</exception>
     private static string ResolveName<T>(string name, Gate gate) where T : class
     {
         // A type nobody has aliased takes the path it always did, with no extra reflection and no

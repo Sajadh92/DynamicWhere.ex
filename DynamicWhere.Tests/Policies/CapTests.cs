@@ -354,6 +354,55 @@ public class CapTests
         Assert.Contains("MaxConditionDepth", exception.SourceOrigin!, StringComparison.Ordinal);
     }
 
+    // ---- condition sets -----------------------------------------------------------------------
+
+    [Fact]
+    public void A_segment_carrying_more_condition_sets_than_the_cap_is_refused()
+    {
+        // Each set is a query that loads every row it matches before the segment pages. A set with
+        // no conditions spends nothing from MaxConditions or MaxConditionDepth, so without this cap
+        // two hundred empty sets were two hundred full-table reads for a page of three rows.
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => GuardSegment(EmptySets(4), caps => caps.MaxConditionSets = 3));
+
+        Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
+        Assert.Equal("*", exception.FieldPath);
+        Assert.Equal("MaxConditionSets cap (3), request had 4", exception.SourceOrigin);
+    }
+
+    [Fact]
+    public void A_segment_carrying_exactly_the_cap_of_condition_sets_is_allowed()
+    {
+        Segment result = GuardSegment(EmptySets(3), caps => caps.MaxConditionSets = 3);
+
+        Assert.Equal(3, result.ConditionSets.Count);
+    }
+
+    [Fact]
+    public void Condition_sets_are_capped_in_the_convenience_tier_as_well()
+    {
+        foreach (DwTier tier in new[] { DwTier.Convenience, DwTier.Strict })
+        {
+            PolicyException exception = Assert.Throws<PolicyException>(
+                () => GuardSegment(EmptySets(4), caps => caps.MaxConditionSets = 3, tier));
+
+            Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
+            Assert.Contains("MaxConditionSets", exception.SourceOrigin!, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void The_default_condition_set_cap_allows_ten_sets_and_refuses_eleven()
+    {
+        // The shipped default rather than a configured one, because the default is what an API that
+        // never heard of this cap is running.
+        GuardSegment(EmptySets(10), _ => { });
+
+        PolicyException exception = Assert.Throws<PolicyException>(() => GuardSegment(EmptySets(11), _ => { }));
+
+        Assert.Equal("MaxConditionSets cap (10), request had 11", exception.SourceOrigin);
+    }
+
     [Fact]
     public void An_unpaged_guarded_summary_is_given_the_default_page()
     {
@@ -436,9 +485,9 @@ public class CapTests
             new PolicyTrace(DwTier.Strict, dryRun: false));
     }
 
-    private static Segment GuardSegment(Segment segment, Action<DwCaps> configure)
+    private static Segment GuardSegment(Segment segment, Action<DwCaps> configure, DwTier tier = DwTier.Strict)
     {
-        DwPolicyOptions options = new() { Tier = DwTier.Strict };
+        DwPolicyOptions options = new() { Tier = tier };
 
         configure(options.Caps);
 
@@ -447,7 +496,24 @@ public class CapTests
             new PolicyResolver(new IDwPolicyProvider[] { new AttributePolicyProvider() }),
             Caller(),
             options,
-            new PolicyTrace(DwTier.Strict, dryRun: false));
+            new PolicyTrace(tier, dryRun: false));
+    }
+
+    /// <summary>A segment of <paramref name="count"/> unions, none of them holding a condition.</summary>
+    private static Segment EmptySets(int count)
+    {
+        Segment segment = new() { ConditionSets = new List<ConditionSet>() };
+
+        for (int sort = 1; sort <= count; sort++)
+        {
+            segment.ConditionSets.Add(new ConditionSet
+            {
+                Sort = sort,
+                Intersection = sort == 1 ? null : Intersection.Union
+            });
+        }
+
+        return segment;
     }
 
     [Fact]

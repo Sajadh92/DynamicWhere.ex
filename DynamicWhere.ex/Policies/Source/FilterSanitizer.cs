@@ -907,9 +907,16 @@ internal static class FilterSanitizer
     /// <remarks>
     /// Conditions are counted across every set together. Each set becomes its own subquery, so the
     /// budget has to cover their sum or a caller buys the whole limit once per set.
+    /// <para>
+    /// The sets are counted first and on their own. A set with no conditions spends nothing from
+    /// the condition budget and still loads every row its query matches, so the number of sets is
+    /// the only thing that bounds how many times one segment reads a table.
+    /// </para>
     /// </remarks>
     private static void EnforceCaps(Segment segment, Gate gate)
     {
+        gate.CheckConditionSetCount(segment.ConditionSets?.Count ?? 0);
+
         int conditions = 0;
 
         if (segment.ConditionSets is not null)
@@ -2305,6 +2312,15 @@ internal static class FilterSanitizer
             if (depth > _options.Caps.MaxConditionDepth)
             {
                 Raise(Cap("MaxConditionDepth", _options.Caps.MaxConditionDepth, depth, WholeClause));
+            }
+        }
+
+        /// <summary>Refuses a segment carrying more condition sets than the budget allows.</summary>
+        internal void CheckConditionSetCount(int count)
+        {
+            if (count > _options.Caps.MaxConditionSets)
+            {
+                Raise(Cap("MaxConditionSets", _options.Caps.MaxConditionSets, count, WholeClause));
             }
         }
 

@@ -25,6 +25,7 @@ public class PolicyOptionsTests
 
         Assert.Equal(1000, caps.MaxPageSize);
         Assert.Equal(50, caps.MaxConditions);
+        Assert.Equal(10, caps.MaxConditionSets);
         Assert.Equal(10, caps.MaxOrderFields);
         Assert.Equal(4, caps.MaxNavigationDepth);
     }
@@ -49,6 +50,7 @@ public class PolicyOptionsTests
         options.Freeze();
 
         Assert.Throws<InvalidOperationException>(() => options.Caps.MaxPageSize = 5);
+        Assert.Throws<InvalidOperationException>(() => options.Caps.MaxConditionSets = 5);
     }
 
     [Fact]
@@ -69,6 +71,7 @@ public class PolicyOptionsTests
 
         Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxPageSize = 0);
         Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxConditions = -1);
+        Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxConditionSets = 0);
         Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxOrderFields = 0);
         Assert.Throws<ArgumentOutOfRangeException>(() => caps.MaxNavigationDepth = -5);
     }

@@ -16,6 +16,7 @@ public sealed class DwCaps
     private int _defaultPageSize;
     private int _maxConditions = 50;
     private int _maxConditionDepth = 10;
+    private int _maxConditionSets = 10;
     private int _maxOrderFields = 10;
     private int _maxNavigationDepth = 4;
     private int _maxQueryCost = 1000;
@@ -107,6 +108,28 @@ public sealed class DwCaps
     {
         get => _maxConditionDepth;
         set => _maxConditionDepth = Set(value);
+    }
+
+    /// <summary>
+    /// The most condition sets one segment may carry. Ten by default.
+    /// </summary>
+    /// <remarks>
+    /// Each set is its own database query, and a segment loads every row that query matches before
+    /// it combines the sets and pages the result. <see cref="DefaultPageSize"/> and
+    /// <see cref="MaxPageSize"/> therefore bound what a segment returns, not what it reads, and
+    /// nothing else bounded how many reads one request could ask for: a set with no conditions
+    /// passes <see cref="MaxConditions"/> and <see cref="MaxConditionDepth"/> alike, so two hundred
+    /// empty sets were two hundred full-table loads for a page of three rows.
+    /// <para>
+    /// This bounds the number of reads. It cannot bound the size of each one, so a segment can still
+    /// load its whole table up to this many times; a deployment exposing segments over a large
+    /// table lowers it, or filters the table through a forced predicate.
+    /// </para>
+    /// </remarks>
+    public int MaxConditionSets
+    {
+        get => _maxConditionSets;
+        set => _maxConditionSets = Set(value);
     }
 
     /// <summary>The most fields one query may sort by.</summary>

@@ -240,6 +240,34 @@ public class GuardedQueryTests : IDisposable
         Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
     }
 
+    [Fact]
+    public async Task A_segment_over_the_set_cap_is_refused_before_the_query_runs()
+    {
+        // Every set reads every row it matches before the segment pages, and a set with no
+        // conditions passes every other cap, so this is the request that read the table once per set.
+        DwPolicyOptions options = new() { Tier = DwTier.Convenience };
+
+        options.Caps.MaxConditionSets = 2;
+
+        Segment segment = new() { Page = new PageBy { PageNumber = 1, PageSize = 1 } };
+
+        for (int sort = 1; sort <= 3; sort++)
+        {
+            segment.ConditionSets.Add(new ConditionSet
+            {
+                Sort = sort,
+                Intersection = sort == 1 ? null : Intersection.Union
+            });
+        }
+
+        PolicyQueryable<Staff> handle = _db.Staff.ApplyPolicy(Caller(), options, Resolver());
+
+        PolicyException exception = await Assert.ThrowsAsync<PolicyException>(() => handle.ToListAsync(segment));
+
+        Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
+        Assert.Equal("MaxConditionSets cap (2), request had 3", exception.SourceOrigin);
+    }
+
     // -------------------------------------------------------------- require policy
 
     [Fact]

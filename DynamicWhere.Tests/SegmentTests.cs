@@ -5,6 +5,7 @@ using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Source;
 using DynamicWhere.Tests.Domain;
+using Microsoft.EntityFrameworkCore;
 
 namespace DynamicWhere.Tests;
 
@@ -192,35 +193,70 @@ public class SegmentTests : SalesTestBase
     }
 
     [Fact]
-    public async Task WithSelectsProjectsBeforeTheSetOperation()
+    public async Task WithSelectsIntersectStillFindsTheRowsInBothSets()
     {
-        // Set operations compare entity instances. Without Selects the sets share tracked instances
-        // and Intersect matches by identity; projecting first creates fresh objects per set, so the
-        // default reference equality no longer finds any overlap. Project after the segment, or give
-        // the entity value equality, when set operations and Selects are combined.
+        // Set operations compare rows. The sets used to be loaded into separate lists and intersected
+        // by reference, so a projection, which builds new objects for every set, found no overlap.
         SegmentResult<Product> result = await Products.ToListAsync(new Segment
         {
             ConditionSets = [ActiveSet(), ExpensiveSet(2, Intersection.Intersect)],
             Selects = ["Id", "Name", "Price"]
         });
 
-        Assert.Empty(result.Data!);
-        Assert.Equal(0, result.TotalCount);
+        Assert.Equal(3, result.TotalCount);
+        Assert.Equal(["Gadget pro", "Pro", "ProBook"],
+            result.Data!.Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal));
     }
 
     [Fact]
-    public async Task WithSelectsIsSafeForUnion()
+    public async Task WithSelectsUnionCountsARowInBothSetsOnce()
     {
-        // Union keeps everything from both sides, so projection only affects de-duplication:
-        // the three products in both sets are counted twice.
+        // The three products in both sets used to be counted twice, for a total of ten.
         SegmentResult<Product> result = await Products.ToListAsync(new Segment
         {
             ConditionSets = [ActiveSet(), ExpensiveSet(2, Intersection.Union)],
             Selects = ["Id", "Name", "Price"]
         });
 
-        Assert.Equal(10, result.TotalCount);
+        Assert.Equal(7, result.TotalCount);
         Assert.All(result.Data!, p => Assert.Equal(0, p.StockQuantity));
+    }
+
+    [Fact]
+    public async Task AnUntrackedQueryCombinesByRowToo()
+    {
+        // AsNoTracking gives every set its own instances, which the in-memory combination could not
+        // match either: Intersect returned nothing and Except removed nothing.
+        SegmentResult<Product> intersect = await Products.AsNoTracking().ToListAsync(new Segment
+        {
+            ConditionSets = [ActiveSet(), ExpensiveSet(2, Intersection.Intersect)]
+        });
+
+        SegmentResult<Product> except = await Products.AsNoTracking().ToListAsync(new Segment
+        {
+            ConditionSets = [ActiveSet(), ExpensiveSet(2, Intersection.Except)]
+        });
+
+        Assert.Equal(3, intersect.TotalCount);
+        Assert.Equal(["Ultra", "Widget", "pro"],
+            except.Data!.Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task OrdersApplyBeforeTheProjection()
+    {
+        // As for a filter. The projection used to run first, so ordering by a field it left out
+        // sorted every row on that field's default value.
+        SegmentResult<Product> result = await Products.ToListAsync(new Segment
+        {
+            ConditionSets = [ActiveSet(), ExpensiveSet(2, Intersection.Union)],
+            Selects = ["Id", "Name"],
+            Orders = [new OrderBy { Sort = 1, Field = "Price", Direction = Direction.Descending }],
+            Page = new PageBy { PageNumber = 1, PageSize = 3 }
+        });
+
+        Assert.Equal(["ProBook", "Gadget pro", "Laptop Pro"], result.Data!.Select(p => p.Name));
+        Assert.All(result.Data!, p => Assert.Equal(0m, p.Price));
     }
 
     #endregion

@@ -1140,6 +1140,13 @@ public static class Extension
     /// <returns>A <see cref="SegmentResult{T}"/> containing entities that match the filter conditions in the <see cref="Segment"/> with pagination information.</returns>
     /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="segment"/> is null.</exception>
     /// <exception cref="LogicException">Thrown when <paramref name="segment"/> contains invalid data.</exception>
+    /// <remarks>
+    /// The condition sets become one query, which the database answers: Union and Intersect combine the
+    /// sets' conditions, Except excludes the rows of its set by primary key, and a type with no primary
+    /// key is combined with the database's UNION, INTERSECT and EXCEPT. Ordering, paging, projection and
+    /// the total count then run exactly as they do for a <see cref="Filter"/>, so only the requested page
+    /// is read.
+    /// </remarks>
     public static async Task<SegmentResult<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment) where T : class
     {
         // Refuse a type that requires a policy context when the call is not inside one.
@@ -1155,123 +1162,32 @@ public static class Extension
             throw new ArgumentNullException(nameof(segment));
         }
 
-        // Validate and retrieve ConditionSets from the Segment.
+        // Validate and retrieve ConditionSets from the Segment, in Sort order.
         List<ConditionSet> sets = segment.ValidateAndGetSets();
 
-        // If there are no filter conditions, return all results (respecting select/order/page).
-        if (sets.Count == 0)
+        // Combine the sets into one query. With no sets there is nothing to combine, and every row is
+        // returned (respecting select/order/page).
+        IQueryable<T> combined = sets.Count == 0 ? query : SegmentComposer.Compose(query, sets);
+
+        // Order, page, project and count the combined query the way a filter does, in the database.
+        Filter filter = new()
         {
-            // Create a new filter with the same select, order, and pagination criteria.
-            Filter filter = new()
-            {
-                ConditionGroup = null,
-                Selects = segment.Selects,
-                Orders = segment.Orders,
-                Page = segment.Page
-            };
-
-            // Retrieve the results using the filter.
-            FilterResult<T> fresult = await query.ToListAsync<T>(filter);
-
-            // Return the results as a SegmentResult.
-            return new()
-            {
-                PageNumber = fresult.PageNumber,
-                PageSize = fresult.PageSize,
-                PageCount = fresult.PageCount,
-                TotalCount = fresult.TotalCount,
-                Data = fresult.Data
-            };
-        }
-
-        // Store filtered data sets.
-        List<(int sort, Intersection? intersection, List<T> list)> dataSets = new();
-
-        foreach (ConditionSet? set in sets.OrderBy(x => x.Sort))
-        {
-            // Apply filter conditions from ConditionGroup.
-            IQueryable<T> queryable = query.Where(set.ConditionGroup);
-
-            // Apply select criteria to the query if provided.
-            if (segment.Selects != null)
-            {
-                queryable = queryable.Select(segment.Selects);
-            }
-
-            // Materialize the filtered data and store it.
-            List<T> list = await queryable.ToListAsync();
-
-            dataSets.Add(new(set.Sort, set.Intersection, list));
-        }
-
-        // Combine and apply intersection operations to the data sets.
-        List<T> data = dataSets.OrderBy(x => x.sort).First().list;
-
-        foreach ((int sort, Intersection? intersection, List<T> list) in dataSets.OrderBy(x => x.sort).Skip(1))
-        {
-            switch (intersection)
-            {
-                case Intersection.Union:
-                {
-                    // Apply union operation to the result and the current list.
-                    data = data.Union(list).ToList();
-                }
-                break;
-
-                case Intersection.Intersect:
-                {
-                    // Apply intersect operation to the result and the current list.
-                    data = data.Intersect(list).ToList();
-                }
-                break;
-
-                case Intersection.Except:
-                {
-                    // Apply except operation to the result and the current list.
-                    data = data.Except(list).ToList();
-                }
-                break;
-            }
-        }
-
-        // Create a new SegmentResult to store the result.
-        SegmentResult<T> sresult = new()
-        {
-            // Get the total count of entities in the result.
-            TotalCount = data.Count
+            ConditionGroup = null,
+            Selects = segment.Selects,
+            Orders = segment.Orders,
+            Page = segment.Page
         };
 
-        // Apply ordering if it is set.
-        if (segment.Orders != null)
+        FilterResult<T> fresult = await combined.ToListAsync<T>(filter);
+
+        // Return the results as a SegmentResult.
+        return new()
         {
-            // Apply ordering to the data.
-            data = data.AsQueryable().Order(segment.Orders).ToList();
-        }
-
-        // Apply pagination if it is set.
-        if (segment.Page != null)
-        {
-            // Apply pagination to the data.
-            sresult.Data = data.AsQueryable().Page(segment.Page).ToList();
-
-            // Set PageNumber, PageSize and PageCount.
-            sresult.PageNumber = segment.Page.PageNumber;
-            sresult.PageSize = segment.Page.PageSize;
-
-            // Validation refuses a page size below one, so the division is always by a real size.
-            sresult.PageCount = (int)Math.Ceiling((double)sresult.TotalCount / sresult.PageSize);
-        }
-        else
-        {
-            sresult.Data = data;
-
-            // Unpaged is one page of everything, as it is for a filter and a summary. Left unset it
-            // reported zero pages beside a full page of rows, and the three result types disagreed
-            // about the same request.
-            sresult.PageCount = sresult.TotalCount == 0 ? 0 : 1;
-        }
-
-        // Return the result.
-        return sresult;
+            PageNumber = fresult.PageNumber,
+            PageSize = fresult.PageSize,
+            PageCount = fresult.PageCount,
+            TotalCount = fresult.TotalCount,
+            Data = fresult.Data
+        };
     }
 }

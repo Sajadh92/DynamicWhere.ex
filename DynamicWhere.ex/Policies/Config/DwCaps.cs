@@ -114,16 +114,15 @@ public sealed class DwCaps
     /// The most condition sets one segment may carry. Ten by default.
     /// </summary>
     /// <remarks>
-    /// Each set is its own database query, and a segment loads every row that query matches before
-    /// it combines the sets and pages the result. <see cref="DefaultPageSize"/> and
-    /// <see cref="MaxPageSize"/> therefore bound what a segment returns, not what it reads, and
-    /// nothing else bounded how many reads one request could ask for: a set with no conditions
-    /// passes <see cref="MaxConditions"/> and <see cref="MaxConditionDepth"/> alike, so two hundred
-    /// empty sets were two hundred full-table loads for a page of three rows.
+    /// A segment is answered by one statement, and every set adds to it: a condition for a Union or an
+    /// Intersect, a <c>NOT EXISTS</c> subquery for an Except, and a whole <c>UNION</c>,
+    /// <c>INTERSECT</c> or <c>EXCEPT</c> operand for a type with no primary key. A set with no
+    /// conditions spends nothing from <see cref="MaxConditions"/> or <see cref="MaxConditionDepth"/>,
+    /// so without this cap one request could hand the database a statement of any size.
     /// <para>
-    /// This bounds the number of reads. It cannot bound the size of each one, so a segment can still
-    /// load its whole table up to this many times; a deployment exposing segments over a large
-    /// table lowers it, or filters the table through a forced predicate.
+    /// It also bounded the worse shape segments had before they were combined in the database: every
+    /// row of every set was loaded before the page was cut, and two hundred empty sets were two
+    /// hundred full-table reads for a page of three rows.
     /// </para>
     /// </remarks>
     public int MaxConditionSets

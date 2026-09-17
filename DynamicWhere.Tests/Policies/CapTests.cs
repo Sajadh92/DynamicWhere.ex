@@ -359,9 +359,9 @@ public class CapTests
     [Fact]
     public void A_segment_carrying_more_condition_sets_than_the_cap_is_refused()
     {
-        // Each set is a query that loads every row it matches before the segment pages. A set with
-        // no conditions spends nothing from MaxConditions or MaxConditionDepth, so without this cap
-        // two hundred empty sets were two hundred full-table reads for a page of three rows.
+        // Each set adds a condition, or a subquery, to the one statement a segment becomes. A set
+        // with no conditions spends nothing from MaxConditions or MaxConditionDepth, so the number of
+        // sets is the only bound on that statement.
         PolicyException exception = Assert.Throws<PolicyException>(
             () => GuardSegment(EmptySets(4), caps => caps.MaxConditionSets = 3));
 

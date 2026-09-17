@@ -909,8 +909,8 @@ internal static class FilterSanitizer
     /// budget has to cover their sum or a caller buys the whole limit once per set.
     /// <para>
     /// The sets are counted first and on their own. A set with no conditions spends nothing from
-    /// the condition budget and still loads every row its query matches, so the number of sets is
-    /// the only thing that bounds how many times one segment reads a table.
+    /// the condition budget and still adds to the statement the segment becomes, so the number of
+    /// sets is the only thing that bounds that statement.
     /// </para>
     /// </remarks>
     private static void EnforceCaps(Segment segment, Gate gate)

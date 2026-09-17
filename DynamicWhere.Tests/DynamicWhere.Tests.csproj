@@ -75,6 +75,10 @@
     <!-- Kept: AttributeProviderTests reflects over the Blog graph declared here, and it carries no
          database of its own. -->
     <Compile Include="TestModel.cs" />
+    <!-- Kept: a segment is combined in the database by an expression tree the library builds and a
+         primary key it reads from the EF Core model, both of which differ between 6 and 8. It
+         carries its own SQLite model. -->
+    <Compile Include="SegmentCompositionTests.cs" />
     <Compile Remove="Policies/EfPolicyModelTests.cs" />
     <Compile Remove="Policies/EfPolicyStoreTests.cs" />
     <Compile Remove="Policies/EfStoreConformanceTests.cs" />

@@ -243,8 +243,8 @@ public class GuardedQueryTests : IDisposable
     [Fact]
     public async Task A_segment_over_the_set_cap_is_refused_before_the_query_runs()
     {
-        // Every set reads every row it matches before the segment pages, and a set with no
-        // conditions passes every other cap, so this is the request that read the table once per set.
+        // A set with no conditions passes every other cap, so the number of sets is the only bound on
+        // the statement a segment hands the database.
         DwPolicyOptions options = new() { Tier = DwTier.Convenience };
 
         options.Caps.MaxConditionSets = 2;

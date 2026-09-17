@@ -2564,7 +2564,8 @@ internal static class FilterSanitizer
             return new PolicyException(
                 PolicyErrorCode.CapExceeded, IsStrict ? WholeClause : fieldPath, PolicyFeature.None, _options.Tier)
             {
-                SourceOrigin = origin
+                SourceOrigin = origin,
+                AuditPath = fieldPath
             };
         }
 
@@ -2790,7 +2791,8 @@ internal static class FilterSanitizer
             throw new PolicyException(
                 PolicyErrorCode.CapExceeded, IsStrict ? WholeClause : fieldPath, feature, _options.Tier)
             {
-                SourceOrigin = origin
+                SourceOrigin = origin,
+                AuditPath = fieldPath
             };
         }
 
@@ -2883,7 +2885,7 @@ internal static class FilterSanitizer
             // apart by what comes back: the same code for the clause, no path, no rule, no attribute.
             if (IsStrict && IsFieldDenial(code))
             {
-                return new PolicyException(code, WholeClause, feature, _options.Tier);
+                return new PolicyException(code, WholeClause, feature, _options.Tier) { AuditPath = fieldPath };
             }
 
             // A resolved policy lists the winning source for every feature it decided, not for this

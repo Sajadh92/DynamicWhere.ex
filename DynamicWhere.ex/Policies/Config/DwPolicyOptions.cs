@@ -17,6 +17,7 @@ public sealed class DwPolicyOptions
     private DwTier _tier = DwTier.Convenience;
     private bool _dryRun;
     private bool? _includeTraceInResult;
+    private bool _auditRefusals;
     private string _hashSalt = string.Empty;
     private IServiceProvider? _services;
     private IDwTokenVault? _tokenVault;
@@ -71,6 +72,33 @@ public sealed class DwPolicyOptions
         {
             Guard();
             _includeTraceInResult = value;
+        }
+    }
+
+    /// <summary>
+    /// When true, every refused guarded query is written to the caller's audit buffer, drained to
+    /// <c>IDwAuditSink</c> like any other audit event. Off by default.
+    /// </summary>
+    /// <remarks>
+    /// <c>[DwAudit]</c> records the use of a field, and a probe for columns a caller may not read is
+    /// refused at every guess, so a log of uses never shows it. Each event names the entity, the field
+    /// the refusal was about — under the strict tier too, where the caller's own refusal names none —
+    /// the feature, the <c>PolicyErrorCode</c>, the tier, the subjects and the purpose. A request that
+    /// never became a guarded query, such as an unguarded read of a <c>RequirePolicy</c> type, has no
+    /// caller to record against. A dry run refuses nothing, so it records no refusal.
+    /// <para>
+    /// Off by default because it changes what reaches a sink: a deployment that registered one for
+    /// <c>[DwAudit]</c> starts receiving events with an <c>ErrorCode</c>, and one that registered none
+    /// is warned on every refused request by the ASP.NET Core audit middleware.
+    /// </para>
+    /// </remarks>
+    public bool AuditRefusals
+    {
+        get => _auditRefusals;
+        set
+        {
+            Guard();
+            _auditRefusals = value;
         }
     }
 

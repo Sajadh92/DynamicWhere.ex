@@ -1,4 +1,5 @@
 using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Policies.Audit;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.Enums;
@@ -34,7 +35,7 @@ public static class PolicyExtensions
     /// </example>
     public static PolicyQueryable<T> ApplyPolicy<T>(this IQueryable<T> query, DwPolicyContext context)
         where T : class =>
-        ApplyPolicy(query, RequirePrepared(context), DwPolicy.Options, DwPolicy.Resolver);
+        ApplyPolicy(query, RequirePrepared<T>(context, DwPolicy.Options), DwPolicy.Options, DwPolicy.Resolver);
 
     /// <summary>
     /// Attaches a caller to an in-memory sequence.
@@ -55,7 +56,7 @@ public static class PolicyExtensions
         where T : class =>
         ApplyPolicy(
             query?.AsQueryable() ?? throw new ArgumentNullException(nameof(query)),
-            RequirePrepared(context),
+            RequirePrepared<T>(context, DwPolicy.Options),
             DwPolicy.Options,
             DwPolicy.Resolver);
 
@@ -121,7 +122,7 @@ public static class PolicyExtensions
     /// </para>
     /// </remarks>
     /// <exception cref="PolicyException">Thrown with <c>PolicyContextNotPrepared</c>.</exception>
-    private static DwPolicyContext RequirePrepared(DwPolicyContext context)
+    internal static DwPolicyContext RequirePrepared<T>(DwPolicyContext context, DwPolicyOptions options)
     {
         if (context is null)
         {
@@ -130,11 +131,15 @@ public static class PolicyExtensions
 
         if (!context.IsPrepared)
         {
-            throw new PolicyException(
+            PolicyException refusal = new(
                 PolicyErrorCode.PolicyContextNotPrepared,
                 "*",
                 PolicyFeature.None,
-                DwPolicy.Options.Tier);
+                options.Tier);
+
+            RefusalAudit.Record(context, options, typeof(T), refusal);
+
+            throw refusal;
         }
 
         return context;

@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "Example: Segment — Set Operations",
   description:
-    "Three ConditionSets joined by Union + Except, with order / page applied in memory to the combined result, plus the SegmentResult shape.",
+    "Three ConditionSets joined by Union + Except into one query, ordered and paged in the database, plus the SegmentResult shape.",
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/examples/segment/" },
 };
 
@@ -24,8 +24,8 @@ export default function Page() {
         <Link href="/docs/enums/intersection">
           <code>UNION</code> / <code>INTERSECT</code> / <code>EXCEPT</code>
         </Link>
-        . Each set runs as its own query; the results are combined in memory,
-        then ordered and paged. Run it through{" "}
+        . The sets are combined into one query, which the database orders and
+        pages. Run it through{" "}
         <Link href="/docs/extensions/to-list-async-segment">
           <code>ToListAsync&lt;T&gt;(Segment)</code>
         </Link>
@@ -98,17 +98,15 @@ export default function Page() {
 
       <Callout tone="info">
         <strong>Logic:</strong> <code>(Electronics) UNION (Price &lt; 20) EXCEPT (Inactive)</code>
-        {" "}→ order → paginate. The three sets are loaded separately and
-        combined in memory, not by a SQL set operator.
+        {" "}→ order → paginate, as one query. The Union joins the first two
+        sets&apos; conditions with <code>OR</code>; the Except removes the
+        inactive rows with <code>NOT EXISTS</code> on the primary key.
       </Callout>
 
-      <Callout tone="warn">
-        <strong>Do not add <code>selects</code> here.</strong> A{" "}
-        <code>Segment</code> projects each set <em>before</em> combining them,
-        and the combination compares rows by reference. Fresh projected objects
-        never match across sets, so <code>Intersect</code> returns nothing,{" "}
-        <code>Except</code> removes nothing, and <code>Union</code> stops
-        de-duplicating. Project after the segment instead.
+      <Callout tone="info">
+        <strong><code>selects</code> can be added.</strong> As for a filter, it
+        projects the ordered page, so ordering by <code>Name</code> works whether
+        or not <code>Name</code> is selected.
       </Callout>
 
       <h2 id="response">Response shape (<code>SegmentResult&lt;Product&gt;</code>)</h2>

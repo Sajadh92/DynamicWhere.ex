@@ -185,13 +185,15 @@ Sorting direction.
 
 ### `Intersection`
 
-Set operation applied between `ConditionSet` results in a `Segment`.
+Set operation applied between `ConditionSet` results in a `Segment`. The sets are combined into one query and rows are matched by primary key.
 
-| Value | Description |
-|-------|-------------|
-| `Union` | Combines both sets (SQL `UNION`) |
-| `Intersect` | Keeps only common items |
-| `Except` | Removes items found in the second set |
+| Value | Description | Generated as |
+|-------|-------------|--------------|
+| `Union` | Combines both sets, each row once | `OR` of the sets' conditions |
+| `Intersect` | Keeps only rows in both sets | `AND` of the sets' conditions |
+| `Except` | Removes rows found in the second set | `NOT EXISTS` on the primary key |
+
+A type with no primary key is combined with SQL `UNION` / `INTERSECT` / `EXCEPT` instead, which compare whole rows: identical rows collapse into one, and a column the database cannot compare (PostgreSQL `json`, SQL Server `xml`) fails the query even when it is not selected.
 
 ---
 
@@ -685,7 +687,7 @@ Async version of `ToList<T>(Summary)`.
 
 ### `.ToListAsync<T>(Segment segment)`
 
-Async-only segment operation. Executes each `ConditionSet` independently, then applies set operations (`Union` / `Intersect` / `Except`), followed by ordering and pagination.
+Async-only segment operation. Combines every `ConditionSet` with set operations (`Union` / `Intersect` / `Except`) into one query, then orders, pages, projects and counts it in the database exactly as `ToListAsync(Filter)` does. Only the requested page is read, `Orders` apply before `Selects`, and rows are matched by primary key, so tracking, `AsNoTracking()` and `Selects` return the same rows. Ordering follows the database: text sorts by its collation.
 
 **Returns:** `Task<SegmentResult<T>>`
 
@@ -1437,7 +1439,7 @@ This works at any depth, and paths may continue through reference navigations af
 **Empty collections.** A row whose collection is empty has no value to sort by:
 
 - **Reference and nullable types** (`string`, `int?`, …) yield `null`, which sorts first ascending and last descending on most providers.
-- **Non-nullable value types** (`int`, `decimal`, `DateTime`, …) use `DefaultIfEmpty()` and yield the type default (`0`, `0m`, `DateTime.MinValue`). Without it, `Min`/`Max` over an empty sequence throws `Sequence contains no elements` under LINQ to Objects — the mode used by the `IEnumerable<T>` overloads and by `Segment`, which sorts after materialising its condition sets.
+- **Non-nullable value types** (`int`, `decimal`, `DateTime`, …) use `DefaultIfEmpty()` and yield the type default (`0`, `0m`, `DateTime.MinValue`). Without it, `Min`/`Max` over an empty sequence throws `Sequence contains no elements` under LINQ to Objects — the mode used by the `IEnumerable<T>` overloads.
 
 **Not supported.** A path may not *end* on a collection of entities or other complex types — there is nothing comparable to sort by, and a `LogicException` with `OrderField[{field}]CannotEndOnCollectionOfComplexElements` is thrown. Sort by a scalar inside it instead (`Tags` ✗ → `Tags.Value` ✓). Collections of simple values (`List<string>`, `List<int>`, …) are supported.
 
@@ -1641,10 +1643,10 @@ new DwPolicyOptions { Caps = { MinGroupSize = 10 } }   // stricter
 | Cap | Default | Meaning |
 |---|---|---|
 | `MaxPageSize` | 1000 | Largest page a caller may request |
-| `DefaultPageSize` | 0 (off) | The page a guarded query is given when it asks for none. `MaxPageSize` only ever read a page the caller sent, so the request with none was the one nothing bounded. Composable `Filter`, `FilterDynamic` and `Summary` return the query already paged; `Where`, `Order`, `Select` and `Group` take no page and are never given one. A `Segment` still loads every row of every set before it pages, so for a segment this bounds the rows returned, not the rows read |
+| `DefaultPageSize` | 0 (off) | The page a guarded query is given when it asks for none. `MaxPageSize` only ever read a page the caller sent, so the request with none was the one nothing bounded. Composable `Filter`, `FilterDynamic` and `Summary` return the query already paged; `Where`, `Order`, `Select` and `Group` take no page and are never given one. A `Segment` is paged in the database like a filter, so this bounds what it reads as well as what it returns |
 | `MaxConditions` | 50 | Conditions in one filter |
 | `MaxConditionDepth` | 10 | How deep condition groups may nest, root counted as one. `MaxConditions` bounds the count and says nothing about the shape |
-| `MaxConditionSets` | 10 | Condition sets in one segment. Each set is its own query and loads every row it matches before the segment pages, so this is what bounds how many reads one request makes; a set with no conditions passes every other cap |
+| `MaxConditionSets` | 10 | Condition sets in one segment. Every set adds a condition or a `NOT EXISTS` subquery to the one statement a segment becomes, and a set with no conditions passes every other cap, so this is what bounds that statement |
 | `MaxOrderFields` | 10 | Order fields in one query |
 | `MaxNavigationDepth` | 4 | How deep a field path may reach |
 | `MaxQueryCost` | 1000 | Budget consumed by `[DwCost]` weights |
@@ -1971,7 +1973,9 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
    `Select<T>(fields)` requires `T` to have a parameterless (default) constructor. If `T` does not have one — a positional record, most often — a `LogicException` is thrown whose `Message` is the stable code `SelectTypeMustHaveParameterlessConstructor` and whose `Subject` carries `typeof(T).Name`. Before 3.1.0 that message was an English sentence with the type name inside it. Most EF Core entity classes have parameterless constructors by default. A guarded query reaches the same refusal when a member carries `[DwNoSelect]`, because deny-select projects.
 
 2. **Segment Operations are Async-Only**
-   `ToListAsync<T>(Segment)` is the only entry point for segment queries. There is no synchronous `ToList<T>(Segment)` variant. Each `ConditionSet` is materialized independently into memory, then set operations are performed in-memory. Ordering and paging come after, so a page bounds what a segment returns, not what it reads. Under `ApplyPolicy`, `DwCaps.MaxConditionSets` (default 10) bounds how many sets one request may carry.
+   `ToListAsync<T>(Segment)` is the only entry point for segment queries. There is no synchronous `ToList<T>(Segment)` variant. The condition sets are combined into one query that the database orders and pages; the provider has to translate a correlated `EXISTS`. Under `ApplyPolicy`, `DwCaps.MaxConditionSets` (default 10) bounds how many sets one request may carry.
+
+   Until 3.1.0 each set was loaded into a list and the lists were combined in memory by object reference. With `AsNoTracking()`, with `Selects`, and under `ApplyPolicy` (always untracked), `Intersect` returned nothing, `Except` removed nothing and `Union` counted a row once per set; ordering ran after projection, and every row of every set was read. Untracked, projected and guarded segments now return the rows their sets describe, a tracking query without `Selects` returns the same rows as before, and sorting follows the database's collation instead of .NET string comparison. A type with no primary key uses SQL `UNION` / `INTERSECT` / `EXCEPT`, which needs every column to be comparable.
 
 3. **Date Values are Read with the Invariant Culture**
    Since 3.1.0 a date value must be ISO 8601, year-first, or a format the deployment declared through `DwDates.Configure`. The server's culture used to decide: `01/09/2026` was 1 September on a day-first server and 9 January on another. It is now refused with `AmbiguousDateFormat` unless the order is declared, and forms the lenient parser used to accept — `12:00` as today at noon — are `InvalidFormat`. A deployment that sent culture-formatted dates either switches its clients to ISO 8601 or declares the format once at startup. In exchange, a filter means one thing on every server, `DateTimeOffset` and `DateOnly` columns work, and a `DateTimeOffset` value is normalised to UTC.

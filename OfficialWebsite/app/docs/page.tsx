@@ -40,8 +40,8 @@ export default function Page() {
         DynamicWhere.ex turns that JSON into a safe, validated, EF Core‑native
         <code>IQueryable&lt;T&gt;</code> — including projection, ordering, paging, grouping,
         and having clauses — plus <code>UNION</code> / <code>INTERSECT</code> /{" "}
-        <code>EXCEPT</code> set operations, which run one query per condition set
-        and combine the results in memory.
+        <code>EXCEPT</code> set operations, which combine condition sets into a
+        single query.
       </p>
 
       <p>The library exposes three composable shapes:</p>

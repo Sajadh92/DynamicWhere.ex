@@ -21,8 +21,8 @@ export default function Page() {
         It <em>inherits</em> every property from{" "}
         <Link href="/docs/classes/filter-result"><code>FilterResult&lt;T&gt;</code></Link> — there
         are no additional members. The separate type exists only to distinguish results that came
-        from a segment query (Union / Intersect / Except, applied in memory) from those that came
-        from a plain filter.
+        from a segment query (Union / Intersect / Except, combined into one query) from those that
+        came from a plain filter.
       </p>
 
       <h2 id="properties">Inherited properties</h2>
@@ -82,9 +82,8 @@ export default function Page() {
               <code>List&lt;T&gt;</code>
             </td>
             <td>
-              The result entities. The set operations de-duplicate only when they can
-              match rows — that is, with no <code>Selects</code> and a tracking query,
-              where every set hands back the same instances.
+              The requested page of the combined rows, each row once. With{" "}
+              <code>Selects</code>, unselected members hold their defaults.
             </td>
           </tr>
           <tr>
@@ -115,13 +114,14 @@ export default function Page() {
         </tbody>
       </table>
 
-      <Callout tone="warn">
-        The sets are loaded one query each and combined <strong>in memory</strong> with
-        LINQ&apos;s <code>Union</code> / <code>Intersect</code> / <code>Except</code>, which
-        compare by reference. Adding <code>Selects</code> projects each set into fresh
-        objects first, so nothing matches across sets: <code>Intersect</code> returns
-        nothing, <code>Except</code> removes nothing, and <code>Union</code> keeps
-        duplicates.
+      <Callout tone="warn" title="Changed in 3.1.0: the database combines the sets">
+        <code>TotalCount</code> counts rows, each once, whether the query tracks,
+        runs <code>AsNoTracking()</code> or carries <code>Selects</code>. The sets
+        used to be loaded one query each and combined in memory by object
+        reference, so an untracked or projected segment counted a row once per
+        set in a <code>Union</code>, found nothing to <code>Intersect</code> and
+        nothing to <code>Except</code>. <code>Data</code> is now the one page the
+        database returns.
       </Callout>
 
       <Callout tone="warn" title="Changed in 3.1.0: an unpaged segment reports one page">

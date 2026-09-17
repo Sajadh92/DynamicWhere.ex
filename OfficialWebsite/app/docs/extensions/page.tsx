@@ -169,8 +169,9 @@ export default function Page() {
         terminals count with EF Core&apos;s <code>CountAsync</code> and read
         with <code>ToListAsync</code> / <code>ToDynamicListAsync</code>;{" "}
         <code>ToListAsync(Summary)</code> counts synchronously and only awaits
-        the read, and <code>ToListAsync(Segment)</code> counts in memory after
-        the set operations.
+        the read, and <code>ToListAsync(Segment)</code> combines its sets into
+        one query and then counts and reads it exactly as a{" "}
+        <code>Filter</code> does.
       </p>
       <table>
         <thead>
@@ -237,10 +238,10 @@ export default function Page() {
 
       <Callout tone="warn">
         Segment operations are <strong>async-only</strong>. There is no
-        synchronous <code>ToList&lt;T&gt;(Segment)</code> variant. Each{" "}
-        <code>ConditionSet</code> is materialized independently into memory,
-        then set operations (<code>Union</code> / <code>Intersect</code> /{" "}
-        <code>Except</code>) execute in-memory before ordering and pagination.
+        synchronous <code>ToList&lt;T&gt;(Segment)</code> variant. The set
+        operations (<code>Union</code> / <code>Intersect</code> /{" "}
+        <code>Except</code>) combine every <code>ConditionSet</code> into one
+        query, which the database orders and pages.
       </Callout>
 
       <h2 id="in-memory">In-memory overloads</h2>

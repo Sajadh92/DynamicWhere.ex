@@ -17,12 +17,12 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The eighteen points below cover constraints, surprises, and corner cases —
+        The nineteen points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
       <Callout tone="danger" title="Behaviour changes in 3.1.0">
-        Five behaviours changed in <strong>3.1.0</strong>. Each one fixes a defect,
+        Six behaviours changed in <strong>3.1.0</strong>. Each one fixes a defect,
         and each one is visible to a caller that depended on the old shape. Date
         comparisons now read the member&apos;s type before building
         the predicate (point&nbsp;14) and accept a value only in ISO&nbsp;8601, a
@@ -30,8 +30,9 @@ export default function Page() {
         unpaged <code>PageCount</code> is now <code>1</code>{" "}
         rather than <code>TotalCount</code> (point&nbsp;16); the{" "}
         <code>Select</code> constructor refusal carries a stable code instead of an
-        English sentence (point&nbsp;17); and a guarded query is refused unless its
-        context was prepared (point&nbsp;18).
+        English sentence (point&nbsp;17); a guarded query is refused unless its
+        context was prepared (point&nbsp;18); and a segment&apos;s condition sets
+        are combined, ordered and paged in the database (point&nbsp;19).
       </Callout>
       <Callout tone="danger" title="Upgrade to 2.1.4">
         Releases before <strong>2.1.4</strong> did not escape condition values before
@@ -66,10 +67,8 @@ export default function Page() {
       <p>
         <code>ToListAsync&lt;T&gt;(Segment)</code> is the only entry point for
         segment queries. There is no synchronous <code>ToList&lt;T&gt;(Segment)</code>{" "}
-        variant. Each <code>ConditionSet</code> is materialized independently into
-        memory, then set operations are performed in‑memory. Ordering and paging
-        come after, so a page bounds what a segment returns, not what it reads.
-        Under <code>ApplyPolicy</code>,{" "}
+        variant. The condition sets are combined into one query that the database
+        orders and pages (point&nbsp;19). Under <code>ApplyPolicy</code>,{" "}
         <Link href="/docs/policies/configuration#caps"><code>DwCaps.MaxConditionSets</code></Link>{" "}
         (default 10) bounds how many sets one request may carry.
       </p>
@@ -247,7 +246,8 @@ export default function Page() {
       <p>
         All Filter extensions — both typed (<code>Filter&lt;T&gt;</code>,{" "}
         <code>ToList&lt;T&gt;(Filter)</code>,{" "}
-        <code>ToListAsync&lt;T&gt;(Filter)</code>) and dynamic (
+        <code>ToListAsync&lt;T&gt;(Filter)</code>, and{" "}
+        <code>ToListAsync&lt;T&gt;(Segment)</code> since 3.1.0) and dynamic (
         <code>FilterDynamic&lt;T&gt;</code>, <code>ToListDynamic&lt;T&gt;</code>,{" "}
         <code>ToListAsyncDynamic&lt;T&gt;</code>) — apply ordering and pagination
         on the typed <code>IQueryable&lt;T&gt;</code> <strong>before</strong> the
@@ -548,6 +548,53 @@ export default function Page() {
         <code>PrepareAsync</code> is the documented ceremony. A store handed to the
         explicit overload still refuses an unprepared context on its own.
       </Callout>
+
+      <h2 id="segment-in-database">19. A Segment&apos;s Sets Are Combined in the Database</h2>
+      <p>
+        <Link href="/docs/extensions/to-list-async-segment"><code>ToListAsync(Segment)</code></Link>{" "}
+        turns its condition sets into one query. <code>Union</code> and{" "}
+        <code>Intersect</code> join the sets&apos; conditions with{" "}
+        <code>OR</code> and <code>AND</code>; <code>Except</code> removes its
+        set&apos;s rows with <code>NOT EXISTS</code> on the primary key; and a type
+        with no primary key uses SQL <code>UNION</code> /{" "}
+        <code>INTERSECT</code> / <code>EXCEPT</code>. The combined query is then
+        ordered, paged, projected and counted exactly like a{" "}
+        <code>Filter</code>.
+      </p>
+      <p>
+        Until 3.1.0 each set was loaded into a list, and the lists were combined
+        in memory by object reference. That was right only for a tracking query
+        with no <code>Selects</code>. With <code>AsNoTracking()</code>, with{" "}
+        <code>Selects</code>, and under <code>ApplyPolicy</code>, which always runs
+        untracked, <code>Intersect</code> returned nothing, <code>Except</code>{" "}
+        removed nothing and <code>Union</code> counted a row once for every set
+        that matched it. Every row of every set was read before the page was cut.
+      </p>
+      <ul>
+        <li>
+          <strong>Results.</strong> Untracked, projected and guarded segments
+          return the rows their sets describe. A tracking query without{" "}
+          <code>Selects</code> returns the same rows it did.
+        </li>
+        <li>
+          <strong>Ordering.</strong> Sorting runs in the database, so text follows
+          its collation rather than .NET&apos;s string comparison, and NULLs fall
+          where the provider puts them. <code>Orders</code> apply before{" "}
+          <code>Selects</code>, so an order field no longer has to be selected. A
+          segment with no <code>Orders</code> comes back in whatever order the
+          database chooses, as a filter does.
+        </li>
+        <li>
+          <strong>Reads.</strong> Only the requested page is read, plus one{" "}
+          <code>COUNT</code> for <code>TotalCount</code>.
+        </li>
+        <li>
+          <strong>Providers.</strong> The provider has to translate a correlated{" "}
+          <code>EXISTS</code>. A type with no primary key also needs every column
+          to be comparable — not PostgreSQL <code>json</code> or SQL Server{" "}
+          <code>xml</code> — and support for all three SQL set operators.
+        </li>
+      </ul>
 
       <h2 id="next">See also</h2>
       <ul>

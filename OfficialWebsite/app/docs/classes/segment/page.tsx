@@ -50,10 +50,8 @@ export default function Page() {
               <code>List&lt;string&gt;?</code>
             </td>
             <td>
-              Optional field projection, applied per set before the set operations. Because
-              those operations compare rows by reference, a projection makes{" "}
-              <code>Intersect</code> and <code>Except</code> match nothing and stops{" "}
-              <code>Union</code> de-duplicating — project after the segment instead.
+              Optional field projection, applied last to the combined, ordered and
+              paged rows, as for a <code>Filter</code>.
             </td>
           </tr>
           <tr>
@@ -78,10 +76,12 @@ export default function Page() {
       </table>
 
       <Callout tone="warn" title="Async-only">
-        Each condition set runs as its own query; the results are then combined{" "}
-        <strong>in memory</strong> with LINQ&apos;s <code>Union</code> /{" "}
-        <code>Intersect</code> / <code>Except</code> — there is no SQL set operator
-        involved. Segments are executed exclusively through{" "}
+        The condition sets are combined into <strong>one query</strong> that the
+        database answers: <code>Union</code> and <code>Intersect</code> join the
+        sets&apos; conditions, and <code>Except</code> removes its set&apos;s rows
+        by primary key. A type with no primary key uses SQL <code>UNION</code> /{" "}
+        <code>INTERSECT</code> / <code>EXCEPT</code>. Segments are executed
+        exclusively through{" "}
         <Link href="/docs/extensions/to-list-async-segment"><code>ToListAsync&lt;T&gt;(Segment)</code></Link>.
         There is no synchronous counterpart.
       </Callout>

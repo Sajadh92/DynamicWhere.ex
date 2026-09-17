@@ -152,8 +152,8 @@ Three request shapes. Each is a plain class with public get/set properties and n
 
 - `Filter`  — where → order → page → select, one query; returns `FilterResult<T>`
 - `Summary` — where → group + aggregate → having → order → page, one query; returns `SummaryResult`
-- `Segment` — several condition sets, one query each, combined **in memory** with Union / Intersect / Except,
-  then ordered and paged in memory; returns `SegmentResult<T>`
+- `Segment` — several condition sets combined with Union / Intersect / Except into one query, then ordered, paged
+  and projected like a filter; returns `SegmentResult<T>`
 
 Unset enum properties take member 0. Lists start empty unless the property type has `?`.
 
@@ -191,9 +191,9 @@ Filter          ConditionGroup      ConditionGroup?       null        null = no 
                 Orders              List<OrderBy>?        null        [] = no ordering
                 Page                PageBy?               null        null = every row
 Segment         ConditionSets       List<ConditionSet>    []          [] = runs as ToListAsync(new Filter { Selects, Orders, Page })
-                Selects             List<string>?         null        projected per set, BEFORE the set operations
-                Orders              List<OrderBy>?        []          applied in memory after the set operations
-                Page                PageBy?               null        applied in memory after ordering
+                Selects             List<string>?         null        projected last, after ordering and paging
+                Orders              List<OrderBy>?        []          applied in SQL to the combined rows
+                Page                PageBy?               null        applied in SQL after ordering
 Summary         ConditionGroup      ConditionGroup?       null        where, before grouping
                 GroupBy             GroupBy?              null        required; null throws ArgumentNullException
                 Having              ConditionGroup?       null        each Condition.Field is an AggregateBy.Alias, not a path
@@ -733,30 +733,35 @@ ToListDynamic, ToListAsyncDynamic   Where -> COUNT(where-only query) -> build Or
 
 ```
 validate the sets
-for each set in Sort order:  Where(set.ConditionGroup) -> Select(Selects) if non-null -> await EF Core ToListAsync()
-in memory:                   data = set1; then data = data.Union|Intersect|Except(setN) using setN.Intersection
-                             TotalCount = data.Count -> Order(Orders) -> Page(Page)      (LINQ to Objects)
+combine them in Sort order into one query:
+  T has a primary key:   Where(set1 OR|AND set2 ... AND NOT EXISTS(setN row with the same key))
+  T has no primary key:  set1 UNION|INTERSECT|EXCEPT set2 ...            (SQL set operators, whole rows)
+then exactly as ToListAsync(Filter): Order(Orders) -> Page(Page) -> Select(Selects); COUNT for TotalCount
 ```
 
-- Each set is one database query, run one after another, loading every matching row. Set operations, ordering
-  and paging all run in memory, never in SQL. Sets combine left to right, `((set1 op2 set2) op3 set3)`, in Sort
-  order, not list order.
-  - `Page` bounds the rows returned, not the rows read. Under `ApplyPolicy`, `Caps.MaxConditionSets` (default 10)
-    bounds the number of sets, and with it the number of reads (section 12).
-- Set operations use T's default equality — reference equality for an ordinary entity class. They only work when
-  every set materializes the same instances: a tracking query from one `DbContext` and no `Selects`.
-  - With `Selects`, each set builds new T objects: `Intersect` returns nothing, `Except` removes nothing, `Union`
-    keeps duplicates and inflates `TotalCount`.
-  - With `AsNoTracking()` the same happens even without `Selects`.
-  - Overriding `Equals` / `GetHashCode` on T makes set membership value-based.
-- `Selects` run before `Orders`, so ordering by an unselected field sorts on its default value.
+- The sets combine left to right, `((set1 op2 set2) op3 set3)`, in Sort order, not list order. The database answers
+  one query: only the requested page is read, plus one COUNT query for `TotalCount`.
+- Union and Intersect combine the sets' own conditions with OR and AND. Except removes the rows of its set with
+  `NOT EXISTS`, matched on T's primary key as EF Core maps it (composite, value-converted and inherited keys
+  included).
+  - Rows are matched by key, so a tracking query, `AsNoTracking()` and `Selects` all return the same rows.
+  - A key the data does not keep unique can make Except remove too much, never return a row no set admitted.
+- A type with no primary key (a keyless entity type, or a query EF Core does not map to T) is combined with SQL
+  `UNION` / `INTERSECT` / `EXCEPT`, which compare whole rows:
+  - identical rows collapse into one;
+  - every mapped column must be comparable, even when unselected: not PostgreSQL `json`, SQL Server `xml` or spatial
+    types;
+  - the provider must support all three operators (MySQL from 8.0.31).
+- `Orders` apply before the projection, as for `Filter`, so an order field need not be selected. Order is the
+  database's: text sorts by collation and NULLs fall where the provider puts them.
+- Under `ApplyPolicy`, `Caps.MaxConditionSets` (default 10) bounds how many sets one statement carries (section 12).
 - Validation: duplicate set Sort → `ListOfConditionsSetsMustHasUniqueSortValue`; a set after the first with a
   null `Intersection` → `ConditionsSetOfIndex[1-N]MustHasIntersection`; the first set's `Intersection` is ignored;
-  a set with a null `ConditionGroup` → `ArgumentNullException`. `Orders` and `Page` are validated only after every
-  set has loaded.
-- Empty or null `ConditionSets` runs `ToListAsync(new Filter { Selects, Orders, Page })` instead: one query with
-  SQL ordering and paging.
-- No synchronous version, no `getQueryString`; needs an EF Core async provider.
+  a set with a null `ConditionGroup` → `ArgumentNullException`. Every clause is validated before the database is
+  queried.
+- Empty or null `ConditionSets` runs `ToListAsync(new Filter { Selects, Orders, Page })`: there is nothing to combine.
+- No synchronous version, no `getQueryString`; needs an EF Core async provider that translates a correlated
+  `EXISTS`.
 
 ### In memory: the IEnumerable<T> overloads
 
@@ -925,7 +930,7 @@ GroupBy          Fields not empty → each field: null/blank, resolves, unique, 
                  Alias identifier → Field (unless Count) → simple type → aggregator valid for type → Alias not a group
                  field → Alias unique
 Summary          GroupBy not null → GroupBy rules → Orders → Page → Having (count, format) → ConditionGroup → Having pairs
-Segment          set Sort unique → Intersection on later sets → per set: ConditionGroup, Selects, query → Orders → Page
+Segment          set Sort unique → Intersection on later sets → each set's ConditionGroup → Orders → Page → Selects
 Filter           ConditionGroup → Orders → Page → Selects, each only when not null
 ```
 
@@ -1191,8 +1196,8 @@ having. `Group<T>` takes the same `groupBy` object and returns the rows without 
 }
 ```
 
-`SegmentResult<Product>`: (active UNION price > 100) EXCEPT out-of-stock, combined in memory. No `selects`: with
-them the set operations stop matching (section 6).
+`SegmentResult<Product>`: (active UNION price > 100) EXCEPT out-of-stock, combined into one query and ordered and
+paged in the database. `selects` can be added; it projects the page, as for a filter (section 6).
 
 ---
 
@@ -1200,10 +1205,10 @@ them the set operations stop matching (section 6).
 
 Each of these compiles, passes validation, and returns something other than what was meant.
 
-1. **`Segment` set operations compare object references, in memory.** With `Selects`, or on an `AsNoTracking()`
-   query, every set materializes new objects: `Intersect` returns nothing, `Except` removes nothing and `Union`
-   keeps duplicates and inflates `TotalCount`. Use a tracking query without `Selects`, or override `Equals` and
-   `GetHashCode` on T.
+1. **A `Segment` over a type with no primary key compares whole rows.** A keyed entity combines by row. A keyless
+   entity type, or a query EF Core does not map to T, uses SQL `UNION` / `INTERSECT` / `EXCEPT`: identical rows
+   collapse into one, and a column the database cannot compare (PostgreSQL `json`, SQL Server `xml`) fails the
+   query even when it is not selected. Give the type a key, or map it without such columns.
 2. **Typed `Select` still returns whole T objects.** Unselected members hold defaults and a serializer writes all of
    them (`"price": 0`, `"createdAt": "0001-01-01T00:00:00"`, `"category": {}`). Use `ToListDynamic` for a payload
    holding only the selected members.
@@ -1237,9 +1242,8 @@ Each of these compiles, passes validation, and returns something other than what
     order with a page.
 16. **Validation is not one pass before the query.** Each clause is checked as it is composed, so some invalid input is
     refused only after the database has been hit: `ToListDynamic` / `ToListAsyncDynamic` run the `COUNT` query before
-    `Orders`, `Page` and `Selects` are validated, and `ToListAsync(Segment)` loads every condition set before it
-    validates `Orders`, `Page` and `Selects`. The `LogicException` is the same one either way; the round trip is not
-    undone.
+    `Orders`, `Page` and `Selects` are validated. The `LogicException` is the same one either way; the round trip is
+    not undone.
 
 ---
 
@@ -1483,14 +1487,12 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
                                      composable Filter, FilterDynamic and Summary return the query already
                                      paged, so page through the request's Page, not a chained Page(). Where,
                                      Order, Select and Group take no page and are never given one.
-                                     A Segment still loads every row of every set before it pages, so for a
-                                     Segment this bounds the rows returned, not the rows read.
   MaxConditions        50       1    conditions at every nesting depth; Summary: ConditionGroup + Having;
                                      Segment: all condition sets together                               CapExceeded (9)
   MaxConditionDepth    10       1    3.1.0. How deep SubConditionGroups nest, root group = depth 1. Summary:
                                      the deeper of ConditionGroup and Having; Segment: each set on its own  CapExceeded (9)
   MaxConditionSets     10       1    3.1.0. Segment.ConditionSets.Count, sets with no conditions included.
-                                     Each set is one query loading every row it matches, before paging  CapExceeded (9)
+                                     Each set adds a condition or subquery to one statement             CapExceeded (9)
   MaxOrderFields       10       1    Orders.Count                                                       CapExceeded (9)
   MaxNavigationDepth   4        1    dot segments of any path ("A.B.C.D" passes, 5 segments refused) in
                                      conditions, Selects, Orders, GroupBy.Fields, AggregateBy.Field     CapExceeded (9)
@@ -1506,11 +1508,9 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
 ```
 
 - Caps apply only to guarded queries, simulations and schema building. Unguarded calls have no limits.
-- A Segment reads before it pages. Each condition set is one query that loads every row it matches; the sets are
-  combined, ordered and paged in memory afterwards (section 6).
-  - `MaxPageSize` and `DefaultPageSize` bound what a Segment returns, not what it reads.
-  - `MaxConditionSets` bounds how many reads one request makes. Nothing bounds the size of each read: a set with
-    no conditions loads the whole table, narrowed only by forced predicates.
+- A Segment is one statement: its sets are combined, ordered and paged in the database (section 6), so `MaxPageSize`
+  and `DefaultPageSize` bound what it reads as well as what it returns. `MaxConditionSets` bounds how many sets the
+  statement carries; a set with no conditions spends nothing from `MaxConditions` or `MaxConditionDepth`.
 - Cost charges every reference, duplicates included, and before gating, so a later-dropped field still costs.
   - Filter: conditions, Orders, and the Selects the caller wrote.
   - Summary: conditions, `GroupBy.Fields` and `AggregateBy.Field` (Having and Orders are not charged).
@@ -4142,7 +4142,7 @@ MemoryCalculationInput
 ### History
 
 ```
-3.1.0   Date comparisons rebuilt, three new caps, two new error codes, and preparation enforced with or without a store.
+3.1.0   Dates rebuilt, segments combined in the database, three new caps, two new error codes, preparation enforced.
         - DataType.Date / DataType.DateTime resolve the member's type before building the predicate. Every
           comparison on a DateTimeOffset member used to throw, and DataType.Date on any nullable date member
           used to throw; both work. The null guard is emitted only where the value can be null: IsNull / IsNotNull
@@ -4154,11 +4154,18 @@ MemoryCalculationInput
           UTC, and a value with no zone is read as UTC. C# date objects in Values are written year-first.
         - DateOnly members can be filtered; they could not under either date data type.
         - HAVING on a date alias takes its type from the aggregate, so it works on DateTimeOffset.
+        - ToListAsync(Segment) combines its condition sets into one query the database answers. Union and
+          Intersect combine the sets' conditions; Except removes its set's rows with NOT EXISTS on the primary key;
+          a type with no primary key uses SQL UNION / INTERSECT / EXCEPT. The sets used to be loaded into lists and
+          combined by object reference, so with AsNoTracking(), with Selects, and under ApplyPolicy (always
+          untracked) Intersect returned nothing, Except removed nothing and Union counted a row once per set.
+          Ordering, paging, projection and TotalCount now run in SQL exactly as for a Filter: text sorts by the
+          database's collation, Orders apply before Selects, and only the requested page is read.
         - PageCount on an unpaged result is 1 (0 with no rows), rather than TotalCount, or 0 for a Segment with
           condition sets.
         - DwCaps.DefaultPageSize (default 0 = off) bounds a guarded query that sends no Page; DwCaps
           .MaxConditionDepth (default 10) bounds how deeply condition groups nest; DwCaps.MaxConditionSets
-          (default 10) bounds how many condition sets a guarded Segment carries, each one a full read.
+          (default 10) bounds how many condition sets a guarded Segment carries.
         - ErrorCode.SelectTypeMustHaveParameterlessConstructor replaces the English sentence a Select on an
           unconstructible type used to throw; LogicException gained Subject, which carries the type name.
         - ApplyPolicy(ctx) refuses a context that never went through PrepareAsync, with or without a store
@@ -4188,9 +4195,8 @@ MemoryCalculationInput
 
 ### Limits by design
 
-- `Segment` is async only; each set is loaded in full and the sets are combined in memory by reference equality
-  (section 6). Paging comes last, so a page bounds what a Segment returns, not what it reads. Under `ApplyPolicy`,
-  `Caps.MaxConditionSets` (default 10) bounds how many sets, and so how many full reads, one request makes.
+- `Segment` is async only and needs a provider that translates a correlated `EXISTS`. A type with no primary key is
+  combined with SQL `UNION` / `INTERSECT` / `EXCEPT` and needs every column to be comparable (section 6).
 - `Select<T>` needs a public parameterless constructor on T. Records with only positional constructors, and
   classes whose constructors all take arguments, cannot be targets; use `SelectDynamic`.
 - The I-variants call `ToLower()` on both sides. On a case-sensitive collation (PostgreSQL with the `C` locale) the
@@ -4287,10 +4293,9 @@ var segment = new Segment
         new ConditionSet { Sort = 1, ConditionGroup = active },
         new ConditionSet { Sort = 2, Intersection = Intersection.Except, ConditionGroup = onLeave },
     },
-    // no Selects: projected sets never match each other
 };
 
-SegmentResult<Employee> result = await db.Employees.ToListAsync(segment);   // tracking DbSet, not AsNoTracking()
+SegmentResult<Employee> result = await db.Employees.AsNoTracking().ToListAsync(segment);   // one query
 ```
 
 ### An ASP.NET Core endpoint

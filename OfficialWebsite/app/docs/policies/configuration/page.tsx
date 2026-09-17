@@ -68,7 +68,7 @@ export default function Page() {
           <tr><td><code>DefaultPageSize</code></td><td><strong>0</strong></td><td>Page given to a guarded query that asked for none. Zero, the default, leaves it unpaged.</td></tr>
           <tr><td><code>MaxConditions</code></td><td>50</td><td>Conditions in one filter.</td></tr>
           <tr><td><code>MaxConditionDepth</code></td><td>10</td><td>How deep a filter may nest its condition groups, counting the root group as one.</td></tr>
-          <tr><td><code>MaxConditionSets</code></td><td>10</td><td>Condition sets in one segment. Each set is its own query.</td></tr>
+          <tr><td><code>MaxConditionSets</code></td><td>10</td><td>Condition sets in one segment. Each set adds to the one statement a segment becomes.</td></tr>
           <tr><td><code>MaxOrderFields</code></td><td>10</td><td>Order fields in one query.</td></tr>
           <tr><td><code>MaxNavigationDepth</code></td><td>4</td><td>How deep a field path may reach.</td></tr>
           <tr><td><code>MaxQueryCost</code></td><td>1000</td><td>Budget consumed by <code>[DwCost]</code> weights.</td></tr>
@@ -131,11 +131,10 @@ export default function Page() {
         given one.
       </p>
       <p>
-        A <code>Segment</code> reads before it pages. Each condition set is its
-        own query and loads every row it matches; the sets are combined, ordered
-        and paged in memory afterwards. So for a segment{" "}
-        <code>DefaultPageSize</code> and <code>MaxPageSize</code> bound the rows
-        it returns, not the rows it reads.
+        A <code>Segment</code> is one statement: its condition sets are combined,
+        ordered and paged in the database, so for a segment as for a filter{" "}
+        <code>DefaultPageSize</code> and <code>MaxPageSize</code> bound what is
+        read as well as what is returned.
       </p>
       <p>
         <code>MaxConditionDepth</code> bounds the shape{" "}
@@ -152,16 +151,14 @@ export default function Page() {
         depth is the depth of one.
       </p>
       <p>
-        <code>MaxConditionSets</code> bounds how many reads one segment can ask
-        for. A set with no conditions spends nothing from{" "}
-        <code>MaxConditions</code> or{" "}
-        <code>MaxConditionDepth</code>, so before this cap two hundred empty
-        sets were two hundred full-table reads for a page of three rows. It
-        counts every set the caller sent, empty or not, and refuses in both
-        tiers with <code>CapExceeded</code>. It bounds how many reads there
-        are, not how large each one is: a segment over a large table can still
-        read all of it once per set, so lower the cap, or narrow the table with
-        a forced predicate, where that matters.
+        <code>MaxConditionSets</code> bounds how large that statement can get.
+        Every set adds to it — a condition for a <code>Union</code> or an{" "}
+        <code>Intersect</code>, a <code>NOT EXISTS</code> subquery for an{" "}
+        <code>Except</code> — and a set with no conditions spends nothing from{" "}
+        <code>MaxConditions</code> or <code>MaxConditionDepth</code>, so the
+        number of sets is the only bound on it. It counts every set the caller
+        sent, empty or not, and refuses in both tiers with{" "}
+        <code>CapExceeded</code>.
       </p>
       <p>
         <code>MinGroupSize</code> is the one that starts <em>unset</em> rather

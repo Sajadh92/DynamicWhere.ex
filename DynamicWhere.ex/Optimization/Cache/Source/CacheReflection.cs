@@ -196,13 +196,7 @@ internal static class CacheReflection
         var cacheKey = (rootType, propertyPath);
         var config = GetCacheConfigOptions();
 
-        // Update access tracking based on eviction strategy
-        var accessTrackingInput = AccessTrackingInput<(Type, string)>.Create(cacheKey, config,
-            CacheDatabase.PropertyPathAccessTime,
-            CacheDatabase.PropertyPathAccessCount);
-        CacheDatabase.UpdateAccessTracking(accessTrackingInput);
-
-        return CacheDatabase.GetOrAddPropertyPath(cacheKey, key =>
+        string validated = CacheDatabase.GetOrAddPropertyPath(cacheKey, key =>
         {
             // Check if eviction is needed and perform it if necessary
             CacheEviction.EvictPropertyPathEntries(config);
@@ -210,6 +204,16 @@ internal static class CacheReflection
             // Perform the actual property path validation
             return ValidatePropertyPathInternal(key.Item1, key.Item2);
         });
+
+        // Tracked only once the path has validated. A path that fails adds no cache entry for eviction
+        // to remove, so tracking it kept one access record per invented name for the life of the
+        // process, and a caller sending unique names grew the process without limit.
+        var accessTrackingInput = AccessTrackingInput<(Type, string)>.Create(cacheKey, config,
+            CacheDatabase.PropertyPathAccessTime,
+            CacheDatabase.PropertyPathAccessCount);
+        CacheDatabase.UpdateAccessTracking(accessTrackingInput);
+
+        return validated;
     }
 
     /// <summary>

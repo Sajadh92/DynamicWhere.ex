@@ -108,7 +108,9 @@ public sealed class ForcedPredicate
     /// <param name="dataType">The field's data type.</param>
     /// <param name="contextValue">The context key holding the value.</param>
     /// <exception cref="ArgumentException">
-    /// Thrown when <paramref name="fieldPath"/> or <paramref name="contextValue"/> is blank.
+    /// Thrown when <paramref name="fieldPath"/> or <paramref name="contextValue"/> is blank, or when
+    /// <paramref name="op"/> is <c>IsNull</c> or <c>IsNotNull</c>, which read no value: build those with
+    /// <see cref="FromNullCheck"/>.
     /// </exception>
     public static ForcedPredicate FromContext(
         string fieldPath, Operator op, DataType dataType, string contextValue) =>
@@ -124,8 +126,10 @@ public sealed class ForcedPredicate
     /// <param name="contextValue">The context key holding the value.</param>
     /// <param name="allowNull">True to inject <c>(field op value OR field IS NULL)</c>.</param>
     /// <exception cref="ArgumentException">
-    /// Thrown when <paramref name="fieldPath"/> or <paramref name="contextValue"/> is blank, or when
-    /// <paramref name="allowNull"/> is true for <c>IsNull</c> or <c>IsNotNull</c>.
+    /// Thrown when <paramref name="fieldPath"/> or <paramref name="contextValue"/> is blank, when
+    /// <paramref name="allowNull"/> is true for <c>IsNull</c> or <c>IsNotNull</c>, or when
+    /// <paramref name="op"/> is <c>IsNull</c> or <c>IsNotNull</c> at all, which read no value: build those
+    /// with <see cref="FromNullCheck"/>.
     /// </exception>
     /// <remarks>
     /// The context value itself must still be supplied. Allowing a null field says which rows pass;
@@ -140,8 +144,29 @@ public sealed class ForcedPredicate
             nameof(contextValue),
             "A forced predicate reading the context requires a key to read.");
         RefuseWidenedNullCheck(op, allowNull);
+        RefuseNullCheckReadingContext(op);
 
         return new ForcedPredicate(fieldPath.Trim(), op, dataType, value: null, contextValue.Trim(), allowNull);
+    }
+
+    /// <summary>
+    /// Refuses a null check that reads a value from the caller's context.
+    /// </summary>
+    /// <remarks>
+    /// There is nowhere for the value to go. The key was still required, so a caller without it was
+    /// refused, and a caller with it had the value added to a null-check condition, which validation
+    /// refuses: every guarded query on the type failed, for every caller. Refused where it is built, as
+    /// the attribute refuses a <c>ContextValue</c> on a null check, so the mistake surfaces once, at
+    /// startup or when the rule is loaded, rather than on each query.
+    /// </remarks>
+    private static void RefuseNullCheckReadingContext(Operator op)
+    {
+        if (op is Operator.IsNull or Operator.IsNotNull)
+        {
+            throw new ArgumentException(
+                $"'{op}' compares against nothing, so it reads no context value; build it with FromNullCheck.",
+                nameof(op));
+        }
     }
 
     /// <summary>

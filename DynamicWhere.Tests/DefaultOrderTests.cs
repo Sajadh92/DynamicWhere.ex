@@ -3,6 +3,7 @@ using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Policies.Attributes;
+using DynamicWhere.ex.Policies.Audit;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
@@ -94,6 +95,16 @@ public class UnsegmentedTicket
     public int Id { get; set; }
 
     [DwDeny(PolicyFeature.Segment)]
+    public int Rank { get; set; }
+}
+
+/// <summary>A default whose leading field is audited whenever a query orders by it.</summary>
+[DwEntity(DefaultOrder = "Rank desc, Id")]
+public class AuditedTicket
+{
+    public int Id { get; set; }
+
+    [DwAudit(PolicyFeature.Order)]
     public int Rank { get; set; }
 }
 
@@ -524,5 +535,37 @@ public sealed class DefaultOrderTests : IDisposable
         Assert.Contains(
             "UnsegmentedTicket: DefaultOrder names 'Rank', which its attributes deny for segments, so guarded segments leave it out.",
             unsegmented.Warnings);
+    }
+
+    [Fact]
+    public void An_audited_default_field_is_recorded_only_when_the_query_orders_by_it()
+    {
+        // A field the default keeps is used, so it is recorded as a caller's own order is. A field left
+        // out is not used and the caller never named it: an event for it would say they tried to.
+        IQueryable<AuditedTicket> rows = new AuditedTicket[]
+        {
+            new() { Id = 1, Rank = 1 }, new() { Id = 2, Rank = 3 }, new() { Id = 3, Rank = 2 },
+        }.AsQueryable();
+        FakePolicyProvider noOrderingByRank =
+            new FakePolicyProvider().Add("Rank", PolicyFeature.Order, PolicyEffect.Deny, PolicyLevel.DynamicGlobal);
+
+        DwPolicyContext kept = Caller();
+        Assert.Equal(new[] { 2, 3, 1 }, rows.ApplyPolicy(kept, Options(), Resolver()).ToList(new Filter()).Data.Select(row => row.Id));
+        DwAuditEvent used = Assert.Single(kept.PendingAuditEvents);
+        Assert.Equal(("Rank", PolicyFeature.Order, PolicyEffect.Allow, false), (used.FieldPath, used.Feature, used.Effect, used.DryRun));
+
+        DwPolicyContext leftOut = Caller();
+        Assert.Equal(
+            new[] { 1, 2, 3 },
+            rows.ApplyPolicy(leftOut, Options(), Resolver(noOrderingByRank)).ToList(new Filter()).Data.Select(row => row.Id));
+        Assert.Empty(leftOut.PendingAuditEvents);
+
+        // A dry run orders by it after all, so the use is recorded, with the effect enforcement would have had.
+        DwPolicyContext dryRun = Caller();
+        Assert.Equal(
+            new[] { 2, 3, 1 },
+            rows.ApplyPolicy(dryRun, Options(dryRun: true), Resolver(noOrderingByRank)).ToList(new Filter()).Data.Select(row => row.Id));
+        DwAuditEvent wouldDeny = Assert.Single(dryRun.PendingAuditEvents);
+        Assert.Equal(("Rank", PolicyEffect.Deny, true), (wouldDeny.FieldPath, wouldDeny.Effect, wouldDeny.DryRun));
     }
 }

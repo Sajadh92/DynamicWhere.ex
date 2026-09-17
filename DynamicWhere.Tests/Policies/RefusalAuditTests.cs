@@ -163,6 +163,21 @@ public class RefusalAuditTests : IDisposable
     }
 
     [Fact]
+    public void Line_separators_and_invisible_format_characters_are_escaped_too()
+    {
+        // A log viewer breaks a line at U+2028 and U+2029 as well, and U+202E reverses the text after it
+        // without showing itself. A format character beyond the Basic Multilingual Plane is escaped whole.
+        DwPolicyContext caller = Caller();
+        PolicyQueryable<SecuredEmployee> guarded = People.ApplyPolicy(caller, Options(audit: true), Attributes());
+
+        Assert.Throws<PolicyException>(() => guarded.ToList(Where("a\u2028b\u2029c\u202Ed\U000E0041e")));
+
+        Assert.Equal(
+            "a\\u2028b\\u2029c\\u202ed\\udb40\\udc41e",
+            Assert.Single(caller.PendingAuditEvents).FieldPath);
+    }
+
+    [Fact]
     public void Refusals_that_name_no_field_are_recorded_too()
     {
         DwPolicyContext caller = Caller();

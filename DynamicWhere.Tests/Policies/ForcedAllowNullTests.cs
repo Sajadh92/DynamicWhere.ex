@@ -398,4 +398,20 @@ public sealed class ForcedAllowNullTests : IDisposable
         Assert.True(
             ForcedPredicate.FromConstant("InstitutionId", Operator.IsNotNull, DataType.Number, "0", allowNull: false).IsNullCheck);
     }
+
+    [Fact]
+    public void A_null_check_cannot_read_the_context()
+    {
+        // The key was still required, and a value it supplied landed on a null check validation refuses,
+        // so every guarded query on the type failed. Refused where it is built instead.
+        foreach (Operator nullCheck in new[] { Operator.IsNull, Operator.IsNotNull })
+        {
+            Assert.Throws<ArgumentException>(
+                () => ForcedPredicate.FromContext("InstitutionId", nullCheck, DataType.Number, "TenantId"));
+            Assert.Throws<ArgumentException>(
+                () => ForcedPredicate.FromContext("InstitutionId", nullCheck, DataType.Number, "TenantId", allowNull: false));
+        }
+
+        Assert.True(ForcedPredicate.FromNullCheck("InstitutionId", Operator.IsNull, DataType.Number).IsNullCheck);
+    }
 }

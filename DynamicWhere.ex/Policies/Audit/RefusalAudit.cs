@@ -49,8 +49,8 @@ internal static class RefusalAudit
     }
 
     /// <summary>
-    /// A path fit to store: cut to <see cref="MaxRecordedPath"/> characters, with every control
-    /// character escaped.
+    /// A path fit to store: cut to <see cref="MaxRecordedPath"/> characters, with every control, format,
+    /// line separator and paragraph separator character escaped.
     /// </summary>
     /// <remarks>
     /// Under the strict tier a name that matches nothing is recorded as the caller sent it, so this is
@@ -74,25 +74,43 @@ internal static class RefusalAudit
             cut = cut.Substring(0, length) + "…";
         }
 
-        if (!cut.Any(char.IsControl))
+        StringBuilder? escaped = null;
+
+        for (int i = 0; i < cut.Length; i += char.IsSurrogatePair(cut, i) ? 2 : 1)
         {
-            return cut;
+            int units = char.IsSurrogatePair(cut, i) ? 2 : 1;
+
+            if (!Hidden(CharUnicodeInfo.GetUnicodeCategory(cut, i)))
+            {
+                escaped?.Append(cut, i, units);
+
+                continue;
+            }
+
+            escaped ??= new StringBuilder(cut.Length + 16).Append(cut, 0, i);
+
+            for (int unit = i; unit < i + units; unit++)
+            {
+                escaped.Append("\\u").Append(((int)cut[unit]).ToString("x4", CultureInfo.InvariantCulture));
+            }
         }
 
-        StringBuilder escaped = new(cut.Length + 16);
-
-        foreach (char character in cut)
-        {
-            if (char.IsControl(character))
-            {
-                escaped.Append("\\u").Append(((int)character).ToString("x4", CultureInfo.InvariantCulture));
-            }
-            else
-            {
-                escaped.Append(character);
-            }
-        }
-
-        return escaped.ToString();
+        return escaped?.ToString() ?? cut;
     }
+
+    /// <summary>
+    /// True for a character that breaks a line or shows nothing where it stands.
+    /// </summary>
+    /// <remarks>
+    /// Control characters include the line feed and carriage return, but a log viewer also breaks a line
+    /// at U+2028 and U+2029, and a format character such as U+202E reverses the text after it without
+    /// showing itself. Any of them in a name the caller wrote would make the record read as something
+    /// other than what was sent. A character outside the Basic Multilingual Plane is judged whole, so a
+    /// format character written as a surrogate pair is escaped too.
+    /// </remarks>
+    private static bool Hidden(UnicodeCategory category) =>
+        category is UnicodeCategory.Control
+            or UnicodeCategory.Format
+            or UnicodeCategory.LineSeparator
+            or UnicodeCategory.ParagraphSeparator;
 }

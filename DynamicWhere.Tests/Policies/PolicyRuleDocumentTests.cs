@@ -385,6 +385,17 @@ public class PolicyRuleDocumentTests
     }
 
     [Fact]
+    public void A_null_check_reading_a_context_key_is_refused()
+    {
+        // It never worked: the key was required, and its value landed on a null check validation refuses.
+        Assert.ThrowsAny<ArgumentException>(
+            () => PolicyRuleDocument.ToRule(Document("""
+                "detail":{"forced":{"fieldPath":"DeletedAt","operator":"IsNull","dataType":"DateTime",
+                "contextValue":"TenantId"}}
+                """)));
+    }
+
+    [Fact]
     public void A_transformer_cannot_be_named_by_a_document()
     {
         // Inherited from PolicyPayload unchanged: naming a CLR type escalates a store from "can

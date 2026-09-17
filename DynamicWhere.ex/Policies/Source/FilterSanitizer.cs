@@ -1554,6 +1554,11 @@ internal static class FilterSanitizer
     /// over an order it never asked for is not a refusal anyone can act on. Leaving it in would rank
     /// the rows by a value the caller may not see. A dry run keeps it, as it keeps everything else,
     /// and still records what enforcement would have left out.
+    /// <para>
+    /// A field the default keeps is a use of that field, and an audited one is recorded as a caller's
+    /// own order is. A field left out is not recorded: the query does not order by it and the caller
+    /// never named it, so an event for it would say this caller tried to.
+    /// </para>
     /// </remarks>
     /// <param name="gate">The per-query state.</param>
     /// <param name="segment">True for a segment, where a field denied for segments is left out too.</param>
@@ -1563,23 +1568,24 @@ internal static class FilterSanitizer
 
         foreach (DefaultOrder.Entry entry in DefaultOrder.For(typeof(T)))
         {
-            FieldPolicy policy = gate.PolicyFor(entry.Field, PolicyFeature.Order);
+            // Resolved without recording a use, which is recorded below only for a field the query keeps.
+            FieldPolicy policy = gate.PolicyFor(entry.Field, PolicyFeature.None);
 
             // Inside a segment a field is refused anywhere it is denied for segments, an order the
             // caller sends included, so the default leaves it out there as well.
-            if (policy.Allows(PolicyFeature.Order) && (!segment || policy.Allows(PolicyFeature.Segment)))
+            if (!policy.Allows(PolicyFeature.Order) || (segment && !policy.Allows(PolicyFeature.Segment)))
             {
-                kept.Add(entry);
+                gate.SkipDefaultOrder(entry.Field, policy);
 
-                continue;
+                if (!gate.IsDryRun)
+                {
+                    continue;
+                }
             }
 
-            gate.SkipDefaultOrder(entry.Field, policy);
+            gate.PolicyFor(entry.Field, PolicyFeature.Order);
 
-            if (gate.IsDryRun)
-            {
-                kept.Add(entry);
-            }
+            kept.Add(entry);
         }
 
         return DefaultOrder.ToOrders(kept);

@@ -17,9 +17,9 @@ export default function Page() {
       <h1>Security &amp; k-anonymity</h1>
       <p>
         Denying a field is easy. The hard part is the set of ways a caller can
-        learn a value <em>without</em> reading it. Eight such channels are closed;
-        each has a test that reproduces the attack and goes red if the control is
-        removed.
+        learn a value <em>without</em> reading it. Six such channels follow, then
+        two bypasses that are not channels; each has a test that reproduces the
+        attack and goes red if the control is removed.
       </p>
 
       <Callout tone="warn" title="MinGroupSize ships on, at 5">

@@ -385,11 +385,16 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
           the caller receives the same exception whether or not it was recorded.
         </li>
         <li>
-          A recorded path is cut to 256 characters, followed by <code>…</code>,
-          and every control character in it is written as <code>\u</code> and
-          four hex digits — a line feed as <code>\u000a</code>. An unknown name is
-          text the caller wrote, and a line break in it would forge a second entry
-          in a log written one event per line.
+          A recorded path is cut to 256 characters, followed by <code>…</code>.
+          After the cut, every character in Unicode category Control (Cc), Format
+          (Cf), Line Separator (Zl) or Paragraph Separator (Zp) is written as{" "}
+          <code>\u</code> and four lowercase hex digits: a line feed as{" "}
+          <code>\u000a</code>, U+2028 as <code>\u2028</code>, U+202E as{" "}
+          <code>\u202e</code>. A character outside the Basic Multilingual Plane is
+          judged whole, and both halves of its surrogate pair are escaped. An
+          unknown name is text the caller wrote. A line break in it would forge a
+          second entry in a log written one event per line, and a format character
+          such as U+202E would reverse the text after it without showing itself.
         </li>
         <li>
           A buffer already holding <code>MaxAuditEvents</code> events records

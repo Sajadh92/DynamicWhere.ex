@@ -123,7 +123,9 @@ export default function Page() {
         200-group result reported 200 pages of one group each. It is now <code>1</code>{" "}
         — or <code>0</code> when there are no groups. <code>PageNumber</code> and{" "}
         <code>PageSize</code> are unchanged: both still <code>0</code> when no page was
-        sent.
+        sent. The exception is a guarded query when the deployment sets{" "}
+        <Link href="/docs/policies/configuration#caps"><code>DwCaps.DefaultPageSize</code></Link>:
+        the query is given page <code>1</code> at that size, and reports it.
       </Callout>
 
       <Callout tone="info" title="Flattened alias keys">

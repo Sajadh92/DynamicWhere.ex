@@ -77,9 +77,10 @@ public sealed class PolicyQueryable<T> where T : class
     /// What the policy did to the most recent call on this handle.
     /// </summary>
     /// <remarks>
-    /// The methods returning a result object attach the record to it directly. The composable ones
-    /// return an <see cref="IQueryable{T}"/>, which has nowhere to carry it, so this is where a
-    /// caller composing a query by hand can read what was dropped.
+    /// Always set, whatever the tier. The methods returning a result object also attach the record to
+    /// it when <c>DwPolicyOptions.IncludeTraceInResult</c> allows, which by default it does not under
+    /// the strict tier. A composable method returns a query, which has nowhere to carry it, so this is
+    /// where a caller composing a query by hand, or reading a strict result, sees what was dropped.
     /// </remarks>
     public PolicyTrace? LastTrace { get; private set; }
 

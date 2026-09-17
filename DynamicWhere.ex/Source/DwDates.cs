@@ -31,6 +31,13 @@ public sealed class DwDateOptions
     /// Read-only once the options are configured. Two formats that read the same text as different
     /// dates — <c>dd/MM/yyyy</c> beside <c>MM/dd/yyyy</c> — are refused when they are configured
     /// rather than left to disagree on a request.
+    /// <para>
+    /// A format that writes its zone as a quoted literal, such as <c>yyyy-MM-dd'T'HH:mm:ss'Z'</c>, is
+    /// not caught there. ISO 8601 reads the same text as a zoned instant and, on a <c>DateTime</c>
+    /// member, converts it to the host's local time, while the declared format reads the digits as
+    /// written; on a host not on UTC the two readings differ, and the value is refused with
+    /// <c>AmbiguousDateFormat</c>. Declare no format that ISO 8601 already reads.
+    /// </para>
     /// </remarks>
     public IList<string> Formats => _frozen ?? _formats;
 
@@ -288,7 +295,11 @@ public static class DwDates
     /// </summary>
     /// <param name="options">The formats. Frozen by this call.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="options"/> is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when the formats contradict each other.</exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when a format is blank or not a valid .NET format, cannot read back the text it writes
+    /// (<c>hh</c> without <c>tt</c>), carries no year, or a day but no month; or when two formats read
+    /// one text as different dates or put the day and the month in opposite orders.
+    /// </exception>
     /// <exception cref="InvalidOperationException">Thrown on a second call.</exception>
     /// <remarks>
     /// Once, like the policy posture, because every query reads it without a lock: formats that could
@@ -317,6 +328,10 @@ public static class DwDates
     /// </summary>
     /// <param name="configure">Fills in a fresh <see cref="DwDateOptions"/>.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="configure"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the formats are refused, as <see cref="Configure(DwDateOptions)"/> refuses them.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">Thrown on a second call.</exception>
     public static void Configure(Action<DwDateOptions> configure)
     {
         if (configure is null)

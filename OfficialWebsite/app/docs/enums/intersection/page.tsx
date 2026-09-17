@@ -21,8 +21,9 @@ export default function Page() {
         <Link href="/docs/classes/condition-set"><code>ConditionSet</code></Link>{" "}
         results inside a{" "}
         <Link href="/docs/classes/segment"><code>Segment</code></Link>. The sets
-        are combined into <strong>one query</strong> the database answers, and
-        rows are matched by primary key.
+        are combined into <strong>one query</strong> the database answers.{" "}
+        <code>Union</code> and <code>Intersect</code> combine the sets&apos; own
+        conditions, and only <code>Except</code> matches rows, by primary key.
       </p>
 
       <h2 id="values">Values</h2>

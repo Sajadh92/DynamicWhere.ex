@@ -122,13 +122,15 @@ export default function Page() {
       "price": 9.99,
       "isActive": true,
       "createdAt": "2024-03-02T09:15:00",
-      "category": { "id": 5, "name": "Electronics" }
+      "category": null
     }
   ],
   "queryString": null
 }`}</Code>
       <p>
-        With no <code>selects</code> the rows are whole entities.{" "}
+        With no <code>selects</code> the rows are whole entities, loaded as the
+        source query loads them. A navigation is not loaded unless that query
+        includes it, so <code>category</code> is <code>null</code> here.{" "}
         <code>queryString</code> is always <code>null</code> on a segment: the
         overload takes no <code>getQueryString</code> argument.
       </p>

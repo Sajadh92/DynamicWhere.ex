@@ -173,9 +173,10 @@ public sealed class ForcedPredicate
     /// Refuses <c>AllowNull</c> on a null check, where a value was supplied anyway.
     /// </summary>
     /// <remarks>
-    /// A null check compares against nothing, so its value is ignored, and widening it would test the
-    /// field for null or not null at once: <c>(field IS NOT NULL OR field IS NULL)</c> filters nothing, and
-    /// a scope written that way would silently be no scope. The attribute refuses the same combination.
+    /// A null check compares against nothing, so a constant given to it is ignored, and widening it would
+    /// test the field for null or not null at once: <c>(field IS NOT NULL OR field IS NULL)</c> filters
+    /// nothing, and a scope written that way would silently be no scope. The attribute refuses the same
+    /// combination.
     /// </remarks>
     private static void RefuseWidenedNullCheck(Operator op, bool allowNull)
     {

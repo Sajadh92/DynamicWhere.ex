@@ -301,11 +301,15 @@ export default function Page() {
       <Callout tone="info" title="On a date member that cannot be null">
         With <code>DataType.Date</code> or <code>DataType.DateTime</code>, the
         library reads the member&apos;s type first. A non-nullable{" "}
-        <code>DateTime</code> or <code>DateTimeOffset</code> can never be null, so{" "}
+        <code>DateTime</code>, <code>DateTimeOffset</code> or{" "}
+        <code>DateOnly</code> of the entity itself can never be null, so{" "}
         <code>IsNull</code> answers the constant <code>false</code> — no rows — and{" "}
         <code>IsNotNull</code> the constant <code>true</code> — every row. On
-        PostgreSQL that is <code>WHERE FALSE</code> and no predicate at all. On a
-        nullable date member they test the column as usual. See{" "}
+        PostgreSQL that is <code>WHERE FALSE</code> and no predicate at all.
+        Reached through a navigation, as in <code>Approval.ApprovedAt</code>, they
+        test the navigation instead: <code>IsNull</code> matches the rows with no{" "}
+        <code>Approval</code>. On a nullable date member they test the column as
+        usual. See{" "}
         <Link href="/docs/breaking-changes#date-member-type">breaking changes</Link>.
       </Callout>
 

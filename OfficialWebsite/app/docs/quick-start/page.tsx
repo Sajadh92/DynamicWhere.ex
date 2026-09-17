@@ -32,6 +32,7 @@ export default function Page() {
       <Code lang="csharp">{`using DynamicWhere.ex.Source;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
+using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Enums;`}</Code>
 
       <h2 id="step-2">2. Build a Filter</h2>

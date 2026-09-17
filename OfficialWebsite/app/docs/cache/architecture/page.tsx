@@ -83,9 +83,10 @@ using DynamicWhere.ex.Optimization.Cache.Output;   // CacheCounts, TrackingCount
       </p>
       <ol>
         <li><code>CacheReflection</code> receives the lookup request.</li>
-        <li>It records an access under the active strategy — a timestamp for LRU, a counter for LFU, nothing for FIFO — then asks <code>CacheDatabase</code> for the cached path. A hit returns immediately.</li>
+        <li>It asks <code>CacheDatabase</code> for the cached path. A hit skips the next two steps.</li>
         <li>On a miss, <code>CacheEviction</code> runs first: if the store already holds more than <code>MaxCacheSize</code> entries, the configured algorithm trims it.</li>
-        <li><code>CacheReflection</code> then performs the real reflection, validates the path, normalises the casing, and writes the result into <code>CacheDatabase</code>. The eviction pass runs before that write, so a store settles at <code>MaxCacheSize</code> + 1 entries.</li>
+        <li><code>CacheReflection</code> then performs the real reflection, validates the path, normalises the casing, and writes the result into <code>CacheDatabase</code>. The eviction pass runs before that write, so a store settles at <code>MaxCacheSize</code> + 1 entries. A path that fails validation throws here, and nothing is written.</li>
+        <li>Only a path that has validated records an access under the active strategy — a timestamp for LRU, a counter for LFU, nothing for FIFO. A path that fails records nothing (3.1.0), so an invented name leaves no record behind.</li>
         <li><code>CacheReporting</code> and <code>CacheCalculator</code> are read-only consumers of <code>CacheDatabase</code> — they never mutate cache state.</li>
       </ol>
 

@@ -64,6 +64,21 @@ export default function Page() {
             <td><code>1.6.7</code></td>
             <td>Enables string-based <code>Select</code> / <code>OrderBy</code> / <code>GroupBy</code> used by the dynamic variants.</td>
           </tr>
+          <tr>
+            <td><code>Microsoft.Extensions.Configuration.Abstractions</code></td>
+            <td><code>6.0.0</code></td>
+            <td>Provides <code>IConfiguration</code>, the section <code>DwPolicyOptions</code> and <code>DwDateOptions</code> bind from.</td>
+          </tr>
+          <tr>
+            <td><code>Microsoft.Extensions.Configuration.Binder</code></td>
+            <td><code>6.0.0</code></td>
+            <td>Binds that section, and refuses a key nothing answers to.</td>
+          </tr>
+          <tr>
+            <td><code>Microsoft.Extensions.DependencyInjection.Abstractions</code></td>
+            <td><code>6.0.0</code></td>
+            <td>Provides <code>IServiceCollection</code>, for <code>AddDwPolicies</code>.</td>
+          </tr>
         </tbody>
       </table>
 
@@ -72,6 +87,7 @@ export default function Page() {
       <Code lang="csharp">{`using DynamicWhere.ex.Source;            // Extension methods
 using DynamicWhere.ex.Classes.Core;      // Condition, ConditionGroup, OrderBy, PageBy, ...
 using DynamicWhere.ex.Classes.Complex;   // Filter, Segment, Summary
+using DynamicWhere.ex.Classes.Result;    // FilterResult, SegmentResult, SummaryResult
 using DynamicWhere.ex.Enums;             // DataType, Operator, Connector, ...
 using DynamicWhere.ex.Optimization.Cache.Source; // CacheExpose
 using DynamicWhere.ex.Optimization.Cache.Config; // CacheOptions
@@ -106,7 +122,8 @@ using DynamicWhere.ex.Optimization.Cache.Enums;  // CacheEvictionStrategy, Cache
           <Link href="/docs/breaking-changes">Breaking Changes</Link> for performance notes.
         </li>
         <li>
-          <strong>Enum storage:</strong> the <code>Enum</code> data type assumes enums are stored as <em>strings</em>. If you store them as integers, filter using <code>DataType.Number</code> instead.
+          <strong>Enum storage:</strong> the <code>Enum</code> data type compares the member name you send, and works whether the column stores names or integers. See{" "}
+          <Link href="/docs/breaking-changes#enum-string-storage">Breaking Changes</Link>.
         </li>
       </ul>
 

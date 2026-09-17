@@ -153,8 +153,8 @@ export default function Page() {
         so on PostgreSQL an <code>Equal</code> becomes{" "}
         <code>{`WHERE "Day" = DATE '2026-09-01'`}</code>. Before 3.1.0 every
         comparison on a <code>DateTimeOffset</code> member threw, so did{" "}
-        <code>Date</code> on any nullable date member, and a <code>DateOnly</code>{" "}
-        member could not be filtered at all — see{" "}
+        <code>Date</code> on any nullable date member, and no comparison on a{" "}
+        <code>DateOnly</code> member worked — see{" "}
         <Link href="/docs/breaking-changes#date-member-type">breaking changes</Link>.
       </Callout>
 
@@ -177,7 +177,10 @@ export default function Page() {
         and in the predicate builder alike, as the member&apos;s own{" "}
         <code>DateTime</code>, <code>DateTimeOffset</code> or{" "}
         <code>DateOnly</code>. The host&apos;s culture and calendar play no part,
-        so a value is accepted or refused the same way on every server. Every
+        so a value is accepted or refused the same way on every server. The one
+        exception is a declared format that writes its zone as a quoted literal,
+        described under{" "}
+        <a href="#declaring-date-formats">Declaring a local format</a>. Every
         deployment accepts these forms:
       </p>
       <table>
@@ -272,9 +275,11 @@ export default function Page() {
         readings would fail on the 5th of the month and pass on the 15th, so a
         client would find out in production instead of on its first request. The
         field — or the <code>Having</code> alias — is on{" "}
-        <code>LogicException.Subject</code>, named as the caller wrote it even
-        under a <code>[DwAlias]</code>, as it is for an{" "}
-        <code>InvalidFormat</code> raised by a date value. Send ISO&nbsp;8601 (
+        <code>LogicException.Subject</code>, as it is for an{" "}
+        <code>InvalidFormat</code> raised by a date value. An unguarded query
+        names the field by its canonical path. Under <code>ApplyPolicy</code> it is
+        named as the caller wrote it, even under a <code>[DwAlias]</code>. Send
+        ISO&nbsp;8601 (
         <code>&quot;2026-09-15&quot;</code>,{" "}
         <code>&quot;2026-09-15T12:00:00Z&quot;</code>), or declare the form your
         clients send — see{" "}
@@ -338,6 +343,16 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
           different shapes, since <code>dd/MM/yyyy HH:mm</code> beside{" "}
           <code>MM/dd/yyyy</code> would read <code>01/09/2026 00:00</code> as 1
           September and <code>01/09/2026</code> as 9 January.
+        </li>
+        <li>
+          A declared format that writes its zone as a quoted literal, such as{" "}
+          <code>yyyy-MM-dd&apos;T&apos;HH:mm:ss&apos;Z&apos;</code>, is not caught
+          when formats are checked at configuration. ISO&nbsp;8601 reads the same
+          text as a zoned instant, and on a <code>DateTime</code> member converts it
+          to the host&apos;s local time. The declared format reads the digits as
+          written. On a host that is not on UTC the two readings differ, and the
+          value is refused with <code>AmbiguousDateFormat</code>. Declare no format
+          that ISO&nbsp;8601 already reads.
         </li>
         <li>
           The formats are process-wide and every query reads them without a lock,

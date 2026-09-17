@@ -75,8 +75,9 @@ public class Invoice
       <Callout tone="danger" title="Drop the ContextValue and the query fails, deliberately">
         A context that does not supply <code>TenantId</code> raises{" "}
         <code>MissingContextValue</code> in both tiers. A tenant scope that
-        silently fails to apply is worse than a failed request, so there is no
-        mode in which it is skipped.
+        silently fails to apply is worse than a failed request, so neither tier
+        skips it. A dry run injects no forced predicate at all, so there the
+        missing value is recorded in the trace and nothing is thrown.
       </Callout>
       <p>
         <strong>Rows that belong to no tenant.</strong> A role no institution owns

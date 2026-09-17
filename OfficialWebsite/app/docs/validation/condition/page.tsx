@@ -97,7 +97,11 @@ export default function Page() {
         the member&apos;s own <code>DateTime</code>, <code>DateTimeOffset</code> or{" "}
         <code>DateOnly</code> type. The server&apos;s culture plays no part, so a
         value is accepted or refused the same way on every host, and a value that
-        passes validation is one the builder can use. ISO&nbsp;8601 (
+        passes validation is one the builder can use. The one exception is a
+        declared format that writes its zone as a quoted literal: on a host that is
+        not on UTC it can refuse a value. See{" "}
+        <Link href="/docs/enums/data-type#declaring-date-formats">Declaring a local format</Link>.
+        ISO&nbsp;8601 (
         <code>&quot;2026-09-15&quot;</code>,{" "}
         <code>&quot;2026-09-15T12:00:00Z&quot;</code>) and year-first dates are
         accepted everywhere; <code>&quot;01/09/2026&quot;</code> is refused with{" "}

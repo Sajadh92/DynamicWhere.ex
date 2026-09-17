@@ -34,7 +34,9 @@ public sealed class DwEntityAttribute : Attribute
     /// <c>FilterDynamic</c>, and <c>Page</c>. An unguarded query never reads it, and is ordered only as
     /// its caller asks. A caller who sends orders gets exactly those; the default is never appended to
     /// them. A query already ordered keeps that order, whether an <c>OrderBy</c> ordered it before
-    /// <c>ApplyPolicy</c> or a composed <c>Order</c> did. An in-memory sequence sorted before
+    /// <c>ApplyPolicy</c> or a composed <c>Order</c> did, even one whose every order the policy dropped. A
+    /// projected query, through a <c>Select</c> before <c>ApplyPolicy</c> or the guarded <c>Select</c>,
+    /// takes no default either. An in-memory sequence sorted before
     /// <c>ApplyPolicy</c> is not recognised as ordered, because it reaches the policy as a query with no
     /// <c>OrderBy</c> in it, so send its order with the filter. End the default with a unique field, such
     /// as the key, or rows sharing the leading values can still change places between pages.
@@ -42,9 +44,16 @@ public sealed class DwEntityAttribute : Attribute
     /// Nothing is ordered that this property does not name. An entry naming a field the type does not
     /// have, one that is not a field and a direction, or one no query can order by, such as a
     /// collection of entities, is skipped rather than refused, and <c>PolicyModelValidator</c> reports
-    /// it. A field the caller may not order by is left out as well,
-    /// and the trace records it: ordering by it would rank rows by a value the caller is not allowed to
-    /// see. A field denied for ordering by its own attributes fails the startup scan.
+    /// it. A field the caller may not order by is left out as well, and in a <c>Segment</c> so is a field
+    /// the caller may not use in a segment; the trace records each one. Ordering by it would rank rows by
+    /// a value the caller is not allowed to see. A field its own attributes seal against ordering fails
+    /// the startup scan; one denied for ordering only by overridable attributes, or denied for segments,
+    /// is reported as a warning.
+    /// </para>
+    /// <para>
+    /// A field the default keeps that is audited for ordering is recorded as a use, as a caller's own
+    /// order is; a field left out is not. A <c>[DwEntity]</c> on a derived type replaces this one, so
+    /// repeat <c>DefaultOrder</c> and <c>RequirePolicy</c> there.
     /// </para>
     /// </remarks>
     public string? DefaultOrder { get; set; }

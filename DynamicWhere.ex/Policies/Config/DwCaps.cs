@@ -182,7 +182,10 @@ public sealed class DwCaps
     /// </summary>
     /// <remarks>
     /// A reference costs the field's <c>[DwCost]</c> weight, or <see cref="DefaultFieldCost"/> when
-    /// nothing weighs it. Every reference is charged, not every distinct field: charging per field
+    /// nothing weighs it; a summary aggregate with no field, such as a <c>Count</c>, costs
+    /// <see cref="DefaultFieldCost"/> too. Under the strict tier, outside a dry run, the total is checked
+    /// after every field has passed its gate; otherwise before. Every reference is charged, not every
+    /// distinct field: charging per field
     /// would let a caller generate the same work by naming one field a thousand times, which is the
     /// case this cap exists for.
     /// <para>
@@ -197,7 +200,8 @@ public sealed class DwCaps
     }
 
     /// <summary>
-    /// What one reference to an unweighted field spends against <see cref="MaxQueryCost"/>.
+    /// What one reference to an unweighted field, or one aggregate with no field, spends against
+    /// <see cref="MaxQueryCost"/>.
     /// </summary>
     /// <remarks>
     /// Separate from the cap so a host can decide what "ordinary" costs. Zero is accepted and means

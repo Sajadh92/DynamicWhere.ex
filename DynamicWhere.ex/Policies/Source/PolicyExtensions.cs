@@ -23,6 +23,10 @@ public static class PolicyExtensions
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="query"/> or <paramref name="context"/> is null.
     /// </exception>
+    /// <exception cref="PolicyException">
+    /// Thrown with <c>PolicyContextNotPrepared</c> when <paramref name="context"/> never went through
+    /// <see cref="DwPolicy.PrepareAsync"/>, whether or not a store is configured.
+    /// </exception>
     /// <remarks>
     /// The posture and the policy sources come from <see cref="DwPolicy"/> rather than from
     /// arguments here, because a posture that has to be passed at every call site is one that will
@@ -46,6 +50,10 @@ public static class PolicyExtensions
     /// <returns>A handle mirroring the ordinary query methods, with enforcement in front of them.</returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="query"/> or <paramref name="context"/> is null.
+    /// </exception>
+    /// <exception cref="PolicyException">
+    /// Thrown with <c>PolicyContextNotPrepared</c> when <paramref name="context"/> never went through
+    /// <see cref="DwPolicy.PrepareAsync"/>, whether or not a store is configured.
     /// </exception>
     /// <remarks>
     /// The unguarded surface carries the same overloads, and leaving them off here would mean a

@@ -403,8 +403,9 @@ export default function Page() {
         <li>
           <Link href="/docs/validation/segment">Segment validation →</Link>{" "}
           <code>SetsUniqueSort</code> and <code>RequiredIntersection</code>, plus
-          the <code>ConditionGroup</code>, <code>Selects</code>,{" "}
-          <code>OrderBy</code> and <code>Page</code> errors of every set it runs.
+          the <code>ConditionGroup</code> errors of each set and the{" "}
+          <code>Selects</code>, <code>OrderBy</code> and <code>Page</code> errors of
+          the segment itself.
         </li>
         <li>
           <Link href="/docs/extensions/select">Select / SelectDynamic →</Link>{" "}

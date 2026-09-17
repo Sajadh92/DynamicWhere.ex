@@ -61,8 +61,8 @@ public sealed class DwPolicyOptions
     /// predicate injected on the caller's behalf. That is the detail the strict tier already refuses to
     /// hand over through <c>getQueryString</c>, and a result is where it reaches the caller: an API that
     /// serializes a result serializes the trace with it. Under the strict tier it stays in-process by
-    /// default, on <c>PolicyQueryable.LastTrace</c> and in the audit, and a deployment that wants it on
-    /// the response sets this to true. The convenience tier serves the application's own front end and
+    /// default, on <c>PolicyQueryable.LastTrace</c>, and a deployment that wants it on the response sets
+    /// this to true. The convenience tier serves the application's own front end and
     /// keeps it, and false takes it off there too.
     /// </remarks>
     public bool? IncludeTraceInResult
@@ -85,7 +85,8 @@ public sealed class DwPolicyOptions
     /// the refusal was about — under the strict tier too, where the caller's own refusal names none —
     /// the feature, the <c>PolicyErrorCode</c>, the tier, the subjects and the purpose. A request that
     /// never became a guarded query, such as an unguarded read of a <c>RequirePolicy</c> type, has no
-    /// caller to record against. A dry run refuses nothing, so it records no refusal.
+    /// caller to record against. A dry run refuses no field, so it records no field refusal; a refusal it
+    /// still raises, such as <c>PolicyContextNotPrepared</c>, is recorded with <c>DryRun</c> false.
     /// <para>
     /// Off by default because it changes what reaches a sink: a deployment that registered one for
     /// <c>[DwAudit]</c> starts receiving events with an <c>ErrorCode</c>, and one that registered none

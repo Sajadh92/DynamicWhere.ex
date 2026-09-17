@@ -120,6 +120,16 @@ public class Ticket
         <code>Convenience</code> tier gets no default in their place.
       </p>
       <p>
+        A field the default keeps that is audited for <code>Order</code>, by{" "}
+        <code>[DwAudit(PolicyFeature.Order)]</code> or by a rule, is recorded as a
+        use, with <code>Effect</code> <code>Allow</code>, each time a guarded query
+        orders by it, as a caller&apos;s own order is. A field the default leaves
+        out is not recorded: the query does not order by it, and the caller never
+        named it. A dry run keeps the field, so it records it with its{" "}
+        <code>Order</code> effect — <code>Deny</code> for a field this caller may
+        not order by — and <code>DryRun</code> <code>true</code>.
+      </p>
+      <p>
         A default is never a reason for the library to refuse a query. An entry
         naming a field the type does not have is skipped, so is an entry that is not
         a field and a direction, and so is one no query can order by, such as a

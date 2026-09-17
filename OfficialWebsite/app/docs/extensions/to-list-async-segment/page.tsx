@@ -30,7 +30,8 @@ export default function Page() {
         <code>.ToListAsync&lt;T&gt;(Segment)</code> is the only entry point for
         segment queries — there is no synchronous{" "}
         <code>.ToList&lt;T&gt;(Segment)</code> variant. It needs an EF Core
-        provider that translates a correlated <code>EXISTS</code>.
+        provider. On a type with a primary key, only <code>Except</code> needs one
+        that translates a correlated <code>EXISTS</code>.
       </Callout>
 
       <h2 id="signature">Signature</h2>
@@ -86,10 +87,11 @@ export default function Page() {
         </li>
       </ul>
       <p>
-        Rows are matched by key, so a tracking query, an{" "}
-        <code>AsNoTracking()</code> query and a query with <code>Selects</code>{" "}
-        all return the same rows. Ordering is the database&apos;s: text sorts by
-        its collation, and NULLs fall where the provider puts them.
+        Which rows belong is decided in the database, not by object reference, so
+        a tracking query, an <code>AsNoTracking()</code> query and a query with{" "}
+        <code>Selects</code> all return the same rows. Ordering is the
+        database&apos;s: text sorts by its collation, and NULLs fall where the
+        provider puts them.
       </p>
 
       <h2 id="validations">Validations</h2>
@@ -238,7 +240,7 @@ SegmentResult<Product> result = await dbContext.Products.ToListAsync(segment);`}
         compare every column: identical rows collapse into one, a column the
         database cannot compare (PostgreSQL <code>json</code>, SQL Server{" "}
         <code>xml</code>) fails the query even when it is not selected, and the
-        provider must support all three operators.
+        provider must support the operators the sets use.
       </Callout>
 
       <Callout tone="danger" title="Changed in 3.1.0">
@@ -252,13 +254,25 @@ SegmentResult<Product> result = await dbContext.Products.ToListAsync(segment);`}
         <Link href="/docs/breaking-changes#segment-in-database">breaking changes</Link>.
       </Callout>
 
+      <p>
+        A typed row is a whole <code>Product</code>, not a trimmed object: the
+        members outside <code>Selects</code> are still present, holding their
+        defaults.
+      </p>
       <Code lang="json">{`{
   "pageNumber": 1,
   "pageSize": 20,
   "pageCount": 2,
   "totalCount": 35,
   "data": [
-    { "id": 1, "name": "Adapter Cable", "price": 9.99 }
+    {
+      "id": 1,
+      "name": "Adapter Cable",
+      "price": 9.99,
+      "isActive": false,
+      "createdAt": "0001-01-01T00:00:00",
+      "category": null
+    }
   ],
   "queryString": null
 }`}</Code>

@@ -140,7 +140,10 @@ export default function Page() {
         <code>PageCount</code> at <code>0</code> beside a full page of rows, while
         the same request as a filter reported one page per row.{" "}
         <code>PageNumber</code> and <code>PageSize</code> still report{" "}
-        <code>0</code> when no page was sent.
+        <code>0</code> when no page was sent. The exception is a guarded query
+        when the deployment sets{" "}
+        <Link href="/docs/policies/configuration#caps"><code>DwCaps.DefaultPageSize</code></Link>:
+        the query is given page <code>1</code> at that size, and reports it.
       </Callout>
 
       <Callout tone="info">

@@ -88,7 +88,7 @@ export default function Page() {
         If you need to compose UNION / INTERSECT / EXCEPT across multiple condition
         sets you <em>must</em> use the async pipeline. See{" "}
         <Link href="/docs/classes/segment"><code>Segment</code></Link> and{" "}
-        <Link href="/docs/extensions/to-list-async-segment"><code>ToListAsyncSegment</code></Link>.
+        <Link href="/docs/extensions/to-list-async-segment"><code>ToListAsync&lt;T&gt;(Segment)</code></Link>.
       </Callout>
 
       <h2 id="case-insensitive-tolower">3. Case-Insensitive Operators use <code>.ToLower()</code></h2>
@@ -202,18 +202,18 @@ export default function Page() {
       <h2 id="get-query-string-ef-core">9. <code>getQueryString</code> Parameter Requires EF Core Provider</h2>
       <p>
         Passing <code>getQueryString: true</code> to <code>ToList</code> /{" "}
-        <code>ToListAsync</code> calls <code>.ToQueryString()</code> which requires
-        an active EF Core database provider. It will fail on pure in‑memory{" "}
-        <code>IEnumerable&lt;T&gt;</code> calls (use the <code>IEnumerable</code>{" "}
-        overloads which internally call <code>AsQueryable()</code> first, but{" "}
-        <code>ToQueryString()</code> may not be supported).
+        <code>ToListAsync</code> calls <code>.ToQueryString()</code>, which needs
+        an active EF Core database provider to produce SQL. On an in‑memory{" "}
+        <code>IEnumerable&lt;T&gt;</code> it does not fail:{" "}
+        <code>QueryString</code> holds a placeholder sentence where the SQL would
+        be.
       </p>
       <Callout tone="warn" title="EF Core only">
         Only enable <code>getQueryString</code> when the source is a real{" "}
         <code>DbSet&lt;T&gt;</code> or an EF Core‑backed{" "}
-        <code>IQueryable&lt;T&gt;</code>. On in‑memory collections you'll get a
-        provider exception. Use it as a development aid, not as a production
-        feature.
+        <code>IQueryable&lt;T&gt;</code>. On an in‑memory collection you get the
+        placeholder sentence rather than SQL. Use it as a development aid, not as
+        a production feature.
       </Callout>
 
       <h2 id="dynamic-return-types">10. <code>SelectDynamic</code> / <code>FilterDynamic</code> / <code>ToListDynamic</code> / <code>ToListAsyncDynamic</code> Return Non-Generic Types</h2>
@@ -357,6 +357,9 @@ export default function Page() {
       <ul>
         <li>
           The null guard is emitted <strong>only for a member that can be null</strong>.
+          A non-nullable member reached through a navigation —{" "}
+          <code>Approval.ApprovedAt</code> — guards each navigation instead:{" "}
+          <code>{`Approval != null && …`}</code>.
         </li>
         <li>
           A <code>DateTimeOffset</code> member is compared against a{" "}
@@ -404,8 +407,9 @@ export default function Page() {
         </code>
         . All of these now work.
       </Callout>
-      <Callout tone="danger" title="Fixed: DateOnly members could not be filtered">
-        Until 3.1.0 no condition on a <code>DateOnly</code> member worked.{" "}
+      <Callout tone="danger" title="Fixed: DateOnly members could not be compared">
+        Until 3.1.0 no comparison on a <code>DateOnly</code> member worked. Only{" "}
+        <code>IsNull</code> and <code>IsNotNull</code> did.{" "}
         <code>DataType.Date</code> asked it for a <code>.Date</code> it does not
         have —{" "}
         <code>
@@ -423,16 +427,19 @@ export default function Page() {
         PostgreSQL an <code>Equal</code> becomes{" "}
         <code>{`WHERE "Day" = DATE '2026-09-01'`}</code>.
       </Callout>
-      <Callout tone="warn" title="IsNull answers a constant on a non-nullable member">
+      <Callout tone="warn" title="IsNull answers a constant on a non-nullable member of the entity itself">
         With the guard gone, there is nothing left for{" "}
         <Link href="/docs/enums/operator"><code>IsNull</code></Link> and{" "}
-        <code>IsNotNull</code> to test on a non-nullable date member, so they answer
-        with the constant the guard already implied: <code>IsNull</code> is{" "}
-        <code>false</code> and <code>IsNotNull</code> is <code>true</code>. On
-        PostgreSQL that reaches the database as <code>WHERE FALSE</code> and, for{" "}
-        <code>IsNotNull</code>, as no predicate at all. On a non-nullable{" "}
-        <code>DateTimeOffset</code>, where both used to throw like every other
-        operator, they now answer.
+        <code>IsNotNull</code> to test on a non-nullable date member of the entity
+        itself, so they answer with the constant the guard already implied:{" "}
+        <code>IsNull</code> is <code>false</code> and <code>IsNotNull</code> is{" "}
+        <code>true</code>. On PostgreSQL that reaches the database as{" "}
+        <code>WHERE FALSE</code> and, for <code>IsNotNull</code>, as no predicate at
+        all. On a non-nullable <code>DateTimeOffset</code>, where both used to throw
+        like every other operator, they now answer. Reached through a navigation,
+        as in <code>Approval.ApprovedAt</code>, they test the navigation instead:{" "}
+        <code>IsNull</code> matches the rows with no approval, because a provider
+        reads the member of a missing approval as NULL.
       </Callout>
       <Callout tone="note" title="Unchanged: the guard sits outside the comparison">
         On a nullable member the guard still wraps the <em>whole</em> comparison,
@@ -447,11 +454,16 @@ export default function Page() {
         Condition values for the two date types are now read against an explicit
         list of formats, never the lenient .NET parser, and re-emitted in
         round-trip form — at validation and in the builder alike, as the
-        member&apos;s own date type. Every deployment accepts ISO&nbsp;8601 (
+        member&apos;s own date type. Every deployment accepts ISO&nbsp;8601
+        extended calendar dates (
         <code>2026-09-01</code>, optionally with a time after a <code>T</code> or
         a space, a fraction, and <code>Z</code> or an offset) and year-first dates
         with <code>/</code> or <code>.</code> (<code>2026/09/01</code>,{" "}
         <code>2026.09.01</code>), plus any format the deployment declares. The
+        other ISO&nbsp;8601 forms are <code>InvalidFormat</code>: basic (
+        <code>20260901</code>), week (<code>2026-W36-2</code>), ordinal (
+        <code>2026-244</code>) and reduced precision (<code>2026-09</code>,{" "}
+        <code>2026-09-01T12</code>). The
         shipped predicate used to carry your raw text into a{" "}
         <code>DateTime.Parse</code> that the runtime evaluated in the host&apos;s
         culture, so the same filter meant different days on two servers; the
@@ -551,7 +563,10 @@ export default function Page() {
         sets.{" "}
         <code>PageNumber</code> and{" "}
         <code>PageSize</code> are unchanged — both still report <code>0</code> when
-        no page was sent.
+        no page was sent. The exception is a guarded query when the deployment
+        sets{" "}
+        <Link href="/docs/policies/configuration#caps"><code>DwCaps.DefaultPageSize</code></Link>:
+        the query is given page <code>1</code> at that size, and reports it.
       </Callout>
 
       <h2 id="select-code">17. <code>Select</code>&apos;s Constructor Refusal Is Now a Stable Code</h2>
@@ -647,10 +662,11 @@ export default function Page() {
           <code>COUNT</code> for <code>TotalCount</code>.
         </li>
         <li>
-          <strong>Providers.</strong> The provider has to translate a correlated{" "}
-          <code>EXISTS</code>. A type with no primary key also needs every column
-          to be comparable — not PostgreSQL <code>json</code> or SQL Server{" "}
-          <code>xml</code> — and support for all three SQL set operators.
+          <strong>Providers.</strong> On a type with a primary key, only{" "}
+          <code>Except</code> needs the provider to translate a correlated{" "}
+          <code>EXISTS</code>. A type with no primary key needs every column to be
+          comparable — not PostgreSQL <code>json</code> or SQL Server{" "}
+          <code>xml</code> — and support for the SQL set operators its sets use.
         </li>
       </ul>
 
@@ -681,8 +697,9 @@ export default function Page() {
       <p>
         Every expression is now parsed with a <code>ParsingConfig</code> the
         library owns: the parser&apos;s defaults with{" "}
-        <code>AreContextKeywordsEnabled = false</code>, so every identifier names a
-        member. No setting restores the keyword reading.
+        <code>AreContextKeywordsEnabled = false</code>, so <code>it</code>,{" "}
+        <code>root</code> and <code>parent</code> name members like any other
+        identifier. No setting restores the keyword reading.
       </p>
       <Callout tone="danger" title="Fixed: a policy decided on one column while the query read another">
         Under <code>ApplyPolicy</code> the gate decided on the path the caller
@@ -701,6 +718,15 @@ export default function Page() {
         library&apos;s own configuration does not reach the host&apos;s dynamic
         LINQ. No setting carries a host&apos;s changes to{" "}
         <code>ParsingConfig.Default</code> into the library&apos;s parsing.
+      </Callout>
+      <Callout tone="warn" title="The parser's functions and literals stay reserved">
+        The parser still reserves its functions and literals — <code>new</code>,{" "}
+        <code>iif</code>, <code>np</code>, <code>isnull</code>, <code>is</code>,{" "}
+        <code>as</code>, <code>cast</code>, <code>true</code>, <code>false</code>{" "}
+        and <code>null</code>, in any case — as the first segment of a path. A
+        condition on a member of the queried type with one of those names throws,
+        and a condition on a member named <code>Null</code> matches no rows without
+        an error.
       </Callout>
 
       <h2 id="condition-depth-and-set-caps">21. <code>MaxConditionDepth</code> and <code>MaxConditionSets</code> Refuse Guarded Requests 3.0 Ran</h2>

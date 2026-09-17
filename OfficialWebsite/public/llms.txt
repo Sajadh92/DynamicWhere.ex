@@ -332,8 +332,9 @@ V by DataType   Text, Guid, Enum    "v"                 Number, Boolean   v (unq
 - The date types are the exception: since 3.1.0 they resolve the member's type first and emit the guard only
   where the member is actually nullable (section 4, Date / DateTime). Every other DataType still guards
   unconditionally.
-- IsNull on a non-nullable value member matches nothing; IsNotNull matches everything. On a date member the
-  predicate is now the constant `false` / `true` rather than a comparison with null.
+- IsNull on a non-nullable value member matches nothing; IsNotNull matches everything. On a non-nullable date
+  member of the entity itself the predicate is now the constant `false` / `true` rather than a comparison with
+  null. Reached through a navigation, IsNull / IsNotNull test the navigation instead (Date / DateTime below).
 - Values are trimmed; `\` and `"` are escaped. A value matches literally and cannot close the literal or inject
   predicate text. Values are inlined as literals, not SQL parameters.
 - A list of more than 32 values (3.1.0) is nested as a balanced tree of flat chains of at most 32 terms, all joined by
@@ -395,18 +396,21 @@ Date       ISO 8601 / year-first / a declared format (3.1.0)       ISO 8601 date
 - **Date / DateTime (3.1.0 rewrote this):** the predicate is built from the member's own type.
   - **Which texts are dates (3.1.0).** Read against explicit formats, never the lenient parser; the server's culture
     and calendar decide nothing.
-    - Always accepted: ISO 8601 — `"2026-09-01"` (also `"2026-9-1"`), optionally `T` or a space and a time
-      (`"12:30"`, `"12:30:15"`, `"12:30:15.123"`), optionally `Z` or an offset (`"+03:00"`, `"+0300"`, `"+03"`) — and
-      year-first dates `"2026/09/01"`, `"2026.09.01"` with the same optional time. A lowercase `t` or `z` and a comma
-      before the fraction are accepted, and a fraction longer than seven digits (Go and Java write nine) is cut to
-      seven, the 100 ns a `DateTime` holds.
+    - Always accepted: ISO 8601 extended calendar dates — `"2026-09-01"` (also `"2026-9-1"`), optionally `T` or a
+      space and a time (`"12:30"`, `"12:30:15"`, `"12:30:15.123"`), optionally `Z` or an offset (`"+03:00"`,
+      `"+0300"`, `"+03"`) — and year-first dates `"2026/09/01"`, `"2026.09.01"` with the same optional time. A
+      lowercase `t` or `z` and a comma before the fraction are accepted, and a fraction longer than seven digits (Go
+      and Java write nine) is cut to seven, the 100 ns a `DateTime` holds.
+    - The other ISO 8601 forms are `InvalidFormat`: basic (`"20260901"`), week (`"2026-W36-2"`), ordinal
+      (`"2026-244"`) and reduced precision (`"2026-09"`, `"2026-09-01T12"`).
     - A numeric date that leads with a day or a month — `"01/09/2026"`, `"15/09/2026"`, `"09/15/2026"`,
       `"01.09.2026"`, `"01-09-2026"`, `"1/9/26"` — throws `AmbiguousDateFormat` whatever its numbers, with the field
       as `LogicException.Subject` (under `ApplyPolicy`, the name the caller wrote, so an alias is not undone). By
       shape, not value: refusing only the values with two readings would fail on the 5th of the month and pass on
       the 15th.
     - Anything else is `InvalidFormat`, including `"12:00"`, `"1/9"`, `"Sep 2026"`, `"1 September 2026"` — which
-      the lenient parser used to accept as today at noon, 9 January of this year, and 1 September.
+      the lenient parser used to accept as today at noon, a day of the current year (9 January or 1 September, by
+      the host's culture), and 1 September.
     - A deployment declares a local form once at startup, and it is read with the invariant culture alongside ISO:
       `DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))` makes `"01/09/2026"` 1 September everywhere. See
       "Date formats" below.
@@ -437,8 +441,8 @@ Date       ISO 8601 / year-first / a declared format (3.1.0)       ISO 8601 date
   - Before 3.1.0 every comparison on a `DateTimeOffset` member threw — `InvalidOperationException` ("The binary
     operator NotEqual is not defined for the types 'System.DateTimeOffset' and 'System.Object'") on a
     non-nullable one, `ParseException` on a nullable one — `DataType.Date` on any nullable date member threw
-    `ParseException` ("No property or field 'Date' exists in type 'DateTime?'"), and a `DateOnly` member could not
-    be filtered under either date data type.
+    `ParseException` ("No property or field 'Date' exists in type 'DateTime?'"), and no comparison on a `DateOnly`
+    member worked under either date data type (`IsNull` and `IsNotNull` did).
 - A C# `DateTime`, `DateTimeOffset` or `DateOnly` placed in `Values` is written year-first (the normalizer table
   above) and then read like any other value; before 3.1.0 it took the month-first invariant form
   (`MM/dd/yyyy HH:mm:ss`), which is now refused.
@@ -500,6 +504,10 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
     `dd/MM/yyyy HH:mm` beside `MM/dd/yyyy` would make `"01/09/2026 00:00"` 1 September and `"01/09/2026"`
     9 January. Declare one day/month order.
   - A format with a year but no day, such as `yyyy-MM`, is accepted and reads the 1st.
+- Not caught at `Configure`: a declared format that writes its zone as a quoted literal, such as
+  `yyyy-MM-dd'T'HH:mm:ss'Z'`. ISO 8601 reads the same text as a zoned instant, and on a `DateTime` member converts it
+  to the host's local time. The declared format reads the digits as written. On a host that is not on UTC the two
+  readings differ, and the value is refused with `AmbiguousDateFormat`. Declare no format that ISO 8601 already reads.
 - `Bind` throws `InvalidOperationException`, at startup instead of leaving the defaults in force, for a key
   nothing answers to (`ErrorOnUnknownConfiguration`) such as a misspelt `Fromats`, and for a single value where the
   list belongs: `"Formats": "dd/MM/yyyy"`, or one environment variable `DynamicWhere__Dates__Formats`. Write
@@ -559,6 +567,11 @@ Path                              Where predicate generated
   `AggregateBy.Alias` named `root`, `it` or `parent` failed in `Having` and `Summary.Orders`. Under `ApplyPolicy`
   the gate decided on the path the caller named while the query read the row's own column, so a denied value could
   be projected and a forced scope reached through such a navigation filtered the wrong column.
+  - Expressions are parsed with the context keywords off, so `it`, `root` and `parent` name members like any other
+    identifier. The parser still reserves its functions and literals — `new`, `iif`, `np`, `isnull`, `is`, `as`,
+    `cast`, `true`, `false` and `null`, in any case — as the first segment of a path. A condition on a member of the
+    queried type with one of those names throws, and a condition on a member named `Null` matches no rows
+    without an error.
 - **Errors.** A missing segment or a null / blank path throws `LogicException("ConditionMustHasValidFieldName")`,
   the same string for Condition, OrderBy, GroupBy and AggregateBy paths. A null or blank `Selects` entry throws
   `ArgumentNullException` instead. Under `ApplyPolicy` in the Strict tier, outside dry run, a path that matches
@@ -784,7 +797,7 @@ then exactly as ToListAsync(Filter): Order(Orders) -> Page(Page) -> Select(Selec
   - identical rows collapse into one;
   - every mapped column must be comparable, even when unselected: not PostgreSQL `json`, SQL Server `xml` or spatial
     types;
-  - the provider must support all three operators (MySQL from 8.0.31).
+  - the provider must support the operators the request uses (MySQL has `INTERSECT` and `EXCEPT` from 8.0.31).
 - `Orders` apply before the projection, as for `Filter`, so an order field need not be selected. Order is the
   database's: text sorts by collation and NULLs fall where the provider puts them.
 - Under `ApplyPolicy`, `Caps.MaxConditionSets` (default 10) bounds how many sets one statement carries (section 12).
@@ -793,8 +806,9 @@ then exactly as ToListAsync(Filter): Order(Orders) -> Page(Page) -> Select(Selec
   a set with a null `ConditionGroup` → `ArgumentNullException`. Every clause is validated before the database is
   queried.
 - Empty or null `ConditionSets` runs `ToListAsync(new Filter { Selects, Orders, Page })`: there is nothing to combine.
-- No synchronous version, no `getQueryString`; needs an EF Core async provider that translates a correlated
-  `EXISTS`.
+- No synchronous version, no `getQueryString`; needs an EF Core async provider. Only `Except` on a type with a
+  primary key needs the provider to translate a correlated `EXISTS`; `Union` and `Intersect` there are plain `OR` and
+  `AND`.
 
 ### In memory: the IEnumerable<T> overloads
 
@@ -839,8 +853,8 @@ Sumation        Sum(f)                                             numeric      
 Average         Average(f)                                         numeric                              as Average(f): int -> double, decimal -> decimal
 Minimum         Min(f)                                             simple, not bool / bool?             the field's type
 Maximum         Max(f)                                             simple, not bool / bool?             the field's type
-FirstOrDefault  Select(f).OrderBy(it).FirstOrDefault()             any simple type                      the field's type: the SMALLEST value
-LastOrDefault   Select(f).OrderByDescending(it).FirstOrDefault()   any simple type                      the field's type: the LARGEST value
+FirstOrDefault  Select(f).OrderBy($).FirstOrDefault()              any simple type                      the field's type: the SMALLEST value
+LastOrDefault   Select(f).OrderByDescending($).FirstOrDefault()    any simple type                      the field's type: the LARGEST value
 ```
 
 - **numeric** = byte, sbyte, short, ushort, int, uint, long, ulong, float, double, decimal and their nullable forms.
@@ -921,7 +935,8 @@ HavingField[<field>]MustExistInAggregateByAliases                      a Having 
 ConditionValuesAreNullOrWhiteSpace                                     defined but never thrown
 AmbiguousDateFormat                                                    a Date / DateTime value that leads with a day or a month
                                                                        ("01/09/2026") and matches no declared format, or one two
-                                                                       declared formats read differently. Subject = the field. 3.1.0
+                                                                       accepted formats read differently (section 4, Date formats).
+                                                                       Subject = the field. 3.1.0
 SelectTypeMustHaveParameterlessConstructor                             Select<T> / Filter.Selects on a T with no parameterless
                                                                        constructor — a positional record, most often. Also a
                                                                        guarded query where a member carries [DwNoSelect],
@@ -951,7 +966,8 @@ EF Core / provider exceptions  unwrapped (for example SQLite NotSupportedExcepti
 
 - The engine catches nothing; everything reaches the caller unwrapped.
 - Timing: composable methods throw at the call; async terminals at `await`; the dynamic terminals run the COUNT
-  query before validating Orders, Page and Selects; a Segment queries earlier sets before later clauses fail.
+  query before validating Orders, Page and Selects. A Segment validates every set and clause before its first query
+  (3.1.0).
 
 ### Checks by shape, in order
 
@@ -1031,6 +1047,8 @@ and enum-typed members and group keys in `data`.
 - `"orders": []` and a group with no conditions change nothing. `"conditionSets": []` runs the segment as a plain filter.
   Under `ApplyPolicy` a Filter or Segment with no orders takes the type's declared `DefaultOrder`, if any
   (3.1.0, section 13); unguarded, no orders means no ordering.
+- Inside a Segment, a set whose group has no conditions stands for every row: a `Union` with it returns every row, an
+  `Intersect` with it changes nothing, and an `Except` of it returns nothing.
 - A Summary with no `groupBy` throws `ArgumentNullException`, not `LogicException`.
 - A `null` inside `values` is `""`, not SQL NULL (section 4).
 
@@ -1038,8 +1056,8 @@ and enum-typed members and group keys in `data`.
 
 ```jsonc
 {
-  "pageNumber": 1,      // 0 when the request had no page
-  "pageSize": 10,       // 0 when the request had no page
+  "pageNumber": 1,      // 0 when the request had no page, unless DwCaps.DefaultPageSize gave a guarded query one
+  "pageSize": 10,       // 0 when the request had no page, with the same exception
   "pageCount": 5,       // no page: 1, or 0 with no rows
   "totalCount": 42,     // before paging
   "data": [ ],
@@ -1531,7 +1549,7 @@ StoreFailureMode  LastKnownGood=0  FailClosed=1  StaticOnly=2
   - One instance per transformer type is cached for the process lifetime, so transformers must be stateless and thread-safe.
   - A type that is not an `IValueTransformer`, or a null result → `InvalidOperationException`.
 - `StoreFailure`, `MaxSnapshotAge` and `RefreshInterval` are read only by a `StorePolicyProvider`, from the options passed to its `CreateAsync`.
-  - Once a context's pinned snapshot is older than `MaxSnapshotAge`, its queries throw `StoreUnavailable` (17), whatever the mode.
+  - Once a context's pinned snapshot is older than `MaxSnapshotAge`, its queries throw `StoreUnavailable` (17) in every mode except `StaticOnly` while the provider is degraded, which serves attributes alone and never reaches the ceiling.
 - `Entities` lists the types that discovery APIs may describe. Nothing is describable until it is exposed.
 
 ### DwCaps
@@ -1779,6 +1797,11 @@ public class Ticket { … }
   - in a `Segment`, a default field this caller may not use in a segment is left out too, recorded the same way,
     because a segment refuses that field in any clause. A `Filter` still takes it;
   - a dry run keeps the field and still records the decision;
+  - a field the default keeps is a use of that field. One audited for `Order`, by `[DwAudit]` or a rule, is recorded
+    as a use, `Effect` `Allow`, each time a guarded query orders by it, as a caller's own order is. A field the
+    default leaves out is not recorded: the query does not order by it, and the caller never named it. A dry run
+    keeps the field, so it records it, with its `Order` effect (`Deny` for a field the caller may not order by) and
+    `DryRun` true (section 22);
   - a caller whose sent orders were all dropped (Convenience) gets no default in their place;
   - it is added after the caps and after the cost is counted, so it counts toward no cap and costs nothing.
 
@@ -2033,8 +2056,11 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - One `DwAuditEvent` is recorded per use of an audited feature on a field the request names, whether the
   use is allowed or refused. A field named twice is recorded twice. Events are buffered on the context
   until drained.
+- A field the type's `DefaultOrder` adds is recorded too (3.1.0): audited for `Order`, it is an `Order` use,
+  `Effect` `Allow`, each time a guarded query orders by it (section 13).
 - Not recorded:
   - columns returned because the request had no `Selects`
+  - a `DefaultOrder` field left out for this caller, outside a dry run
   - forced predicates
   - output transforms
 - If the context already holds `Caps.MaxAuditEvents` (default 10000) events, the query throws
@@ -2800,8 +2826,15 @@ FieldFacts                                          sealed class
   `FromNullCheck` takes only `IsNull` / `IsNotNull`.
 - `FromConstant` and `FromContext` with `allowNull: true` and `IsNull` or `IsNotNull` → `ArgumentException`
   ("AllowNull widens a comparison, and a null check compares against nothing.") (3.1.0). A null check ignores
-  its value, and a widened `IsNotNull` would render `(field IS NOT NULL OR field IS NULL)`: a scope that scopes nothing.
-  Without `allowNull`, a null check built through either factory is accepted and its value ignored, as before.
+  a constant, and a widened `IsNotNull` would render `(field IS NOT NULL OR field IS NULL)`: a scope that scopes nothing.
+  Without `allowNull`, `FromConstant` accepts a null check and ignores its value, as before.
+- `FromContext` with `IsNull` or `IsNotNull` → `ArgumentException`, whatever `allowNull` says (3.1.0). Without
+  `allowNull` the message is "'IsNull' compares against nothing, so it reads no context value; build it with
+  FromNullCheck."; with it, the refusal above answers first. A null check has nowhere to put a context value, so
+  the key is refused where the predicate is built.
+  - Fixed in 3.1.0. The factory used to accept it, and the key was still required: a caller without it was refused
+    with `MissingContextValue`, and a caller with it had the value added to a null check that validation refuses
+    (`ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues`). Every guarded query on the type failed.
 - `AllowNull` (3.1.0): true injects `(field op value OR field IS NULL)` in a group of its own (section 14). The
   four-argument `FromConstant` and `FromContext` mean `allowNull: false`, and `FromNullCheck` never sets it.
   The factories know no member type, so nothing refuses `allowNull` on a member that can never be null. On a
@@ -2845,8 +2878,14 @@ DwAuditEvent                                        sealed class
 - An event is recorded each time a guarded query resolves a field for a feature in the field's audited set.
   - `[DwAudit]` defaults to `PolicyFeature.All`; rules can add features.
   - One event per reference: a field in a condition and in an order gives two events.
+  - A field the type's `DefaultOrder` adds is a use too (3.1.0): audited for `Order`, it is recorded as an `Order`
+    use, `Effect` `Allow`, each time a guarded query orders by it, as a caller's own order is. A dry run keeps a
+    default field that enforcement would leave out, so it records that one too, with its `Order` effect (`Deny` for a
+    field the caller may not order by) and `DryRun` true.
 - Events are recorded whether the use was allowed, masked, dropped or denied, and in dry run too.
 - Nothing is recorded for:
+  - a `DefaultOrder` field left out for this caller, outside a dry run: the query does not order by it, and the
+    caller never named it;
   - a projection the library synthesized;
   - `PolicySimulator`;
   - `Explain`;
@@ -2870,7 +2909,7 @@ DwAuditEvent                                        sealed class
   - `Feature` and `Tier` = the refusal's own, so a store provider's refusal reports `All` and `Strict`;
   - `Subjects` and `Purpose` = the context's;
   - `FieldPath` = the field the refusal was about, as its canonical path, in both tiers. A `FieldDeniedFor*`, `OperatorNotAllowed` or `RequiredFilterMissing` refusal, a `CapExceeded` refusal from `MaxNavigationDepth` or `MaxAuditEvents`, and `MissingContextValue`, which records the scoped field, are all recorded under the path although the refusal itself named the caller's alias or, under `Strict`, said `"*"`. A name that matches nothing (`Strict`) is recorded as the caller sent it, trimmed and with empty segments dropped. Every other refusal records its own `FieldPath` (section 30): `"*"` for a whole-request refusal such as `QueryStringDenied`, `QueryCostExceeded`, a cap on the request's size or `ApplyPolicy`'s `PolicyContextNotPrepared`; the entity's short type name for a store provider's refusal; the name as written for `AmbiguousFieldName`.
-  - The recorded path is cut to its first 256 characters followed by `…`, and every control character in it is written as `\u` and four hex digits — a line feed as `\u000a` (3.1.0). A name that matches nothing is text the caller wrote: a line break in it would forge a second entry in a log written one event per line, and a name a megabyte long would be kept whole.
+  - The recorded path is cut to its first 256 characters followed by `…` (3.1.0). Then every character in Unicode category Control (Cc), Format (Cf), Line Separator (Zl) or Paragraph Separator (Zp) is written as `\u` and four lowercase hex digits: a line feed as `\u000a`, U+2028 as `\u2028`, U+202E as `\u202e`. A character outside the Basic Multilingual Plane is judged whole, and both halves of its surrogate pair are escaped. A name that matches nothing is text the caller wrote: a line break in it would forge a second entry in a log written one event per line, a format character such as U+202E would reverse the text after it without showing itself, and a name a megabyte long would be kept whole.
 - Written at most once per refusal, from an exception filter: the refusal is never changed, caught or swallowed.
 - A full buffer (`Caps.MaxAuditEvents`) records nothing, and the original refusal is still thrown.
 - Not written:
@@ -3013,7 +3052,10 @@ if (!sim.WouldRun) logger.LogInformation("{Code}", sim.Refusal!.ErrorCode);
 - Runtime overload errors:
   - a value-type `entityType`, or a `TClause` other than `Filter`, `Summary` or `Segment` → `ArgumentException`;
   - null entity, context or options → `ArgumentNullException`.
-- Handle-level refusals are not simulated: `QueryStringDenied`, `TransformRequiresMaterialization`, `PolicyRequired`.
+- Handle-level refusals are not simulated: `QueryStringDenied`, `TransformRequiresMaterialization`, `PolicyRequired`,
+  and the `PolicyContextNotPrepared` that `ApplyPolicy(context)` raises. The simulator never reads `IsPrepared`, so
+  without a store an unprepared context simulates as `WouldRun`; a store provider still refuses a context it never
+  prepared.
 - A simulated Summary's `Clause` includes the floor's `__dwGroupSize` aggregate and its HAVING.
 
 ---
@@ -3184,7 +3226,8 @@ static TransformStage PolicyPayload.ToStage(string json)      static string Poli
     "requiredOperators": ["Equal"],
     "alias": "ContactEmail",
     "forced": { "fieldPath": "Email", "operator": "IsNotNull", "dataType": "Text" },
-                                                     // plus "allowNull": true with value or contextValue (3.1.0)
+                                                     // a null check takes neither value nor contextValue; a comparison
+                                                     // takes one of them, plus "allowNull": true to admit null (3.1.0)
     "facts": { "label": "Email", "description": "...", "group": "Contact", "order": 1,
                "allowedValues": ["a", "b"], "cost": 5, "audit": "Where, Select" }
   }
@@ -3210,13 +3253,21 @@ Document rules:
   - A string of digits, for the rule-level enums: `subjectKind`, `effect`, `features`, operators, `dataType` and `audit`.
 - `"kind": "Mutate"` is refused both when reading and when writing.
 - `forced` holds either `value` or `contextValue`, or neither for IsNull/IsNotNull. Both together throw `ArgumentException`.
+  - A `contextValue` on IsNull/IsNotNull throws `ArgumentException` when the rule is read (3.1.0): the reader builds it
+    through `ForcedPredicate.FromContext`, which refuses a null check (section 21). Such a rule never worked: the key was
+    still required, and its value landed on a null check that validation refuses, so every guarded query on the type
+    failed.
+  - A `value` on IsNull/IsNotNull is still accepted and ignored.
 - `forced.allowNull` (3.1.0): `true` injects `(field op value OR field IS NULL)`, as `[DwForceWhere(AllowNull = true)]` does.
   - It is written only when true, so a document for any other predicate is the one earlier releases wrote and read. Absent or JSON null reads as false.
   - Anything but a JSON boolean throws `ArgumentException` (the string `"true"` included).
-  - `true` on a null check (`IsNull` / `IsNotNull`) throws `ArgumentException`, whether or not the object also carries a `value` or `contextValue` (3.1.0). A null check ignores its value, and an `IsNotNull` rule widened this way would render `(field IS NOT NULL OR field IS NULL)`, a scope that scopes nothing. Without `allowNull`, a stray value on a null check is still ignored.
+  - `true` on a null check (`IsNull` / `IsNotNull`) throws `ArgumentException`, whether or not the object also carries a `value` or `contextValue` (3.1.0). A null check ignores a constant, and an `IsNotNull` rule widened this way would render `(field IS NOT NULL OR field IS NULL)`, a scope that scopes nothing. Without `allowNull`, a stray `value` on a null check is still ignored; a `contextValue` there is refused (above).
   - The document knows no member type, so `true` is not refused on a member that can never be null; there the rule injects the comparison alone (section 21).
 - An absent operator list and an empty one stay distinct.
-- A document or row that cannot be read fails the whole load. It is never skipped.
+- A document or row that cannot be read is never skipped: it fails the load that reads it.
+  - A broad rule fails the load: fatal at startup, and a refresh failure afterwards, where `StoreFailure` applies.
+  - A `User` rule is read only when a context is prepared, so it fails `DwPolicy.PrepareAsync` for the callers it
+    names, in every `StoreFailure` mode, and does not degrade the provider.
 
 ---
 
@@ -3306,7 +3357,7 @@ long Version   bool IsDegraded   DateTimeOffset LoadedAt   TimeSpan Age   Except
 - **`PrepareAsync`:**
   - Loads the narrow zone for the context's User identities, skipped when there are none.
   - Pins onto the context the current snapshot, the provider's `LoadedAt`, the narrow zone, and the identities it read. Preparing again replaces the pin.
-  - A narrow-load failure propagates, in every mode.
+  - A narrow-load failure propagates, in every mode, and so does a `User` rule the store cannot read.
 - **`RefreshAsync`:**
   - Always reloads and swaps atomically.
   - Stamps `LoadedAt` from the provider's own UTC clock and clears `IsDegraded` and `LastError`.
@@ -3763,7 +3814,7 @@ through `PolicySimulator` or in dry run to see the decisions).
 ```
 #   Name                              Raised when                                                              In dry run
 1   FieldDeniedForWhere               a Where, Having or Segment condition uses a field denied for Where        recorded
-                                      (both tiers)
+                                      (both tiers; under Strict a Segment condition gets code 6 instead)
 2   FieldDeniedForSelect              Strict: a selected field, or a navigation with a denied field beneath     recorded
                                       it, is denied for Select; any tier: "a.b" when its key "a.Id" is denied
 3   FieldDeniedForOrder               Strict: an order field is denied for Order (Convenience drops it)         recorded
@@ -3896,7 +3947,7 @@ any policy                  [DwEntity(RequirePolicy = true)]   a DynamicWhere ca
 
 ### Inference channels
 
-There are nine. The first seven let a caller learn a value, or what the policy hides, without reading it;
+There are eight. The first six let a caller learn a value, or what the policy hides, without reading it;
 **Forgotten guard** and **Empty store** are bypasses.
 
 - **Set operations:** `EXCEPT` or `INTERSECT` rebuild a field that is denied for Select but allowed for
@@ -3912,9 +3963,9 @@ There are nine. The first seven let a caller learn a value, or what the policy h
   Use `[DwNoOrder]`; `ValidateModel` warns about every transformed field that can still be sorted.
 - **getQueryString:** the SQL names denied columns and the injected predicates. Strict throws
   `QueryStringDenied`; Convenience returns the SQL.
-- **The trace on a result:** `result.Policy` names the fields a policy dropped, the attribute or rule that
-  sealed each one, and every injected predicate, and an API that serializes the result sends it on. Strict
-  leaves it off unless `IncludeTraceInResult = true`; Convenience returns it (3.1.0).
+  - The trace on a result names the same things: `result.Policy` lists the fields a policy dropped, the
+    attribute or rule that sealed each one, and every injected predicate, and an API that serializes the
+    result sends it on. Strict leaves it off unless `IncludeTraceInResult = true`; Convenience returns it (3.1.0).
 - **Which fields exist:** Convenience answers a name that matches nothing with `ConditionMustHasValidFieldName`
   and a denied field with a refusal that names it and its source, so a caller can map the hidden columns one
   guess at a time. Strict answers both alike, with the clause's `FieldDeniedFor*` code, `FieldPath` `"*"` and
@@ -3979,8 +4030,9 @@ Read before generating policy attributes.
     `[DwAudit]` either.
 15. **Aliases rename output columns only in dynamic filter results and summaries.** Typed results keep
     member names.
-16. **`[DwAudit]` records only fields the request names.** A request without `Selects` returns audited
-    columns with no Select event.
+16. **`[DwAudit]` records only fields the query uses by name: those the request names, and a `DefaultOrder`
+    field it orders by (3.1.0).** A request without `Selects` returns audited columns with no Select event, and a
+    default field left out for the caller records nothing.
 17. **`AmbiguousGroupKey` compares only the transformed keys.** A summary mixing untransformed and
     transformed keys can be refused even though its rows differ.
 18. **`[DwFormat]` ignores its format for a string value.** `[DwGeneralize(GeneralizeMode.Round, ...)]`
@@ -4500,15 +4552,16 @@ MemoryCalculationInput
         - Behaviour change. DataType.Date / DataType.DateTime resolve the member's type before building the
           predicate. Every comparison on a DateTimeOffset member used to throw, and DataType.Date on any nullable
           date member used to throw; both work. The null guard is emitted only where the value can be null:
-          IsNull / IsNotNull on a non-nullable date member of the entity answer false / true instead of throwing,
-          and through a navigation they test the navigation.
+          IsNull / IsNotNull on a non-nullable date member of the entity answer false / true (on a DateTimeOffset
+          member they threw), and through a navigation they test the navigation.
         - Behaviour change. A date value must be ISO 8601, year-first, or a format declared through
           DwDates.Configure. A numeric day/month date such as "01/09/2026" throws the new AmbiguousDateFormat;
           lenient forms such as "12:00" are InvalidFormat. The server's culture no longer decides anything.
           DateTimeOffset values normalise to UTC, and a value with no zone is read as UTC. C# date objects in
           Values are written year-first; a DateTime of Kind Local compared under DataType.DateTime with a
           DateTimeOffset member is written with its UTC offset, so it filters on the moment it holds.
-        - DateOnly members can be filtered; they could not under either date data type.
+        - DateOnly members can be compared; no comparison on one worked under either date data type (IsNull and
+          IsNotNull did).
         - HAVING on a date alias takes its type from the aggregate, so it works on DateTimeOffset.
         - Security fix and behaviour change. A member named Root, It or Parent, and an alias named root, it or
           parent, was read by System.Linq.Dynamic.Core as a context keyword. Root.Name and It.Name filtered,
@@ -4565,18 +4618,29 @@ MemoryCalculationInput
           The trace keeps the field. The Convenience tier and dry run are unchanged.
         - [DwEntity(DefaultOrder = "CreatedAt desc, Id")] orders a guarded query whose caller sends no orders,
           less the fields that caller may not order by, and in a Segment less the fields denied for segments.
-          Unguarded calls ignore it, and so does a projected query or one that composed an Order. PolicyModelValidator
-          reports unreadable entries, fields no query can order by and fields sealed attributes deny for ordering
-          as errors; unknown fields, fields only overridable attributes deny for ordering, and fields denied for
-          segments as warnings.
+          Unguarded calls ignore it, and so does a projected query or one that composed an Order. A field the
+          default keeps that is audited for Order is recorded as a use, as a caller's own order is; a field left out
+          is not. PolicyModelValidator reports unreadable entries, fields no query can order by and fields sealed
+          attributes deny for ordering as errors; unknown fields, fields only overridable attributes deny for
+          ordering, and fields denied for segments as warnings.
         - [DwForceWhere(AllowNull = true)], ForcedPredicate.AllowNull with FromConstant / FromContext overloads
           taking bool allowNull, and "allowNull" in a stored rule's forced object inject
           (field op value OR field IS NULL). AllowNull on IsNull or IsNotNull is refused by the attribute, by both
           factories and by a stored rule, value or no value. PolicyModelValidator now reports every malformed
           [DwForceWhere] at startup; it used to surface on the first guarded query of the type.
         - DwPolicyOptions.AuditRefusals (default false) writes every refused guarded query to the context's audit
-          buffer, under the canonical path, cut to 256 characters with control characters escaped. DwAuditEvent
-          gains ErrorCode and a constructor taking it.
+          buffer, under the canonical path, cut to 256 characters with control, format, line separator and
+          paragraph separator characters escaped. DwAuditEvent gains ErrorCode and a constructor taking it.
+        - StorePolicyProvider renews MaxSnapshotAge on a poll that reads back the version it serves, and that poll
+          clears IsDegraded. A healthy store nobody wrote to refused every guarded query one MaxSnapshotAge after
+          the provider last loaded it. A poll whose read was overtaken by a failed refresh or poll reloads instead.
+        - The composable PolicyQueryable<T>.Group applies the group floor. It went past the summary pipeline and
+          returned the small groups ToList(Summary) suppresses; it and the composable Summary also handed back the
+          floor's own __dwGroupSize column, which they no longer do.
+        - A forced null check built from a context key failed every guarded query on its type: the key was still
+          required, and its value landed on a null check that validation refuses. ForcedPredicate.FromContext now
+          refuses IsNull and IsNotNull and points to FromNullCheck, and a stored rule of that shape is refused when
+          it is read, as [DwForceWhere] already refused a ContextValue on a null check.
         - The reflection cache no longer keeps an access record for a field path that fails validation. Under LRU,
           the default, or LFU every invented name a caller sent stayed recorded for the life of the process.
 3.0.0   Field-level policies (sections 12–32) and three companion packages. Additive for 2.x callers:
@@ -4604,8 +4668,9 @@ MemoryCalculationInput
 
 ### Limits by design
 
-- `Segment` is async only and needs a provider that translates a correlated `EXISTS`. A type with no primary key is
-  combined with SQL `UNION` / `INTERSECT` / `EXCEPT` and needs every column to be comparable (section 6).
+- `Segment` is async only. On a type with a primary key, `Except` needs a provider that translates a correlated
+  `EXISTS`. A type with no primary key is combined with SQL `UNION` / `INTERSECT` / `EXCEPT`: it needs the operators
+  the request uses, and every column to be comparable (section 6).
 - `Select<T>` needs a public parameterless constructor on T. Records with only positional constructors, and
   classes whose constructors all take arguments, cannot be targets; use `SelectDynamic`.
 - The I-variants call `ToLower()` on both sides. On a case-sensitive collation (PostgreSQL with the `C` locale) the
@@ -4613,6 +4678,16 @@ MemoryCalculationInput
 - Values are inlined as escaped literals, not SQL parameters. EF Core escapes them for SQL, so this is not an
   injection path, but every distinct value is a distinct statement and a separate plan-cache entry.
 - A path through a collection means "any element matches". There is no `All()` and no negated `Any()`.
+- Expressions are parsed with the context keywords off, so `it`, `root` and `parent` name members like any other
+  identifier. The parser still reserves its functions and literals — `new`, `iif`, `np`, `isnull`, `is`, `as`,
+  `cast`, `true`, `false` and `null`, in any case — as the first segment of a path. A condition on a member of the
+  queried type with one of those names throws, and a condition on a member named `Null` matches no rows
+  without an error (section 5).
+- A declared format that writes its zone as a quoted literal, such as `yyyy-MM-dd'T'HH:mm:ss'Z'`, is not caught when
+  formats are checked at configuration. ISO 8601 reads the same text as a zoned instant, and on a `DateTime` member
+  converts it to the host's local time. The declared format reads the digits as written. On a host that is not on
+  UTC the two readings differ, and the value is refused with `AmbiguousDateFormat`. Declare no format that ISO 8601
+  already reads (section 4).
 - Summary rows flatten dotted group fields (`CategoryName`); `SelectDynamic` rows nest them (`Category.Name`).
 - `Filter` applies `Orders` and `Page` on T before the projection, so order fields need not be selected.
 - `getQueryString` needs an EF Core provider.
@@ -4731,6 +4806,9 @@ app.MapPost("/employees/search", async (Filter filter, AppDbContext db) =>
 ```
 
 ### A policy-protected entity
+
+The examples above query `Employee` unguarded. Declared as below, with `RequirePolicy = true`, each of those calls
+throws `PolicyRequired`: query it through `ApplyPolicy`, as the next example does.
 
 ```csharp
 using DynamicWhere.ex.Policies.Attributes;

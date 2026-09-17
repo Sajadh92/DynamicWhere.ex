@@ -67,9 +67,10 @@ public sealed class DwForceWhereAttribute : DwPolicyAttribute
     /// The key of an ambient value on the caller's context, such as <c>"TenantId"</c>.
     /// </summary>
     /// <remarks>
-    /// A key the context does not supply, or supplies as null, throws in both tiers and in dry run.
-    /// A tenant scope that silently fails to apply is worse than a failed request, and dry run's
-    /// promise is that it changes no data — not that it grants access.
+    /// A key the context does not supply, or supplies as null, throws <c>MissingContextValue</c> in
+    /// both tiers: a tenant scope that silently fails to apply is worse than a failed request. A dry run
+    /// injects no forced predicate at all, so there the missing value is recorded in the trace and
+    /// nothing is thrown.
     /// </remarks>
     public string? ContextValue { get; set; }
 

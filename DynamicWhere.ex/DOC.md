@@ -39,6 +39,9 @@ dotnet add package DynamicWhere.ex --version 3.1.0
 |---------|---------|
 | `Microsoft.EntityFrameworkCore` | 6.0.22 |
 | `System.Linq.Dynamic.Core` | 1.6.7 |
+| `Microsoft.Extensions.Configuration.Abstractions` | 6.0.0 |
+| `Microsoft.Extensions.Configuration.Binder` | 6.0.0 |
+| `Microsoft.Extensions.DependencyInjection.Abstractions` | 6.0.0 |
 
 The library parses every expression it builds with its own `ParsingConfig` — the parser's defaults with `AreContextKeywordsEnabled = false` — and does not read `ParsingConfig.Default`. See breaking point 15.
 
@@ -60,6 +63,7 @@ All four ship at the same version and `build/check-version.ps1` refuses to let t
 using DynamicWhere.ex.Source;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
+using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Enums;
 
 // Build a filter from a front-end POST body
@@ -115,14 +119,14 @@ Since 3.1.0 the predicate is built from the member's own CLR type, which is what
 
 | | What the library does |
 |---|---|
-| Accepted texts | **ISO 8601** (`2026-09-01`, optionally `T` or a space and a time, a fraction, `Z` or an offset such as `+03:00`, `+0300` or `+03`; a lowercase `t`/`z`, a comma before the fraction, and fractions beyond seven digits are accepted too) and **year-first** dates (`2026/09/01`, `2026.09.01`), on every deployment. A numeric date that leads with a day or a month — `01/09/2026`, `15.09.2026` — is refused with `AmbiguousDateFormat` whatever its numbers, so a client finds out on its first request rather than on the fifth of the month. Anything else, including `12:00` and `Sep 2026`, is `InvalidFormat`. The server's culture and calendar decide nothing |
-| Declared formats | A deployment whose clients send a local form declares it once: `DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))`, or bound from `DynamicWhere:Dates:Formats` (a list; a single value there refuses to bind). Two formats that read one text differently, or that put the day and month in opposite orders, are refused at configuration, and so is a format that is malformed, cannot read back what it writes (`hh` without `tt`), has no year, or has a day but no month |
+| Accepted texts | **ISO 8601** extended calendar dates (`2026-09-01`, optionally `T` or a space and a time, a fraction, `Z` or an offset such as `+03:00`, `+0300` or `+03`; a lowercase `t`/`z`, a comma before the fraction, and fractions beyond seven digits are accepted too) and **year-first** dates (`2026/09/01`, `2026.09.01`), on every deployment. The other ISO 8601 forms — basic (`20260901`), week (`2026-W36-2`), ordinal (`2026-244`) and reduced precision (`2026-09`) — are `InvalidFormat`. A numeric date that leads with a day or a month — `01/09/2026`, `15.09.2026` — is refused with `AmbiguousDateFormat` whatever its numbers, so a client finds out on its first request rather than on the fifth of the month. Anything else, including `12:00` and `Sep 2026`, is `InvalidFormat`. The server's culture and calendar decide nothing |
+| Declared formats | A deployment whose clients send a local form declares it once: `DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))`, or bound from `DynamicWhere:Dates:Formats` (a list; a single value there refuses to bind). Two formats that read one text differently, or that put the day and month in opposite orders, are refused at configuration, and so is a format that is malformed, cannot read back what it writes (`hh` without `tt`), has no year, or has a day but no month. A declared format that writes its zone as a quoted literal, such as `yyyy-MM-dd'T'HH:mm:ss'Z'`, is not caught there. ISO 8601 reads the same text as a zoned instant, and on a `DateTime` member converts it to the host's local time. The declared format reads the digits as written. On a host that is not on UTC the two readings differ, and the value is refused with `AmbiguousDateFormat`. Declare no format that ISO 8601 already reads |
 | `DateOnly` member | Compared as a day under both date data types, against a `DateOnly(y, m, d)` constructor. On Npgsql, `WHERE "Day" = DATE '2026-09-01'` |
 | `HAVING` | Names an alias, so the type comes from the aggregate behind it: `Minimum`, `Maximum`, `FirstOrDefault` and `LastOrDefault` carry the member's type, nullable if the member is, and the predicate is built as for that member. On Npgsql, `HAVING max(col) > TIMESTAMPTZ '…'` |
 | `DateTimeOffset` member | Compared against a `DateTimeOffset` literal normalised to UTC. A value carrying no zone is read as UTC, so `Date` names the day the caller wrote. A C# `DateTime` whose `Kind` is `Local`, placed in `Values` under `DataType.DateTime`, is written with its offset and so names its own moment — see [Value Coercion](#value-coercion). On Npgsql `Date` becomes `date_trunc('day', col AT TIME ZONE 'UTC')` |
 | `DateTime` member | Compared against a `DateTime` literal. A value carrying `Z` or an offset converts to the host's local time first, as it always has — send it in the convention the column stores |
 | Nullable member | Guarded with `field != null` and unwrapped under that guard (`field.Value`, `field.Value.Date`). A null row therefore fails `NotEqual` and `NotBetween`, which is deliberate |
-| Non-nullable member | No guard at all. `IsNull` answers `false` and `IsNotNull` answers `true` — on Npgsql, `WHERE FALSE` and no predicate |
+| Non-nullable member | On the entity itself, no guard at all: `IsNull` answers `false` and `IsNotNull` answers `true` — on Npgsql, `WHERE FALSE` and no predicate. Reached through a navigation (`Approval.ApprovedAt`), each navigation is guarded instead (`Approval != null && …`), and `IsNull` / `IsNotNull` test the navigation: a provider reads the member of a missing approval as NULL |
 
 ---
 
@@ -187,7 +191,7 @@ Sorting direction.
 
 ### `Intersection`
 
-Set operation applied between `ConditionSet` results in a `Segment`. The sets are combined into one query and rows are matched by primary key.
+Set operation applied between `ConditionSet` results in a `Segment`. The sets are combined into one query: `Union` and `Intersect` combine the sets' conditions, and `Except` matches rows by primary key.
 
 | Value | Description | Generated as |
 |-------|-------------|--------------|
@@ -691,7 +695,7 @@ Async version of `ToList<T>(Summary)`.
 
 ### `.ToListAsync<T>(Segment segment)`
 
-Async-only segment operation. Combines every `ConditionSet` with set operations (`Union` / `Intersect` / `Except`) into one query, then orders, pages, projects and counts it in the database exactly as `ToListAsync(Filter)` does. Only the requested page is read, `Orders` apply before `Selects`, and rows are matched by primary key, so tracking, `AsNoTracking()` and `Selects` return the same rows. Ordering follows the database: text sorts by its collation.
+Async-only segment operation. Combines every `ConditionSet` with set operations (`Union` / `Intersect` / `Except`) into one query, then orders, pages, projects and counts it in the database exactly as `ToListAsync(Filter)` does. Only the requested page is read, and `Orders` apply before `Selects`. `Union` and `Intersect` combine the sets' conditions and `Except` matches rows by primary key, never by object reference, so on a type with a primary key, tracking, `AsNoTracking()` and `Selects` return the same rows. Ordering follows the database: text sorts by its collation.
 
 **Returns:** `Task<SegmentResult<T>>`
 
@@ -733,7 +737,7 @@ Async-only segment operation. Combines every `ConditionSet` with set operations 
 | Aggregation aliases must be unique | `AggregationAliasesMustBeUnique` |
 | Aggregation alias cannot match a GroupBy field | `AggregationAliasCannotBeGroupByField({alias})` |
 | Aggregation field must be a simple type | `AggregationFieldMustBeSimpleType` |
-| Aggregation field cannot be a collection **of collections** — the element type is what is checked, so an ordinary collection reports `AggregationFieldMustBeSimpleType` instead | `AggregationFieldCannotBeCollectionType` |
+| Aggregation field cannot be a collection **of collections** — the element type is what is checked, so a collection of entities reports `AggregationFieldMustBeSimpleType` instead, and a collection of simple values such as `List<string>` passes | `AggregationFieldCannotBeCollectionType` |
 | `Sumation` / `Average` only work on numeric fields | `UnsupportedAggregatorForType({agg},{type})` |
 | `Minimum` / `Maximum` do not work on `Boolean` | `UnsupportedAggregatorForType({agg},{type})` |
 
@@ -1060,11 +1064,20 @@ The entire `Brands` collection is bound as-is.
   "pageCount": 5,
   "totalCount": 42,
   "data": [
-    { "id": 7, "name": "Laptop Pro", "price": 1299.99, "category": { "name": "Electronics" } }
+    {
+      "id": 7,
+      "name": "Laptop Pro",
+      "price": 1299.99,
+      "isActive": false,
+      "createdAt": "0001-01-01T00:00:00",
+      "category": { "id": 5, "name": "Electronics" }
+    }
   ],
   "queryString": null
 }
 ```
+
+> **Note:** A typed row is a whole `Product`, not a trimmed object. `selects` decides which members are read; the rest are still present, holding their defaults, and a selected reference navigation also carries its `Id`. Use `ToListDynamic` for a payload holding only the selected members.
 
 ---
 
@@ -1213,11 +1226,13 @@ The entire `Brands` collection is bound as-is.
   "pageCount": 2,
   "totalCount": 35,
   "data": [
-    { "id": 1, "name": "Adapter Cable", "price": 9.99 }
+    { "id": 1, "name": "Adapter Cable", "price": 9.99, "isActive": false, "createdAt": "0001-01-01T00:00:00" }
   ],
   "queryString": null
 }
 ```
+
+> **Note:** As in example 7, a typed row is a whole `Product`. `isActive` reads `false` because it was not selected, not because the row is inactive.
 
 ---
 
@@ -1545,7 +1560,8 @@ The injected term is `(field op value OR field IS NULL)` — here, `InstitutionI
 - The widened term is a disjunction, so it does not satisfy a `[DwRequireWhere]` on the same member. The caller must still filter on it.
 - The trace records the injection as `forced predicate (Equal, or null)`, naming the operator used. A dry run injects nothing, as for every forced predicate.
 - A runtime rule can carry it too: `ForcedPredicate.FromConstant` and `ForcedPredicate.FromContext` gain overloads taking `bool allowNull` (the four-argument ones mean `false`), and a stored rule writes `"allowNull": true` in its `forced` object, only when it is true. A rule is written without the type to hand, so on a member that can never be null it is not refused: it injects the comparison alone, which is the same predicate.
-- On a null check it is refused everywhere. `FromConstant` and `FromContext` throw `ArgumentException` for `allowNull: true` with `IsNull` or `IsNotNull` — "AllowNull widens a comparison, and a null check compares against nothing." — and a stored rule whose `forced` object pairs a null check with `"allowNull": true` is refused whether or not it also carries a `value` or `contextValue`. A null check ignores its value, so a widened `IsNotNull` would inject `(field IS NOT NULL OR field IS NULL)`: a scope that scopes nothing. Without the flag, a value handed to a null check is still ignored.
+- On a null check it is refused everywhere. `FromConstant` and `FromContext` throw `ArgumentException` for `allowNull: true` with `IsNull` or `IsNotNull` — "AllowNull widens a comparison, and a null check compares against nothing." — and a stored rule whose `forced` object pairs a null check with `"allowNull": true` is refused whether or not it also carries a `value` or `contextValue`. A null check ignores a constant, so a widened `IsNotNull` would inject `(field IS NOT NULL OR field IS NULL)`: a scope that scopes nothing. Without the flag, `FromConstant` still accepts a null check and ignores its value.
+- A null check never reads the context. `FromContext` throws `ArgumentException` for `IsNull` or `IsNotNull`, whatever `allowNull` says; without the flag the message is "'IsNull' compares against nothing, so it reads no context value; build it with FromNullCheck." A stored rule whose `forced` object pairs a null check with `contextValue` is refused when it is read, as `[DwForceWhere]` already refused a `ContextValue` on a null check. Fixed in 3.1.0: the factory used to accept it, and the key was still required. A caller without the key was refused with `MissingContextValue`, and a caller with it had the value added to a null check that validation refuses (`ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues`), so every guarded query on the type failed. Build a null check with `FromNullCheck`.
 
 ### Default order
 
@@ -1574,6 +1590,8 @@ It is never applied:
 - to a `Summary`, or by the composable `Where`, `Select`, `Order` or `Group`.
 
 Nothing is ordered that the type's own `[DwEntity]` did not declare, and a default is never a reason for the library to refuse a query. An entry naming a field the type does not have, one that is not a field optionally followed by a direction, or one the core refuses to order by — a path ending on a collection of entities, such as `Tags` — is skipped. A path through a collection to a value, such as `Tags.Value`, is kept and sorted by its smallest value ascending or its largest descending. A field this caller may not order by is left out, in either tier, and never refused: the caller did not send it, and ordering by it would rank rows by a value they may not see. In a `Segment`, a field this caller may not use in a segment is left out as well, since a segment refuses it in any clause; a filter still orders by it. The trace records a `Dropped` decision for `Order` whose reason starts `left out of the default order`; a dry run keeps the field and still records the decision. A caller whose own orders were all dropped under `Convenience` sent orders, and gets no default in their place. The startup check reports every entry a query would skip or leave out.
+
+A field the default keeps is a use of that field. One audited for `Order`, by `[DwAudit]` or a rule, is recorded as a use, `Effect` `Allow`, each time a guarded query orders by it, as a caller's own order is. A field the default leaves out is not recorded: the query does not order by it, and the caller never named it. A dry run keeps the field, so it records it, with its `Order` effect (`Deny` for a field the caller may not order by) and `DryRun` true. See [Auditing](#auditing).
 
 `[DwEntity]` allows one attribute per type, and .NET attribute inheritance gives a derived type its own when it declares one: the base type's attribute is replaced, not merged. A subclass that declares `[DwEntity(DefaultOrder = "Id")]` loses its base type's `RequirePolicy`, and one that declares `[DwEntity(RequirePolicy = true)]` loses the base type's `DefaultOrder`. Repeat both on the derived type.
 
@@ -1621,14 +1639,14 @@ The trace names the fields a policy dropped, the attribute or rule that sealed e
 
 ### Auditing
 
-`[DwAudit(features)]` records every use of a field, whatever the policy decided, as a `DwAuditEvent` in the caller's context (`DwPolicyContext.PendingAuditEvents`). Nothing is stored until the buffer is drained to an `IDwAuditSink`, by `DwPolicy.DrainAuditAsync(context, sink)` or, per request, by the ASP.NET Core middleware `app.UseDwPolicyAudit()`. A buffer already holding `DwCaps.MaxAuditEvents` refuses the next audited use with `CapExceeded`.
+`[DwAudit(features)]` records every use of a field, whatever the policy decided, as a `DwAuditEvent` in the caller's context (`DwPolicyContext.PendingAuditEvents`). A use is a field the request names, or, since 3.1.0, a field of the type's [default order](#default-order) that the query orders by: audited for `Order`, it is recorded each time, as a caller's own order is. A default field left out for this caller is not recorded, because the query does not order by it and the caller never named it. Nothing is stored until the buffer is drained to an `IDwAuditSink`, by `DwPolicy.DrainAuditAsync(context, sink)` or, per request, by the ASP.NET Core middleware `app.UseDwPolicyAudit()`. A buffer already holding `DwCaps.MaxAuditEvents` refuses the next audited use with `CapExceeded`.
 
 A log of uses never shows a caller probing for columns they may not read: every guess is refused, so nothing was used. `DwPolicyOptions.AuditRefusals` (`bool`, default `false`, new in 3.1.0) records the refusals too. When it is on, every `PolicyException` raised by a guarded entry point of `PolicyQueryable<T>` — terminal or composable — and `ApplyPolicy(context)`'s refusal of an unprepared context are written to the same buffer and drain the same way:
 
 | `DwAuditEvent` | On a refusal |
 |---|---|
 | `EntityType` | The type's full name |
-| `FieldPath` | The field the refusal was about, by its canonical path in both tiers: the path an alias stands for, and under `Strict` the real field although the caller's refusal said `"*"`. A name that matches nothing is recorded as the caller sent it. `"*"` for a refusal of the whole request, such as `QueryStringDenied` or `PolicyContextNotPrepared`; `MissingContextValue` names the scoped field. At most 256 characters are kept, followed by `…`, and every control character is written as `\u` and four hex digits — a line feed as `\u000a` — so a name the caller invented cannot forge a second line in a log |
+| `FieldPath` | The field the refusal was about, by its canonical path in both tiers: the path an alias stands for, and under `Strict` the real field although the caller's refusal said `"*"`. A name that matches nothing is recorded as the caller sent it. `"*"` for a refusal of the whole request, such as `QueryStringDenied` or `PolicyContextNotPrepared`; `MissingContextValue` names the scoped field. At most 256 characters are kept, followed by `…`. Then every character in Unicode category Control (Cc), Format (Cf), Line Separator (Zl) or Paragraph Separator (Zp) is written as `\u` and four lowercase hex digits — a line feed as `\u000a`, U+2028 as `\u2028`, U+202E as `\u202e` — and a character outside the Basic Multilingual Plane is judged whole, with both halves of its surrogate pair escaped. A name the caller invented therefore cannot forge a second line in a log, or reverse the text after it |
 | `Feature` | The refused feature |
 | `Effect` | `Deny` |
 | `Subjects`, `Purpose`, `Tier` | The caller's subjects and purpose, and the tier in force |
@@ -2041,7 +2059,7 @@ bool isFull = CacheExpose.IsCacheFull(CacheMemoryType.TypeProperties);
 
 ## Error Codes Reference
 
-All validation errors throw `LogicException` (inherits `Exception`) with one of the following messages:
+All validation errors throw `LogicException` (inherits `Exception`) with one of the following messages. Every message is a fixed code but one, the sentence in the last row:
 
 | Error Code | Message | When |
 |------------|---------|------|
@@ -2059,7 +2077,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `InvalidPageSize` | `PageSizeMustBeGreaterThanZero` | PageSize ≤ 0 |
 | `MustHaveFields` | `MustHasFields` | Empty fields list in Select |
 | `InvalidFormat` | `InvalidFormat` | Value doesn't parse for declared DataType. For a date: not ISO 8601, year-first, or a declared format |
-| `AmbiguousDateFormat` | `AmbiguousDateFormat` | A date value that leads with a day or a month (`01/09/2026`) and matches no declared format. `LogicException.Subject` carries the field, as the caller wrote it |
+| `AmbiguousDateFormat` | `AmbiguousDateFormat` | A date value that leads with a day or a month (`01/09/2026`) and matches no declared format, or one two accepted formats read differently. `LogicException.Subject` carries the field: its path, and under `ApplyPolicy` the name the caller wrote |
 | `SelectTypeMustHaveParameterlessConstructor` | `SelectTypeMustHaveParameterlessConstructor` | `Select<T>` or `Filter.Selects` on a `T` the projection cannot construct. `LogicException.Subject` carries the type's name, `typeof(T).Name` |
 | `InvalidAlias` | `AggregationMustHasValidAlias` | Alias is not a plain identifier — empty, or carrying a dot, comma, space, or dash |
 | `GroupByMustHaveFields` | `GroupByMustHasAtLeastOneField` | GroupBy with no fields |
@@ -2074,6 +2092,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `SummaryOrderFieldMustExistInGroupByOrAggregate(f)` | `SummaryOrderField[{f}]MustExistInGroupByFieldsOrAggregateByAliases` | Order on non-grouped field |
 | `HavingFieldMustExistInAggregateByAlias(f)` | `HavingField[{f}]MustExistInAggregateByAliases` | Having references unknown alias |
 | `OrderFieldCannotEndOnComplexCollection(f)` | `OrderField[{f}]CannotEndOnCollectionOfComplexElements` | Order path ends on a collection of entities |
+| — | `Unsupported combination of DataType '{type}' and Operator '{op}'.` | A `DataType` and `Operator` pair the predicate builder does not support, such as `Guid` with `GreaterThan`. Raised when the predicate is built, after the value checks have passed |
 
 ---
 
@@ -2085,12 +2104,12 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
    `Select<T>(fields)` requires `T` to have a parameterless (default) constructor. If `T` does not have one — a positional record, most often — a `LogicException` is thrown whose `Message` is the stable code `SelectTypeMustHaveParameterlessConstructor` and whose `Subject` carries `typeof(T).Name`. Before 3.1.0 that message was an English sentence with the type name inside it. Most EF Core entity classes have parameterless constructors by default. A guarded query reaches the same refusal when a member carries `[DwNoSelect]`, because deny-select projects.
 
 2. **Segment Operations are Async-Only**
-   `ToListAsync<T>(Segment)` is the only entry point for segment queries. There is no synchronous `ToList<T>(Segment)` variant. The condition sets are combined into one query that the database orders and pages; the provider has to translate a correlated `EXISTS`. Under `ApplyPolicy`, `DwCaps.MaxConditionSets` (default 10) bounds how many sets one request may carry.
+   `ToListAsync<T>(Segment)` is the only entry point for segment queries. There is no synchronous `ToList<T>(Segment)` variant. The condition sets are combined into one query that the database orders and pages. `Union` and `Intersect` combine the sets' conditions; only `Except` on a type with a primary key needs a provider that translates a correlated `EXISTS`. Under `ApplyPolicy`, `DwCaps.MaxConditionSets` (default 10) bounds how many sets one request may carry.
 
-   Until 3.1.0 each set was loaded into a list and the lists were combined in memory by object reference. With `AsNoTracking()`, with `Selects`, and under `ApplyPolicy` (always untracked), `Intersect` returned nothing, `Except` removed nothing and `Union` counted a row once per set; ordering ran after projection, and every row of every set was read. Untracked, projected and guarded segments now return the rows their sets describe, a tracking query without `Selects` returns the same rows as before, and sorting follows the database's collation instead of .NET string comparison. A type with no primary key uses SQL `UNION` / `INTERSECT` / `EXCEPT`, which needs every column to be comparable.
+   Until 3.1.0 each set was loaded into a list and the lists were combined in memory by object reference. With `AsNoTracking()`, with `Selects`, and under `ApplyPolicy` (always untracked), `Intersect` returned nothing, `Except` removed nothing and `Union` counted a row once per set; ordering ran after projection, and every row of every set was read. Untracked, projected and guarded segments now return the rows their sets describe, a tracking query without `Selects` returns the same rows as before, and sorting follows the database's collation instead of .NET string comparison. A type with no primary key uses SQL `UNION` / `INTERSECT` / `EXCEPT`, which needs every column to be comparable and a provider that supports the operators the request uses.
 
-3. **Date Values are Read with the Invariant Culture**
-   Since 3.1.0 a date value must be ISO 8601, year-first, or a format the deployment declared through `DwDates.Configure`. The server's culture used to decide: `01/09/2026` was 1 September on a day-first server and 9 January on another. It is now refused with `AmbiguousDateFormat` unless the order is declared, and forms the lenient parser used to accept — `12:00` as today at noon — are `InvalidFormat`. A deployment that sent culture-formatted dates either switches its clients to ISO 8601 or declares the format once at startup. In exchange, a filter means one thing on every server, `DateTimeOffset` and `DateOnly` columns work, and a `DateTimeOffset` value is normalised to UTC.
+3. **Date Values Are ISO 8601, Year-First, or a Declared Format**
+   Since 3.1.0 a date value must be ISO 8601, year-first, or a format the deployment declared through `DwDates.Configure`. The server's culture used to decide: `01/09/2026` was 1 September on a day-first server and 9 January on another. It is now refused with `AmbiguousDateFormat` unless the order is declared, and forms the lenient parser used to accept — `12:00` as today at noon — are `InvalidFormat`. A deployment that sent culture-formatted dates either switches its clients to ISO 8601 or declares the format once at startup. In exchange, a filter no longer depends on the server's culture or calendar, `DateTimeOffset` and `DateOnly` columns work, and a `DateTimeOffset` value is normalised to UTC. A zoned value on a `DateTime` member still converts to the host's local time, and a declared format that writes its zone as a quoted literal can disagree with ISO 8601 on a host that is not on UTC — see [How the two date types compare](#how-the-two-date-types-compare).
 
 4. **Case-Insensitive Operators use `.ToLower()`**
    All `I*` operators (e.g., `IContains`, `IEqual`) normalize both sides via `.ToLower()`. This works correctly with SQL Server (`COLLATE` is typically case-insensitive), but be aware of potential performance or behavior differences on case-sensitive database collations (e.g., PostgreSQL with `C` locale).
@@ -2124,7 +2143,9 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
     - **Mixed whole-navigation + sub-field paths**: when both `"Category"` and `"Category.Name"` are requested, the sub-field projection takes precedence and `"Category"` is silently dropped.
 
 12. **All Filter Extensions Apply Order and Page Before the Select Projection**
-    All Filter extensions — both typed (`Filter<T>`, `ToList<T>(Filter)`, `ToListAsync<T>(Filter)`) and dynamic (`FilterDynamic<T>`, `ToListDynamic<T>`, `ToListAsyncDynamic<T>`) — apply ordering and pagination on the typed `IQueryable<T>` **before** the select projection. This ensures that field names referenced in `orders` always resolve against the original entity type `T`, regardless of which fields are projected.
+    All Filter extensions — both typed (`Filter<T>`, `ToList<T>(Filter)`, `ToListAsync<T>(Filter)`, and `ToListAsync<T>(Segment)` since 3.1.0) and dynamic (`FilterDynamic<T>`, `ToListDynamic<T>`, `ToListAsyncDynamic<T>`) — apply ordering and pagination on the typed `IQueryable<T>` **before** the select projection. This ensures that field names referenced in `orders` always resolve against the original entity type `T`, regardless of which fields are projected.
+
+    Changed in 3.1.0: `PageCount` on an unpaged result is `1`, the one page the whole result occupies, and `0` when nothing matched, on filter, summary and segment results alike. It used to equal `TotalCount` for a filter or summary — one page per row — and to be `0` for a segment with condition sets. A client that draws page links from `PageCount` drew one link per row on every unpaged endpoint and now draws one.
 
 13. **Condition Values Become Escaped Literals, Not Query Parameters**
     A condition's `Values` are written into the generated dynamic LINQ expression as string literals. Since **2.1.4** they are escaped first — a backslash is doubled and a double quote is backslash-escaped — so any value matches literally, `\` and `"` included, and a value can no longer break out of its literal to alter the predicate. Before 2.1.4 a value ending in `\` threw `ParseException: ')' or ',' expected`, and a crafted value could append predicate logic of its own.
@@ -2138,8 +2159,12 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 15. **Members Named `Root`, `It` or `Parent` Are Ordinary Names**
     System.Linq.Dynamic.Core treats `it`, `root` and `parent` as keywords, in any case. Before 3.1.0 the library parsed with them on, so a navigation named `Root` or `It` was read as the row itself — `Root.Name` filtered, sorted, grouped, aggregated and projected the row's own `Name` — a navigation named `Parent` threw `ParseException`, and an `AggregateBy.Alias` named `root`, `it` or `parent` failed in `Having` and `Summary.Orders`. Under `ApplyPolicy` the gate decided on the path the caller named while the query read the row's own column: a dynamic projection of `Root.Name` returned a `[DwDenied]` `Name`, a filter on it tested the denied column, and a `[DwForceWhere]` scope reached through such a navigation filtered the row's own column. Every expression is now parsed with a configuration of the library's own, with the keywords off. `ParsingConfig.Default` is no longer read, so a host's changes to it do not reach DynamicWhere queries.
 
-16. **`MaxConditionDepth` and `MaxConditionSets` Refuse Guarded Requests 3.0 Ran**
+    With the context keywords off, `it`, `root` and `parent` name members like any other identifier. The parser still reserves its functions and literals — `new`, `iif`, `np`, `isnull`, `is`, `as`, `cast`, `true`, `false` and `null`, in any case — as the first segment of a path. A condition on a member of the queried type with one of those names throws, and a condition on a member named `Null` matches no rows without an error.
+
+16. **`MaxConditionDepth`, `MaxConditionSets` and an Unprepared Context Refuse Guarded Requests 3.0 Ran**
     Two caps new in 3.1.0 bound the shape of a guarded request. `DwCaps.MaxConditionDepth` bounds how deeply condition groups nest: the top group counts as one, each level of `SubConditionGroups` adds one, and the count is taken on the caller's groups before forced predicates are injected. `DwCaps.MaxConditionSets` bounds how many condition sets one `Segment` sends, empty sets included. Both default to 10, so a guarded request 3.0.0 ran with groups nested eleven levels deep, or a segment with eleven or more sets, is now refused with `PolicyException` `CapExceeded` — `SourceOrigin` `"MaxConditionDepth cap (10), request had 11"` or `"MaxConditionSets cap (10), request had 11"` — unless the deployment raises the cap. Both refuse a value below 1, freeze with the posture, and bind from `Caps:MaxConditionDepth` and `Caps:MaxConditionSets`. Only `ApplyPolicy` enforces them: an unguarded query is not affected.
+
+    A guarded query also requires a prepared context since 3.1.0. `ApplyPolicy(context)` throws `PolicyException` `PolicyContextNotPrepared` for a context that never went through `DwPolicy.PrepareAsync`, whether or not a store is configured. Only a store provider used to refuse one, so an attributes-only deployment ran such queries and would have started refusing the day it gained a store. `DwPolicyContext.IsPrepared` reports it, and the overload taking explicit options and a resolver does not check. See [The shape](#the-shape).
 
 17. **The Strict Tier Keeps the Policy Trace Off Results**
     Before 3.1.0 every guarded terminal put its `PolicyTrace` on `FilterResult<T>.Policy`, `SummaryResult.Policy` or `SegmentResult<T>.Policy`, in both tiers. The trace names the fields a policy dropped, the attribute or rule that sealed each one, and every injected predicate — the detail the strict tier already refuses through `getQueryString` — and an API that serializes its result sends all of it to the caller. Under `DwTier.Strict`, `Policy` is now null unless `DwPolicyOptions.IncludeTraceInResult` is `true`; under `Convenience` it is still carried unless the option is `false`. `PolicyQueryable<T>.LastTrace` still holds the trace, so a strict deployment that read `result.Policy` reads `LastTrace` instead, or sets `IncludeTraceInResult = true`. See [Results and the trace](#results-and-the-trace).

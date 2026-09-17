@@ -59,8 +59,10 @@ export default function Page() {
           <code>GroupByFieldCannotBeComplexType</code>.
         </li>
         <li>
-          Fields cannot be collection types —{" "}
-          <code>GroupByFieldCannotBeCollectionType</code>.
+          Fields cannot be a collection of collections —{" "}
+          <code>GroupByFieldCannotBeCollectionType</code>. A path ending on a
+          collection is checked by its element type, so a collection of entities
+          fails the rule above and a <code>List&lt;string&gt;</code> passes.
         </li>
         <li>
           Aggregation alias must be an identifier — a letter or{" "}
@@ -81,8 +83,9 @@ export default function Page() {
           <code>AggregationFieldMustBeSimpleType</code>.
         </li>
         <li>
-          Aggregation field cannot be a collection —{" "}
-          <code>AggregationFieldCannotBeCollectionType</code>.
+          Aggregation field cannot be a collection of collections —{" "}
+          <code>AggregationFieldCannotBeCollectionType</code>. As for a group
+          field, a collection is checked by its element type.
         </li>
         <li>
           <code>Sumation</code> / <code>Average</code> only work on numeric

@@ -87,7 +87,8 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     }
 
     /// <summary>
-    /// When this provider last loaded the store successfully, by its own clock.
+    /// When this provider last loaded the store successfully, or last confirmed with a poll that the
+    /// store still holds the version it serves, by its own clock.
     /// </summary>
     /// <remarks>
     /// The provider's clock, not the store's. A store clock running ahead would make every snapshot
@@ -115,7 +116,8 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     /// </summary>
     /// <remarks>
     /// Kept so a health endpoint can say why an instance is degraded rather than only that it is.
-    /// Cleared by a refresh that succeeds, so it never outlives the condition it describes.
+    /// Cleared by a refresh that succeeds, or by a poll that confirms the version served, so it never
+    /// outlives the condition it describes.
     /// </remarks>
     public Exception? LastError
     {
@@ -185,13 +187,19 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     /// </summary>
     /// <param name="context">The caller's context, built once per request.</param>
     /// <param name="ct">Cancels the narrow load.</param>
-    /// <returns>The same context, prepared, for chaining.</returns>
+    /// <returns>The same context, with this provider's snapshot pinned, for chaining.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="context"/> is null.</exception>
     /// <remarks>
+    /// This pins and reads; it does not mark the context prepared, so <c>ApplyPolicy(context)</c> still
+    /// refuses it. Prepare a context through <see cref="DwPolicy.PrepareAsync"/>, which calls this
+    /// for every configured store.
+    /// <para>
     /// Call this before the context's first query. Everything downstream then resolves synchronously
     /// against what was read here, and every query made with this context sees one coherent version.
+    /// </para>
     /// <para>
-    /// A narrow load failure is not caught. There is no safe way to continue: an empty narrow zone
+    /// A narrow load failure is not caught, whatever <c>StoreFailure</c> says, and neither is a
+    /// user-level rule the store cannot read. There is no safe way to continue: an empty narrow zone
     /// is a real answer meaning "this caller has no user rules", so substituting one for a failed
     /// read would drop a denial written for exactly this caller.
     /// </para>

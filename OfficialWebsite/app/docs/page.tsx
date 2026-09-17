@@ -89,6 +89,7 @@ export default function Page() {
       <Code lang="csharp">{`using DynamicWhere.ex.Source;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
+using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Enums;
 
 var filter = new Filter

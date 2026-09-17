@@ -67,8 +67,12 @@ export default function Page() {
         <code>IsNull</code> or <code>IsNotNull</code>, which compare against
         nothing: a widened <code>IsNotNull</code> would inject{" "}
         <code>(field IS NOT NULL OR field IS NULL)</code>, a scope that scopes
-        nothing. Without the flag, a value handed to a null check is ignored, as
-        before.
+        nothing. Without the flag, a constant handed to <code>FromConstant</code>{" "}
+        with a null check is ignored, as before. A context key is not:{" "}
+        <code>FromContext</code>, both overloads, throws{" "}
+        <code>ArgumentException</code> for <code>IsNull</code> and{" "}
+        <code>IsNotNull</code>, which read no context value. Build a null check
+        with <code>FromNullCheck</code>.
       </p>
       <Code lang="csharp">{`// Every caller sees their own institution's roles, and the roles no institution owns.
 var scope = new PolicyRule(
@@ -91,6 +95,16 @@ var scope = new PolicyRule(
         stored rule writes the flag is on{" "}
         <Link href="/docs/policies/providers#serialization">Store providers</Link>.
       </p>
+      <Callout tone="warn" title="Fixed in 3.1.0: a null check built from a context key never worked">
+        <code>FromContext</code> used to accept <code>IsNull</code> and{" "}
+        <code>IsNotNull</code>. The key was still required, so a caller without it
+        was refused with <code>MissingContextValue</code>. A caller with it had the
+        value added to the null check, which validation refuses with{" "}
+        <code>ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues</code>, so
+        every guarded query on the type failed. The factory now refuses the
+        predicate where it is built, as <code>[DwForceWhere]</code> already refused
+        a <code>ContextValue</code> on a null check.
+      </Callout>
 
       <h2 id="zones">Two zones</h2>
       <table>

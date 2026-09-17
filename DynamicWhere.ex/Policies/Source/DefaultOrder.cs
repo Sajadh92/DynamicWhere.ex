@@ -5,12 +5,11 @@ using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Policies.Attributes;
-using DynamicWhere.ex.Policies.Source;
 
-namespace DynamicWhere.ex.Source;
+namespace DynamicWhere.ex.Policies.Source;
 
 /// <summary>
-/// The order a type declares for a query whose caller sends none:
+/// The order a type declares for a guarded query whose caller sends none:
 /// <see cref="DwEntityAttribute.DefaultOrder"/>.
 /// </summary>
 /// <remarks>
@@ -19,9 +18,9 @@ namespace DynamicWhere.ex.Source;
 /// default can make a query stable but can never make one fail; <c>PolicyModelValidator</c> reports
 /// both at startup.
 /// <para>
-/// Under a policy the sanitizer decides the default instead, because a default field the caller may
-/// not order by must be left out, and ordering by it anyway would rank rows by a value the caller is
-/// not allowed to see. So the core never applies one while a policy scope is active.
+/// Only the sanitizer applies one, and only with the fields this caller may order by: ordering by any
+/// other would rank rows by a value the caller is not allowed to see. The core never reads the
+/// declaration, so an unguarded query is ordered only as its caller asks.
 /// </para>
 /// </remarks>
 internal static class DefaultOrder
@@ -47,26 +46,6 @@ internal static class DefaultOrder
     /// <summary>The usable entries a type declares, or none.</summary>
     internal static IReadOnlyList<Entry> For(Type type) => Declared.GetOrAdd(type, Read);
 
-    /// <summary>
-    /// Orders a query by its type's declared default, unless a policy is deciding the order, the query
-    /// is already ordered, or the type declares none.
-    /// </summary>
-    /// <remarks>
-    /// A query ordered before it reached the library — <c>db.Products.OrderBy(p => p.Name).ToList(filter)</c>
-    /// — keeps that order, as it always did.
-    /// </remarks>
-    internal static IQueryable<T> Apply<T>(IQueryable<T> query) where T : class
-    {
-        if (PolicyScope.Current is not null || IsOrdered(query.Expression))
-        {
-            return query;
-        }
-
-        IReadOnlyList<Entry> entries = For(typeof(T));
-
-        return entries.Count == 0 ? query : query.Order(ToOrders(entries));
-    }
-
     /// <summary>The entries as the order clauses a caller would have sent.</summary>
     internal static List<OrderBy> ToOrders(IEnumerable<Entry> entries) =>
         entries.Select((entry, index) => new OrderBy { Sort = index, Field = entry.Field, Direction = entry.Direction })
@@ -77,8 +56,9 @@ internal static class DefaultOrder
     /// </summary>
     /// <remarks>
     /// Walks the source argument of each call, which is where a composed query keeps what came before
-    /// it: <c>Order(...).Where(...).Page(...)</c> is still ordered when it reaches the page. A default
-    /// applied to such a query would replace the order the caller chose.
+    /// it: <c>Order(...).Where(...).Page(...)</c> is still ordered when it reaches the page, and so is
+    /// <c>db.Products.OrderBy(p => p.Name)</c> guarded afterwards. A default applied to such a query
+    /// would replace the order the caller chose.
     /// </remarks>
     internal static bool IsOrdered(Expression expression)
     {

@@ -24,22 +24,26 @@ public sealed class DwEntityAttribute : Attribute
     public bool RequirePolicy { get; set; }
 
     /// <summary>
-    /// The order applied when a caller sends none, such as <c>"CreatedAt desc, Id"</c>.
+    /// The order a guarded query takes when its caller sends none, such as <c>"CreatedAt desc, Id"</c>.
     /// </summary>
     /// <remarks>
     /// Comma-separated fields, each optionally followed by <c>asc</c> or <c>desc</c> in any letter case;
-    /// ascending when neither is written. It applies to guarded and unguarded queries alike, through
-    /// <c>ToList</c> and <c>ToListAsync</c> with a <c>Filter</c> or a <c>Segment</c>, the composable
-    /// <c>Filter</c> and <c>FilterDynamic</c>, and <c>Page</c> on a query nothing has ordered. A caller
-    /// who sends orders gets exactly those; the default is not appended to them. End it with a unique
-    /// field, such as the key, or rows sharing the leading values can still change places between
-    /// pages.
+    /// ascending when neither is written. It applies only to a query guarded by <c>ApplyPolicy</c>:
+    /// <c>ToList</c>, <c>ToListAsync</c>, <c>ToListDynamic</c> and <c>ToListAsyncDynamic</c> with a
+    /// <c>Filter</c>, <c>ToListAsync</c> with a <c>Segment</c>, the composable <c>Filter</c> and
+    /// <c>FilterDynamic</c>, and <c>Page</c>. An unguarded query never reads it, and is ordered only as
+    /// its caller asks. A caller who sends orders gets exactly those; the default is never appended to
+    /// them. A query already ordered keeps that order, whether an <c>OrderBy</c> ordered it before
+    /// <c>ApplyPolicy</c> or a composed <c>Order</c> did. An in-memory sequence sorted before
+    /// <c>ApplyPolicy</c> is not recognised as ordered, because it reaches the policy as a query with no
+    /// <c>OrderBy</c> in it, so send its order with the filter. End the default with a unique field, such
+    /// as the key, or rows sharing the leading values can still change places between pages.
     /// <para>
     /// Nothing is ordered that this property does not name. An entry naming a field the type does not
     /// have, or one that is not a field and a direction, is skipped rather than refused, and
-    /// <c>PolicyModelValidator</c> reports it. Under a policy a field the caller may not order by is
-    /// left out as well, and the trace records it: ordering by it would rank rows by a value the caller
-    /// is not allowed to see. A field denied for ordering by its own attributes fails the startup scan.
+    /// <c>PolicyModelValidator</c> reports it. A field the caller may not order by is left out as well,
+    /// and the trace records it: ordering by it would rank rows by a value the caller is not allowed to
+    /// see. A field denied for ordering by its own attributes fails the startup scan.
     /// </para>
     /// </remarks>
     public string? DefaultOrder { get; set; }

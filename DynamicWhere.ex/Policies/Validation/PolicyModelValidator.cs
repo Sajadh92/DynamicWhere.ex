@@ -4,7 +4,7 @@ using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Masking;
-using DefaultOrder = DynamicWhere.ex.Source.DefaultOrder;
+using DynamicWhere.ex.Policies.Source;
 
 namespace DynamicWhere.ex.Policies.Validation;
 
@@ -111,10 +111,10 @@ public static class PolicyModelValidator
     }
 
     /// <summary>
-    /// Reports what a query would silently skip in <c>[DwEntity(DefaultOrder = ...)]</c>.
+    /// Reports what a guarded query would silently skip in <c>[DwEntity(DefaultOrder = ...)]</c>.
     /// </summary>
     /// <remarks>
-    /// A query never fails over a default order, so this scan is the only place a mistake in one is
+    /// A guarded query never fails over a default order, so this scan is the only place a mistake in one is
     /// said out loud. An entry that is not a field and a direction is an error, because the author
     /// meant something by it; a field the type does not have is a warning, because a model shared
     /// across types can name one on purpose; and a field the type's own attributes deny for ordering
@@ -129,12 +129,12 @@ public static class PolicyModelValidator
         {
             errors.Add(
                 $"{type.Name}: DefaultOrder entry '{entry}' is not a field optionally followed by asc or desc, "
-                + "so queries skip it.");
+                + "so guarded queries skip it.");
         }
 
         foreach (string field in unknown)
         {
-            warnings.Add($"{type.Name}: DefaultOrder names '{field}', which {type.Name} does not have, so queries skip it.");
+            warnings.Add($"{type.Name}: DefaultOrder names '{field}', which {type.Name} does not have, so guarded queries skip it.");
         }
 
         IReadOnlyList<DefaultOrder.Entry> entries = DefaultOrder.For(type);

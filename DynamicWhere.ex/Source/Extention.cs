@@ -361,13 +361,6 @@ public static class Extension
 
         page.Validate<T>();
 
-        // A page of an unordered query is whichever rows the provider returns first, so a query the
-        // caller has not ordered takes the type's declared default, where it declares one.
-        if (!DefaultOrder.IsOrdered(query.Expression))
-        {
-            query = DefaultOrder.Apply(query);
-        }
-
         // Skip the required number of items to reach the desired page,
         // and then take the specified number of items for the page.
         return query.Skip((page.PageNumber - 1) * page.PageSize).Take(page.PageSize);
@@ -403,8 +396,11 @@ public static class Extension
             query = query.Where(filter.ConditionGroup);
         }
 
-        // Apply the order-by criteria to the query, or the type's declared default when it sent none.
-        query = filter.Orders is { Count: > 0 } ? query.Order(filter.Orders) : DefaultOrder.Apply(query);
+        // Apply the order-by criteria to the query.
+        if (filter.Orders != null)
+        {
+            query = query.Order(filter.Orders);
+        }
 
         // Apply the pagination criteria to the query.
         if (filter.Page != null)
@@ -454,8 +450,11 @@ public static class Extension
             query = query.Where(filter.ConditionGroup);
         }
 
-        // Apply ordering on the typed query before projection, or the type's declared default.
-        query = filter.Orders is { Count: > 0 } ? query.Order(filter.Orders) : DefaultOrder.Apply(query);
+        // Apply ordering on the typed query before projection.
+        if (filter.Orders != null)
+        {
+            query = query.Order(filter.Orders);
+        }
 
         // Apply pagination on the typed query before projection.
         if (filter.Page != null)
@@ -507,8 +506,11 @@ public static class Extension
         // Create a new query to apply ordering and pagination.
         var newQuery = query;
 
-        // Apply the order-by criteria to the new query, or the type's declared default when it sent none.
-        newQuery = filter.Orders is { Count: > 0 } ? newQuery.Order(filter.Orders) : DefaultOrder.Apply(newQuery);
+        // Apply the order-by criteria to the new query.
+        if (filter.Orders != null)
+        {
+            newQuery = newQuery.Order(filter.Orders);
+        }
 
         // Initialize variables for pagination.
         int pageNumber = 0, pageSize = 0;
@@ -590,8 +592,11 @@ public static class Extension
         // Create a new query to apply ordering and pagination.
         IQueryable<T> newQuery = query;
 
-        // Apply the order-by criteria to the new query, or the type's declared default when it sent none.
-        newQuery = filter.Orders is { Count: > 0 } ? newQuery.Order(filter.Orders) : DefaultOrder.Apply(newQuery);
+        // Apply the order-by criteria to the new query.
+        if (filter.Orders != null)
+        {
+            newQuery = newQuery.Order(filter.Orders);
+        }
 
         // Initialize variables for pagination.
         int pageNumber = 0, pageSize = 0;
@@ -700,8 +705,11 @@ public static class Extension
         // Create a new query to apply ordering and pagination.
         var newQuery = query;
 
-        // Apply the order-by criteria to the new query, or the type's declared default when it sent none.
-        newQuery = filter.Orders is { Count: > 0 } ? newQuery.Order(filter.Orders) : DefaultOrder.Apply(newQuery);
+        // Apply the order-by criteria to the new query.
+        if (filter.Orders != null)
+        {
+            newQuery = newQuery.Order(filter.Orders);
+        }
 
         // Initialize variables for pagination.
         int pageNumber = 0, pageSize = 0;
@@ -783,8 +791,11 @@ public static class Extension
         // Create a new query to apply ordering and pagination.
         IQueryable<T> newQuery = query;
 
-        // Apply the order-by criteria to the new query, or the type's declared default when it sent none.
-        newQuery = filter.Orders is { Count: > 0 } ? newQuery.Order(filter.Orders) : DefaultOrder.Apply(newQuery);
+        // Apply the order-by criteria to the new query.
+        if (filter.Orders != null)
+        {
+            newQuery = newQuery.Order(filter.Orders);
+        }
 
         // Initialize variables for pagination.
         int pageNumber = 0, pageSize = 0;

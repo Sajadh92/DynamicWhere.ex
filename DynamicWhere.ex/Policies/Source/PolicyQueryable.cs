@@ -773,7 +773,7 @@ public sealed class PolicyQueryable<T> where T : class
     /// <summary>Sanitizes a whole filter and records the outcome.</summary>
     private Filter Sanitize(Filter filter, PolicyTrace trace)
     {
-        // A source the caller ordered before guarding it keeps that order, as it does unguarded.
+        // A source the caller ordered before guarding it keeps that order: a default would replace it.
         Filter sanitized = FilterSanitizer.Sanitize<T>(
             filter, _resolver, _context, _options, trace,
             applyDefaultOrder: !DefaultOrder.IsOrdered(_source.Expression));

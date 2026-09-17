@@ -74,15 +74,18 @@ public sealed class TicketContext : DbContext
 }
 
 /// <summary>
-/// <c>[DwEntity(DefaultOrder = ...)]</c>: the order a query takes when its caller sends none.
+/// <c>[DwEntity(DefaultOrder = ...)]</c>: the order a guarded query takes when its caller sends none.
 /// </summary>
 /// <remarks>
 /// Five tickets with priorities 1, 3, 2, 3, 1 and titles a to e, so the default <c>Priority desc, Id</c>
-/// reads 2, 4, 3, 1, 5 — neither insertion order nor either field alone.
+/// reads 2, 4, 3, 1, 5 — neither the order they were written in nor either field alone.
 /// </remarks>
 public sealed class DefaultOrderTests : IDisposable
 {
     private static readonly int[] ByDefault = { 2, 4, 3, 1, 5 };
+
+    /// <summary>The order the rows were written in, which SQLite returns when nothing orders them.</summary>
+    private static readonly int[] AsWritten = { 1, 2, 3, 4, 5 };
 
     private readonly SqliteConnection _connection;
     private readonly TicketContext _db;
@@ -120,120 +123,60 @@ public sealed class DefaultOrderTests : IDisposable
     private static OrderBy By(string field, Direction direction = Direction.Ascending) =>
         new() { Sort = 0, Field = field, Direction = direction };
 
+    private static Filter IdsOnly() => new() { Selects = new List<string> { "Id" } };
+
+    private static PageBy FirstTwo() => new() { PageNumber = 1, PageSize = 2 };
+
+    /// <summary>The urgent tickets, 2, 3 and 4, together with ticket 5.</summary>
+    private static Segment UrgentOrFive() => new()
+    {
+        ConditionSets =
+        {
+            new ConditionSet
+            {
+                Sort = 1,
+                ConditionGroup = new ConditionGroup
+                {
+                    Conditions = { new Condition { Field = "Priority", DataType = DataType.Number, Operator = Operator.GreaterThanOrEqual, Values = { 2 } } }
+                }
+            },
+            new ConditionSet
+            {
+                Sort = 2,
+                Intersection = Intersection.Union,
+                ConditionGroup = new ConditionGroup
+                {
+                    Conditions = { new Condition { Field = "Id", DataType = DataType.Number, Operator = Operator.Equal, Values = { 5 } } }
+                }
+            }
+        }
+    };
+
     // ------------------------------------------------------------------------------ unguarded
 
     [Fact]
-    public void An_unordered_request_takes_the_declared_default()
+    public async Task No_unguarded_terminal_reads_the_declaration()
     {
-        FilterResult<Ticket> result = _db.Tickets.ToList(new Filter());
+        // The declaration belongs to the policy layer: a plain query is ordered only as its caller asks.
+        FilterResult<Ticket> result = _db.Tickets.ToList(
+            new Filter { Page = new PageBy { PageNumber = 1, PageSize = 5 } }, getQueryString: true);
 
-        Assert.Equal(ByDefault, Ids(result.Data));
+        Assert.DoesNotContain("ORDER BY", result.QueryString!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(AsWritten, Ids(result.Data));
+        Assert.Equal(AsWritten, Ids((await _db.Tickets.ToListAsync(new Filter())).Data));
+        Assert.Equal(AsWritten, _db.Tickets.ToListDynamic(IdsOnly()).Data.Select(row => (int)row.Id));
+        Assert.Equal(AsWritten, (await _db.Tickets.ToListAsyncDynamic(IdsOnly())).Data.Select(row => (int)row.Id));
+        Assert.Equal(AsWritten, Ids(_db.Tickets.AsEnumerable().ToList(new Filter()).Data));
+        Assert.Equal(new[] { 2, 3, 4, 5 }, Ids((await _db.Tickets.ToListAsync(UrgentOrFive())).Data!));
     }
 
     [Fact]
-    public void A_caller_who_sends_orders_gets_exactly_those()
+    public void No_unguarded_composable_reads_the_declaration()
     {
-        // The default is not appended as a tiebreak: the caller's orders are the whole order.
-        Filter filter = new() { Orders = new List<OrderBy> { By("Title", Direction.Descending) } };
-
-        Assert.Equal(new[] { 5, 4, 3, 2, 1 }, Ids(_db.Tickets.ToList(filter).Data));
-    }
-
-    [Fact]
-    public void Pages_follow_the_default()
-    {
-        Assert.Equal(new[] { 2, 4 }, Ids(_db.Tickets.ToList(new Filter { Page = new PageBy { PageNumber = 1, PageSize = 2 } }).Data));
-        Assert.Equal(new[] { 3, 1 }, Ids(_db.Tickets.ToList(new Filter { Page = new PageBy { PageNumber = 2, PageSize = 2 } }).Data));
-    }
-
-    [Fact]
-    public async Task Every_filter_terminal_takes_the_default()
-    {
-        Assert.Equal(ByDefault, Ids((await _db.Tickets.ToListAsync(new Filter())).Data));
-        Assert.Equal(ByDefault, _db.Tickets.ToListDynamic(new Filter { Selects = new List<string> { "Id" } }).Data.Select(row => (int)row.Id));
-        Assert.Equal(
-            ByDefault,
-            (await _db.Tickets.ToListAsyncDynamic(new Filter { Selects = new List<string> { "Id" } })).Data.Select(row => (int)row.Id));
-        Assert.Equal(ByDefault, Ids(_db.Tickets.AsEnumerable().ToList(new Filter()).Data));
-    }
-
-    [Fact]
-    public void The_composable_filter_and_page_take_the_default()
-    {
-        Assert.Equal(ByDefault, Ids(_db.Tickets.Filter(new Filter()).ToList()));
-        Assert.Equal(new[] { 2, 4 }, Ids(_db.Tickets.Page(new PageBy { PageNumber = 1, PageSize = 2 }).ToList()));
-        Assert.Equal(
-            ByDefault,
-            _db.Tickets.FilterDynamic(new Filter { Selects = new List<string> { "Id" } }).ToDynamicList().Select(row => (int)row.Id));
-    }
-
-    [Fact]
-    public void A_query_the_caller_already_ordered_keeps_that_order()
-    {
-        // Ordered before it reached the library, and ordered by a composed clause before a page.
-        Assert.Equal(new[] { 1, 2, 3, 4, 5 }, Ids(_db.Tickets.OrderBy(t => t.Title).ToList(new Filter()).Data));
-        Assert.Equal(
-            new[] { 1, 2 },
-            Ids(_db.Tickets.Order(By("Title")).Page(new PageBy { PageNumber = 1, PageSize = 2 }).ToList()));
-        Assert.Equal(
-            new[] { 5, 4 },
-            Ids(_db.Tickets.Order(By("Id", Direction.Descending)).Where(t => t.Priority > 0).Page(new PageBy { PageNumber = 1, PageSize = 2 }).ToList()));
-    }
-
-    [Fact]
-    public async Task A_segment_takes_the_default()
-    {
-        Segment segment = new()
-        {
-            ConditionSets =
-            {
-                new ConditionSet
-                {
-                    Sort = 1,
-                    ConditionGroup = new ConditionGroup
-                    {
-                        Conditions = { new Condition { Field = "Priority", DataType = DataType.Number, Operator = Operator.GreaterThanOrEqual, Values = { 2 } } }
-                    }
-                },
-                new ConditionSet
-                {
-                    Sort = 2,
-                    Intersection = Intersection.Union,
-                    ConditionGroup = new ConditionGroup
-                    {
-                        Conditions = { new Condition { Field = "Id", DataType = DataType.Number, Operator = Operator.Equal, Values = { 5 } } }
-                    }
-                }
-            }
-        };
-
-        SegmentResult<Ticket> result = await _db.Tickets.ToListAsync(segment);
-
-        Assert.Equal(new[] { 2, 4, 3, 5 }, Ids(result.Data!));
-    }
-
-    [Fact]
-    public void A_type_that_declares_nothing_is_never_ordered_by_the_library()
-    {
-        string sql = _db.PlainTickets.ToList(new Filter { Page = new PageBy { PageNumber = 1, PageSize = 2 } }, getQueryString: true).QueryString!;
-
-        Assert.DoesNotContain("ORDER BY", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.False(DefaultOrder.IsOrdered(_db.PlainTickets.Filter(new Filter()).Expression));
-        Assert.False(DefaultOrder.IsOrdered(_db.PlainTickets.Page(new PageBy { PageNumber = 1, PageSize = 2 }).Expression));
-    }
-
-    [Fact]
-    public void Unknown_fields_and_unreadable_entries_are_skipped_and_reported_at_startup()
-    {
-        // "Missing desc" names nothing and "Id sideways" is not a direction; "priority DESC" and "id"
-        // still read, in any letter case, and the trailing comma says nothing at all.
-        Assert.Equal(ByDefault, _db.SloppyTickets.ToList(new Filter()).Data.Select(row => row.Id));
-
-        PolicyModelReport report = PolicyModelValidator.Inspect(new[] { typeof(SloppyTicket) });
-
-        Assert.Equal(new[] { "SloppyTicket: DefaultOrder entry 'Id sideways' is not a field optionally followed by asc or desc, so queries skip it." }, report.Errors);
-        Assert.Equal(new[] { "SloppyTicket: DefaultOrder names 'Missing', which SloppyTicket does not have, so queries skip it." }, report.Warnings);
-        Assert.Empty(PolicyModelValidator.Inspect(new[] { typeof(Ticket), typeof(PlainTicket) }).Errors);
+        Assert.False(DefaultOrder.IsOrdered(_db.Tickets.Filter(new Filter()).Expression));
+        Assert.False(DefaultOrder.IsOrdered(_db.Tickets.FilterDynamic(IdsOnly()).Expression));
+        Assert.False(DefaultOrder.IsOrdered(_db.Tickets.Page(FirstTwo()).Expression));
+        Assert.Equal(new[] { 1, 2 }, Ids(_db.Tickets.Page(FirstTwo()).ToList()));
     }
 
     // ------------------------------------------------------------------------------ guarded
@@ -249,6 +192,17 @@ public sealed class DefaultOrderTests : IDisposable
     private static FakePolicyProvider NoOrderingByPriority() =>
         new FakePolicyProvider().Add("Priority", PolicyFeature.Order, PolicyEffect.Deny, PolicyLevel.DynamicGlobal);
 
+    private PolicyQueryable<Ticket> Guarded(params IDwPolicyProvider[] more) =>
+        _db.Tickets.ApplyPolicy(Caller(), Options(), Resolver(more));
+
+    /// <summary>What follows the last ORDER BY in a query string, or nothing when it has none.</summary>
+    private static string OrderByClause(string sql)
+    {
+        int at = sql.LastIndexOf("ORDER BY", StringComparison.OrdinalIgnoreCase);
+
+        return at < 0 ? string.Empty : sql[at..];
+    }
+
     [Theory]
     [InlineData(DwTier.Convenience)]
     [InlineData(DwTier.Strict)]
@@ -257,6 +211,101 @@ public sealed class DefaultOrderTests : IDisposable
         FilterResult<Ticket> result = _db.Tickets.ApplyPolicy(Caller(), Options(tier), Resolver()).ToList(new Filter());
 
         Assert.Equal(ByDefault, Ids(result.Data));
+    }
+
+    [Fact]
+    public void A_caller_who_sends_orders_gets_exactly_those()
+    {
+        // The default is not appended as a tiebreak: the caller's orders are the whole order.
+        FilterResult<Ticket> result = Guarded().ToList(
+            new Filter { Orders = new List<OrderBy> { By("Title", Direction.Descending) } }, getQueryString: true);
+
+        Assert.Equal(new[] { 5, 4, 3, 2, 1 }, Ids(result.Data));
+        Assert.DoesNotContain("Priority", OrderByClause(result.QueryString!), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Pages_follow_the_default()
+    {
+        Assert.Equal(new[] { 2, 4 }, Ids(Guarded().ToList(new Filter { Page = FirstTwo() }).Data));
+        Assert.Equal(new[] { 3, 1 }, Ids(Guarded().ToList(new Filter { Page = new PageBy { PageNumber = 2, PageSize = 2 } }).Data));
+    }
+
+    [Fact]
+    public async Task Every_guarded_filter_terminal_takes_the_default()
+    {
+        Assert.Equal(ByDefault, Ids((await Guarded().ToListAsync(new Filter())).Data));
+        Assert.Equal(ByDefault, Guarded().ToListDynamic(IdsOnly()).Data.Select(row => (int)row.Id));
+        Assert.Equal(ByDefault, (await Guarded().ToListAsyncDynamic(IdsOnly())).Data.Select(row => (int)row.Id));
+    }
+
+    [Fact]
+    public void The_guarded_composable_filter_takes_the_default()
+    {
+        Assert.Equal(ByDefault, Ids(Guarded().Filter(new Filter()).AsUnguardedQueryable().ToList()));
+        Assert.Equal(ByDefault, Guarded().FilterDynamic(IdsOnly()).ToDynamicList().Select(row => (int)row.Id));
+    }
+
+    [Fact]
+    public void A_query_the_caller_already_ordered_keeps_that_order()
+    {
+        // Ordered before it was guarded, and ordered by a composed clause before a filter or a page.
+        Assert.Equal(
+            new[] { 5, 4, 3, 2, 1 },
+            Ids(_db.Tickets.OrderByDescending(t => t.Title).ApplyPolicy(Caller(), Options(), Resolver()).ToList(new Filter()).Data));
+        Assert.Equal(
+            new[] { 5, 4, 3, 2, 1 },
+            Ids(Guarded().Order(By("Title", Direction.Descending)).ToList(new Filter()).Data));
+        Assert.Equal(
+            new[] { 5, 4 },
+            Ids(Guarded()
+                .Order(By("Id", Direction.Descending))
+                .Where(new Condition { Field = "Priority", DataType = DataType.Number, Operator = Operator.GreaterThan, Values = { 0 } })
+                .Page(FirstTwo())
+                .AsUnguardedQueryable()
+                .ToList()));
+    }
+
+    [Fact]
+    public async Task A_guarded_segment_takes_the_default_unless_its_source_is_ordered()
+    {
+        SegmentResult<Ticket> result = await Guarded().ToListAsync(UrgentOrFive());
+        SegmentResult<Ticket> ordered = await _db.Tickets.OrderByDescending(t => t.Title)
+            .ApplyPolicy(Caller(), Options(), Resolver())
+            .ToListAsync(UrgentOrFive());
+
+        Assert.Equal(new[] { 2, 4, 3, 5 }, Ids(result.Data!));
+        Assert.Equal(new[] { 5, 4, 3, 2 }, Ids(ordered.Data!));
+    }
+
+    [Fact]
+    public void A_type_that_declares_nothing_is_never_ordered_by_the_library()
+    {
+        PolicyQueryable<PlainTicket> guarded = _db.PlainTickets.ApplyPolicy(Caller(), Options(), Resolver());
+
+        string sql = guarded.ToList(new Filter { Page = FirstTwo() }, getQueryString: true).QueryString!;
+
+        Assert.DoesNotContain("ORDER BY", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.False(DefaultOrder.IsOrdered(guarded.Filter(new Filter()).AsUnguardedQueryable().Expression));
+        Assert.False(DefaultOrder.IsOrdered(guarded.Page(FirstTwo()).AsUnguardedQueryable().Expression));
+    }
+
+    [Theory]
+    [InlineData(DwTier.Convenience)]
+    [InlineData(DwTier.Strict)]
+    public void Unknown_fields_and_unreadable_entries_are_skipped_and_reported_at_startup(DwTier tier)
+    {
+        // "Missing desc" names nothing and "Id sideways" is not a direction; "priority DESC" and "id"
+        // still read, in any letter case, and the trailing comma says nothing at all.
+        Assert.Equal(
+            ByDefault,
+            _db.SloppyTickets.ApplyPolicy(Caller(), Options(tier), Resolver()).ToList(new Filter()).Data.Select(row => row.Id));
+
+        PolicyModelReport report = PolicyModelValidator.Inspect(new[] { typeof(SloppyTicket) });
+
+        Assert.Equal(new[] { "SloppyTicket: DefaultOrder entry 'Id sideways' is not a field optionally followed by asc or desc, so guarded queries skip it." }, report.Errors);
+        Assert.Equal(new[] { "SloppyTicket: DefaultOrder names 'Missing', which SloppyTicket does not have, so guarded queries skip it." }, report.Warnings);
+        Assert.Empty(PolicyModelValidator.Inspect(new[] { typeof(Ticket), typeof(PlainTicket) }).Errors);
     }
 
     [Theory]
@@ -268,7 +317,7 @@ public sealed class DefaultOrderTests : IDisposable
 
         FilterResult<Ticket> result = guarded.ToList(new Filter());
 
-        Assert.Equal(new[] { 1, 2, 3, 4, 5 }, Ids(result.Data));
+        Assert.Equal(AsWritten, Ids(result.Data));
         Assert.Contains(
             guarded.LastTrace!.Decisions,
             decision => decision.FieldPath == "Priority"
@@ -277,14 +326,11 @@ public sealed class DefaultOrderTests : IDisposable
     }
 
     [Fact]
-    public void A_field_the_attributes_deny_is_left_out_under_a_policy_and_fails_the_startup_scan()
+    public void A_field_the_attributes_deny_is_left_out_and_fails_the_startup_scan()
     {
         Assert.Equal(
-            new[] { 1, 2, 3, 4, 5 },
+            AsWritten,
             _db.SecretTickets.ApplyPolicy(Caller(), Options(), Resolver()).ToList(new Filter()).Data.Select(row => row.Id));
-
-        // Unguarded, no policy applies, so the declared order is the order.
-        Assert.Equal(new[] { 2, 4, 3, 1, 5 }, _db.SecretTickets.ToList(new Filter()).Data.Select(row => row.Id));
 
         Assert.Contains(
             "SecretTicket: DefaultOrder names 'Secret', which its attributes deny for ordering, so every guarded query leaves it out.",
@@ -304,7 +350,7 @@ public sealed class DefaultOrderTests : IDisposable
     [Fact]
     public void A_caller_whose_orders_were_all_dropped_gets_no_default_in_their_place()
     {
-        PolicyQueryable<Ticket> guarded = _db.Tickets.ApplyPolicy(Caller(), Options(), Resolver(NoOrderingByPriority()));
+        PolicyQueryable<Ticket> guarded = Guarded(NoOrderingByPriority());
 
         FilterResult<Ticket> result = guarded.ToList(
             new Filter { Orders = new List<OrderBy> { By("Priority") } }, getQueryString: true);
@@ -316,40 +362,18 @@ public sealed class DefaultOrderTests : IDisposable
     [Fact]
     public void The_guarded_page_takes_the_default_only_when_nothing_ordered_the_query()
     {
-        PolicyQueryable<Ticket> guarded = _db.Tickets.ApplyPolicy(Caller(), Options(), Resolver());
-
-        Assert.Equal(new[] { 2, 4 }, Ids(guarded.Page(new PageBy { PageNumber = 1, PageSize = 2 }).AsUnguardedQueryable().ToList()));
-        Assert.Equal(
-            new[] { 1, 2 },
-            Ids(guarded.Order(By("Title")).Page(new PageBy { PageNumber = 1, PageSize = 2 }).AsUnguardedQueryable().ToList()));
-        Assert.Equal(
-            new[] { 1, 2 },
-            Ids(_db.Tickets.ApplyPolicy(Caller(), Options(), Resolver(NoOrderingByPriority()))
-                .Page(new PageBy { PageNumber = 1, PageSize = 2 }).AsUnguardedQueryable().ToList()));
+        Assert.Equal(new[] { 2, 4 }, Ids(Guarded().Page(FirstTwo()).AsUnguardedQueryable().ToList()));
+        Assert.Equal(new[] { 1, 2 }, Ids(Guarded().Order(By("Title")).Page(FirstTwo()).AsUnguardedQueryable().ToList()));
+        Assert.Equal(new[] { 1, 2 }, Ids(Guarded(NoOrderingByPriority()).Page(FirstTwo()).AsUnguardedQueryable().ToList()));
     }
 
     [Fact]
-    public async Task A_guarded_segment_takes_the_default_less_what_the_caller_may_not_order_by()
+    public async Task A_guarded_segment_leaves_out_what_the_caller_may_not_order_by()
     {
-        Segment segment = new()
-        {
-            ConditionSets =
-            {
-                new ConditionSet
-                {
-                    Sort = 1,
-                    ConditionGroup = new ConditionGroup
-                    {
-                        Conditions = { new Condition { Field = "Priority", DataType = DataType.Number, Operator = Operator.GreaterThanOrEqual, Values = { 1 } } }
-                    }
-                }
-            }
-        };
+        SegmentResult<Ticket> allowed = await Guarded().ToListAsync(UrgentOrFive());
+        SegmentResult<Ticket> denied = await Guarded(NoOrderingByPriority()).ToListAsync(UrgentOrFive());
 
-        SegmentResult<Ticket> allowed = await _db.Tickets.ApplyPolicy(Caller(), Options(), Resolver()).ToListAsync(segment);
-        SegmentResult<Ticket> denied = await _db.Tickets.ApplyPolicy(Caller(), Options(), Resolver(NoOrderingByPriority())).ToListAsync(segment);
-
-        Assert.Equal(ByDefault, Ids(allowed.Data!));
-        Assert.Equal(new[] { 1, 2, 3, 4, 5 }, Ids(denied.Data!));
+        Assert.Equal(new[] { 2, 4, 3, 5 }, Ids(allowed.Data!));
+        Assert.Equal(new[] { 2, 3, 4, 5 }, Ids(denied.Data!));
     }
 }

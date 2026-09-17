@@ -383,4 +383,19 @@ public sealed class ForcedAllowNullTests : IDisposable
         [DwForceWhere(Operator.Equal, Value = "5", ContextValue = "TenantId")]
         public int TenantId { get; set; }
     }
+
+    [Fact]
+    public void A_null_check_given_a_value_anyway_cannot_be_widened()
+    {
+        // A null check ignores its value, so AllowNull on one rendered (field IS NOT NULL OR field IS
+        // NULL): no filter at all, and a scope written that way silently scoped nothing.
+        Assert.Throws<ArgumentException>(
+            () => ForcedPredicate.FromConstant("InstitutionId", Operator.IsNotNull, DataType.Number, "0", allowNull: true));
+        Assert.Throws<ArgumentException>(
+            () => ForcedPredicate.FromContext("InstitutionId", Operator.IsNull, DataType.Number, "TenantId", allowNull: true));
+
+        // Without AllowNull the stray value is ignored, as it always was.
+        Assert.True(
+            ForcedPredicate.FromConstant("InstitutionId", Operator.IsNotNull, DataType.Number, "0", allowNull: false).IsNullCheck);
+    }
 }

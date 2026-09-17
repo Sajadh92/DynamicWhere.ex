@@ -77,6 +77,26 @@ public class ReachingTicket
     public List<TicketWatcher> Watchers { get; set; } = new();
 }
 
+/// <summary>A default whose leading field only a rule can open for ordering.</summary>
+[DwEntity(DefaultOrder = "Rank desc, Id")]
+public class GrantedTicket
+{
+    public int Id { get; set; }
+
+    [DwNoOrder(Overridable = true)]
+    public int Rank { get; set; }
+}
+
+/// <summary>A default whose leading field may not take part in a segment.</summary>
+[DwEntity(DefaultOrder = "Rank desc, Id")]
+public class UnsegmentedTicket
+{
+    public int Id { get; set; }
+
+    [DwDeny(PolicyFeature.Segment)]
+    public int Rank { get; set; }
+}
+
 /// <summary>A type that declares no default, and so is never ordered by one.</summary>
 public class PlainTicket
 {
@@ -428,5 +448,81 @@ public sealed class DefaultOrderTests : IDisposable
 
         Assert.Equal(new[] { 2, 4, 3, 5 }, Ids(allowed.Data!));
         Assert.Equal(new[] { 2, 3, 4, 5 }, Ids(denied.Data!));
+    }
+
+    // ---------------------------------------------------------------- found by the 3.1.0 review
+
+    [Fact]
+    public void A_projected_query_is_left_in_its_own_order()
+    {
+        // A default names fields a projection may not have kept: ordering Select(Id, Title) by Priority
+        // could not be translated, and the chain worked before the default existed.
+        PolicyQueryable<Ticket> projected = Guarded().Select(new List<string> { "Id", "Title" });
+
+        Assert.Equal(new[] { 1, 2 }, Ids(projected.Page(FirstTwo()).AsUnguardedQueryable().ToList()));
+        Assert.Equal(new[] { 1, 2 }, Ids(projected.ToList(new Filter { Page = FirstTwo() }).Data));
+    }
+
+    [Fact]
+    public void A_composed_order_whose_fields_were_all_dropped_gets_no_default()
+    {
+        // The whole filter gives a caller whose orders were all dropped no default in their place, and
+        // so does a chain: Order sent orders, whether or not any of them survived.
+        PolicyQueryable<Ticket> ordered = Guarded(
+                new FakePolicyProvider().Add("Title", PolicyFeature.Order, PolicyEffect.Deny, PolicyLevel.DynamicGlobal))
+            .Order(By("Title"));
+
+        Assert.False(DefaultOrder.IsOrdered(ordered.Page(FirstTwo()).AsUnguardedQueryable().Expression));
+        Assert.DoesNotContain(
+            "ORDER BY", ordered.ToList(new Filter(), getQueryString: true).QueryString!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A_segment_leaves_out_a_default_field_denied_for_segments()
+    {
+        // A segment refuses an order the caller sends on a field denied for segments, so its default
+        // leaves that field out as well. A filter, which may order by it, still takes it.
+        PolicyQueryable<Ticket> guarded = Guarded(
+            new FakePolicyProvider().Add("Priority", PolicyFeature.Segment, PolicyEffect.Deny, PolicyLevel.DynamicGlobal));
+
+        Segment everyone = new()
+        {
+            ConditionSets =
+            {
+                new ConditionSet
+                {
+                    Sort = 1,
+                    ConditionGroup = new ConditionGroup
+                    {
+                        Conditions = { new Condition { Field = "Id", DataType = DataType.Number, Operator = Operator.GreaterThanOrEqual, Values = { 1 } } }
+                    }
+                }
+            }
+        };
+
+        Assert.Equal(AsWritten, Ids((await guarded.ToListAsync(everyone)).Data!));
+        Assert.Contains(
+            guarded.LastTrace!.Decisions,
+            decision => decision.FieldPath == "Priority"
+                        && decision.Action == PolicyAction.Dropped
+                        && decision.Reason!.StartsWith("left out of the default order", StringComparison.Ordinal));
+        Assert.Equal(ByDefault, Ids(guarded.ToList(new Filter()).Data));
+    }
+
+    [Fact]
+    public void A_denial_a_rule_can_lift_is_a_warning_and_so_is_one_for_segments()
+    {
+        PolicyModelReport granted = PolicyModelValidator.Inspect(new[] { typeof(GrantedTicket) });
+        PolicyModelReport unsegmented = PolicyModelValidator.Inspect(new[] { typeof(UnsegmentedTicket) });
+
+        Assert.Empty(granted.Errors);
+        Assert.Contains(
+            "GrantedTicket: DefaultOrder names 'Rank', which its attributes deny for ordering unless a rule allows it, "
+            + "so guarded queries leave it out until one does.",
+            granted.Warnings);
+        Assert.Empty(unsegmented.Errors);
+        Assert.Contains(
+            "UnsegmentedTicket: DefaultOrder names 'Rank', which its attributes deny for segments, so guarded segments leave it out.",
+            unsegmented.Warnings);
     }
 }

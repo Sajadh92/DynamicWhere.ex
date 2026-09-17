@@ -147,6 +147,22 @@ public class RefusalAuditTests : IDisposable
     }
 
     [Fact]
+    public void A_name_the_caller_invented_is_recorded_cut_short_and_with_its_control_characters_escaped()
+    {
+        // Under the strict tier an unknown name is recorded as sent, so it is text the caller wrote: a
+        // line break would forge a second line in a log, and a megabyte of it would be kept whole.
+        DwPolicyContext caller = Caller();
+        PolicyQueryable<SecuredEmployee> guarded = People.ApplyPolicy(caller, Options(audit: true), Attributes());
+
+        Assert.Throws<PolicyException>(() => guarded.ToList(Where("probe\nSalary Select Allow")));
+        Assert.Throws<PolicyException>(() => guarded.ToList(Where(new string('x', 1000))));
+
+        Assert.Equal(
+            new[] { "probe\\u000aSalary Select Allow", new string('x', 256) + "\u2026" },
+            caller.PendingAuditEvents.Select(e => e.FieldPath));
+    }
+
+    [Fact]
     public void Refusals_that_name_no_field_are_recorded_too()
     {
         DwPolicyContext caller = Caller();

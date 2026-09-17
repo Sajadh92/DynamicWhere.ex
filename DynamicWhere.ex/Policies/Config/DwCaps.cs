@@ -17,6 +17,8 @@ public sealed class DwCaps
     private int _maxConditions = 50;
     private int _maxConditionDepth = 10;
     private int _maxConditionSets = 10;
+    private int _maxConditionValues = 1000;
+    private int _maxAggregates = 50;
     private int _maxOrderFields = 10;
     private int _maxNavigationDepth = 4;
     private int _maxQueryCost = 1000;
@@ -129,6 +131,36 @@ public sealed class DwCaps
     {
         get => _maxConditionSets;
         set => _maxConditionSets = Set(value);
+    }
+
+    /// <summary>
+    /// The most values one condition may carry. One thousand by default.
+    /// </summary>
+    /// <remarks>
+    /// An <c>In</c> or a <c>NotIn</c> is one comparison per value, so a single condition can hand the
+    /// database a predicate of any size while spending one condition from <see cref="MaxConditions"/>
+    /// and one field from the cost budget. Counted for every condition of the where clause, the having
+    /// clause and each set of a segment; the largest is what is compared.
+    /// </remarks>
+    public int MaxConditionValues
+    {
+        get => _maxConditionValues;
+        set => _maxConditionValues = Set(value);
+    }
+
+    /// <summary>
+    /// The most aggregates one summary may compute. Fifty by default.
+    /// </summary>
+    /// <remarks>
+    /// Every aggregate is a column of every group, and one with no field, a <c>Count</c>, names nothing
+    /// the cost budget could weigh, so without this cap one request could ask for any number of them.
+    /// Each such aggregate is also charged <see cref="DefaultFieldCost"/>. The count the group-size floor
+    /// adds for itself is not the caller's and is not counted.
+    /// </remarks>
+    public int MaxAggregates
+    {
+        get => _maxAggregates;
+        set => _maxAggregates = Set(value);
     }
 
     /// <summary>The most fields one query may sort by.</summary>

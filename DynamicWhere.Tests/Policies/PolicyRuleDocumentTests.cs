@@ -177,6 +177,23 @@ public class PolicyRuleDocumentTests
     }
 
     [Fact]
+    public void An_allowNull_on_a_null_check_that_carries_a_value_is_refused()
+    {
+        // Written from code with a stray value, a null check is accepted and the value ignored; widened,
+        // it would filter nothing, so the document refuses it rather than store a scope that scopes nothing.
+        string json = PolicyRuleDocument.ToJson(Rule(
+            forced: ForcedPredicate.FromConstant("ApprovalId", Operator.IsNotNull, DataType.Number, "0")));
+
+        string tampered = json.Replace(
+            "\"dataType\":\"Number\"",
+            "\"dataType\":\"Number\",\"allowNull\":true",
+            StringComparison.Ordinal);
+
+        Assert.NotEqual(json, tampered);
+        Assert.Throws<ArgumentException>(() => PolicyRuleDocument.ToRule(tampered));
+    }
+
+    [Fact]
     public void An_allowNull_on_a_null_check_is_refused()
     {
         string json = PolicyRuleDocument.ToJson(Rule(

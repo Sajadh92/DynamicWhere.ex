@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
@@ -17,6 +19,9 @@ namespace DynamicWhere.ex.Policies.Audit;
 /// </remarks>
 internal static class RefusalAudit
 {
+    /// <summary>The most characters of a field path an event records.</summary>
+    private const int MaxRecordedPath = 256;
+
     internal static void Record(DwPolicyContext context, DwPolicyOptions options, Type entityType, PolicyException refusal)
     {
         if (!options.AuditRefusals || refusal.Audited)
@@ -26,7 +31,7 @@ internal static class RefusalAudit
 
         refusal.Audited = true;
 
-        string path = refusal.AuditPath ?? refusal.FieldPath;
+        string path = Recordable(refusal.AuditPath ?? refusal.FieldPath);
 
         DwAuditEvent recorded = new(
             DateTimeOffset.UtcNow,
@@ -41,5 +46,53 @@ internal static class RefusalAudit
             refusal.ErrorCode);
 
         context.TryRecordAudit(recorded, options.Caps.MaxAuditEvents);
+    }
+
+    /// <summary>
+    /// A path fit to store: cut to <see cref="MaxRecordedPath"/> characters, with every control
+    /// character escaped.
+    /// </summary>
+    /// <remarks>
+    /// Under the strict tier a name that matches nothing is recorded as the caller sent it, so this is
+    /// text a caller wrote. A line break in it would forge a second entry in any log written one event
+    /// per line, and a name a megabyte long would be kept whole for as long as the audit is.
+    /// </remarks>
+    private static string Recordable(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return string.Empty;
+        }
+
+        string cut = path!;
+
+        if (cut.Length > MaxRecordedPath)
+        {
+            // Never between the two halves of a surrogate pair, which would store half a character.
+            int length = char.IsHighSurrogate(cut[MaxRecordedPath - 1]) ? MaxRecordedPath - 1 : MaxRecordedPath;
+
+            cut = cut.Substring(0, length) + "…";
+        }
+
+        if (!cut.Any(char.IsControl))
+        {
+            return cut;
+        }
+
+        StringBuilder escaped = new(cut.Length + 16);
+
+        foreach (char character in cut)
+        {
+            if (char.IsControl(character))
+            {
+                escaped.Append("\\u").Append(((int)character).ToString("x4", CultureInfo.InvariantCulture));
+            }
+            else
+            {
+                escaped.Append(character);
+            }
+        }
+
+        return escaped.ToString();
     }
 }

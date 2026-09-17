@@ -86,6 +86,36 @@ internal static class DefaultOrder
     }
 
     /// <summary>
+    /// True when a query's rows are a projection made somewhere along the chain that produced it.
+    /// </summary>
+    /// <remarks>
+    /// A default names fields of the type, and a projection keeps only the members it assigns, so a
+    /// default ordering it could reach for a member the projection left out and fail to translate:
+    /// <c>Select(["Id", "Title"]).Page(...)</c> on a type ordered by <c>Priority</c> worked before the
+    /// default existed. Such a query is left in whatever order it had.
+    /// </remarks>
+    internal static bool IsProjected(Expression expression)
+    {
+        for (Expression? node = expression; node is MethodCallExpression call;
+             node = call.Arguments.Count > 0 ? call.Arguments[0] : null)
+        {
+            if ((call.Method.DeclaringType == typeof(Queryable) || call.Method.DeclaringType == typeof(Enumerable))
+                && call.Method.Name == nameof(Queryable.Select))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when a guarded query over this source takes the type's default: nothing has ordered it and
+    /// nothing has projected it.
+    /// </summary>
+    internal static bool Applies(Expression expression) => !IsOrdered(expression) && !IsProjected(expression);
+
+    /// <summary>
     /// Everything wrong with a type's declared default: entries that cannot be read and fields no query
     /// can order by, which are errors, and fields the type does not have, which are skipped and so only
     /// warnings.

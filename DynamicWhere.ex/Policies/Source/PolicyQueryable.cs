@@ -38,6 +38,10 @@ public sealed class PolicyQueryable<T> where T : class
     private readonly DwPolicyOptions _options;
     private readonly PolicyTrace? _carried;
 
+    // True once a composed Order has run on this chain, whether or not any of its orders survived the
+    // gate. A caller whose orders were all dropped still sent orders, and gets no default in their place.
+    private readonly bool _ordered;
+
     private TypePolicy? _typePolicy;
 
     /// <summary>
@@ -48,13 +52,15 @@ public sealed class PolicyQueryable<T> where T : class
         DwPolicyContext context,
         PolicyResolver resolver,
         DwPolicyOptions options,
-        PolicyTrace? carried = null)
+        PolicyTrace? carried = null,
+        bool ordered = false)
     {
         _source = source;
         _context = context;
         _resolver = resolver;
         _options = options;
         _carried = carried;
+        _ordered = ordered;
     }
 
     /// <summary>
@@ -331,7 +337,7 @@ public sealed class PolicyQueryable<T> where T : class
 
             Segment sanitized = FilterSanitizer.Sanitize<T>(
                 segment, _resolver, _context, _options, trace,
-                applyDefaultOrder: !DefaultOrder.IsOrdered(_source.Expression));
+                applyDefaultOrder: TakesDefaultOrder);
 
             LastTrace = trace;
 
@@ -460,7 +466,7 @@ public sealed class PolicyQueryable<T> where T : class
 
             using (PolicyScope.Enter(_context, LastTrace))
             {
-                return Chain(Scoped(sanitized).Order(sanitized.Orders!));
+                return Chain(Scoped(sanitized).Order(sanitized.Orders!), ordered: true);
             }
         }
         catch (PolicyException refusal) when (Refused(refusal))
@@ -478,8 +484,7 @@ public sealed class PolicyQueryable<T> where T : class
         {
             // A query nothing has ordered takes the type's default, gated like any other order. One the
             // caller ordered keeps that order: a default applied here would replace it.
-            Filter sanitized = SanitizeClause(
-                new Filter { Page = page }, applyDefaultOrder: !DefaultOrder.IsOrdered(_source.Expression));
+            Filter sanitized = SanitizeClause(new Filter { Page = page }, applyDefaultOrder: TakesDefaultOrder);
 
             using (PolicyScope.Enter(_context, LastTrace))
             {
@@ -667,8 +672,16 @@ public sealed class PolicyQueryable<T> where T : class
     public IQueryable<T> AsUnguardedQueryable() => _source;
 
     /// <summary>Wraps a composed query back into a handle, carrying the trace so far.</summary>
-    private PolicyQueryable<T> Chain(IQueryable<T> composed) =>
-        new(composed, _context, _resolver, _options, LastTrace);
+    /// <param name="composed">The composed query.</param>
+    /// <param name="ordered">True when the composing call was an <c>Order</c>.</param>
+    private PolicyQueryable<T> Chain(IQueryable<T> composed, bool ordered = false) =>
+        new(composed, _context, _resolver, _options, LastTrace, _ordered || ordered);
+
+    /// <summary>
+    /// True when a query over this handle takes the type's default order: the caller composed no
+    /// <c>Order</c>, and nothing ordered or projected the source.
+    /// </summary>
+    private bool TakesDefaultOrder => !_ordered && DefaultOrder.Applies(_source.Expression);
 
     /// <summary>
     /// Refuses a method that hands back a query the caller materializes, when this type's values
@@ -775,8 +788,7 @@ public sealed class PolicyQueryable<T> where T : class
     {
         // A source the caller ordered before guarding it keeps that order: a default would replace it.
         Filter sanitized = FilterSanitizer.Sanitize<T>(
-            filter, _resolver, _context, _options, trace,
-            applyDefaultOrder: !DefaultOrder.IsOrdered(_source.Expression));
+            filter, _resolver, _context, _options, trace, applyDefaultOrder: TakesDefaultOrder);
 
         LastTrace = trace;
 

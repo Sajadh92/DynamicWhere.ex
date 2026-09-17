@@ -1,4 +1,5 @@
 ﻿using System.Reflection;
+using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.DTOs;
@@ -121,6 +122,11 @@ public static class PolicyModelValidator
     /// entities, is an error, because it can never be applied; and a field the type's own attributes
     /// deny for ordering is an error, because every caller would have it left out and the order would
     /// never be the one declared.
+    /// <para>
+    /// Only where the denial is sealed. One every attribute marks overridable can be lifted by a rule
+    /// for some callers, so it is a warning: a model that grants ordering at runtime is valid. A field
+    /// denied for segments alone is a warning too, since only a segment leaves it out.
+    /// </para>
     /// </remarks>
     private static void CheckDefaultOrder(Type type, List<string> errors, List<string> warnings)
     {
@@ -154,13 +160,58 @@ public static class PolicyModelValidator
 
         foreach (DefaultOrder.Entry entry in entries)
         {
-            if (!attributes.Resolve(type, entry.Field, new Context.DwPolicyContext()).Allows(PolicyFeature.Order))
+            FieldPolicy policy = attributes.Resolve(type, entry.Field, new Context.DwPolicyContext());
+
+            if (!policy.Allows(PolicyFeature.Order))
             {
-                errors.Add(
-                    $"{type.Name}: DefaultOrder names '{entry.Field}', which its attributes deny for ordering, "
-                    + "so every guarded query leaves it out.");
+                if (DeniedOnlyOverridably(type, entry.Field, PolicyFeature.Order))
+                {
+                    warnings.Add(
+                        $"{type.Name}: DefaultOrder names '{entry.Field}', which its attributes deny for ordering "
+                        + "unless a rule allows it, so guarded queries leave it out until one does.");
+                }
+                else
+                {
+                    errors.Add(
+                        $"{type.Name}: DefaultOrder names '{entry.Field}', which its attributes deny for ordering, "
+                        + "so every guarded query leaves it out.");
+                }
+            }
+            else if (!policy.Allows(PolicyFeature.Segment))
+            {
+                warnings.Add(
+                    $"{type.Name}: DefaultOrder names '{entry.Field}', which its attributes deny for segments, "
+                    + "so guarded segments leave it out.");
             }
         }
+    }
+
+    /// <summary>
+    /// True when the member a path ends on is denied a feature by its own attributes, and every one of
+    /// those attributes is overridable.
+    /// </summary>
+    private static bool DeniedOnlyOverridably(Type type, string path, PolicyFeature feature)
+    {
+        PropertyInfo? member = null;
+
+        foreach (string segment in path.Split('.'))
+        {
+            member = CacheReflection.FindProperty(type, segment);
+
+            if (member is null)
+            {
+                return false;
+            }
+
+            type = CacheReflection.GetCollectionElementType(member.PropertyType) ?? member.PropertyType;
+        }
+
+        List<DwDenyAttribute> denials = member!
+            .GetCustomAttributes<DwDenyAttribute>(inherit: true)
+            .Where(attribute => (attribute.Features & feature) == feature)
+            .ToList();
+
+        return denials.Count > 0 && denials.TrueForAll(attribute => attribute.Overridable);
     }
 
     /// <summary>

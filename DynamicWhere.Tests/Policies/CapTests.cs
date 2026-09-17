@@ -532,4 +532,137 @@ public class CapTests
 
         Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
     }
+
+    // ---------------------------------------------------------------- values and aggregates (3.1.0)
+
+    private static Condition InValues(string field, int count)
+    {
+        Condition condition = new() { Field = field, DataType = DataType.Text, Operator = Operator.In };
+
+        condition.Values.AddRange(Enumerable.Range(0, count).Select(i => (object)$"v{i}"));
+
+        return condition;
+    }
+
+    private static Filter WhereIn(int count) =>
+        new() { ConditionGroup = new ConditionGroup { Conditions = { InValues("Name", count) } } };
+
+    private static Summary Aggregating(int count, string? field)
+    {
+        Summary summary = new()
+        {
+            GroupBy = new GroupBy { Fields = new List<string> { "Name" }, AggregateBy = new List<AggregateBy>() }
+        };
+
+        for (int i = 0; i < count; i++)
+        {
+            summary.GroupBy.AggregateBy.Add(new AggregateBy { Field = field, Aggregator = Aggregator.Count, Alias = $"n{i}" });
+        }
+
+        return summary;
+    }
+
+    [Fact]
+    public void A_condition_carrying_more_values_than_the_cap_is_refused_in_both_tiers()
+    {
+        // An In is one comparison per value, so one condition could make a predicate of any size while
+        // spending one condition and one field.
+        foreach (DwTier tier in new[] { DwTier.Convenience, DwTier.Strict })
+        {
+            PolicyException exception = Assert.Throws<PolicyException>(
+                () => Guard<SecuredEmployee>(WhereIn(4), tier, caps => caps.MaxConditionValues = 3));
+
+            Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
+            Assert.Equal("MaxConditionValues cap (3), request had 4", exception.SourceOrigin);
+
+            Guard<SecuredEmployee>(WhereIn(3), tier, caps => caps.MaxConditionValues = 3);
+        }
+    }
+
+    [Fact]
+    public void Values_are_counted_in_a_having_clause_and_in_every_set_of_a_segment()
+    {
+        Summary summary = Counted();
+        Condition having = OnCount();
+
+        having.Operator = Operator.In;
+        having.Values.AddRange(new object[] { 1, 2, 3 });
+        summary.Having = new ConditionGroup { Conditions = { having } };
+
+        Assert.Equal(
+            "MaxConditionValues cap (3), request had 4",
+            Assert.Throws<PolicyException>(() => GuardSummary(summary, caps => caps.MaxConditionValues = 3)).SourceOrigin);
+
+        Segment segment = EmptySets(2);
+
+        segment.ConditionSets[1].ConditionGroup = new ConditionGroup { Conditions = { InValues("Name", 4) } };
+
+        Assert.Equal(
+            "MaxConditionValues cap (3), request had 4",
+            Assert.Throws<PolicyException>(() => GuardSegment(segment, caps => caps.MaxConditionValues = 3)).SourceOrigin);
+    }
+
+    [Fact]
+    public void The_default_value_cap_allows_a_thousand_values_and_refuses_one_more()
+    {
+        Guard<SecuredEmployee>(WhereIn(1000), DwTier.Strict);
+
+        Assert.Equal(
+            "MaxConditionValues cap (1000), request had 1001",
+            Assert.Throws<PolicyException>(() => Guard<SecuredEmployee>(WhereIn(1001), DwTier.Strict)).SourceOrigin);
+    }
+
+    [Fact]
+    public void A_summary_computing_more_aggregates_than_the_cap_is_refused()
+    {
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => GuardSummary(Aggregating(4, "Id"), caps => caps.MaxAggregates = 3));
+
+        Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
+        Assert.Equal("*", exception.FieldPath);
+        Assert.Equal("MaxAggregates cap (3), request had 4", exception.SourceOrigin);
+
+        GuardSummary(Aggregating(3, "Id"), caps => caps.MaxAggregates = 3);
+    }
+
+    [Fact]
+    public void The_default_aggregate_cap_allows_fifty_and_refuses_fifty_one()
+    {
+        GuardSummary(Aggregating(50, null), _ => { });
+
+        Assert.Equal(
+            "MaxAggregates cap (50), request had 51",
+            Assert.Throws<PolicyException>(() => GuardSummary(Aggregating(51, null), _ => { })).SourceOrigin);
+    }
+
+    [Fact]
+    public void An_aggregate_with_no_field_is_charged_the_default_field_cost()
+    {
+        // A Count names nothing a weight could be set on, and was free: any number of them cost nothing.
+        // Grouping by Name costs one and each Count one more, so three Counts break a budget of three.
+        GuardSummary(Aggregating(2, null), caps => caps.MaxQueryCost = 3);
+
+        Assert.Equal(
+            PolicyErrorCode.QueryCostExceeded,
+            Assert.Throws<PolicyException>(() => GuardSummary(Aggregating(3, null), caps => caps.MaxQueryCost = 3)).ErrorCode);
+    }
+
+    [Fact]
+    public void Counts_are_checked_before_any_name_is_resolved()
+    {
+        // In the convenience tier a name that matches nothing fails the moment it is resolved, so the
+        // order is visible: an oversized request of unknown names is refused by the cap, not by its
+        // first name, and none of them is resolved at all.
+        Filter filter = new() { ConditionGroup = new ConditionGroup() };
+
+        for (int i = 0; i < 4; i++)
+        {
+            filter.ConditionGroup.Conditions.Add(On("NoSuchColumn"));
+        }
+
+        PolicyException exception = Assert.Throws<PolicyException>(
+            () => Guard<SecuredEmployee>(filter, DwTier.Convenience, caps => caps.MaxConditions = 3));
+
+        Assert.Equal(PolicyErrorCode.CapExceeded, exception.ErrorCode);
+    }
 }

@@ -87,13 +87,15 @@ public sealed class ForcedPredicate
     /// <param name="value">The constant, in string form.</param>
     /// <param name="allowNull">True to inject <c>(field op value OR field IS NULL)</c>.</param>
     /// <exception cref="ArgumentException">
-    /// Thrown when <paramref name="fieldPath"/> or <paramref name="value"/> is blank.
+    /// Thrown when <paramref name="fieldPath"/> or <paramref name="value"/> is blank, or when
+    /// <paramref name="allowNull"/> is true for <c>IsNull</c> or <c>IsNotNull</c>.
     /// </exception>
     public static ForcedPredicate FromConstant(
         string fieldPath, Operator op, DataType dataType, string value, bool allowNull)
     {
         Require(fieldPath, nameof(fieldPath), "A forced predicate requires a field path.");
         Require(value, nameof(value), "A forced predicate built from a constant requires a value.");
+        RefuseWidenedNullCheck(op, allowNull);
 
         return new ForcedPredicate(fieldPath.Trim(), op, dataType, value, contextValue: null, allowNull);
     }
@@ -122,7 +124,8 @@ public sealed class ForcedPredicate
     /// <param name="contextValue">The context key holding the value.</param>
     /// <param name="allowNull">True to inject <c>(field op value OR field IS NULL)</c>.</param>
     /// <exception cref="ArgumentException">
-    /// Thrown when <paramref name="fieldPath"/> or <paramref name="contextValue"/> is blank.
+    /// Thrown when <paramref name="fieldPath"/> or <paramref name="contextValue"/> is blank, or when
+    /// <paramref name="allowNull"/> is true for <c>IsNull</c> or <c>IsNotNull</c>.
     /// </exception>
     /// <remarks>
     /// The context value itself must still be supplied. Allowing a null field says which rows pass;
@@ -136,8 +139,26 @@ public sealed class ForcedPredicate
             contextValue,
             nameof(contextValue),
             "A forced predicate reading the context requires a key to read.");
+        RefuseWidenedNullCheck(op, allowNull);
 
         return new ForcedPredicate(fieldPath.Trim(), op, dataType, value: null, contextValue.Trim(), allowNull);
+    }
+
+    /// <summary>
+    /// Refuses <c>AllowNull</c> on a null check, where a value was supplied anyway.
+    /// </summary>
+    /// <remarks>
+    /// A null check compares against nothing, so its value is ignored, and widening it would test the
+    /// field for null or not null at once: <c>(field IS NOT NULL OR field IS NULL)</c> filters nothing, and
+    /// a scope written that way would silently be no scope. The attribute refuses the same combination.
+    /// </remarks>
+    private static void RefuseWidenedNullCheck(Operator op, bool allowNull)
+    {
+        if (allowNull && op is Operator.IsNull or Operator.IsNotNull)
+        {
+            throw new ArgumentException(
+                "AllowNull widens a comparison, and a null check compares against nothing.", nameof(allowNull));
+        }
     }
 
     /// <summary>

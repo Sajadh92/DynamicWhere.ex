@@ -37,12 +37,16 @@ public class PolicyConfigurationTests
         DwPolicyOptions options = new DwPolicyOptions().Bind(Section(
             ("Caps:MaxPageSize", "25"),
             ("Caps:MaxConditionSets", "3"),
+            ("Caps:MaxConditionValues", "200"),
+            ("Caps:MaxAggregates", "7"),
             ("Caps:SchemaDepth", "3"),
             ("Caps:SchemaCycleLimit", "4"),
             ("Caps:MaxSchemaFields", "100")));
 
         Assert.Equal(25, options.Caps.MaxPageSize);
         Assert.Equal(3, options.Caps.MaxConditionSets);
+        Assert.Equal(200, options.Caps.MaxConditionValues);
+        Assert.Equal(7, options.Caps.MaxAggregates);
         Assert.Equal(3, options.Caps.SchemaDepth);
         Assert.Equal(4, options.Caps.SchemaCycleLimit);
         Assert.Equal(100, options.Caps.MaxSchemaFields);

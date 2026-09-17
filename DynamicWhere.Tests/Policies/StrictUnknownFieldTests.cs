@@ -1,7 +1,9 @@
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
+using System.Globalization;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
@@ -10,6 +12,28 @@ using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Policies.Source;
 
 namespace DynamicWhere.Tests.Policies;
+
+/// <summary>A hidden field that is also expensive, beside an expensive one the caller may use.</summary>
+internal class WeighedSecrets
+{
+    public int Id { get; set; }
+
+    [DwDenied]
+    [DwCost(50)]
+    public string Secret { get; set; } = string.Empty;
+
+    [DwCost(50)]
+    public string Open { get; set; } = string.Empty;
+}
+
+/// <summary>A field hidden from every clause by hand, and so still allowed to take part in a segment.</summary>
+internal class HandHidden
+{
+    public int Id { get; set; }
+
+    [DwDeny(PolicyFeature.Where | PolicyFeature.Select | PolicyFeature.Order | PolicyFeature.Group | PolicyFeature.Aggregate)]
+    public string Hidden { get; set; } = string.Empty;
+}
 
 /// <summary>
 /// Under the strict tier a name that matches nothing and a field the caller may not use answer alike
@@ -284,5 +308,116 @@ public class StrictUnknownFieldTests
             () => people.ApplyPolicy(Caller(), Options(), Attributes()).ToList(Where(Missing)),
             PolicyErrorCode.FieldDeniedForWhere,
             PolicyFeature.Where);
+    }
+
+    // ---------------------------------------------------------------- found by the 3.1.0 review
+
+    private static Filter FilterOf<T>(Filter filter, DwTier tier = DwTier.Strict) where T : class =>
+        FilterSanitizer.Sanitize<T>(filter, Attributes(), Caller(), Options(tier), new PolicyTrace(tier, dryRun: false));
+
+    private static Segment SegmentOf<T>(Segment segment) where T : class =>
+        FilterSanitizer.Sanitize<T>(
+            segment, Attributes(), Caller(), Options(), new PolicyTrace(DwTier.Strict, dryRun: false));
+
+    [Theory]
+    [InlineData("{0}....")]
+    [InlineData("....{0}")]
+    [InlineData(". . . . {0}")]
+    public void A_name_padded_with_dots_answers_alike(string shape)
+    {
+        // A real field padded with dots canonicalizes to its own depth. An unknown name kept padded
+        // failed the navigation cap instead, which told the two apart for every field of the type.
+        string denied = string.Format(CultureInfo.InvariantCulture, shape, Denied);
+        string missing = string.Format(CultureInfo.InvariantCulture, shape, Missing);
+
+        AssertAlike(
+            () => Filter(Where(denied)),
+            () => Filter(Where(missing)),
+            PolicyErrorCode.FieldDeniedForWhere,
+            PolicyFeature.Where);
+        AssertAlike(
+            () => Filter(new Filter { Orders = new List<OrderBy> { new() { Field = denied } } }),
+            () => Filter(new Filter { Orders = new List<OrderBy> { new() { Field = missing } } }),
+            PolicyErrorCode.FieldDeniedForOrder,
+            PolicyFeature.Order);
+        AssertAlike(
+            () => Filter(new Filter { Selects = new List<string> { denied } }),
+            () => Filter(new Filter { Selects = new List<string> { missing } }),
+            PolicyErrorCode.FieldDeniedForSelect,
+            PolicyFeature.Select);
+    }
+
+    [Fact]
+    public void A_weighted_field_the_caller_may_not_use_answers_like_a_name_that_matches_nothing()
+    {
+        // Charged before the gates, twenty-one uses of a field weighing fifty broke a budget of a
+        // thousand, while twenty-one uses of a missing name cost twenty-one and were refused as denied.
+        static Filter Many(string field)
+        {
+            ConditionGroup group = new();
+
+            for (int i = 0; i < 21; i++)
+            {
+                group.Conditions.Add(new Condition
+                {
+                    Sort = i, Field = field, DataType = DataType.Text, Operator = Operator.Equal, Values = { "x" }
+                });
+            }
+
+            return new Filter { ConditionGroup = group };
+        }
+
+        AssertAlike(
+            () => FilterOf<WeighedSecrets>(Many("Secret")),
+            () => FilterOf<WeighedSecrets>(Many(Missing)),
+            PolicyErrorCode.FieldDeniedForWhere,
+            PolicyFeature.Where);
+
+        // A weighted field the caller may use is still refused for what it costs, in either tier.
+        foreach (DwTier tier in new[] { DwTier.Strict, DwTier.Convenience })
+        {
+            Assert.Equal(
+                PolicyErrorCode.QueryCostExceeded,
+                Assert.Throws<PolicyException>(() => FilterOf<WeighedSecrets>(Many("Open"), tier)).ErrorCode);
+        }
+    }
+
+    [Fact]
+    public void Inside_a_segment_a_field_hidden_by_hand_answers_like_a_name_that_matches_nothing()
+    {
+        // Denied for every clause but not for segments, the field passes a segment's own check and was
+        // refused by clause, while a missing name is refused for taking part at all.
+        static Segment Ordered(string field) => new()
+        {
+            ConditionSets = { new ConditionSet { Sort = 1 } },
+            Orders = new List<OrderBy> { new() { Field = field } }
+        };
+
+        static Segment Projected(string field) => new()
+        {
+            ConditionSets = { new ConditionSet { Sort = 1 } },
+            Selects = new List<string> { "Id", field }
+        };
+
+        static Segment Filtered(string field) => new()
+        {
+            ConditionSets = { new ConditionSet { Sort = 1, ConditionGroup = new ConditionGroup { Conditions = { On(field) } } } }
+        };
+
+        AssertAlike(
+            () => SegmentOf<HandHidden>(Ordered("Hidden")),
+            () => SegmentOf<HandHidden>(Ordered(Missing)),
+            PolicyErrorCode.FieldDeniedForSegment,
+            PolicyFeature.Segment);
+        AssertAlike(
+            () => SegmentOf<HandHidden>(Projected("Hidden")),
+            () => SegmentOf<HandHidden>(Projected(Missing)),
+            PolicyErrorCode.FieldDeniedForSegment,
+            PolicyFeature.Segment);
+        AssertAlike(
+            () => SegmentOf<HandHidden>(Filtered("Hidden")),
+            () => SegmentOf<HandHidden>(Filtered(Missing)),
+            PolicyErrorCode.FieldDeniedForSegment,
+            PolicyFeature.Segment);
     }
 }

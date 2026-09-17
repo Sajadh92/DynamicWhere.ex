@@ -109,14 +109,24 @@ internal static class FilterSanitizer
         // the gate is what carries it. Nothing the gate does depends on the paths being canonical.
         Gate gate = new(typeof(T), resolver, context, options, trace);
 
+        // Before any name is resolved. Counting needs no name, and resolving every name of an
+        // oversized request is exactly the work the caps exist to refuse.
+        EnforceCaps(working, gate);
+
         Canonicalize<T>(working, gate);
 
-        EnforceCaps(working, gate);
+        EnforceNavigationDepth(working, gate);
 
         // After the caps, so a page the caller did write is still refused when it is too large,
         // and a page the caller did not write is bounded rather than unbounded.
         working.Page = DefaultPage(working.Page, options);
-        EnforceCost(working, gate);
+
+        long cost = Cost(working, gate);
+
+        if (!gate.HidesExistence)
+        {
+            gate.CheckCost(cost);
+        }
 
         GateConditions(working.ConditionGroup, gate);
 
@@ -132,6 +142,15 @@ internal static class FilterSanitizer
         }
 
         GateSelects(working, gate, synthesizeProjection);
+
+        // The strict tier checks the bill once every field has passed its gate. It drops nothing, so a
+        // request still here names no field the caller may not use, and a weighted field the caller may
+        // not use has already been refused as a denied one, before its weight could set it apart from a
+        // name that matches nothing.
+        if (gate.HidesExistence)
+        {
+            gate.CheckCost(cost);
+        }
 
         // Last, and after gating rather than before it. A forced predicate is the library filtering
         // on the caller's behalf, so it is never checked against the caller's own policy — and
@@ -200,6 +219,8 @@ internal static class FilterSanitizer
 
         Gate gate = new(typeof(T), resolver, context, options, trace);
 
+        EnforceCaps(working, gate);
+
         if (working.ConditionGroup is not null)
         {
             CanonicalizeGroup<T>(working.ConditionGroup, gate);
@@ -207,12 +228,18 @@ internal static class FilterSanitizer
 
         CanonicalizeGrouping<T>(working.GroupBy, gate);
 
-        EnforceCaps(working, gate);
+        EnforceNavigationDepth(working, gate);
 
         // After the caps, so a page the caller did write is still refused when it is too large,
         // and a page the caller did not write is bounded rather than unbounded.
         working.Page = DefaultPage(working.Page, options);
-        EnforceCost(working, gate);
+
+        long cost = Cost(working, gate);
+
+        if (!gate.HidesExistence)
+        {
+            gate.CheckCost(cost);
+        }
 
         GateConditions(working.ConditionGroup, gate);
         GateGrouping(working.GroupBy, gate);
@@ -223,6 +250,15 @@ internal static class FilterSanitizer
 
         GateHaving(working.Having, references, gate);
         GateSummaryOrders(working, references, gate);
+
+        // The strict tier checks the bill once every field has passed its gate. It drops nothing, so a
+        // request still here names no field the caller may not use, and a weighted field the caller may
+        // not use has already been refused as a denied one, before its weight could set it apart from a
+        // name that matches nothing.
+        if (gate.HidesExistence)
+        {
+            gate.CheckCost(cost);
+        }
 
         // A summary is a query that returns rows, so it takes the same scope a filter does.
         // Injecting on the filter path alone would let a caller read an aggregate across every
@@ -620,7 +656,9 @@ internal static class FilterSanitizer
 
         Segment working = segment.Clone();
 
-        Gate gate = new(typeof(T), resolver, context, options, trace);
+        Gate gate = new(typeof(T), resolver, context, options, trace) { InSegment = true };
+
+        EnforceCaps(working, gate);
 
         if (working.ConditionSets is not null)
         {
@@ -649,12 +687,19 @@ internal static class FilterSanitizer
             }
         }
 
-        EnforceCaps(working, gate);
+        EnforceNavigationDepth(working, gate);
 
         // After the caps, so a page the caller did write is still refused when it is too large,
         // and a page the caller did not write is bounded rather than unbounded.
         working.Page = DefaultPage(working.Page, options);
-        EnforceCost(working, gate);
+
+        long cost = Cost(working, gate);
+
+        if (!gate.HidesExistence)
+        {
+            gate.CheckCost(cost);
+        }
+
         GateSegmentParticipation(working, gate);
         GateSegmentInference(working, gate);
 
@@ -670,12 +715,21 @@ internal static class FilterSanitizer
 
         GateSegmentOrders(working, gate);
 
-        if (applyDefaultOrder && !callerOrdered && DefaultOrders<T>(gate) is { Count: > 0 } defaults)
+        if (applyDefaultOrder && !callerOrdered && DefaultOrders<T>(gate, segment: true) is { Count: > 0 } defaults)
         {
             working.Orders = defaults;
         }
 
         GateSegmentSelects(working, gate);
+
+        // The strict tier checks the bill once every field has passed its gate. It drops nothing, so a
+        // request still here names no field the caller may not use, and a weighted field the caller may
+        // not use has already been refused as a denied one, before its weight could set it apart from a
+        // name that matches nothing.
+        if (gate.HidesExistence)
+        {
+            gate.CheckCost(cost);
+        }
 
         InjectIntoSets<T>(working, gate);
 
@@ -968,9 +1022,30 @@ internal static class FilterSanitizer
             }
         }
 
+        int values = 0;
+
+        if (segment.ConditionSets is not null)
+        {
+            foreach (ConditionSet set in segment.ConditionSets)
+            {
+                values = Math.Max(values, MostValues(set.ConditionGroup));
+            }
+        }
+
+        gate.CheckConditionValues(values);
         gate.CheckOrderCount(segment.Orders?.Count ?? 0);
         gate.CheckPage(segment.Page);
+    }
 
+    /// <summary>
+    /// Refuses a segment naming a path that crosses more navigations than the cap allows.
+    /// </summary>
+    /// <remarks>
+    /// After canonicalization rather than with the counts, because only a canonical path says how many
+    /// navigations it really crosses.
+    /// </remarks>
+    private static void EnforceNavigationDepth(Segment segment, Gate gate)
+    {
         foreach (string field in SegmentFields(segment))
         {
             gate.CheckDepth(field);
@@ -1008,9 +1083,10 @@ internal static class FilterSanitizer
     /// Refuses a filter that exceeds a configured limit.
     /// </summary>
     /// <remarks>
-    /// Run before any policy is resolved. Caps exist to stop a request generating unbounded work,
-    /// and resolving a policy for every field of an unbounded filter is exactly the work being
-    /// avoided, so the cheap structural check has to come first.
+    /// Run before any name is resolved, and so before any policy is. Caps exist to stop a request
+    /// generating unbounded work, and resolving every name and policy of an unbounded filter is exactly
+    /// the work being avoided, so the cheap structural check has to come first. Navigation depth is the
+    /// one cap that needs a canonical path, and is checked once names are resolved.
     /// <para>
     /// Every cap refuses in both tiers, and none of them clamps. Truncating a filter would widen
     /// its result the way dropping a condition does, and silently shrinking a page would make a
@@ -1021,9 +1097,20 @@ internal static class FilterSanitizer
     {
         gate.CheckConditionCount(CountConditions(filter.ConditionGroup));
         gate.CheckConditionDepth(Depth(filter.ConditionGroup));
+        gate.CheckConditionValues(MostValues(filter.ConditionGroup));
         gate.CheckOrderCount(filter.Orders?.Count ?? 0);
         gate.CheckPage(filter.Page);
+    }
 
+    /// <summary>
+    /// Refuses a filter naming a path that crosses more navigations than the cap allows.
+    /// </summary>
+    /// <remarks>
+    /// After canonicalization rather than with the counts, because only a canonical path says how many
+    /// navigations it really crosses.
+    /// </remarks>
+    private static void EnforceNavigationDepth(Filter filter, Gate gate)
+    {
         CheckDepth(filter.ConditionGroup, gate);
 
         if (filter.Selects is not null)
@@ -1055,9 +1142,21 @@ internal static class FilterSanitizer
     {
         gate.CheckConditionCount(CountConditions(summary.ConditionGroup) + CountConditions(summary.Having));
         gate.CheckConditionDepth(Math.Max(Depth(summary.ConditionGroup), Depth(summary.Having)));
+        gate.CheckConditionValues(Math.Max(MostValues(summary.ConditionGroup), MostValues(summary.Having)));
+        gate.CheckAggregateCount(summary.GroupBy?.AggregateBy?.Count ?? 0);
         gate.CheckOrderCount(summary.Orders?.Count ?? 0);
         gate.CheckPage(summary.Page);
+    }
 
+    /// <summary>
+    /// Refuses a summary naming a path that crosses more navigations than the cap allows.
+    /// </summary>
+    /// <remarks>
+    /// After canonicalization rather than with the counts, because only a canonical path says how many
+    /// navigations it really crosses.
+    /// </remarks>
+    private static void EnforceNavigationDepth(Summary summary, Gate gate)
+    {
         CheckDepth(summary.ConditionGroup, gate);
 
         if (summary.GroupBy?.Fields is not null)
@@ -1078,7 +1177,7 @@ internal static class FilterSanitizer
     }
 
     /// <summary>
-    /// Refuses a filter that spends more than the budget allows.
+    /// What a filter spends from the budget.
     /// </summary>
     /// <remarks>
     /// After <see cref="EnforceCaps(Filter, Gate)"/> rather than beside it, and for the opposite
@@ -1088,7 +1187,9 @@ internal static class FilterSanitizer
     /// <para>
     /// Before gating, so a field is charged for being named rather than for surviving. Charging
     /// only what survives would let a caller measure the policy by watching the budget: a name that
-    /// costs nothing is a name that was dropped.
+    /// costs nothing is a name that was dropped. The convenience tier refuses the bill there too; the
+    /// strict tier, which drops nothing, refuses it after the gates, so a weighted field the caller may
+    /// not use is refused as denied before its weight can tell it from a name that matches nothing.
     /// </para>
     /// <para>
     /// Selects and orders the caller wrote are charged; a projection this library synthesizes for a
@@ -1096,7 +1197,7 @@ internal static class FilterSanitizer
     /// query nobody made expensive.
     /// </para>
     /// </remarks>
-    private static void EnforceCost(Filter filter, Gate gate)
+    private static long Cost(Filter filter, Gate gate)
     {
         Budget budget = new();
 
@@ -1118,18 +1219,22 @@ internal static class FilterSanitizer
             }
         }
 
-        gate.CheckCost(budget.Total);
+        return budget.Total;
     }
 
     /// <summary>
-    /// Refuses a summary that spends more than the budget allows.
+    /// What a summary spends from the budget.
     /// </summary>
     /// <remarks>
     /// <c>Having</c> and <c>Orders</c> name aggregate aliases and dot-stripped group-by keys rather
     /// than property paths, so they are not charged here — the fields they stand for are charged
     /// through <c>GroupBy</c>, and charging both would bill the caller twice for one column.
+    /// <para>
+    /// An aggregate with no field, a <c>Count</c>, is charged the standing default. It names nothing a
+    /// weight could be set on, and free, any number of them was a column of every group for nothing.
+    /// </para>
     /// </remarks>
-    private static void EnforceCost(Summary summary, Gate gate)
+    private static long Cost(Summary summary, Gate gate)
     {
         Budget budget = new();
 
@@ -1147,21 +1252,28 @@ internal static class FilterSanitizer
         {
             foreach (AggregateBy aggregate in summary.GroupBy.AggregateBy)
             {
-                budget.Charge(aggregate.Field, gate);
+                if (string.IsNullOrWhiteSpace(aggregate.Field))
+                {
+                    budget.ChargeDefault(gate);
+                }
+                else
+                {
+                    budget.Charge(aggregate.Field, gate);
+                }
             }
         }
 
-        gate.CheckCost(budget.Total);
+        return budget.Total;
     }
 
     /// <summary>
-    /// Refuses a set operation that spends more than the budget allows.
+    /// What a set operation spends from the budget.
     /// </summary>
     /// <remarks>
     /// One budget across every set rather than one per set. A per-set budget would be spent as many
     /// times as the caller cares to add sets, which is the same unbounded work with more typing.
     /// </remarks>
-    private static void EnforceCost(Segment segment, Gate gate)
+    private static long Cost(Segment segment, Gate gate)
     {
         Budget budget = new();
 
@@ -1170,7 +1282,7 @@ internal static class FilterSanitizer
             budget.Charge(field, gate);
         }
 
-        gate.CheckCost(budget.Total);
+        return budget.Total;
     }
 
     /// <summary>Charges every condition in a group tree.</summary>
@@ -1228,6 +1340,9 @@ internal static class FilterSanitizer
             // which is a refusal turning into a grant on overflow.
             Total += budget.CostOf(fieldPath!);
         }
+
+        /// <summary>Charges one reference to nothing a weight could be set on, at the standing default.</summary>
+        internal void ChargeDefault(Gate budget) => Total += budget.Options.Caps.DefaultFieldCost;
     }
 
     /// <summary>
@@ -1267,6 +1382,35 @@ internal static class FilterSanitizer
         }
 
         return deepest + 1;
+    }
+
+    /// <summary>The most values any one condition in a group tree carries.</summary>
+    private static int MostValues(ConditionGroup? group)
+    {
+        if (group is null)
+        {
+            return 0;
+        }
+
+        int most = 0;
+
+        if (group.Conditions is not null)
+        {
+            foreach (Condition condition in group.Conditions)
+            {
+                most = Math.Max(most, condition.Values?.Count ?? 0);
+            }
+        }
+
+        if (group.SubConditionGroups is not null)
+        {
+            foreach (ConditionGroup sub in group.SubConditionGroups)
+            {
+                most = Math.Max(most, MostValues(sub));
+            }
+        }
+
+        return most;
     }
 
     private static int CountConditions(ConditionGroup? group)
@@ -1411,7 +1555,9 @@ internal static class FilterSanitizer
     /// the rows by a value the caller may not see. A dry run keeps it, as it keeps everything else,
     /// and still records what enforcement would have left out.
     /// </remarks>
-    private static List<OrderBy> DefaultOrders<T>(Gate gate) where T : class
+    /// <param name="gate">The per-query state.</param>
+    /// <param name="segment">True for a segment, where a field denied for segments is left out too.</param>
+    private static List<OrderBy> DefaultOrders<T>(Gate gate, bool segment = false) where T : class
     {
         List<DefaultOrder.Entry> kept = new();
 
@@ -1419,7 +1565,9 @@ internal static class FilterSanitizer
         {
             FieldPolicy policy = gate.PolicyFor(entry.Field, PolicyFeature.Order);
 
-            if (policy.Allows(PolicyFeature.Order))
+            // Inside a segment a field is refused anywhere it is denied for segments, an order the
+            // caller sends included, so the default leaves it out there as well.
+            if (policy.Allows(PolicyFeature.Order) && (!segment || policy.Allows(PolicyFeature.Segment)))
             {
                 kept.Add(entry);
 
@@ -1898,7 +2046,9 @@ internal static class FilterSanitizer
     /// </remarks>
     private static bool Widens<T>(ForcedPredicate predicate, string path) where T : class
     {
-        if (!predicate.AllowNull)
+        // A null check compares against nothing, and widening one would test the field for null and for
+        // not null at once: no filter at all. Refused where the predicate is built; never widened here.
+        if (!predicate.AllowNull || predicate.IsNullCheck)
         {
             return false;
         }
@@ -2212,6 +2362,12 @@ internal static class FilterSanitizer
         /// </summary>
         internal TypePolicy TypePolicy { get; }
 
+        /// <summary>
+        /// True while a segment is sanitized, where every field refusal of the strict tier carries the
+        /// segment's code.
+        /// </summary>
+        internal bool InSegment { get; init; }
+
         /// <summary>The caller this query is being sanitized for.</summary>
         internal DwPolicyContext Context => _context;
 
@@ -2254,10 +2410,19 @@ internal static class FilterSanitizer
         /// </remarks>
         internal bool HidesExistence => IsStrict && !IsDryRun;
 
-        /// <summary>Remembers a name that matches nothing, and returns it unchanged for the gate to refuse.</summary>
+        /// <summary>Remembers a name that matches nothing, and returns it for the gate to refuse.</summary>
+        /// <remarks>
+        /// Empty and blank segments are dropped, as they are from a real path before it is counted. A
+        /// real field padded with dots canonicalizes to its own depth; an unknown name kept padded would
+        /// fail the navigation cap instead, and so tell the two apart.
+        /// </remarks>
         internal string Unknown(string name)
         {
-            string spoken = name.Trim();
+            string collapsed = string.Join(
+                SegmentSeparator,
+                name.Split(SegmentSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+            string spoken = collapsed.Length > 0 ? collapsed : name.Trim();
 
             _unknown.Add(spoken);
 
@@ -2483,6 +2648,28 @@ internal static class FilterSanitizer
             }
         }
 
+        /// <summary>Refuses a condition carrying more values than the budget allows.</summary>
+        /// <remarks>
+        /// An <c>In</c> is one comparison per value, so one condition can make a predicate of any size
+        /// while spending one condition and one field.
+        /// </remarks>
+        internal void CheckConditionValues(int most)
+        {
+            if (most > _options.Caps.MaxConditionValues)
+            {
+                Raise(Cap("MaxConditionValues", _options.Caps.MaxConditionValues, most, WholeClause));
+            }
+        }
+
+        /// <summary>Refuses a summary computing more aggregates than the budget allows.</summary>
+        internal void CheckAggregateCount(int count)
+        {
+            if (count > _options.Caps.MaxAggregates)
+            {
+                Raise(Cap("MaxAggregates", _options.Caps.MaxAggregates, count, WholeClause));
+            }
+        }
+
         /// <summary>Refuses a query sorting by more fields than the budget allows.</summary>
         internal void CheckOrderCount(int count)
         {
@@ -2621,10 +2808,14 @@ internal static class FilterSanitizer
                         return null;
                     }
 
+                    // The strict tier names neither the scope's column nor the key it reads, which together
+                    // describe how rows are partitioned. The trace above and the audit keep both.
                     throw new PolicyException(
-                        PolicyErrorCode.MissingContextValue, path, PolicyFeature.Where, _options.Tier)
+                        PolicyErrorCode.MissingContextValue, IsStrict ? WholeClause : path, PolicyFeature.Where,
+                        _options.Tier)
                     {
-                        SourceOrigin = origin
+                        SourceOrigin = IsStrict ? null : origin,
+                        AuditPath = path
                     };
                 }
 
@@ -2889,7 +3080,17 @@ internal static class FilterSanitizer
             // apart by what comes back: the same code for the clause, no path, no rule, no attribute.
             if (IsStrict && IsFieldDenial(code))
             {
-                return new PolicyException(code, WholeClause, feature, _options.Tier) { AuditPath = fieldPath };
+                // Inside a segment, one code for every field refusal. A field is refused there for taking
+                // part at all or for one clause, and a name that matches nothing is refused for taking
+                // part, so answering by clause would set a field the caller may not order by apart from
+                // a name that does not exist.
+                return InSegment
+                    ? new PolicyException(
+                        PolicyErrorCode.FieldDeniedForSegment, WholeClause, PolicyFeature.Segment, _options.Tier)
+                    {
+                        AuditPath = fieldPath
+                    }
+                    : new PolicyException(code, WholeClause, feature, _options.Tier) { AuditPath = fieldPath };
             }
 
             // A resolved policy lists the winning source for every feature it decided, not for this

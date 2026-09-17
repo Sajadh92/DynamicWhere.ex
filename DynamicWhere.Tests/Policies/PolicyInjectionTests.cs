@@ -131,14 +131,27 @@ public class PolicyInjectionTests
     [InlineData(DwTier.Strict)]
     public void A_missing_context_value_throws_in_both_tiers(DwTier tier)
     {
-        // A tenant scope that silently fails to apply is worse than a failed request.
+        // A tenant scope that silently fails to apply is worse than a failed request. Under the strict
+        // tier the refusal names neither the scope's column nor the key it reads: together they describe
+        // how the rows are partitioned. The audit keeps both.
         DwPolicyContext blank = new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
 
         PolicyException error = Assert.Throws<PolicyException>(
             () => Sanitize<ScopedInvoice>(new Filter(), blank, tier));
 
         Assert.Equal(PolicyErrorCode.MissingContextValue, error.ErrorCode);
-        Assert.Equal("TenantId", error.FieldPath);
+
+        if (tier == DwTier.Strict)
+        {
+            Assert.Equal("*", error.FieldPath);
+            Assert.Null(error.SourceOrigin);
+            Assert.DoesNotContain("TenantId", error.Message, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Equal("TenantId", error.FieldPath);
+            Assert.Contains("TenantId", error.SourceOrigin!, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

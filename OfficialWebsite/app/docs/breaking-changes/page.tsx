@@ -67,7 +67,11 @@ export default function Page() {
         <code>ToListAsync&lt;T&gt;(Segment)</code> is the only entry point for
         segment queries. There is no synchronous <code>ToList&lt;T&gt;(Segment)</code>{" "}
         variant. Each <code>ConditionSet</code> is materialized independently into
-        memory, then set operations are performed in‑memory.
+        memory, then set operations are performed in‑memory. Ordering and paging
+        come after, so a page bounds what a segment returns, not what it reads.
+        Under <code>ApplyPolicy</code>,{" "}
+        <Link href="/docs/policies/configuration#caps"><code>DwCaps.MaxConditionSets</code></Link>{" "}
+        (default 10) bounds how many sets one request may carry.
       </p>
       <Callout tone="danger" title="No synchronous overload">
         If you need to compose UNION / INTERSECT / EXCEPT across multiple condition

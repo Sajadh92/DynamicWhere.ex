@@ -741,6 +741,8 @@ in memory:                   data = set1; then data = data.Union|Intersect|Excep
 - Each set is one database query, run one after another, loading every matching row. Set operations, ordering
   and paging all run in memory, never in SQL. Sets combine left to right, `((set1 op2 set2) op3 set3)`, in Sort
   order, not list order.
+  - `Page` bounds the rows returned, not the rows read. Under `ApplyPolicy`, `Caps.MaxConditionSets` (default 10)
+    bounds the number of sets, and with it the number of reads (section 12).
 - Set operations use T's default equality — reference equality for an ordinary entity class. They only work when
   every set materializes the same instances: a tracking query from one `DbContext` and no `Selects`.
   - With `Selects`, each set builds new T objects: `Intersect` returns nothing, `Except` removes nothing, `Union`
@@ -1400,9 +1402,9 @@ HashSalt          string; supply via user secrets, an environment variable or a 
 StoreFailure      "LastKnownGood" | "FailClosed" | "StaticOnly"
 MaxSnapshotAge    TimeSpan "hh:mm:ss", e.g. "00:15:00"
 RefreshInterval   TimeSpan "hh:mm:ss", e.g. "00:00:30"
-Caps:MaxPageSize  Caps:DefaultPageSize  Caps:MaxConditions  Caps:MaxConditionDepth  Caps:MaxOrderFields
-Caps:MaxNavigationDepth  Caps:MaxQueryCost  Caps:DefaultFieldCost  Caps:MaxAuditEvents  Caps:MinGroupSize
-Caps:SchemaDepth  Caps:SchemaCycleLimit  Caps:MaxSchemaFields                integers
+Caps:MaxPageSize  Caps:DefaultPageSize  Caps:MaxConditions  Caps:MaxConditionDepth  Caps:MaxConditionSets
+Caps:MaxOrderFields  Caps:MaxNavigationDepth  Caps:MaxQueryCost  Caps:DefaultFieldCost  Caps:MaxAuditEvents
+Caps:MinGroupSize  Caps:SchemaDepth  Caps:SchemaCycleLimit  Caps:MaxSchemaFields     integers
 ```
 
 ```jsonc
@@ -1481,10 +1483,14 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
                                      composable Filter, FilterDynamic and Summary return the query already
                                      paged, so page through the request's Page, not a chained Page(). Where,
                                      Order, Select and Group take no page and are never given one.
+                                     A Segment still loads every row of every set before it pages, so for a
+                                     Segment this bounds the rows returned, not the rows read.
   MaxConditions        50       1    conditions at every nesting depth; Summary: ConditionGroup + Having;
                                      Segment: all condition sets together                               CapExceeded (9)
   MaxConditionDepth    10       1    3.1.0. How deep SubConditionGroups nest, root group = depth 1. Summary:
                                      the deeper of ConditionGroup and Having; Segment: each set on its own  CapExceeded (9)
+  MaxConditionSets     10       1    3.1.0. Segment.ConditionSets.Count, sets with no conditions included.
+                                     Each set is one query loading every row it matches, before paging  CapExceeded (9)
   MaxOrderFields       10       1    Orders.Count                                                       CapExceeded (9)
   MaxNavigationDepth   4        1    dot segments of any path ("A.B.C.D" passes, 5 segments refused) in
                                      conditions, Selects, Orders, GroupBy.Fields, AggregateBy.Field     CapExceeded (9)
@@ -1500,6 +1506,11 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
 ```
 
 - Caps apply only to guarded queries, simulations and schema building. Unguarded calls have no limits.
+- A Segment reads before it pages. Each condition set is one query that loads every row it matches; the sets are
+  combined, ordered and paged in memory afterwards (section 6).
+  - `MaxPageSize` and `DefaultPageSize` bound what a Segment returns, not what it reads.
+  - `MaxConditionSets` bounds how many reads one request makes. Nothing bounds the size of each read: a set with
+    no conditions loads the whole table, narrowed only by forced predicates.
 - Cost charges every reference, duplicates included, and before gating, so a later-dropped field still costs.
   - Filter: conditions, Orders, and the Selects the caller wrote.
   - Summary: conditions, `GroupBy.Fields` and `AggregateBy.Field` (Having and Orders are not charged).
@@ -2017,8 +2028,9 @@ field denied for Segment used anywhere in a Segment          throw             t
 Segment condition on a field denied for Select               allowed           throw    FieldDeniedForSegment
 [DwRequireWhere] not satisfied                               throw             throw    RequiredFilterMissing
 ContextValue missing or null                                 throw             throw    MissingContextValue
-MaxConditions / MaxConditionDepth / MaxOrderFields /
-  MaxPageSize / MaxNavigationDepth exceeded                  throw             throw    CapExceeded
+MaxConditions / MaxConditionDepth / MaxConditionSets /
+  MaxOrderFields / MaxPageSize /
+  MaxNavigationDepth exceeded                                throw             throw    CapExceeded
 total cost above MaxQueryCost                                throw             throw    QueryCostExceeded
 getQueryString: true                                         SQL returned      throw    QueryStringDenied
 ```
@@ -3468,9 +3480,9 @@ through `PolicySimulator` or in dry run to see the decisions).
                                       a Segment condition on a field the caller may not Select
 7   AllSelectsDenied                  Convenience dropped every requested select (FieldPath "*")                recorded
 8   OperatorNotAllowed                an operator outside the field's allowed set ([DwOperators], rules)        recorded
-9   CapExceeded                       MaxPageSize, MaxConditions, MaxConditionDepth, MaxOrderFields or           recorded, except the
-                                      MaxNavigationDepth exceeded; or the context already holds MaxAuditEvents  audit buffer: throws
-                                      undrained events
+9   CapExceeded                       MaxPageSize, MaxConditions, MaxConditionDepth, MaxConditionSets,          recorded, except the
+                                      MaxOrderFields or MaxNavigationDepth exceeded; or the context already     audit buffer: throws
+                                      holds MaxAuditEvents undrained events
 10  PolicyRequired                    a DynamicWhere extension method called on a                               throws
                                       [DwEntity(RequirePolicy = true)] type outside ApplyPolicy
 11  RequiredFilterMissing             a [DwRequireWhere] field has no AND-reachable condition using one of      recorded
@@ -4130,7 +4142,7 @@ MemoryCalculationInput
 ### History
 
 ```
-3.1.0   Date comparisons rebuilt, two new caps, two new error codes, and preparation enforced with or without a store.
+3.1.0   Date comparisons rebuilt, three new caps, two new error codes, and preparation enforced with or without a store.
         - DataType.Date / DataType.DateTime resolve the member's type before building the predicate. Every
           comparison on a DateTimeOffset member used to throw, and DataType.Date on any nullable date member
           used to throw; both work. The null guard is emitted only where the value can be null: IsNull / IsNotNull
@@ -4145,7 +4157,8 @@ MemoryCalculationInput
         - PageCount on an unpaged result is 1 (0 with no rows), rather than TotalCount, or 0 for a Segment with
           condition sets.
         - DwCaps.DefaultPageSize (default 0 = off) bounds a guarded query that sends no Page; DwCaps
-          .MaxConditionDepth (default 10) bounds how deeply condition groups nest.
+          .MaxConditionDepth (default 10) bounds how deeply condition groups nest; DwCaps.MaxConditionSets
+          (default 10) bounds how many condition sets a guarded Segment carries, each one a full read.
         - ErrorCode.SelectTypeMustHaveParameterlessConstructor replaces the English sentence a Select on an
           unconstructible type used to throw; LogicException gained Subject, which carries the type name.
         - ApplyPolicy(ctx) refuses a context that never went through PrepareAsync, with or without a store
@@ -4176,7 +4189,8 @@ MemoryCalculationInput
 ### Limits by design
 
 - `Segment` is async only; each set is loaded in full and the sets are combined in memory by reference equality
-  (section 6).
+  (section 6). Paging comes last, so a page bounds what a Segment returns, not what it reads. Under `ApplyPolicy`,
+  `Caps.MaxConditionSets` (default 10) bounds how many sets, and so how many full reads, one request makes.
 - `Select<T>` needs a public parameterless constructor on T. Records with only positional constructors, and
   classes whose constructors all take arguments, cannot be targets; use `SelectDynamic`.
 - The I-variants call `ToLower()` on both sides. On a case-sensitive collation (PostgreSQL with the `C` locale) the

@@ -68,6 +68,7 @@ export default function Page() {
           <tr><td><code>DefaultPageSize</code></td><td><strong>0</strong></td><td>Page given to a guarded query that asked for none. Zero, the default, leaves it unpaged.</td></tr>
           <tr><td><code>MaxConditions</code></td><td>50</td><td>Conditions in one filter.</td></tr>
           <tr><td><code>MaxConditionDepth</code></td><td>10</td><td>How deep a filter may nest its condition groups, counting the root group as one.</td></tr>
+          <tr><td><code>MaxConditionSets</code></td><td>10</td><td>Condition sets in one segment. Each set is its own query.</td></tr>
           <tr><td><code>MaxOrderFields</code></td><td>10</td><td>Order fields in one query.</td></tr>
           <tr><td><code>MaxNavigationDepth</code></td><td>4</td><td>How deep a field path may reach.</td></tr>
           <tr><td><code>MaxQueryCost</code></td><td>1000</td><td>Budget consumed by <code>[DwCost]</code> weights.</td></tr>
@@ -92,7 +93,8 @@ export default function Page() {
       <p>
         They do not all refuse alike, and the error code says which fired.{" "}
         <code>MaxPageSize</code>, <code>MaxConditions</code>,{" "}
-        <code>MaxConditionDepth</code>, <code>MaxOrderFields</code>,{" "}
+        <code>MaxConditionDepth</code>, <code>MaxConditionSets</code>,{" "}
+        <code>MaxOrderFields</code>,{" "}
         <code>MaxNavigationDepth</code> and <code>MaxAuditEvents</code> share{" "}
         <code>CapExceeded</code>, naming the cap in <code>SourceOrigin</code>.{" "}
         <code>MaxQueryCost</code> is the one with a code of its own,{" "}
@@ -129,6 +131,13 @@ export default function Page() {
         given one.
       </p>
       <p>
+        A <code>Segment</code> reads before it pages. Each condition set is its
+        own query and loads every row it matches; the sets are combined, ordered
+        and paged in memory afterwards. So for a segment{" "}
+        <code>DefaultPageSize</code> and <code>MaxPageSize</code> bound the rows
+        it returns, not the rows it reads.
+      </p>
+      <p>
         <code>MaxConditionDepth</code> bounds the shape{" "}
         <code>MaxConditions</code> says nothing about: fifty conditions in one
         flat group and fifty nested fifty deep both pass the count, and only the
@@ -141,6 +150,18 @@ export default function Page() {
         <code>Having</code>, and on each <code>Segment</code> condition set
         separately — a segment sums its conditions across every set, but its
         depth is the depth of one.
+      </p>
+      <p>
+        <code>MaxConditionSets</code> bounds how many reads one segment can ask
+        for. A set with no conditions spends nothing from{" "}
+        <code>MaxConditions</code> or{" "}
+        <code>MaxConditionDepth</code>, so before this cap two hundred empty
+        sets were two hundred full-table reads for a page of three rows. It
+        counts every set the caller sent, empty or not, and refuses in both
+        tiers with <code>CapExceeded</code>. It bounds how many reads there
+        are, not how large each one is: a segment over a large table can still
+        read all of it once per set, so lower the cap, or narrow the table with
+        a forced predicate, where that matters.
       </p>
       <p>
         <code>MinGroupSize</code> is the one that starts <em>unset</em> rather

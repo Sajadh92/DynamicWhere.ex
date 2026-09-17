@@ -155,6 +155,7 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         <li>Put <code>[DwEntity(RequirePolicy = true)]</code> on anything sensitive, so a DynamicWhere call that forgets <code>ApplyPolicy</code> fails loudly.</li>
         <li>Prefer <code>[DwOperators]</code> over allowing free filtering on a protected field.</li>
         <li>Set <code>DwCaps.DefaultPageSize</code> if the API does not page for itself. It ships off, and the request <code>MaxPageSize</code> never bounded is the one that sent no page at all.</li>
+        <li>Lower <code>DwCaps.MaxConditionSets</code> if you expose <code>Segment</code> over a large table. A segment reads every row each set matches before it pages, so the page bounds the response and this cap bounds how many reads there are.</li>
       </ul>
     </DocPage>
   );

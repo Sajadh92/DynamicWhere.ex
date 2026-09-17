@@ -1641,9 +1641,10 @@ new DwPolicyOptions { Caps = { MinGroupSize = 10 } }   // stricter
 | Cap | Default | Meaning |
 |---|---|---|
 | `MaxPageSize` | 1000 | Largest page a caller may request |
-| `DefaultPageSize` | 0 (off) | The page a guarded query is given when it asks for none. `MaxPageSize` only ever read a page the caller sent, so the request with none was the one nothing bounded. Composable `Filter`, `FilterDynamic` and `Summary` return the query already paged; `Where`, `Order`, `Select` and `Group` take no page and are never given one |
+| `DefaultPageSize` | 0 (off) | The page a guarded query is given when it asks for none. `MaxPageSize` only ever read a page the caller sent, so the request with none was the one nothing bounded. Composable `Filter`, `FilterDynamic` and `Summary` return the query already paged; `Where`, `Order`, `Select` and `Group` take no page and are never given one. A `Segment` still loads every row of every set before it pages, so for a segment this bounds the rows returned, not the rows read |
 | `MaxConditions` | 50 | Conditions in one filter |
 | `MaxConditionDepth` | 10 | How deep condition groups may nest, root counted as one. `MaxConditions` bounds the count and says nothing about the shape |
+| `MaxConditionSets` | 10 | Condition sets in one segment. Each set is its own query and loads every row it matches before the segment pages, so this is what bounds how many reads one request makes; a set with no conditions passes every other cap |
 | `MaxOrderFields` | 10 | Order fields in one query |
 | `MaxNavigationDepth` | 4 | How deep a field path may reach |
 | `MaxQueryCost` | 1000 | Budget consumed by `[DwCost]` weights |
@@ -1970,7 +1971,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
    `Select<T>(fields)` requires `T` to have a parameterless (default) constructor. If `T` does not have one — a positional record, most often — a `LogicException` is thrown whose `Message` is the stable code `SelectTypeMustHaveParameterlessConstructor` and whose `Subject` carries `typeof(T).Name`. Before 3.1.0 that message was an English sentence with the type name inside it. Most EF Core entity classes have parameterless constructors by default. A guarded query reaches the same refusal when a member carries `[DwNoSelect]`, because deny-select projects.
 
 2. **Segment Operations are Async-Only**
-   `ToListAsync<T>(Segment)` is the only entry point for segment queries. There is no synchronous `ToList<T>(Segment)` variant. Each `ConditionSet` is materialized independently into memory, then set operations are performed in-memory.
+   `ToListAsync<T>(Segment)` is the only entry point for segment queries. There is no synchronous `ToList<T>(Segment)` variant. Each `ConditionSet` is materialized independently into memory, then set operations are performed in-memory. Ordering and paging come after, so a page bounds what a segment returns, not what it reads. Under `ApplyPolicy`, `DwCaps.MaxConditionSets` (default 10) bounds how many sets one request may carry.
 
 3. **Date Values are Read with the Invariant Culture**
    Since 3.1.0 a date value must be ISO 8601, year-first, or a format the deployment declared through `DwDates.Configure`. The server's culture used to decide: `01/09/2026` was 1 September on a day-first server and 9 January on another. It is now refused with `AmbiguousDateFormat` unless the order is declared, and forms the lenient parser used to accept — `12:00` as today at noon — are `InvalidFormat`. A deployment that sent culture-formatted dates either switches its clients to ISO 8601 or declares the format once at startup. In exchange, a filter means one thing on every server, `DateTimeOffset` and `DateOnly` columns work, and a `DateTimeOffset` value is normalised to UTC.

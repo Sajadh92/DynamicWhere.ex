@@ -1945,7 +1945,7 @@ internal static class FilterSanitizer
         // behavioural difference from before this existed.
         if (gate.TypePolicy.Aliases.Count == 0)
         {
-            return name.Validate<T>();
+            return gate.HidesExistence ? TryValidate<T>(name) ?? gate.Unknown(name) : name.Validate<T>();
         }
 
         string spoken = name.Trim();
@@ -1994,8 +1994,9 @@ internal static class FilterSanitizer
 
         if (candidates.Count == 0)
         {
-            // Nothing matched. Hand it back to the validator so the failure is the ordinary one.
-            return name.Validate<T>();
+            // Nothing matched. Hand it back to the validator so the failure is the ordinary one --
+            // except under the strict tier, where it is gated like a field denied for everything.
+            return gate.HidesExistence ? gate.Unknown(name) : name.Validate<T>();
         }
 
         string canonical = candidates[0];
@@ -2183,6 +2184,10 @@ internal static class FilterSanitizer
         // an internal column name back to a caller who never used one.
         private readonly Dictionary<string, string> _spoken = new(StringComparer.Ordinal);
 
+        // Names that match nothing on the type, kept under the strict tier so they can be refused
+        // where a denied field is, as a denied field is.
+        private readonly HashSet<string> _unknown = new(StringComparer.Ordinal);
+
         internal Gate(
             Type entityType,
             PolicyResolver resolver,
@@ -2230,6 +2235,31 @@ internal static class FilterSanitizer
 
         /// <summary>True when every refusal throws rather than being applied quietly.</summary>
         internal bool IsStrict => _options.Tier == DwTier.Strict;
+
+        /// <summary>
+        /// True when a name that matches nothing, and a field this caller may not use, must be told
+        /// apart by nothing in the answer.
+        /// </summary>
+        /// <remarks>
+        /// The strict tier serves a caller who may be probing. Refusing an unknown name as a validation
+        /// error and a denied field as a policy refusal hands that caller the list of columns they
+        /// cannot see, one guess at a time, and a refusal carrying the field's path or the attribute
+        /// that sealed it confirms each guess. So an unknown name is gated as a field denied for every
+        /// feature, at the step a denial is raised, and every field refusal names no field and no
+        /// source. The trace and the audit keep both. A dry run refuses nothing, so an unknown name
+        /// still fails there as it would unguarded.
+        /// </remarks>
+        internal bool HidesExistence => IsStrict && !IsDryRun;
+
+        /// <summary>Remembers a name that matches nothing, and returns it unchanged for the gate to refuse.</summary>
+        internal string Unknown(string name)
+        {
+            string spoken = name.Trim();
+
+            _unknown.Add(spoken);
+
+            return spoken;
+        }
 
         /// <summary>
         /// True when nothing is enforced and every decision is only recorded.
@@ -2529,7 +2559,10 @@ internal static class FilterSanitizer
                 return null;
             }
 
-            return new PolicyException(PolicyErrorCode.CapExceeded, fieldPath, PolicyFeature.None, _options.Tier)
+            // Under the strict tier the refusal names no field: a path the caller wrote comes back
+            // canonicalized, which would confirm that it names something.
+            return new PolicyException(
+                PolicyErrorCode.CapExceeded, IsStrict ? WholeClause : fieldPath, PolicyFeature.None, _options.Tier)
             {
                 SourceOrigin = origin
             };
@@ -2649,9 +2682,9 @@ internal static class FilterSanitizer
         /// Refuses a filter inside a set operation on a field the caller may not project.
         /// </summary>
         /// <remarks>
-        /// Carries its own reason rather than going through <see cref="Deny"/>, because the refusal
+        /// Records its own reason rather than going through <see cref="Deny"/>, because the refusal
         /// is not what the field's policy appears to say: the field is allowed for filtering, and
-        /// the same filter succeeds outside a segment. Without the origin an operator reading a
+        /// the same filter succeeds outside a segment. Without the reason an operator reading a
         /// trace would go looking for a denial that is not there.
         /// </remarks>
         internal void DenySegmentInference(string fieldPath, FieldPolicy policy)
@@ -2660,19 +2693,16 @@ internal static class FilterSanitizer
                 "denied for projection, and a set operation reconstructs a field from membership " +
                 "rather than from the columns it returns";
 
-            Record(fieldPath, PolicyFeature.Segment, PolicyAction.Denied, policy);
+            _trace.Add(new PolicyDecision(fieldPath, PolicyFeature.Segment, PolicyAction.Denied, origin));
 
             if (IsDryRun)
             {
                 return;
             }
 
-            throw new PolicyException(
-                PolicyErrorCode.FieldDeniedForSegment, Spoken(fieldPath), PolicyFeature.Segment,
-                _options.Tier)
-            {
-                SourceOrigin = origin
-            };
+            // Only ever raised under the strict tier, where a field refusal names no field and no
+            // source. The origin stays in the trace, where an operator reads it.
+            throw Exception(fieldPath, PolicyFeature.Segment, PolicyErrorCode.FieldDeniedForSegment, policy);
         }
 
         /// <summary>Records that a field of the type's default order was left out for this caller.</summary>
@@ -2698,6 +2728,11 @@ internal static class FilterSanitizer
         /// <summary>Resolves one field's policy, once per query.</summary>
         internal FieldPolicy PolicyFor(string fieldPath, PolicyFeature feature)
         {
+            if (_unknown.Contains(fieldPath))
+            {
+                return new FieldPolicy(fieldPath, DeniedEverything, Array.Empty<PolicySource>(), isSealed: true);
+            }
+
             if (!_resolved.TryGetValue(fieldPath, out FieldPolicy? policy))
             {
                 policy = _resolver.Resolve(_entityType, fieldPath, _context);
@@ -2753,7 +2788,7 @@ internal static class FilterSanitizer
             _trace.Add(new PolicyDecision(fieldPath, feature, PolicyAction.Denied, origin));
 
             throw new PolicyException(
-                PolicyErrorCode.CapExceeded, fieldPath, feature, _options.Tier)
+                PolicyErrorCode.CapExceeded, IsStrict ? WholeClause : fieldPath, feature, _options.Tier)
             {
                 SourceOrigin = origin
             };
@@ -2821,7 +2856,9 @@ internal static class FilterSanitizer
             // The decision names the field the policy governs, not the alias the caller wrote, so
             // a trace can be read straight against the policy. The alias goes in the reason,
             // because otherwise the caller cannot tell which part of their query was refused.
-            string? reason = Describe(policy);
+            string? reason = _unknown.Contains(fieldPath)
+                ? $"names nothing on {_entityType.Name}"
+                : Describe(policy);
 
             // An explicit via wins: it names an aggregate alias or a grouping key, which is more
             // specific than the field alias this would otherwise fall back to.
@@ -2842,6 +2879,13 @@ internal static class FilterSanitizer
             PolicyErrorCode code,
             FieldPolicy? policy)
         {
+            // Every field refusal alike, so a denied field and a name matching nothing cannot be told
+            // apart by what comes back: the same code for the clause, no path, no rule, no attribute.
+            if (IsStrict && IsFieldDenial(code))
+            {
+                return new PolicyException(code, WholeClause, feature, _options.Tier);
+            }
+
             // A resolved policy lists the winning source for every feature it decided, not for this
             // one alone, so naming a single source is only honest when there is a single source.
             // Per-feature attribution arrives with the explain endpoint; guessing here would put a
@@ -2857,6 +2901,27 @@ internal static class FilterSanitizer
                 SourceOrigin = sole?.Origin
             };
         }
+
+        /// <summary>True for the codes that refuse a field for one feature.</summary>
+        private static bool IsFieldDenial(PolicyErrorCode code) =>
+            code is PolicyErrorCode.FieldDeniedForWhere
+                or PolicyErrorCode.FieldDeniedForSelect
+                or PolicyErrorCode.FieldDeniedForOrder
+                or PolicyErrorCode.FieldDeniedForGroup
+                or PolicyErrorCode.FieldDeniedForAggregate
+                or PolicyErrorCode.FieldDeniedForSegment;
+
+        /// <summary>Every feature denied, which is how an unknown name is gated under the strict tier.</summary>
+        private static readonly IReadOnlyDictionary<PolicyFeature, PolicyEffect> DeniedEverything =
+            new Dictionary<PolicyFeature, PolicyEffect>
+            {
+                [PolicyFeature.Where] = PolicyEffect.Deny,
+                [PolicyFeature.Select] = PolicyEffect.Deny,
+                [PolicyFeature.Order] = PolicyEffect.Deny,
+                [PolicyFeature.Group] = PolicyEffect.Deny,
+                [PolicyFeature.Aggregate] = PolicyEffect.Deny,
+                [PolicyFeature.Segment] = PolicyEffect.Deny
+            };
 
         /// <summary>Names every source that contributed, for the trace.</summary>
         private static string? Describe(FieldPolicy? policy) =>

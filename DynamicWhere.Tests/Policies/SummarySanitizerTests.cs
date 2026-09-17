@@ -101,7 +101,7 @@ public class SummarySanitizerTests
                 () => Guard<SecuredEmployee>(GroupedBy("InternalNotes"), tier));
 
             Assert.Equal(PolicyErrorCode.FieldDeniedForGroup, exception.ErrorCode);
-            Assert.Equal("InternalNotes", exception.FieldPath);
+            Assert.Equal(tier == DwTier.Strict ? "*" : "InternalNotes", exception.FieldPath);
         }
     }
 
@@ -118,7 +118,7 @@ public class SummarySanitizerTests
                 () => Guard<SecuredEmployee>(summary, tier));
 
             Assert.Equal(PolicyErrorCode.FieldDeniedForAggregate, exception.ErrorCode);
-            Assert.Equal("NationalId", exception.FieldPath);
+            Assert.Equal(tier == DwTier.Strict ? "*" : "NationalId", exception.FieldPath);
         }
     }
 
@@ -343,7 +343,7 @@ public class SummarySanitizerTests
             () => Guard<SecuredEmployee>(summary, DwTier.Strict, provider));
 
         Assert.Equal(PolicyErrorCode.FieldDeniedForOrder, exception.ErrorCode);
-        Assert.Equal("Contact.Phone", exception.FieldPath);
+        Assert.Equal("*", exception.FieldPath);
     }
 
     [Fact]

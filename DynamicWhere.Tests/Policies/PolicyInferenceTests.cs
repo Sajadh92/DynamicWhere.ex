@@ -90,7 +90,7 @@ public class PolicyInferenceTests : IDisposable
             () => Sanitize(SegmentOn(OnSalary()), DwTier.Strict));
 
         Assert.Equal(PolicyErrorCode.FieldDeniedForSegment, error.ErrorCode);
-        Assert.Equal("Salary", error.FieldPath);
+        Assert.Equal("*", error.FieldPath);
     }
 
     [Fact]

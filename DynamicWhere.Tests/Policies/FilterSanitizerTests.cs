@@ -235,7 +235,9 @@ public class FilterSanitizerTests
             () => Guard<SecuredEmployee>(filter, DwTier.Strict));
 
         Assert.Equal(PolicyErrorCode.FieldDeniedForSelect, exception.ErrorCode);
-        Assert.Equal("Salary", exception.FieldPath);
+
+        // A strict refusal names no field, so it reads the same for a name that matches nothing.
+        Assert.Equal("*", exception.FieldPath);
         Assert.Equal(PolicyFeature.Select, exception.Feature);
         Assert.Equal(DwTier.Strict, exception.Tier);
     }
@@ -429,7 +431,7 @@ public class FilterSanitizerTests
             () => Guard<SecuredEmployee>(filter, DwTier.Strict));
 
         Assert.Equal(PolicyErrorCode.FieldDeniedForOrder, exception.ErrorCode);
-        Assert.Equal("InternalNotes", exception.FieldPath);
+        Assert.Equal("*", exception.FieldPath);
     }
 
     [Fact]

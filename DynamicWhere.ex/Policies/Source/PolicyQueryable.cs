@@ -97,7 +97,7 @@ public sealed class PolicyQueryable<T> where T : class
             ResultTransformer.Rows(
                 result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
 
-            result.Policy = trace;
+            result.Policy = _options.TraceInResult ? trace : null;
 
             return result;
         }
@@ -122,7 +122,7 @@ public sealed class PolicyQueryable<T> where T : class
             ResultTransformer.Rows(
                 result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
 
-            result.Policy = trace;
+            result.Policy = _options.TraceInResult ? trace : null;
 
             return result;
         }
@@ -152,7 +152,7 @@ public sealed class PolicyQueryable<T> where T : class
             // columns that no longer exist.
             ResultTransformer.Rename(result.Data, TypePolicy, trace);
 
-            result.Policy = trace;
+            result.Policy = _options.TraceInResult ? trace : null;
 
             return result;
         }
@@ -182,7 +182,7 @@ public sealed class PolicyQueryable<T> where T : class
             // columns that no longer exist.
             ResultTransformer.Rename(result.Data, TypePolicy, trace);
 
-            result.Policy = trace;
+            result.Policy = _options.TraceInResult ? trace : null;
 
             return result;
         }
@@ -226,7 +226,7 @@ public sealed class PolicyQueryable<T> where T : class
             ResultTransformer.Rename(
                 result.Data, TypePolicy, trace, floor > 1 ? GroupFloor.SizeAlias : null);
 
-            result.Policy = trace;
+            result.Policy = _options.TraceInResult ? trace : null;
 
             return result;
         }
@@ -268,7 +268,7 @@ public sealed class PolicyQueryable<T> where T : class
             ResultTransformer.Rename(
                 result.Data, TypePolicy, trace, floor > 1 ? GroupFloor.SizeAlias : null);
 
-            result.Policy = trace;
+            result.Policy = _options.TraceInResult ? trace : null;
 
             return result;
         }
@@ -297,7 +297,7 @@ public sealed class PolicyQueryable<T> where T : class
             ResultTransformer.Rows(
                 result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
 
-            result.Policy = trace;
+            result.Policy = _options.TraceInResult ? trace : null;
 
             return result;
         }

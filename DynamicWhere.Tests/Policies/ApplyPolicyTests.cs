@@ -140,10 +140,12 @@ public class ApplyPolicyTests
             Orders = new List<OrderBy> { new() { Field = "Name", Direction = Direction.Descending } }
         };
 
-        FilterResult<SecuredEmployee> result = Guarded(DwTier.Strict).ToList(filter);
+        PolicyQueryable<SecuredEmployee> guarded = Guarded(DwTier.Strict);
+
+        FilterResult<SecuredEmployee> result = guarded.ToList(filter);
 
         Assert.Equal(new[] { "Bo", "Ada" }, result.Data.Select(r => r.Name));
-        Assert.Empty(result.Policy!.Decisions);
+        Assert.Empty(guarded.LastTrace!.Decisions);
     }
 
     [Fact]
@@ -174,11 +176,14 @@ public class ApplyPolicyTests
     [Fact]
     public void The_trace_reports_the_tier_the_query_actually_ran_under()
     {
-        FilterResult<SecuredEmployee> result = Guarded(DwTier.Strict).ToList(
-            new Filter { Selects = new List<string> { "Name" } });
+        // Read from the query rather than the result: under the strict tier the trace stays
+        // in-process unless IncludeTraceInResult says otherwise.
+        PolicyQueryable<SecuredEmployee> guarded = Guarded(DwTier.Strict);
 
-        Assert.Equal(DwTier.Strict, result.Policy!.Tier);
-        Assert.False(result.Policy.DryRun);
+        guarded.ToList(new Filter { Selects = new List<string> { "Name" } });
+
+        Assert.Equal(DwTier.Strict, guarded.LastTrace!.Tier);
+        Assert.False(guarded.LastTrace.DryRun);
     }
 
     // ------------------------------------------------------------ configuration

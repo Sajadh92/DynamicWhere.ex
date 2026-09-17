@@ -16,6 +16,7 @@ public sealed class DwPolicyOptions
 {
     private DwTier _tier = DwTier.Convenience;
     private bool _dryRun;
+    private bool? _includeTraceInResult;
     private string _hashSalt = string.Empty;
     private IServiceProvider? _services;
     private IDwTokenVault? _tokenVault;
@@ -48,6 +49,33 @@ public sealed class DwPolicyOptions
             _dryRun = value;
         }
     }
+
+    /// <summary>
+    /// Whether a guarded result carries the policy trace in its <c>Policy</c> property: true, false, or
+    /// null to follow the tier — off under <see cref="DwTier.Strict"/>, on under
+    /// <see cref="DwTier.Convenience"/>.
+    /// </summary>
+    /// <remarks>
+    /// The trace names the fields a policy dropped, the attribute or rule that sealed each one, and every
+    /// predicate injected on the caller's behalf. That is the detail the strict tier already refuses to
+    /// hand over through <c>getQueryString</c>, and a result is where it reaches the caller: an API that
+    /// serializes a result serializes the trace with it. Under the strict tier it stays in-process by
+    /// default, on <c>PolicyQueryable.LastTrace</c> and in the audit, and a deployment that wants it on
+    /// the response sets this to true. The convenience tier serves the application's own front end and
+    /// keeps it, and false takes it off there too.
+    /// </remarks>
+    public bool? IncludeTraceInResult
+    {
+        get => _includeTraceInResult;
+        set
+        {
+            Guard();
+            _includeTraceInResult = value;
+        }
+    }
+
+    /// <summary>True when a guarded result carries the trace, by setting or by the tier's default.</summary>
+    internal bool TraceInResult => _includeTraceInResult ?? _tier == DwTier.Convenience;
 
     /// <summary>Numeric limits applied to every guarded query.</summary>
     public DwCaps Caps { get; } = new();

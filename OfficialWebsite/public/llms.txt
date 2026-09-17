@@ -89,6 +89,10 @@ DynamicWhere.ex.Policies.AspNetCore           MapDwPolicyAdmin, claims adapter, 
   FrameworkReference Microsoft.AspNetCore.App
 ```
 
+- The engine parses every expression it builds with its own `ParsingConfig`: System.Linq.Dynamic.Core's defaults
+  with `AreContextKeywordsEnabled = false`. It does not read `ParsingConfig.Default` (since 3.1.0), so a change a host
+  makes there does not reach DynamicWhere queries.
+
 Namespace of every public type:
 
 ```
@@ -528,6 +532,11 @@ Path                              Where predicate generated
   declared name (`orders.totalamount` → `Orders.TotalAmount`). Fields and serializer names (`[JsonPropertyName]`,
   `[Column]`) are not recognized: camelCase works, snake_case does not. Spaces around segments and empty segments
   are removed (`"Orders . TotalAmount"`, `"Orders..TotalAmount"`). A path of only dots fails.
+- **Names the parser reserves.** A member named `Root`, `It` or `Parent`, in any case, is an ordinary segment, and so
+  is an alias named `root`, `it` or `parent`. Before 3.1.0 System.Linq.Dynamic.Core read such a name as its context
+  keyword: `Root.Name` and `It.Name` addressed the row's own `Name`, and `Parent` threw `ParseException`. Under
+  `ApplyPolicy` the gate decided on the path the caller named while the query read the row's own column, so a denied
+  value could be projected and a forced scope reached through such a navigation filtered the wrong column.
 - **Errors.** A missing segment or a null / blank path throws `LogicException("ConditionMustHasValidFieldName")`,
   the same string for Condition, OrderBy, GroupBy and AggregateBy paths. A null or blank `Selects` entry throws
   `ArgumentNullException` instead.
@@ -4154,6 +4163,12 @@ MemoryCalculationInput
           UTC, and a value with no zone is read as UTC. C# date objects in Values are written year-first.
         - DateOnly members can be filtered; they could not under either date data type.
         - HAVING on a date alias takes its type from the aggregate, so it works on DateTimeOffset.
+        - Security fix. A member named Root, It or Parent, and an alias named root, it or parent, was read by
+          System.Linq.Dynamic.Core as a context keyword. Root.Name and It.Name filtered, sorted, grouped, aggregated
+          and projected the row's own Name; Parent threw. Under ApplyPolicy that projected [DwDenied] values, let a
+          filter test a denied column, and applied a [DwForceWhere] scope reached through such a navigation to the
+          row's own column. Expressions are parsed with a library-owned ParsingConfig with the context keywords
+          off, and ParsingConfig.Default is no longer read.
         - ToListAsync(Segment) combines its condition sets into one query the database answers. Union and
           Intersect combine the sets' conditions; Except removes its set's rows with NOT EXISTS on the primary key;
           a type with no primary key uses SQL UNION / INTERSECT / EXCEPT. The sets used to be loaded into lists and

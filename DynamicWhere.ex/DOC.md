@@ -40,6 +40,8 @@ dotnet add package DynamicWhere.ex --version 3.1.0
 | `Microsoft.EntityFrameworkCore` | 6.0.22 |
 | `System.Linq.Dynamic.Core` | 1.6.7 |
 
+The library parses every expression it builds with its own `ParsingConfig` — the parser's defaults with `AreContextKeywordsEnabled = false` — and does not read `ParsingConfig.Default`. See breaking point 15.
+
 **Companion packages** (optional, only for [field-level policies](#field-level-policies)):
 
 | Package | What it adds |
@@ -2018,6 +2020,9 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 
 14. **`AggregateBy.Alias` Must Be a Plain Identifier**
     The alias is emitted verbatim into the generated `Select` projection, so since **2.1.4** it must be a leading letter or underscore followed by letters, digits, or underscores. Letters are matched by Unicode category, so a non-Latin alias such as `"المجموع"` stays valid. Earlier releases only rejected aliases containing a dot, which let an alias holding a comma — `"Total, 1 as Leaked"` — append terms of its own to the projection. Aliases carrying any other separator never parsed, so nothing that worked is rejected.
+
+15. **Members Named `Root`, `It` or `Parent` Are Ordinary Names**
+    System.Linq.Dynamic.Core treats `it`, `root` and `parent` as keywords, in any case. Before 3.1.0 the library parsed with them on, so a navigation named `Root` or `It` was read as the row itself — `Root.Name` filtered, sorted, grouped, aggregated and projected the row's own `Name` — a navigation named `Parent` threw `ParseException`, and an `AggregateBy.Alias` named `root`, `it` or `parent` failed in `Having` and `Summary.Orders`. Under `ApplyPolicy` the gate decided on the path the caller named while the query read the row's own column: a dynamic projection of `Root.Name` returned a `[DwDenied]` `Name`, a filter on it tested the denied column, and a `[DwForceWhere]` scope reached through such a navigation filtered the row's own column. Every expression is now parsed with a configuration of the library's own, with the keywords off. `ParsingConfig.Default` is no longer read, so a host's changes to it do not reach DynamicWhere queries.
 
 ---
 

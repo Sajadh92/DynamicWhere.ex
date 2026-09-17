@@ -41,6 +41,15 @@ public class RequiredScopedRole
     public int? InstitutionId { get; set; }
 }
 
+/// <summary>A role whose only forced predicate lets null through.</summary>
+public class OpenScopedRole
+{
+    public int Id { get; set; }
+
+    [DwForceWhere(Operator.Equal, ContextValue = "TenantId", AllowNull = true)]
+    public int? InstitutionId { get; set; }
+}
+
 /// <summary>AllowNull on an operator that already decides about null.</summary>
 public class AllowNullOnANullCheck
 {
@@ -68,6 +77,8 @@ public sealed class ForcedNullContext : DbContext
     public DbSet<ScopedRole> Roles => Set<ScopedRole>();
 
     public DbSet<RequiredScopedRole> RequiredRoles => Set<RequiredScopedRole>();
+
+    public DbSet<OpenScopedRole> OpenRoles => Set<OpenScopedRole>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder options) => options.UseSqlite(_connection);
 }
@@ -103,6 +114,11 @@ public sealed class ForcedAllowNullTests : IDisposable
             new RequiredScopedRole { Id = 1, InstitutionId = 5 },
             new RequiredScopedRole { Id = 2, InstitutionId = null },
             new RequiredScopedRole { Id = 3, InstitutionId = 9 });
+
+        _db.OpenRoles.AddRange(
+            new OpenScopedRole { Id = 1, InstitutionId = 5 },
+            new OpenScopedRole { Id = 2, InstitutionId = null },
+            new OpenScopedRole { Id = 3, InstitutionId = 9 });
 
         _db.SaveChanges();
         _db.ChangeTracker.Clear();
@@ -148,6 +164,17 @@ public sealed class ForcedAllowNullTests : IDisposable
 
         Assert.Equal(expected, Ids(result, role => role.Id));
         Assert.Equal(expected.Length, result.TotalCount);
+    }
+
+    [Fact]
+    public void A_scope_made_only_of_a_widened_predicate_still_applies_with_no_caller_filter()
+    {
+        // The injected root then holds no condition of its own, only the widened group.
+        FilterResult<OpenScopedRole> result = _db.OpenRoles
+            .ApplyPolicy(Tenant(5), Options(DwTier.Strict), Resolver())
+            .ToList(new Filter());
+
+        Assert.Equal(new[] { 1, 2 }, Ids(result, role => role.Id));
     }
 
     [Fact]

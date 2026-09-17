@@ -2658,8 +2658,8 @@ internal static class FilterSanitizer
         /// <remarks>
         /// Reported under the field's public name where it has one. This refusal is unlike a denial:
         /// the caller has to act on it, and naming the field in a vocabulary they are allowed to use
-        /// is the difference between a fixable error and a riddle. The trace keeps the canonical
-        /// path, as it does everywhere else.
+        /// is the difference between a fixable error and a riddle. The trace and the audit keep the
+        /// canonical path, as they do everywhere else.
         /// </remarks>
         internal void RequireMissing(string fieldPath)
         {
@@ -2678,7 +2678,8 @@ internal static class FilterSanitizer
             throw new PolicyException(
                 PolicyErrorCode.RequiredFilterMissing, named, PolicyFeature.Where, _options.Tier)
             {
-                SourceOrigin = origin
+                SourceOrigin = origin,
+                AuditPath = fieldPath
             };
         }
 
@@ -2899,11 +2900,12 @@ internal static class FilterSanitizer
 
             // Reported under the name the caller used. Handing back the canonical path for a field
             // they only ever named by alias turns every refusal into schema disclosure, which is one
-            // of the two reasons aliases exist. The trace keeps the canonical path.
+            // of the two reasons aliases exist. The trace and the audit keep the canonical path.
             return new PolicyException(code, Spoken(fieldPath), feature, _options.Tier)
             {
                 RuleId = sole?.RuleId,
-                SourceOrigin = sole?.Origin
+                SourceOrigin = sole?.Origin,
+                AuditPath = fieldPath
             };
         }
 

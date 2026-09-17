@@ -60,12 +60,14 @@ public class PolicyException : LogicException
     public string? SourceOrigin { get; init; }
 
     /// <summary>
-    /// The field the refusal was about, where <see cref="FieldPath"/> withholds it from the caller.
+    /// The field the refusal was about, in canonical form, where <see cref="FieldPath"/> withholds it
+    /// from the caller or names it by the caller's alias.
     /// </summary>
     /// <remarks>
     /// The strict tier refuses a field without naming it, so an unknown name and a denied field read
     /// alike. The audit is not the caller, and a record of a refusal that cannot say which field was
-    /// probed answers nothing.
+    /// probed answers nothing. An alias varies by caller, so the audit keeps the path it stands for,
+    /// as every audit event does; a name that matches nothing is kept as sent.
     /// </remarks>
     internal string? AuditPath { get; init; }
 

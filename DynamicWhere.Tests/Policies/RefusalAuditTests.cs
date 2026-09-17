@@ -64,6 +64,9 @@ public class RefusalAuditTests : IDisposable
 
     private static PolicyResolver Attributes() => new(new IDwPolicyProvider[] { new AttributePolicyProvider() });
 
+    private static PolicyResolver Attributes(IDwPolicyProvider extra) =>
+        new(new IDwPolicyProvider[] { new AttributePolicyProvider(), extra });
+
     private static Filter Where(string field) => new()
     {
         ConditionGroup = new ConditionGroup
@@ -116,6 +119,31 @@ public class RefusalAuditTests : IDisposable
 
         Assert.Equal("password_hash", recorded.FieldPath);
         Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, recorded.ErrorCode);
+    }
+
+    [Fact]
+    public void A_refusal_through_an_alias_is_recorded_under_the_path_it_stands_for()
+    {
+        // The caller is told the name they used. The audit keeps the canonical path, as every audit
+        // event does, so a search for one column finds each refusal of it whatever the caller typed.
+        FakePolicyProvider denied = new FakePolicyProvider()
+            .Add("Name", PolicyFeature.Where, PolicyEffect.Deny, PolicyLevel.DynamicGlobal)
+            .AddAlias("Name", "full_name", PolicyLevel.DynamicGlobal);
+        FakePolicyProvider required = new FakePolicyProvider()
+            .AddRequired("Name", PolicyLevel.DynamicGlobal, Operator.Equal)
+            .AddAlias("Name", "full_name", PolicyLevel.DynamicGlobal);
+        DwPolicyContext caller = Caller();
+
+        PolicyException refused = Assert.Throws<PolicyException>(
+            () => People.ApplyPolicy(caller, Options(audit: true, DwTier.Convenience), Attributes(denied)).ToList(Where("full_name")));
+        PolicyException missing = Assert.Throws<PolicyException>(
+            () => People.ApplyPolicy(caller, Options(audit: true, DwTier.Convenience), Attributes(required)).ToList(new Filter()));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, refused.ErrorCode);
+        Assert.Equal("full_name", refused.FieldPath);
+        Assert.Equal(PolicyErrorCode.RequiredFilterMissing, missing.ErrorCode);
+        Assert.Equal("full_name", missing.FieldPath);
+        Assert.Equal(new[] { "Name", "Name" }, caller.PendingAuditEvents.Select(e => e.FieldPath));
     }
 
     [Fact]

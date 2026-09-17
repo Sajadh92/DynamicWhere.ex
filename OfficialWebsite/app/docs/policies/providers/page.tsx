@@ -109,10 +109,12 @@ DwPolicy.Configure(options, provider);`}</Code>
         An absent or <code>null</code> <code>allowNull</code> reads as{" "}
         <code>false</code>. Anything else that is not a JSON <code>true</code> or{" "}
         <code>false</code> — the string <code>&quot;true&quot;</code>, the number{" "}
-        <code>1</code> — is refused, and so is <code>allowNull</code> on a null
-        check, which carries neither <code>value</code> nor{" "}
-        <code>contextValue</code>. A refused document fails the load rather than
-        being skipped: fatal at startup, a refresh failure afterwards. Guessing
+        <code>1</code> — is refused, and so is <code>allowNull: true</code> on a
+        null check, whether or not the object also carries a <code>value</code>{" "}
+        or <code>contextValue</code>: a null check ignores its value, so a widened{" "}
+        <code>IsNotNull</code> would filter nothing. A refused document fails the
+        load rather than being skipped: fatal at startup, a refresh failure
+        afterwards. Guessing
         at a string would go wrong one way or the other: read as true it can widen
         a tenant scope nobody asked to widen, and read as false it can drop a
         widening somebody wrote.

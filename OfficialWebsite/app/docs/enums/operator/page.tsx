@@ -220,6 +220,18 @@ export default function Page() {
         </tbody>
       </table>
 
+      <Callout tone="note" title="Long lists">
+        A list of up to 32 values is written as one chain of comparisons, and a
+        longer one as a balanced tree of such chains, which returns the same rows.
+        Before 3.1.0 every list was one chain, and a single condition carrying about
+        seven hundred values could overflow the request thread&apos;s stack and end
+        the process — see{" "}
+        <Link href="/docs/breaking-changes#values-are-literals">breaking changes</Link>.
+        Under <code>ApplyPolicy</code>,{" "}
+        <Link href="/docs/policies/configuration#caps"><code>MaxConditionValues</code></Link>{" "}
+        (default 1000) bounds the values one condition may carry.
+      </Callout>
+
       <h2 id="ranges">Ordered comparisons &amp; ranges</h2>
       <table>
         <thead>

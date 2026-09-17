@@ -117,13 +117,22 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
         <li>
           A field path that names nothing on the type does not fail validation. It
           is gated as a field denied for every feature, at the step where a denial is
-          raised — after the caps and the cost budget — so it gets the code a{" "}
+          raised — after the caps — so it gets the code a{" "}
           <code>[DwDenied]</code> field gets in that clause:{" "}
           <code>FieldDeniedForWhere</code>, <code>FieldDeniedForSelect</code>,{" "}
           <code>FieldDeniedForOrder</code>, <code>FieldDeniedForGroup</code> or{" "}
-          <code>FieldDeniedForAggregate</code>. In a segment, an unknown name — like
-          a <code>[DwDenied]</code> field — is refused in any of its clauses with{" "}
-          <code>FieldDeniedForSegment</code>.
+          <code>FieldDeniedForAggregate</code>. A name padded with dots or blank
+          segments, such as <code>NoSuchColumn....</code>, is normalized the way a
+          real path is, so it is refused as a padded real field is.
+        </li>
+        <li>
+          Inside a segment every field refusal is{" "}
+          <code>FieldDeniedForSegment</code>, with <code>Feature</code>{" "}
+          <code>Segment</code>, whichever clause refused it — a condition in any
+          set, an order, a select, or the field taking part at all. A field denied
+          for every clause but not for segments would otherwise answer by clause
+          where a name that matches nothing answers for taking part. Filters and
+          summaries keep their per-clause codes.
         </li>
         <li>
           Every refusal with one of those six codes has <code>FieldPath</code>{" "}
@@ -139,9 +148,24 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
           names the cap.
         </li>
         <li>
+          <code>MissingContextValue</code> has <code>FieldPath</code>{" "}
+          <code>&quot;*&quot;</code> and a <code>null</code>{" "}
+          <code>SourceOrigin</code>. Together the scope&apos;s column and the
+          context key it reads describe how rows are partitioned, so the message
+          names neither.
+        </li>
+        <li>
+          <code>MaxQueryCost</code> is checked after every field has passed its
+          gate. A field weighted by <code>[DwCost]</code> that the caller may not
+          use is refused as denied before its weight counts, as a name that matches
+          nothing is, so the budget cannot tell them apart. An allowed weighted
+          field still gets <code>QueryCostExceeded</code>.
+        </li>
+        <li>
           The trace keeps the real path and the reason: an unknown name is recorded
           as <code>Denied</code>, with the reason <code>names nothing on</code>{" "}
-          followed by the type&apos;s name. With{" "}
+          followed by the type&apos;s name. The trace also keeps a missing context
+          value&apos;s column and key. With{" "}
           <Link href="/docs/policies/configuration#audit-refusals"><code>AuditRefusals</code></Link>{" "}
           on, the audit event keeps the real field as well.
         </li>
@@ -149,18 +173,13 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
       <p>
         The <code>Convenience</code> tier answers as it always did: an unknown
         field fails validation with <code>LogicException</code>{" "}
-        <code>ConditionMustHasValidFieldName</code>, and a refusal names the field
+        <code>ConditionMustHasValidFieldName</code>, a refusal names the field
         as the caller wrote it, with <code>RuleId</code> and{" "}
-        <code>SourceOrigin</code> where one source decided. In a dry run, which
-        refuses nothing, an unknown name fails validation in either tier.
+        <code>SourceOrigin</code> where one source decided, and{" "}
+        <code>MaxQueryCost</code> is checked before any field is gated. In a dry
+        run, which refuses nothing, an unknown name fails validation in either
+        tier. See <Link href="/docs/policies/security#probing">Security</Link>.
       </p>
-      <Callout tone="note" title="The cost budget can still tell them apart">
-        <code>MaxQueryCost</code> is charged before any field is gated, and a name
-        that matches nothing costs <code>DefaultFieldCost</code>. A caller who can
-        push a request over the budget can still tell a field weighted by{" "}
-        <code>[DwCost]</code> from a name that does not exist. See{" "}
-        <Link href="/docs/policies/security#probing">Security</Link>.
-      </Callout>
 
       <h2 id="caps">Caps</h2>
       <table>
@@ -171,10 +190,12 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
           <tr><td><code>MaxConditions</code></td><td>50</td><td>Conditions in one filter.</td></tr>
           <tr><td><code>MaxConditionDepth</code></td><td>10</td><td>How deep a filter may nest its condition groups, counting the root group as one.</td></tr>
           <tr><td><code>MaxConditionSets</code></td><td>10</td><td>Condition sets in one segment. Each set adds to the one statement a segment becomes.</td></tr>
+          <tr><td><code>MaxConditionValues</code></td><td>1000</td><td>Values in any one condition, such as the list of an <code>In</code>.</td></tr>
+          <tr><td><code>MaxAggregates</code></td><td>50</td><td>Aggregates one summary computes.</td></tr>
           <tr><td><code>MaxOrderFields</code></td><td>10</td><td>Order fields in one query.</td></tr>
           <tr><td><code>MaxNavigationDepth</code></td><td>4</td><td>How deep a field path may reach.</td></tr>
           <tr><td><code>MaxQueryCost</code></td><td>1000</td><td>Budget consumed by <code>[DwCost]</code> weights.</td></tr>
-          <tr><td><code>DefaultFieldCost</code></td><td>1</td><td>Charged for an unweighted field.</td></tr>
+          <tr><td><code>DefaultFieldCost</code></td><td>1</td><td>Charged for an unweighted field, and for an aggregate with no field.</td></tr>
           <tr><td><code>MaxAuditEvents</code></td><td>10000</td><td>Audit buffer before draining.</td></tr>
           <tr><td><code>SchemaDepth</code></td><td>2</td><td>Levels a schema request walks when it names no depth.</td></tr>
           <tr><td><code>SchemaCycleLimit</code></td><td>2</td><td>Times one type may appear on one path.</td></tr>
@@ -196,6 +217,7 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
         They do not all refuse alike, and the error code says which fired.{" "}
         <code>MaxPageSize</code>, <code>MaxConditions</code>,{" "}
         <code>MaxConditionDepth</code>, <code>MaxConditionSets</code>,{" "}
+        <code>MaxConditionValues</code>, <code>MaxAggregates</code>,{" "}
         <code>MaxOrderFields</code>,{" "}
         <code>MaxNavigationDepth</code> and <code>MaxAuditEvents</code> share{" "}
         <code>CapExceeded</code>, naming the cap in <code>SourceOrigin</code>.
@@ -271,11 +293,41 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
         <code>CapExceeded</code>.
       </p>
       <p>
-        <code>MaxConditionDepth</code> and <code>MaxConditionSets</code> are new
-        in 3.1.0, so a guarded request 3.0.0 ran — a filter nested eleven groups
-        deep, a segment with eleven sets — is refused unless the deployment raises
-        the cap. See{" "}
-        <Link href="/docs/breaking-changes#condition-depth-and-set-caps">breaking changes</Link>.
+        <code>MaxConditionValues</code> bounds what one condition carries. An{" "}
+        <code>In</code> or a <code>NotIn</code> is one comparison per value, so a
+        single condition could hand the database a predicate of any size while
+        spending one condition from <code>MaxConditions</code> and one field from{" "}
+        <code>MaxQueryCost</code>. The condition carrying the most values is the
+        one compared, wherever it sits: a filter&apos;s conditions, a
+        summary&apos;s conditions and its <code>Having</code>, every set of a
+        segment.
+      </p>
+      <p>
+        <code>MaxAggregates</code> bounds the <code>AggregateBy</code> entries of
+        one summary, through the summary terminals and the composable{" "}
+        <code>Group</code> and <code>Summary</code>. Every aggregate is a column of
+        every group, and one with no field — a <code>Count</code> — names nothing a
+        weight could be set on, so it is also charged <code>DefaultFieldCost</code>{" "}
+        toward <code>MaxQueryCost</code>. The count the group-size floor adds for
+        itself is neither counted nor charged.
+      </p>
+      <p>
+        The caps that count — <code>MaxConditions</code>,{" "}
+        <code>MaxConditionDepth</code>, <code>MaxConditionSets</code>,{" "}
+        <code>MaxConditionValues</code>, <code>MaxAggregates</code>,{" "}
+        <code>MaxOrderFields</code> and <code>MaxPageSize</code> — are checked
+        before any field name is resolved, so an oversized request is refused
+        before its names are looked at, a name that does not exist included.{" "}
+        <code>MaxNavigationDepth</code> needs a resolved path and runs after them.
+      </p>
+      <p>
+        <code>MaxConditionDepth</code>, <code>MaxConditionSets</code>,{" "}
+        <code>MaxConditionValues</code> and <code>MaxAggregates</code> are new in
+        3.1.0, so a guarded request 3.0.0 ran — a filter nested eleven groups deep,
+        a segment with eleven sets, a summary with fifty-one aggregates — is
+        refused unless the deployment raises the cap. See breaking changes, for{" "}
+        <Link href="/docs/breaking-changes#condition-depth-and-set-caps">the first two</Link>{" "}
+        and <Link href="/docs/breaking-changes#values-and-aggregates-caps">the last two</Link>.
       </p>
       <p>
         <code>MinGroupSize</code> is the one that starts <em>unset</em> rather
@@ -320,7 +372,7 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
         <tbody>
           <tr><td><code>ErrorCode</code></td><td>The refusal&apos;s <code>PolicyErrorCode</code>. New in 3.1.0, and <code>null</code> on an event that records a use of an audited field.</td></tr>
           <tr><td><code>EntityType</code></td><td>The full name of the type being queried.</td></tr>
-          <tr><td><code>FieldPath</code></td><td>The field the refusal was about. Under the <code>Strict</code> tier that is the real field, or the unknown name the caller sent, although the refusal the caller received said <code>&quot;*&quot;</code>. A refusal of the whole request, such as <code>QueryStringDenied</code> or <code>PolicyContextNotPrepared</code>, records <code>&quot;*&quot;</code>; <code>MissingContextValue</code> names the scoped field.</td></tr>
+          <tr><td><code>FieldPath</code></td><td>The field the refusal was about, by its canonical path in both tiers: the path an alias stands for, and under the <code>Strict</code> tier the real field although the refusal the caller received said <code>&quot;*&quot;</code>. A name that matches nothing is recorded as the caller sent it. A refusal of the whole request, such as <code>QueryStringDenied</code> or <code>PolicyContextNotPrepared</code>, records <code>&quot;*&quot;</code>; <code>MissingContextValue</code> names the scoped field.</td></tr>
           <tr><td><code>Feature</code></td><td>The feature the refusal concerned.</td></tr>
           <tr><td><code>Effect</code></td><td><code>Deny</code>.</td></tr>
           <tr><td><code>Subjects</code>, <code>Purpose</code>, <code>Tier</code></td><td>The caller and the posture, as on every event.</td></tr>
@@ -331,6 +383,13 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
         <li>
           A refusal is written at most once, and it is never changed or swallowed:
           the caller receives the same exception whether or not it was recorded.
+        </li>
+        <li>
+          A recorded path is cut to 256 characters, followed by <code>…</code>,
+          and every control character in it is written as <code>\u</code> and
+          four hex digits — a line feed as <code>\u000a</code>. An unknown name is
+          text the caller wrote, and a line break in it would forge a second entry
+          in a log written one event per line.
         </li>
         <li>
           A buffer already holding <code>MaxAuditEvents</code> events records
@@ -414,20 +473,29 @@ foreach (var error in inspected.Errors) logger.LogError("{E}", error);`}</Code>
         A <Link href="/docs/policies/attributes#default-order"><code>[DwEntity(DefaultOrder = ...)]</code></Link>{" "}
         is read entry by entry. A default order is never a reason to refuse a
         query, so this scan is the only place a mistake in one is reported. For{" "}
-        <code>[DwEntity(DefaultOrder = &quot;Missing desc, Watchers, Secret, Id sideways&quot;)]</code>{" "}
+        <code>[DwEntity(DefaultOrder = &quot;Missing desc, Watchers, Secret, Rank, Region, Id sideways&quot;)]</code>{" "}
         on a <code>Ticket</code> whose <code>Watchers</code> is a collection of
-        entities and whose <code>Secret</code> carries <code>[DwNoOrder]</code>:
+        entities, whose <code>Secret</code> carries <code>[DwNoOrder]</code>, whose{" "}
+        <code>Rank</code> carries <code>[DwNoOrder(Overridable = true)]</code> and
+        whose <code>Region</code> carries{" "}
+        <code>[DwDeny(PolicyFeature.Segment)]</code>:
       </p>
       <Code lang="text">{`Ticket: DefaultOrder entry 'Id sideways' is not a field optionally followed by asc or desc, so guarded queries skip it.
 Ticket: DefaultOrder names 'Missing', which Ticket does not have, so guarded queries skip it.
 Ticket: DefaultOrder names 'Watchers', which no query can order by, so guarded queries skip it.
-Ticket: DefaultOrder names 'Secret', which its attributes deny for ordering, so every guarded query leaves it out.`}</Code>
+Ticket: DefaultOrder names 'Secret', which its attributes deny for ordering, so every guarded query leaves it out.
+Ticket: DefaultOrder names 'Rank', which its attributes deny for ordering unless a rule allows it, so guarded queries leave it out until one does.
+Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so guarded segments leave it out.`}</Code>
       <p>
-        All but the second are errors: an entry that cannot be read meant
+        The first, third and fourth are errors: an entry that cannot be read meant
         something, a collection of entities holds no single value to sort by, and a
-        field the type&apos;s own attributes deny for ordering is left out of every
-        guarded query, so the declared order is never the one used. The second is a
-        warning, because a model shared across types can name a field on purpose.
+        field the type&apos;s own attributes seal against ordering is left out of
+        every guarded query, so the declared order is never the one used. The rest
+        are warnings. A model shared across types can name a field on purpose; a
+        denial every attribute marks <code>Overridable</code> can be lifted by a
+        rule for the callers it names, so <code>Rank</code> is left out only until
+        one does; and <code>Region</code> is left out only of guarded segments,
+        which refuse it in any clause, while a filter still orders by it.
       </p>
 
       <h2 id="from-a-file">Configuration from a file</h2>
@@ -534,20 +602,20 @@ Ticket: DefaultOrder names 'Secret', which its attributes deny for ordering, so 
       <table>
         <thead><tr><th>Code</th><th>Raised when</th></tr></thead>
         <tbody>
-          <tr><td><code>FieldDeniedForWhere</code> … <code>FieldDeniedForSegment</code> (1–6)</td><td>A field is refused for that feature. <code>Where</code>, <code>Group</code>, <code>Aggregate</code> and <code>Segment</code> throw in <strong>both</strong> tiers, because dropping one of those would widen the result set or answer a different question. Only <code>Order</code> and <code>Select</code> are tier-dependent: the <code>Convenience</code> tier drops the clause instead. Under <code>Strict</code> a field path that names nothing gets the same code, and all six carry <code>FieldPath</code> <code>&quot;*&quot;</code> with no <code>RuleId</code> or <code>SourceOrigin</code> — see <Link href="/docs/policies/configuration#strict-refusals">What a strict refusal says</Link>.</td></tr>
+          <tr><td><code>FieldDeniedForWhere</code> … <code>FieldDeniedForSegment</code> (1–6)</td><td>A field is refused for that feature. <code>Where</code>, <code>Group</code>, <code>Aggregate</code> and <code>Segment</code> throw in <strong>both</strong> tiers, because dropping one of those would widen the result set or answer a different question. Only <code>Order</code> and <code>Select</code> are tier-dependent: the <code>Convenience</code> tier drops the clause instead. Under <code>Strict</code> a field path that names nothing gets the same code, and all six carry <code>FieldPath</code> <code>&quot;*&quot;</code> with no <code>RuleId</code> or <code>SourceOrigin</code>; inside a segment every one of them is <code>FieldDeniedForSegment</code> — see <Link href="/docs/policies/configuration#strict-refusals">What a strict refusal says</Link>.</td></tr>
           <tr><td><code>AllSelectsDenied</code> (7)</td><td>Every requested field was denied.</td></tr>
           <tr><td><code>OperatorNotAllowed</code> (8)</td><td>An operator outside the permitted set.</td></tr>
           <tr><td><code>CapExceeded</code> (9)</td><td>A cap above was exceeded; <code>SourceOrigin</code> names it. Under <code>Strict</code>, <code>FieldPath</code> is <code>&quot;*&quot;</code>.</td></tr>
           <tr><td><code>PolicyRequired</code> (10)</td><td>An unguarded query on a <code>RequirePolicy</code> type.</td></tr>
           <tr><td><code>RequiredFilterMissing</code> (11)</td><td>A <code>[DwRequireWhere]</code> field was not filtered on.</td></tr>
-          <tr><td><code>MissingContextValue</code> (12)</td><td>A forced predicate needed a context value that was absent.</td></tr>
+          <tr><td><code>MissingContextValue</code> (12)</td><td>A forced predicate needed a context value that was absent. Under <code>Strict</code>, <code>FieldPath</code> is <code>&quot;*&quot;</code> and <code>SourceOrigin</code> is <code>null</code>.</td></tr>
           <tr><td><code>AmbiguousFieldName</code> (13)</td><td>A name could mean more than one field.</td></tr>
           <tr><td><code>QueryStringDenied</code> (14)</td><td><code>getQueryString</code> in the <code>Strict</code> tier.</td></tr>
           <tr><td><code>AmbiguousGroupKey</code> (15)</td><td>Two groups of a summary share a key once their key values were transformed, so their aggregates cannot be added together without inventing a figure.</td></tr>
           <tr><td><code>TransformRequiresMaterialization</code> (16)</td><td>A transform on a query the caller materializes itself.</td></tr>
           <tr><td><code>StoreUnavailable</code> (17)</td><td>The store failed under <code>FailClosed</code>, or the context&apos;s pinned snapshot is older than <code>MaxSnapshotAge</code>.</td></tr>
           <tr><td><code>PolicyContextNotPrepared</code> (18)</td><td><code>ApplyPolicy</code> was handed a context that never went through <code>PrepareAsync</code> — refused whether or not a store is configured — or a store saw one it had attached nothing to, or the caller gained a <code>User</code> subject after preparation.</td></tr>
-          <tr><td><code>QueryCostExceeded</code> (19)</td><td>The query cost budget was exceeded.</td></tr>
+          <tr><td><code>QueryCostExceeded</code> (19)</td><td>The query cost budget was exceeded. Under <code>Strict</code> it is checked after every field gate.</td></tr>
           <tr><td><code>GroupTooSmall</code> (20)</td><td>A summary already uses the alias the group floor reserves.</td></tr>
           <tr><td><code>MissingHashSalt</code> (21)</td><td>A field masks to a hash and no salt was configured.</td></tr>
           <tr><td><code>MissingTokenVault</code> (22)</td><td>A field masks to a token and no vault was configured.</td></tr>

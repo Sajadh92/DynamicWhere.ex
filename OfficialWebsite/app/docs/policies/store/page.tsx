@@ -62,7 +62,13 @@ export default function Page() {
         <code>FromContext</code> each have an overload taking a fifth argument,{" "}
         <code>bool allowNull</code>, which <code>ForcedPredicate.AllowNull</code>{" "}
         reports; the four-argument overloads mean <code>allowNull: false</code>, and{" "}
-        <code>FromNullCheck</code> is unchanged.
+        <code>FromNullCheck</code> is unchanged. Either factory throws{" "}
+        <code>ArgumentException</code> for <code>allowNull: true</code> with{" "}
+        <code>IsNull</code> or <code>IsNotNull</code>, which compare against
+        nothing: a widened <code>IsNotNull</code> would inject{" "}
+        <code>(field IS NOT NULL OR field IS NULL)</code>, a scope that scopes
+        nothing. Without the flag, a value handed to a null check is ignored, as
+        before.
       </p>
       <Code lang="csharp">{`// Every caller sees their own institution's roles, and the roles no institution owns.
 var scope = new PolicyRule(

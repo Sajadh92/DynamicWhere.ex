@@ -112,8 +112,8 @@ DynamicWhere.ex code. It is the complete API surface.`}</Code>
           actually does.
         </li>
         <li>
-          <strong>Fifty-three traps</strong> that produce silently wrong code:
-          sixteen for the query engine, thirty-seven for policies. A mask without{" "}
+          <strong>Fifty-four traps</strong> that produce silently wrong code:
+          sixteen for the query engine, thirty-eight for policies. A mask without{" "}
           <code>[DwNoOrder]</code> leaking through sorting is the one an agent
           reproduces most often, because the attribute reads as sufficient on its
           own.

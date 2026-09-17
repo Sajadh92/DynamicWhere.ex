@@ -35,7 +35,7 @@
       <PackageLicenseExpression>MIT</PackageLicenseExpression>
       <!-- Locked to the core's version; see the note in the Redis package. -->
       <Version>3.1.0</Version>
-      <PackageReleaseNotes>v3.1.0 — Released in lockstep with DynamicWhere.ex 3.1.0, which it now requires. No API or behaviour change in this package. A stored rule's forced predicate can now carry allowNull, which lets rows with no value through: the core's PolicyRuleDocument writes it into the Detail column's forced object as "allowNull": true, only when it is true, so no migration is needed and a rule without it is stored exactly as before.
+      <PackageReleaseNotes>v3.1.0 — Released in lockstep with DynamicWhere.ex 3.1.0, which it now requires. No API or behaviour change in this package. A stored rule's forced predicate can now carry allowNull, which lets rows with no value through: the core's PolicyRuleDocument writes it into the Detail column's forced object as "allowNull": true, only when it is true, so no migration is needed and a rule without it is stored exactly as before. A row whose forced object pairs "allowNull": true with IsNull or IsNotNull is refused when it is read, value or no value, and fails the load like any row the core cannot read.
 
 v3.0.0 — First release. A database-backed policy store for the DynamicWhere.ex field-level policy layer, introduced in DynamicWhere.ex 3.0.0. Works with any EF Core provider; ships DwPolicyDbContext, the rule and version records, and their EF configurations. Passes the same store conformance suite as the in-memory and Redis stores, verified against PostgreSQL.
 

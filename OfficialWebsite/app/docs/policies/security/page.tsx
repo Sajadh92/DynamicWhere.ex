@@ -155,8 +155,8 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
       <p>
         <strong>Closed by:</strong> under the <code>Strict</code> tier, outside a
         dry run, a name that matches nothing is gated as a field denied for every
-        feature, at the step where a denial is raised and after the same caps and
-        cost budget a real field passes, so it receives the code a{" "}
+        feature, at the step where a denial is raised and after the same caps a
+        real field passes, so it receives the code a{" "}
         <code>[DwDenied]</code> field receives in that clause —{" "}
         <code>FieldDeniedForWhere</code> … <code>FieldDeniedForSegment</code>.
         All six codes carry <code>FieldPath</code> <code>&quot;*&quot;</code> and
@@ -169,13 +169,19 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         <code>Convenience</code> tier still names the field, documented. See{" "}
         <Link href="/docs/policies/configuration#strict-refusals">What a strict refusal says</Link>.
       </p>
-      <Callout tone="warn" title="The cost budget still answers">
-        <code>MaxQueryCost</code> is charged before any field is gated, and a name
-        that matches nothing costs <code>DefaultFieldCost</code>. A caller who can
-        push a request over the budget can still tell a field weighted by{" "}
-        <code>[DwCost]</code> from a name that does not exist, by whether{" "}
-        <code>QueryCostExceeded</code> is raised.
-      </Callout>
+      <p>
+        The strict tier closes the side doors too. Inside a <code>Segment</code> every
+        field refusal is <code>FieldDeniedForSegment</code>, so a field denied for
+        every clause but not for segments cannot answer by clause while a missing
+        name answers for taking part. A name padded with dots or blank segments is
+        normalized the way a real path is, so it cannot trip the navigation cap
+        that a padded real field passes. <code>MaxQueryCost</code> is checked only
+        after every field has passed its gate, so a field weighted by{" "}
+        <code>[DwCost]</code> is refused as denied before its weight could set it
+        apart from a name that does not exist. And <code>MissingContextValue</code>{" "}
+        names neither the scope&apos;s column nor the context key it reads, which
+        together describe how the rows are partitioned.
+      </p>
 
       <h2 id="two-more">7 and 8. The two that are not channels</h2>
       <table>

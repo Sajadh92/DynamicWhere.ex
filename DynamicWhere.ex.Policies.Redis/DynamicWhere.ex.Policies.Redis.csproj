@@ -35,7 +35,7 @@
            disagree, because publish.yml packs all three from one push and a provider shipped at a
            version its core was never built against is a dependency nobody tested. -->
       <Version>3.1.0</Version>
-      <PackageReleaseNotes>v3.1.0 — Released in lockstep with DynamicWhere.ex 3.1.0, which it now requires. No API or behaviour change in this package. A stored rule's forced predicate can now carry allowNull, which lets rows with no value through: the core's PolicyRuleDocument writes it into the rule document's forced object as "allowNull": true, only when it is true, so a rule without it is stored exactly as before.
+      <PackageReleaseNotes>v3.1.0 — Released in lockstep with DynamicWhere.ex 3.1.0, which it now requires. No API or behaviour change in this package. A stored rule's forced predicate can now carry allowNull, which lets rows with no value through: the core's PolicyRuleDocument writes it into the rule document's forced object as "allowNull": true, only when it is true, so a rule without it is stored exactly as before. A document whose forced object pairs "allowNull": true with IsNull or IsNotNull is refused when it is read, value or no value, and fails the load like any document the core cannot read.
 
 v3.0.0 — First release. A Redis-backed policy store for the DynamicWhere.ex field-level policy layer, introduced in DynamicWhere.ex 3.0.0. Holds runtime rules in Redis and invalidates through pub/sub with a poll behind it, because pub/sub is fire-and-forget and the poll is what bounds a dropped message. Passes the same store conformance suite as the in-memory and Entity Framework Core stores.
 

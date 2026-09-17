@@ -72,7 +72,7 @@ public class Ticket
           and <code>ToListAsyncDynamic</code> with a <code>Filter</code>, to{" "}
           <code>ToListAsync</code> with a <code>Segment</code>, to the composable{" "}
           <code>Filter</code> and <code>FilterDynamic</code>, and to the composable{" "}
-          <code>Page</code> on a source nothing has ordered.
+          <code>Page</code> on a source nothing has ordered or projected.
         </li>
         <li>
           It never applies outside the guarded handle. A core method on a plain{" "}
@@ -88,13 +88,22 @@ public class Ticket
           guarded —{" "}
           <code>{`db.Tickets.OrderBy(t => t.Title).ApplyPolicy(caller)`}</code> — or
           an <code>Order</code> was composed on the guarded handle first, as in{" "}
-          <code>{`guarded.Order(order).Page(page)`}</code>. An in-memory
+          <code>{`guarded.Order(order).Page(page)`}</code> — even when the policy
+          dropped every order that call sent. An in-memory
           sequence sorted before <code>ApplyPolicy</code> is not recognised as
           ordered, because it reaches the policy as a query with no{" "}
           <code>OrderBy</code> in it, so it takes the default; send that order with
           the filter instead. A <code>Summary</code> never takes the default, and
           neither do the composable <code>Where</code>, <code>Select</code> and{" "}
           <code>Order</code>.
+        </li>
+        <li>
+          A projected query takes no default. A <code>Select</code> anywhere in the
+          chain — the guarded <code>Select</code>, as in{" "}
+          <code>{`guarded.Select(fields).Page(page)`}</code>, or a projection made
+          before <code>ApplyPolicy</code> — leaves the query in its own order: a
+          default applied after a projection can name a field the projection left
+          out, which EF Core cannot translate.
         </li>
       </ul>
       <p>
@@ -103,9 +112,12 @@ public class Ticket
         and the trace records a <code>Dropped</code> decision for{" "}
         <code>Order</code> whose reason starts{" "}
         <code>left out of the default order</code>. Ordering by that field would
-        rank rows by a value the caller may not see. A dry run keeps the field and
-        still records the decision, and a caller whose own orders were all dropped
-        under the <code>Convenience</code> tier gets no default in their place.
+        rank rows by a value the caller may not see. In a <code>Segment</code> a
+        field this caller may not use in a segment is left out too, and recorded the
+        same way, because a segment refuses that field in any clause; a filter
+        still orders by it. A dry run keeps the field and still records the
+        decision, and a caller whose own orders were all dropped under the{" "}
+        <code>Convenience</code> tier gets no default in their place.
       </p>
       <p>
         A default is never a reason for the library to refuse a query. An entry
@@ -116,13 +128,22 @@ public class Ticket
         ordered only as its caller asks.{" "}
         <Link href="/docs/policies/configuration#validate">Startup validation</Link>{" "}
         reports an unreadable entry, a field no query can order by and a field the
-        type&apos;s own attributes deny for ordering as errors, and a field the type
-        does not have as a warning.
+        type&apos;s own attributes seal against ordering as errors. A field the type
+        does not have, a field only <code>Overridable</code> attributes deny for
+        ordering — a rule can lift those — and a field denied for segments are
+        warnings.
       </p>
       <Callout tone="warn" title="End it with a unique field">
         Rows that share every value the default names can still change places
         between pages. End the default with the key —{" "}
         <code>&quot;CreatedAt desc, Id&quot;</code> — so that no two rows tie.
+      </Callout>
+      <Callout tone="warn" title="A derived type's [DwEntity] replaces its base type's">
+        <code>[DwEntity]</code> allows one per type, and .NET attribute inheritance
+        hands a derived type its own when it declares one. The base type&apos;s{" "}
+        <code>DefaultOrder</code> and <code>RequirePolicy</code> are then gone, not
+        merged: a subclass declaring <code>[DwEntity(DefaultOrder = &quot;Id&quot;)]</code>{" "}
+        no longer requires a policy. Repeat both on the derived type.
       </Callout>
 
       <h2 id="access">Access control</h2>

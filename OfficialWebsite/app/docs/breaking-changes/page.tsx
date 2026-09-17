@@ -17,12 +17,12 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The twenty-three points below cover constraints, surprises, and corner cases —
+        The twenty-four points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
       <Callout tone="danger" title="Behaviour changes in 3.1.0">
-        Ten behaviours changed in <strong>3.1.0</strong>. Each one fixes a defect,
+        Eleven behaviours changed in <strong>3.1.0</strong>. Each one fixes a defect,
         and each one is visible to a caller that depended on the old shape. Date
         comparisons now read the member&apos;s type before building
         the predicate (point&nbsp;14) and accept a value only in ISO&nbsp;8601, a
@@ -38,10 +38,13 @@ export default function Page() {
         <code>ParsingConfig.Default</code> is no longer read (point&nbsp;20); a
         guarded request whose condition groups nest deeper than{" "}
         <code>MaxConditionDepth</code>, or a guarded segment with more sets than{" "}
-        <code>MaxConditionSets</code>, is refused (point&nbsp;21); and under the
+        <code>MaxConditionSets</code>, is refused (point&nbsp;21); under the
         strict tier a result no longer carries the policy trace (point&nbsp;22),
         and a field that does not exist is refused exactly as a denied one is, with
-        no field named (point&nbsp;23).
+        no field named (point&nbsp;23); and a guarded condition carrying more
+        values than <code>MaxConditionValues</code>, or a guarded summary computing
+        more aggregates than <code>MaxAggregates</code>, is refused, while a{" "}
+        <code>Count</code> is now charged to the query budget (point&nbsp;24).
       </Callout>
       <Callout tone="danger" title="Upgrade to 2.1.4">
         Releases before <strong>2.1.4</strong> did not escape condition values before
@@ -186,6 +189,15 @@ export default function Page() {
         ongoing operations. See{" "}
         <Link href="/docs/cache/configuration">cache configuration</Link>.
       </Callout>
+      <Callout tone="warn" title="Fixed in 3.1.0: an invented field name stayed in memory">
+        Validating a field path recorded an access for eviction before the path
+        was validated. A path that fails adds no cache entry for eviction to
+        remove, so under <code>LRU</code> — the default — or <code>LFU</code>{" "}
+        every distinct invalid name a caller sent kept its record for the life of
+        the process, and a caller sending unique invented names grew the process
+        without limit, fastest under a strict policy, which resolves every unknown
+        name in a request. A path is now tracked only once it has validated.
+      </Callout>
 
       <h2 id="get-query-string-ef-core">9. <code>getQueryString</code> Parameter Requires EF Core Provider</h2>
       <p>
@@ -294,6 +306,23 @@ export default function Page() {
         term produces a distinct SQL statement. On SQL Server that means a separate
         plan‑cache entry per term. If a high‑cardinality free‑text filter is on a hot
         path, consider enabling forced parameterization at the database level.
+      </Callout>
+      <Callout tone="danger" title="Fixed in 3.1.0: a long In list ended the process">
+        <code>In</code>, <code>NotIn</code>, <code>IIn</code> and{" "}
+        <code>INotIn</code> on <code>Text</code>, and <code>In</code> and{" "}
+        <code>NotIn</code> on <code>Guid</code>, <code>Number</code> and{" "}
+        <code>Enum</code>, joined their values into one flat chain —{" "}
+        <code>{`f == "a" || f == "b" || …`}</code> — which the expression parser
+        reads as one level of nesting per value. EF Core and the expression
+        compiler walk that tree recursively, so a single condition carrying about
+        seven hundred values overflowed the request thread&apos;s stack, guarded or
+        not, and a stack overflow ends the process: no <code>catch</code> can stop
+        it. A list longer than 32 values is now nested as a balanced tree of flat
+        chains of at most 32 terms, all joined by the same operator. A list of 32
+        or fewer is written exactly as before, so its predicate and its SQL do not
+        change, and a longer list returns the same rows. Under{" "}
+        <code>ApplyPolicy</code>, <code>MaxConditionValues</code> also bounds the
+        values of one condition (point&nbsp;24).
       </Callout>
 
       <h2 id="alias-identifier">13. <code>AggregateBy.Alias</code> Must Be a Plain Identifier</h2>
@@ -802,13 +831,25 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
       <ul>
         <li>
           A name that matches nothing is gated as a field denied for every feature,
-          at the step where a denial is raised — after the caps and the cost budget
-          — so it gets the code a <code>[DwDenied]</code> field gets in that clause:{" "}
+          at the step where a denial is raised — after the caps — so it gets the
+          code a <code>[DwDenied]</code> field gets in that clause:{" "}
           <code>FieldDeniedForWhere</code>, <code>FieldDeniedForSelect</code>,{" "}
           <code>FieldDeniedForOrder</code>, <code>FieldDeniedForGroup</code> or{" "}
-          <code>FieldDeniedForAggregate</code>. In a segment, an unknown name —
-          like a <code>[DwDenied]</code> field — is refused in any of its clauses
-          with <code>FieldDeniedForSegment</code>.
+          <code>FieldDeniedForAggregate</code>. A name padded with dots or blank
+          segments — <code>NoSuchColumn....</code>,{" "}
+          <code>. . . . X</code> — is normalized the way a real path is, so it
+          gets the refusal a padded real field gets rather than failing{" "}
+          <code>MaxNavigationDepth</code>.
+        </li>
+        <li>
+          Inside a segment every field refusal is{" "}
+          <code>FieldDeniedForSegment</code>, with <code>Feature</code>{" "}
+          <code>Segment</code>, whichever clause refused it: a condition in any set,
+          an order, a select, or the field taking part at all. Answered by clause, a
+          field denied for every clause but not for segments would say{" "}
+          <code>FieldDeniedForOrder</code> where a name that matches nothing says{" "}
+          <code>FieldDeniedForSegment</code>. Filters and summaries keep their
+          per-clause codes.
         </li>
         <li>
           Every refusal with one of those six codes carries{" "}
@@ -825,11 +866,27 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
           and <code>SourceOrigin</code> still names the cap.
         </li>
         <li>
+          <code>MaxQueryCost</code> is checked after every field has passed its
+          gate, not before. A field weighted by <code>[DwCost]</code> that the
+          caller may not use is refused as denied before its weight can count,
+          exactly as a name that does not exist is, so the budget cannot tell the
+          two apart. An allowed weighted field is still refused with{" "}
+          <code>QueryCostExceeded</code>.
+        </li>
+        <li>
+          <code>MissingContextValue</code> has <code>FieldPath</code>{" "}
+          <code>&quot;*&quot;</code> and a <code>null</code>{" "}
+          <code>SourceOrigin</code>, so it names neither the scope&apos;s column nor
+          the context key it reads — together they describe how rows are
+          partitioned.
+        </li>
+        <li>
           The trace keeps the real path and reason: an unknown name is recorded as{" "}
           <code>Denied</code>, with the reason <code>names nothing on</code>{" "}
           followed by the type&apos;s name. With{" "}
           <Link href="/docs/policies/configuration#audit-refusals"><code>AuditRefusals</code></Link>{" "}
-          on, the audit event names the field, or the unknown name the caller sent.
+          on, the audit event names the field, the scoped field of a{" "}
+          <code>MissingContextValue</code>, or the unknown name the caller sent.
         </li>
       </ul>
       <Callout tone="danger" title="Check anything that reads FieldPath or matches the validation code">
@@ -838,18 +895,113 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         handler that matched <code>ConditionMustHasValidFieldName</code> for a
         misspelt field receives a <code>PolicyException</code> instead. It still
         derives from <code>LogicException</code>, so an existing{" "}
-        <code>catch</code> still catches it. No setting restores the old answer
-        under the strict tier. The convenience tier is unchanged — an unknown field
-        fails validation, and a refusal names the field with its{" "}
-        <code>RuleId</code> and <code>SourceOrigin</code> — and a dry run refuses
-        nothing, so an unknown name fails validation there too.
+        <code>catch</code> still catches it. Inside a segment, a handler that
+        matched a clause&apos;s code receives <code>FieldDeniedForSegment</code>,
+        and a <code>MissingContextValue</code> carries neither the column nor its
+        key. No setting restores the old answer under the strict tier. The
+        convenience tier is unchanged — an unknown field fails validation, a
+        refusal names the field with its <code>RuleId</code> and{" "}
+        <code>SourceOrigin</code>, and the cost budget is checked before gating —
+        and a dry run refuses nothing, so an unknown name fails validation there
+        too.
       </Callout>
-      <Callout tone="note" title="What can still tell them apart">
-        The cost budget is charged before any field is gated, and a name that
-        matches nothing costs <code>DwCaps.DefaultFieldCost</code>. A caller who
-        can push a request over <code>MaxQueryCost</code> can therefore still tell
-        a field weighted by <code>[DwCost]</code> from a name that does not exist,
-        by whether <code>QueryCostExceeded</code> is raised.
+
+      <h2 id="values-and-aggregates-caps">24. <code>MaxConditionValues</code> and <code>MaxAggregates</code> Refuse Guarded Requests 3.0 Ran</h2>
+      <p>
+        Two more caps are new in <strong>3.1.0</strong>. As with point&nbsp;21,
+        only a query guarded through{" "}
+        <Link href="/docs/policies/configuration#caps"><code>ApplyPolicy</code></Link>{" "}
+        enforces them; an unguarded call is not affected.{" "}
+        <code>MaxConditionValues</code> defaults to <code>1000</code> and{" "}
+        <code>MaxAggregates</code> to <code>50</code>. Both refuse a value below{" "}
+        <code>1</code>, freeze with the rest of the posture, and bind from
+        configuration as <code>Caps:MaxConditionValues</code> and{" "}
+        <code>Caps:MaxAggregates</code>.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Cap</th><th>What it counts</th><th>Refusal</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>DwCaps.MaxConditionValues</code></td>
+            <td>
+              The values one condition carries. The condition carrying the most is
+              the one compared, wherever it sits: a <code>Filter</code>&apos;s
+              conditions, a <code>Summary</code>&apos;s conditions and its{" "}
+              <code>Having</code>, and every set of a <code>Segment</code>.
+            </td>
+            <td>
+              <code>PolicyException</code> with <code>CapExceeded</code>,{" "}
+              <code>FieldPath</code> <code>&quot;*&quot;</code> and{" "}
+              <code>SourceOrigin</code>{" "}
+              <code>&quot;MaxConditionValues cap (1000), request had 1001&quot;</code>
+            </td>
+          </tr>
+          <tr>
+            <td><code>DwCaps.MaxAggregates</code></td>
+            <td>
+              The <code>AggregateBy</code> entries one summary sends, through the{" "}
+              <code>Summary</code> terminals and the composable <code>Group</code>{" "}
+              and <code>Summary</code>. The count the group-size floor adds for
+              itself is not the caller&apos;s and is not counted.
+            </td>
+            <td>
+              <code>PolicyException</code> with <code>CapExceeded</code>,{" "}
+              <code>FieldPath</code> <code>&quot;*&quot;</code> and{" "}
+              <code>SourceOrigin</code>{" "}
+              <code>&quot;MaxAggregates cap (50), request had 51&quot;</code>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Nothing bounded either shape before. An <code>In</code> or a{" "}
+        <code>NotIn</code> is one comparison per value, so a single condition
+        could hand the database a predicate of any size while spending one
+        condition from <code>MaxConditions</code> and one field from the cost
+        budget. Every aggregate is a column of every group, and one with no field
+        — a <code>Count</code> — named nothing a <code>[DwCost]</code> weight
+        could be set on, so any number of them cost nothing.
+      </p>
+      <p>
+        That <code>Count</code> is now charged as well: an aggregate with no{" "}
+        <code>Field</code> costs <code>DwCaps.DefaultFieldCost</code> toward{" "}
+        <code>MaxQueryCost</code>, where it used to cost nothing. A guarded summary
+        that sat just under its budget can now go over it and be refused with{" "}
+        <code>QueryCostExceeded</code>.
+      </p>
+      <p>
+        Every count cap — <code>MaxConditions</code>,{" "}
+        <code>MaxConditionDepth</code>, <code>MaxConditionSets</code>,{" "}
+        <code>MaxConditionValues</code>, <code>MaxAggregates</code>,{" "}
+        <code>MaxOrderFields</code> and <code>MaxPageSize</code> — is now checked
+        before any field name is resolved, because resolving every name of an
+        oversized request is the work the caps exist to refuse;{" "}
+        <code>MaxNavigationDepth</code> still runs once names are resolved. A
+        request that is too large <em>and</em> names a field that does not exist
+        is refused with <code>CapExceeded</code> in both tiers, where 3.0.0
+        resolved names first and answered{" "}
+        <code>ConditionMustHasValidFieldName</code>.
+      </p>
+      <Callout tone="danger" title="A request 3.0 ran can be refused">
+        A guarded summary computing more than fifty aggregates, or one whose{" "}
+        <code>Count</code> aggregates now take it over <code>MaxQueryCost</code>,
+        ran on 3.0.0 and is refused on 3.1.0. So is a guarded condition carrying
+        more than a thousand values — which on 3.0.0 could end the process instead
+        (point&nbsp;12). A deployment whose clients send such requests raises the
+        cap, in code or from configuration:
+        <Code lang="csharp">{`DwPolicy.Configure(new DwPolicyOptions
+{
+    Caps = { MaxConditionValues = 5000, MaxAggregates = 100, MaxQueryCost = 2000 },
+}, providers);`}</Code>
+        <Code lang="json">{`{
+  "DynamicWhere": {
+    "Policies": {
+      "Caps": { "MaxConditionValues": 5000, "MaxAggregates": 100, "MaxQueryCost": 2000 }
+    }
+  }
+}`}</Code>
       </Callout>
 
       <h2 id="next">See also</h2>
@@ -880,9 +1032,13 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
           context for point 13.
         </li>
         <li>
+          <Link href="/docs/enums/operator#in"><code>Operator</code> →</Link>{" "}
+          context for the long-list fix in point 12.
+        </li>
+        <li>
           <Link href="/docs/policies/configuration">Policy configuration →</Link>{" "}
-          context for points 21, 22 and 23: the caps, the trace on a result, and
-          what a strict refusal carries.
+          context for points 21, 22, 23 and 24: the caps, the trace on a result,
+          and what a strict refusal carries.
         </li>
         <li>
           <Link href="/docs/policies/security#probing">Security &amp; k-anonymity →</Link>{" "}

@@ -336,6 +336,16 @@ V by DataType   Text, Guid, Enum    "v"                 Number, Boolean   v (unq
   predicate is now the constant `false` / `true` rather than a comparison with null.
 - Values are trimmed; `\` and `"` are escaped. A value matches literally and cannot close the literal or inject
   predicate text. Values are inlined as literals, not SQL parameters.
+- A list of more than 32 values (3.1.0) is nested as a balanced tree of flat chains of at most 32 terms, all joined by
+  the same operator: 50 values of an `In` become `f != null && ((f == V1 || … || f == V25) || (f == V26 || … || f == V50))`.
+  This covers `In`, `NotIn`, `IIn` and `INotIn` on Text and `In` / `NotIn` on Guid, Number and Enum. A list of 32 or
+  fewer is written exactly as the table shows, so its predicate and SQL are unchanged, and a longer list returns the
+  same rows.
+  - Security fix. Before 3.1.0 every list was one flat chain, one level of nesting per value, and EF Core and the
+    expression compiler walk that tree recursively: a condition carrying about seven hundred values overflowed the
+    request thread's stack. A stack overflow ends the process, and no `catch` can stop it. Guarded and unguarded
+    queries alike, since before 3.0.0.
+  - Under `ApplyPolicy`, `Caps.MaxConditionValues` (default 1000) also bounds the values of one condition (section 12).
 - `Between` with V1 > V2 matches nothing; `NotBetween` with V1 > V2 matches every non-null row.
 - Plain text operators add no case handling: in memory they are ordinal; in SQL the provider and collation
   decide (SQLite: `==` and Contains case-sensitive, StartsWith/EndsWith case-insensitive for ASCII). The
@@ -859,8 +869,9 @@ LastOrDefault   Select(f).OrderByDescending(it).FirstOrDefault()   any simple ty
   sorted by Sort, with no collection rewriting and no duplicate-Sort check.
 - Summary validation order: `GroupBy` null (`ArgumentNullException`, parameter `GroupBy`) → GroupBy and AggregateBy
   rules → Orders → Page → Having → ConditionGroup → Having DataType/Operator pairs.
-- Aggregation runs in SQL on stored values. Under `ApplyPolicy`, transformed fields need `AllowAggregate` and every
-  guarded summary is subject to the group floor (section 19).
+- Aggregation runs in SQL on stored values. Under `ApplyPolicy`, transformed fields need `AllowAggregate`, every
+  guarded summary is subject to the group floor (section 19), and `Caps.MaxAggregates` (default 50, 3.1.0) bounds how
+  many `AggregateBy` entries one summary sends (section 12).
 
 ---
 
@@ -1318,8 +1329,9 @@ await DwPolicy.DrainAuditAsync(caller, sink);
 What one guarded call does, in order:
 
 ```
-Strict getQueryString check → clone the request → resolve names and aliases → caps → cost budget
-  → gate each field → default order when no orders were sent (Filter, Segment) → inject forced predicates
+Strict getQueryString check → clone the request → count caps → resolve names and aliases → MaxNavigationDepth
+  → cost budget (Convenience, and any dry run) → gate each field → default order when no orders were sent
+  (Filter, Segment) → cost budget (Strict outside dry run, 3.1.0) → inject forced predicates
   → check required filters → group floor (Summary) → unchanged core method over AsNoTracking()
   → transform materialized values → rename aliased columns (dynamic and Summary rows)
   → result.Policy = trace when IncludeTraceInResult allows it (by default: Convenience yes, Strict no)
@@ -1331,9 +1343,10 @@ a refusal at any step: PolicyException, also written to the audit buffer when Au
 - Unguarded calls on `DynamicWhere.ex.Source.Extension` are never sanitized, capped, transformed, traced or given a `DefaultOrder`.
   - The only policy check they run is `[DwEntity(RequirePolicy = true)]`.
 - The first failing check throws.
-  - A cap refusal (`CapExceeded`) wins over the cost budget (`QueryCostExceeded`), and both win over field denials.
-- A field path that names nothing on `T` throws `LogicException` from validation, before any policy decision: unguarded, in the Convenience tier, and in dry run.
-  - In the Strict tier (3.1.0), outside dry run, it is kept and gated as a field denied for every feature, after the caps and the cost budget, so it is refused exactly as a denied field is (section 17).
+  - The count caps (`CapExceeded`) run before any name is resolved (3.1.0), so they win over everything after them, a name that matches nothing or is ambiguous included. `MaxNavigationDepth` runs once names are resolved.
+  - In the Convenience tier and in dry run the cost budget (`QueryCostExceeded`) wins over field denials. Under `Strict`, outside dry run, the budget is checked after every field gate (3.1.0), so a field denial wins over it.
+- A field path that names nothing on `T` throws `LogicException` from validation, before any policy decision: unguarded, in the Convenience tier, and in dry run. Under `ApplyPolicy` the count caps run first.
+  - In the Strict tier (3.1.0), outside dry run, it is kept and gated as a field denied for every feature, after the caps, so it is refused exactly as a denied field is (section 17).
 - The `Filter`, `Summary` or `Segment` passed in is never modified. Each guarded call works on a clone.
 - `PrepareAsync` reads nothing unless a `StorePolicyProvider` is configured, but it always records that it ran:
   `DwPolicyContext.IsPrepared` (3.1.0).
@@ -1439,8 +1452,9 @@ StoreFailure          "LastKnownGood" | "FailClosed" | "StaticOnly"
 MaxSnapshotAge        TimeSpan "hh:mm:ss", e.g. "00:15:00"
 RefreshInterval       TimeSpan "hh:mm:ss", e.g. "00:00:30"
 Caps:MaxPageSize  Caps:DefaultPageSize  Caps:MaxConditions  Caps:MaxConditionDepth  Caps:MaxConditionSets
-Caps:MaxOrderFields  Caps:MaxNavigationDepth  Caps:MaxQueryCost  Caps:DefaultFieldCost  Caps:MaxAuditEvents
-Caps:MinGroupSize  Caps:SchemaDepth  Caps:SchemaCycleLimit  Caps:MaxSchemaFields     integers
+Caps:MaxConditionValues  Caps:MaxAggregates  Caps:MaxOrderFields  Caps:MaxNavigationDepth  Caps:MaxQueryCost
+Caps:DefaultFieldCost  Caps:MaxAuditEvents  Caps:MinGroupSize  Caps:SchemaDepth  Caps:SchemaCycleLimit
+Caps:MaxSchemaFields                                                                        integers
 ```
 
 ```jsonc
@@ -1493,7 +1507,10 @@ StoreFailureMode  LastKnownGood=0  FailClosed=1  StaticOnly=2
 - `Strict` also discloses less (3.1.0):
   - a guarded result carries no trace unless `IncludeTraceInResult` is true;
   - outside dry run, a path that matches nothing on `T` is refused as a denied field is (section 17);
-  - every `FieldDeniedFor*` and `CapExceeded` refusal names no field: its `FieldPath` is `"*"`.
+  - every `FieldDeniedFor*` and `CapExceeded` refusal names no field: its `FieldPath` is `"*"`;
+  - inside a `Segment` every field refusal is `FieldDeniedForSegment`, whatever clause refused it;
+  - `MissingContextValue` names neither the scoped field nor the context key: `FieldPath` `"*"`, no `SourceOrigin`;
+  - outside dry run, `MaxQueryCost` is checked only after every field has passed its gate.
 - `IncludeTraceInResult` (3.1.0) decides whether `FilterResult<T>.Policy`, `SummaryResult.Policy` and `SegmentResult<T>.Policy` carry the `PolicyTrace` from the guarded terminals.
   - null, the default, follows the tier: off under `Strict`, on under `Convenience`. `true` or `false` overrides the tier in either direction.
   - The trace names the fields a policy dropped, the attribute or rule that sealed each one, and every injected predicate: the detail `Strict` already refuses through `getQueryString`. An API that serializes a result sends it to the caller.
@@ -1537,11 +1554,18 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
                                      the deeper of ConditionGroup and Having; Segment: each set on its own  CapExceeded (9)
   MaxConditionSets     10       1    3.1.0. Segment.ConditionSets.Count, sets with no conditions included.
                                      Each set adds a condition or subquery to one statement             CapExceeded (9)
+  MaxConditionValues   1000     1    3.1.0. Values carried by the largest single condition: the where
+                                     clause, Having and every Segment set. An In / NotIn is one comparison
+                                     per value, so one condition could build a predicate of any size    CapExceeded (9)
+  MaxAggregates        50       1    3.1.0. Summary GroupBy.AggregateBy.Count: Summary terminals and the
+                                     composable Group and Summary. The group floor's own count is not
+                                     counted                                                            CapExceeded (9)
   MaxOrderFields       10       1    Orders.Count                                                       CapExceeded (9)
   MaxNavigationDepth   4        1    dot segments of any path ("A.B.C.D" passes, 5 segments refused) in
                                      conditions, Selects, Orders, GroupBy.Fields, AggregateBy.Field     CapExceeded (9)
   MaxQueryCost         1000     1    sum of cost over every field reference                             QueryCostExceeded (19)
-  DefaultFieldCost     1        0    cost of one reference to a field with no [DwCost] or rule weight
+  DefaultFieldCost     1        0    cost of one reference to a field with no [DwCost] or rule weight, and
+                                     (3.1.0) of an aggregate with no Field, such as a Count
   MaxAuditEvents       10000    1    undrained audit events one context may hold                        CapExceeded (9)
   MinGroupSize         5        1    k-anonymity floor for guarded grouped summaries; 1 = off           groups suppressed
   SchemaDepth          2        1    default PolicySchemaRequest.Depth
@@ -1552,19 +1576,27 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
 ```
 
 - Caps apply only to guarded queries, simulations and schema building. Unguarded calls have no limits.
+- The count caps — `MaxConditions`, `MaxConditionDepth`, `MaxConditionSets`, `MaxConditionValues`, `MaxAggregates`,
+  `MaxOrderFields` and `MaxPageSize` — are checked before any name is resolved (3.1.0), so an oversized request is
+  refused with `CapExceeded` even when it also names a field that does not exist; 3.0.0 resolved names first and
+  answered `ConditionMustHasValidFieldName`. `MaxNavigationDepth` needs canonical paths and is checked after them.
 - A Segment is one statement: its sets are combined, ordered and paged in the database (section 6), so `MaxPageSize`
   and `DefaultPageSize` bound what it reads as well as what it returns. `MaxConditionSets` bounds how many sets the
   statement carries; a set with no conditions spends nothing from `MaxConditions` or `MaxConditionDepth`.
-- Cost charges every reference, duplicates included, and before gating, so a later-dropped field still costs.
+- `MaxConditionValues` compares the one condition carrying the most values, wherever it is. `MaxConditions` and the
+  cost budget see an `In` of any length as one condition and one field.
+- Cost charges every reference, duplicates included, before gating, so a later-dropped field still costs.
   - Filter: conditions, Orders, and the Selects the caller wrote.
-  - Summary: conditions, `GroupBy.Fields` and `AggregateBy.Field` (Having and Orders are not charged).
+  - Summary: conditions, `GroupBy.Fields`, and every `AggregateBy` entry: its `Field`, or `DefaultFieldCost` for
+    one with no field, such as a `Count` (3.1.0; it was free). Having and Orders are not charged.
   - Segment: every field it names.
   - A projection the library synthesizes is free.
-  - The weight is the elected `[DwCost]` or rule weight, else `DefaultFieldCost`. Under `Strict`, a name that matches nothing costs `DefaultFieldCost` too (section 34, limits).
+  - The weight is the elected `[DwCost]` or rule weight, else `DefaultFieldCost`. Under `Strict`, a name that matches nothing costs `DefaultFieldCost` too.
+  - Where the total is checked depends on the tier (3.1.0). The Convenience tier and every dry run check it before gating. The Strict tier, outside dry run, checks it after every field has passed its gate: a field the caller may not use, weighted or not, is refused as denied first, exactly as a name that matches nothing is, so the budget cannot tell the two apart. An allowed weighted field still gets `QueryCostExceeded` in both tiers.
 - Caps and cost count what the caller sent. Forced predicates, the group floor and a default order are added afterwards and count toward neither.
 - A cap or cost refusal records a `Denied` decision before throwing.
   - `FieldPath` is `"*"`, or, in the Convenience tier, the path for `MaxNavigationDepth`. Under `Strict` every `CapExceeded` refusal carries `"*"` (3.1.0); the trace keeps the path.
-  - `Reason` and `SourceOrigin` name the cap, e.g. `"MaxConditions cap (50), request had 51"`.
+  - `Reason` and `SourceOrigin` name the cap, e.g. `"MaxConditions cap (50), request had 51"`, `"MaxConditionValues cap (1000), request had 1001"`, `"MaxAggregates cap (50), request had 51"`.
   - In dry run it is recorded and not thrown.
 - `MaxAuditEvents` throws even in dry run, with `FieldPath` = the audited field (`"*"` under `Strict`).
 - `MinGroupSize`:
@@ -1715,19 +1747,27 @@ public class Ticket { … }
   entry, such as the one a trailing comma leaves, is ignored, and a field named twice is used once.
 - Applied only under `ApplyPolicy`, when `Orders` is null or empty: `ToList`, `ToListAsync`, `ToListDynamic` and
   `ToListAsyncDynamic` with a `Filter`; `ToListAsync(Segment)`; the composable `Filter` and `FilterDynamic`; and the
-  composable `Page` on a source nothing has ordered.
+  composable `Page` on a source nothing has ordered or projected.
 - Never applied:
   - by an unguarded call. The core methods of section 6 on a plain `IQueryable<T>` or `IEnumerable<T>`, `Page`
     included, never read the attribute and order only as their caller asks, exactly as in 3.0; so does a DynamicWhere
     method called on what `AsUnguardedQueryable()` returns;
   - when the caller sends orders: the default is not appended as a tiebreak;
   - to a source already ordered, before it was guarded (`db.Tickets.OrderBy(t => t.Title).ApplyPolicy(ctx)`) or by
-    a composed `Order` before `Page`. Only the query's expression is read, so a sequence sorted in memory before
+    a composed `Order` earlier in the chain — even one whose every order the policy dropped, because the caller
+    still sent orders. Only the query's expression is read, so a sequence sorted in memory before
     `ApplyPolicy(IEnumerable<T>)` does not count as ordered: send `Orders` for it;
+  - to a projected source: a `Select` anywhere in the query's chain, whether the guarded composable `Select`
+    or a projection before `ApplyPolicy`, leaves the query in its own order. A default applied after a projection could
+    name a field the projection left out, which EF Core cannot translate, so `guarded.Select(["Id", "Title"]).Page(page)`
+    pages as it did in 3.0.0, unordered;
   - to a `Summary`, or by the composable `Where`, `Select` and `Order`.
 - A type that declares no `DefaultOrder` is never ordered by the library, guarded or not; only a caller's own
   orders apply. End a default with a unique field, such as the key, or rows sharing the leading values can still
   change places between pages.
+- `[DwEntity]` allows one attribute per type and is inherited the .NET way: a `[DwEntity]` on a derived type replaces
+  its base type's instead of merging with it. `[DwEntity(RequirePolicy = true)]` on a type whose base declares
+  `DefaultOrder` has no default order, and the reverse drops `RequirePolicy`. Repeat both on the derived type.
 - An entry naming a field the type does not have, one that is not a field and a direction (`"Id sideways"`), or one
   the core refuses to order by, a path ending on a collection of entities (`"Tags"`), is skipped, never refused, and
   `PolicyModelValidator` reports all three (section 20). A path through a collection to a value (`"Tags.Value"`) is
@@ -1736,9 +1776,11 @@ public class Ticket { … }
   - a default field this caller may not order by is left out, never refused, and recorded as a `Dropped` decision
     on `Order` whose reason starts `left out of the default order`. Ordering by it would rank rows by a value the
     caller may not see;
+  - in a `Segment`, a default field this caller may not use in a segment is left out too, recorded the same way,
+    because a segment refuses that field in any clause. A `Filter` still takes it;
   - a dry run keeps the field and still records the decision;
   - a caller whose sent orders were all dropped (Convenience) gets no default in their place;
-  - it is added after the caps and the cost budget, so it counts toward no cap and costs nothing.
+  - it is added after the caps and after the cost is counted, so it counts toward no cap and costs nothing.
 
 ### [DwEntity(RequirePolicy = true)] enforcement
 
@@ -1752,6 +1794,7 @@ public class Ticket { … }
   - `SourceOrigin` = `"DwEntityAttribute(RequirePolicy = true)"`.
 - Neither dry run nor `DwPolicy.IsConfigured` affects it.
 - It checks `T`, the query's element type. The attribute is inherited by subclasses, and the answer is cached per type for the process lifetime.
+  - A subclass that declares a `[DwEntity]` of its own, for a `DefaultOrder` say, replaces the inherited one, and its `RequirePolicy` is false unless it says `true` again.
 - Not guarded:
   - plain EF Core or LINQ on the type (`db.Employees.ToListAsync()`, `.Where(e => ...)`);
   - anything done with `AsUnguardedQueryable()` that avoids DynamicWhere extension methods.
@@ -1827,6 +1870,8 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - `DefaultOrder` (3.1.0), e.g. `[DwEntity(DefaultOrder = "CreatedAt desc, Id")]`: the order a guarded query
   takes when its caller sends none, less the fields this caller may not order by. Unguarded calls ignore it.
   Entry syntax, entry points and exclusions are in section 13; `ValidateModel` checks it (section 20).
+- A derived type reads its own `[DwEntity]` when it has one, and that attribute replaces the base type's whole: set
+  `RequirePolicy` and `DefaultOrder` again on it.
 
 ### DwDeny family
 
@@ -1891,6 +1936,10 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   are case-sensitive.
 - A missing or null context value throws `MissingContextValue` in both tiers. In dry run it is recorded
   and nothing is injected.
+  - Convenience: `FieldPath` is the scoped field and `SourceOrigin` names it and the context key.
+  - Strict (3.1.0): `FieldPath` is `"*"` and `SourceOrigin` is null, so the message names neither the scope's
+    column nor the key it reads, which together describe how rows are partitioned. The trace keeps both, and an
+    `AuditRefusals` event records the scoped field's canonical path.
 - Each predicate carries one value, or none for a null check, so `Between` and `NotBetween` cannot be
   forced.
 - `AllowNull = true` (3.1.0) lets a row whose member is null through as well: the injected term is
@@ -1963,13 +2012,17 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - Every reference the caller writes is charged before gating, so a denied field costs the same as an
   allowed one.
   - Filter: each condition at any depth, and each `Orders` and `Selects` entry.
-  - Summary: `ConditionGroup` conditions, `GroupBy.Fields` and `AggregateBy.Field`.
+  - Summary: `ConditionGroup` conditions, `GroupBy.Fields`, and each `AggregateBy` entry — its `Field`, or
+    `Caps.DefaultFieldCost` for an aggregate with no field, such as a `Count` (3.1.0; before, it was free).
   - Segment: every field in every clause.
 - Not charged: a synthesized projection, `Having`, summary `Orders`, forced predicates and the group-size
   count.
 - An unweighted field costs `Caps.DefaultFieldCost` (default 1, may be 0).
 - A total above `Caps.MaxQueryCost` (default 1000) throws `QueryCostExceeded` in both tiers. In dry run
   it is only recorded.
+  - The Convenience tier checks the total before gating. The Strict tier checks it after every field gate
+    (3.1.0), so a weighted field the caller may not use is refused as denied, exactly as a name that matches
+    nothing is, before its weight could set the two apart.
 - The weight is elected: the top-ranked one wins, and among fragments tied at that rank the largest wins.
   A `"*"` rule may set a weight for every field.
 
@@ -2118,8 +2171,9 @@ The resolver, fragment and provider types are listed in section 21.
 
 ## 17. Enforcement by tier and dry run
 
-A request's names are resolved to canonical paths first, then caps and cost are checked, and only then
-field policies. Nothing is clamped.
+The count caps are checked first, before any name is resolved (3.1.0). Names are then resolved to canonical paths,
+`MaxNavigationDepth` is checked, and the cost budget is checked before field policies — except under `Strict` outside
+dry run, where it is checked after them (3.1.0). Nothing is clamped.
 
 ```
 Request                                                      Convenience       Strict   Error code
@@ -2137,9 +2191,11 @@ AGGREGATE a denied field, or a transformed field lacking
   AllowAggregate on a stage                                  throw             throw    FieldDeniedForAggregate
 field denied for Segment used anywhere in a Segment          throw             throw    FieldDeniedForSegment
 Segment condition on a field denied for Select               allowed           throw    FieldDeniedForSegment
+any other field refusal inside a Segment (3.1.0)             the rows above    throw    Strict: FieldDeniedForSegment
 [DwRequireWhere] not satisfied                               throw             throw    RequiredFilterMissing
 ContextValue missing or null                                 throw             throw    MissingContextValue
 MaxConditions / MaxConditionDepth / MaxConditionSets /
+  MaxConditionValues / MaxAggregates (3.1.0) /
   MaxOrderFields / MaxPageSize /
   MaxNavigationDepth exceeded                                throw             throw    CapExceeded
 total cost above MaxQueryCost                                throw             throw    QueryCostExceeded
@@ -2147,6 +2203,7 @@ getQueryString: true                                         SQL returned      t
 a path that matches nothing on T (3.1.0)                     throw             throw    Convenience: ConditionMustHasValidFieldName
                                                                                         Strict: that clause's FieldDeniedFor* code
 DefaultOrder field the caller may not order by (3.1.0)       left out          left out
+DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          left out
 ```
 
 - "drop" removes the entry and records `Dropped`. A Strict throw records `Denied`.
@@ -2163,25 +2220,36 @@ DefaultOrder field the caller may not order by (3.1.0)       left out          l
   - Convenience, and dry run in either tier: validation throws `LogicException`
     `ConditionMustHasValidFieldName` before any policy decision, as it does unguarded.
   - Strict, outside dry run: the name is kept and gated as a field denied for every feature, at the step a
-    denial is raised, after the caps and the cost budget. It throws the code a `[DwDenied]` field throws in
-    the same clause: `FieldDeniedForWhere`, `FieldDeniedForSelect`, `FieldDeniedForOrder`,
-    `FieldDeniedForGroup` or `FieldDeniedForAggregate`, and `FieldDeniedForSegment` in any clause of a Segment.
+    denial is raised, after the caps. It throws the code a `[DwDenied]` field throws in the same clause:
+    `FieldDeniedForWhere`, `FieldDeniedForSelect`, `FieldDeniedForOrder`, `FieldDeniedForGroup` or
+    `FieldDeniedForAggregate`, and `FieldDeniedForSegment` in any clause of a Segment.
+  - A name padded with dots or blank segments is normalized as a real path is, empty segments dropped (3.1.0):
+    `NoSuchColumn....`, `....X` and `. . . . X` are gated as `NoSuchColumn` and `X`, and refused as a padded real
+    field is. Kept whole, it would fail `MaxNavigationDepth` where a padded real field passes.
   - It covers condition fields, `Selects`, `Orders`, `GroupBy.Fields` and `AggregateBy.Field`. `Having` and
     summary `Orders` name aliases and group keys, which validation still checks. A null or blank name is
     refused the same way in both tiers.
 - Under `Strict`, field and cap refusals name no field (3.1.0). Every `FieldDeniedFor*` refusal carries
   `FieldPath = "*"`, `RuleId = null` and `SourceOrigin = null`, for a denied field, an alias and an unknown name
   alike, so their messages are identical. Every `CapExceeded` refusal carries `FieldPath = "*"` as well, and
-  keeps its `SourceOrigin`. `OperatorNotAllowed`, `RequiredFilterMissing`, `MissingContextValue` and
+  keeps its `SourceOrigin`. `MissingContextValue` carries `FieldPath = "*"` and `SourceOrigin = null`, naming
+  neither the scope's column nor the context key it reads. `OperatorNotAllowed`, `RequiredFilterMissing` and
   `AmbiguousFieldName` still name their field.
+  - Inside a `Segment` every field refusal is `FieldDeniedForSegment` with `Feature = Segment`, whichever clause
+    refused it: a condition in any set, an order, a select, or taking part at all (3.1.0). Answered by clause, a field
+    denied for every clause but not for `Segment` would say `FieldDeniedForOrder` where a name that matches nothing
+    says `FieldDeniedForSegment`. The Convenience tier keeps per-clause codes, and filters and summaries keep them in
+    both tiers.
+  - The cost budget is checked after every field gate (3.1.0). A weighted field the caller may not use is refused
+    as denied before its weight counts, exactly as a name that matches nothing is; an allowed weighted field still
+    gets `QueryCostExceeded`.
   - The trace keeps the real path and reason; an unknown name is recorded as `Denied` with reason
     `names nothing on <TypeName>`. A refusal event under `AuditRefusals` names the field too (section 22).
   - Convenience names the field as the caller wrote it, with `RuleId` and `SourceOrigin`.
-  - Cost is counted before gating, and an unknown name costs `DefaultFieldCost`: a caller who can push a
-    request over `MaxQueryCost` can still tell a `[DwCost]`-weighted field from an unknown name (section 34).
 - "left out" (3.1.0): a guarded query that sends no orders takes the type's `DefaultOrder` less every field
-  this caller may not order by, in both tiers. Each field left out is recorded as `Dropped`, with a reason
-  starting `left out of the default order`, and never refused. Dry run keeps it and still records it (section 13).
+  this caller may not order by, in both tiers, and in a `Segment` less every field this caller may not use in a
+  segment. Each field left out is recorded as `Dropped` on `Order`, with a reason starting
+  `left out of the default order`, and never refused. Dry run keeps it and still records it (section 13).
 - These throw regardless of tier and dry run: `AmbiguousFieldName`, `GroupTooSmall`, `AmbiguousGroupKey`,
   `CapExceeded` from a full audit buffer, `MissingHashSalt`, `MissingTokenVault`,
   `TransformRequiresMaterialization`, `StoreUnavailable` and `PolicyContextNotPrepared`. `PolicyRequired`
@@ -2492,7 +2560,8 @@ Errors:
     `"{Type}: DefaultOrder entry '{entry}' is not a field optionally followed by asc or desc, so guarded queries skip it."`
   - a field no query can order by, a path ending on a collection of entities:
     `"{Type}: DefaultOrder names '{field}', which no query can order by, so guarded queries skip it."`
-  - a field the type's own attributes deny for ordering:
+  - a field the type's own attributes deny for ordering, unless every one of those denials is `Overridable` (then a
+    warning, below):
     `"{Type}: DefaultOrder names '{field}', which its attributes deny for ordering, so every guarded query leaves it out."`
 - a stage that cannot be built:
   - `Round` or `Bucket` with `Step <= 0`, or `Truncate` with `Decimals < 0`
@@ -2515,6 +2584,11 @@ Warnings:
   The message ends "Add [DwNoOrder] unless that is intended."
 - `DefaultOrder` names a field the type does not have (3.1.0):
   `"{Type}: DefaultOrder names '{field}', which {Type} does not have, so guarded queries skip it."`
+- `DefaultOrder` names a field denied for ordering only by overridable attributes on the member its path ends on,
+  such as `[DwNoOrder(Overridable = true)]`, which a rule can lift for some callers (3.1.0):
+  `"{Type}: DefaultOrder names '{field}', which its attributes deny for ordering unless a rule allows it, so guarded queries leave it out until one does."`
+- `DefaultOrder` names a field the attributes allow ordering but deny for segments (3.1.0):
+  `"{Type}: DefaultOrder names '{field}', which its attributes deny for segments, so guarded segments leave it out."`
 
 Not checked; these throw at query time:
 - a blank, dotted or `"*"` alias
@@ -2541,7 +2615,8 @@ PolicyTrace                                         sealed class, DynamicWhere.e
 PolicyDecision                                      sealed class
   PolicyDecision(string fieldPath, PolicyFeature feature, PolicyAction action, string? reason)   blank path → ArgumentException
   FieldPath  : string          canonical path, never the alias typed; "*" = whole request; "__dwGroupSize" = group floor;
-                               under Strict, a name that matches nothing as the caller sent it (3.1.0)
+                               under Strict, a name that matches nothing as the caller sent it, trimmed and with
+                               empty segments dropped (3.1.0)
   Feature    : PolicyFeature
   Action     : PolicyAction
   Reason     : string?
@@ -2560,8 +2635,8 @@ A refused call throws, and `PolicyException` carries no trace. To see a refusal'
 ```
 What is recorded
   Dropped      a field removed from a Convenience request (Select, Order); one per field
-  Dropped      a DefaultOrder field left out for this caller (Order), both tiers; Reason starts
-               "left out of the default order" (3.1.0)
+  Dropped      a DefaultOrder field left out for this caller (Order), both tiers, and in a Segment a field
+               denied for Segment too; Reason starts "left out of the default order" (3.1.0)
   Denied       a refusal: Strict denial, cap, cost, query string ("*"), required filter, segment inference,
                MaxAuditEvents; the throw follows unless dry run. Under Strict a name that matches nothing
                is Denied under that name, Reason "names nothing on <TypeName>" (3.1.0)
@@ -2723,6 +2798,10 @@ FieldFacts                                          sealed class
   or for `auditedFeatures` None or an unknown bit; `ArgumentOutOfRangeException` for `costWeight < 0` (0 is allowed).
 - `ForcedPredicate` factories → `ArgumentException` for a blank `fieldPath`, `value` or `contextValue`;
   `FromNullCheck` takes only `IsNull` / `IsNotNull`.
+- `FromConstant` and `FromContext` with `allowNull: true` and `IsNull` or `IsNotNull` → `ArgumentException`
+  ("AllowNull widens a comparison, and a null check compares against nothing.") (3.1.0). A null check ignores
+  its value, and a widened `IsNotNull` would render `(field IS NOT NULL OR field IS NULL)`: a scope that scopes nothing.
+  Without `allowNull`, a null check built through either factory is accepted and its value ignored, as before.
 - `AllowNull` (3.1.0): true injects `(field op value OR field IS NULL)` in a group of its own (section 14). The
   four-argument `FromConstant` and `FromContext` mean `allowNull: false`, and `FromNullCheck` never sets it.
   The factories know no member type, so nothing refuses `allowNull` on a member that can never be null. On a
@@ -2790,7 +2869,8 @@ DwAuditEvent                                        sealed class
   - `EntityType` = the queried type's `FullName`; `Effect` = `Deny`; `DryRun` = false; `ErrorCode` = the refusal's code;
   - `Feature` and `Tier` = the refusal's own, so a store provider's refusal reports `All` and `Strict`;
   - `Subjects` and `Purpose` = the context's;
-  - `FieldPath` = the field the refusal was about. Under `Strict`, a `FieldDeniedFor*` refusal and a `CapExceeded` refusal from `MaxNavigationDepth` or `MaxAuditEvents` record the canonical path, or the name as the caller sent it when it matches nothing, although the refusal itself said `"*"`. Every other refusal records its own `FieldPath` (section 30): `"*"` for a whole-request refusal such as `QueryStringDenied`, a cap on the request's size or `ApplyPolicy`'s `PolicyContextNotPrepared`; the scoped field for `MissingContextValue`; the entity's short type name for a store provider's refusal; otherwise the name the caller wrote.
+  - `FieldPath` = the field the refusal was about, as its canonical path, in both tiers. A `FieldDeniedFor*`, `OperatorNotAllowed` or `RequiredFilterMissing` refusal, a `CapExceeded` refusal from `MaxNavigationDepth` or `MaxAuditEvents`, and `MissingContextValue`, which records the scoped field, are all recorded under the path although the refusal itself named the caller's alias or, under `Strict`, said `"*"`. A name that matches nothing (`Strict`) is recorded as the caller sent it, trimmed and with empty segments dropped. Every other refusal records its own `FieldPath` (section 30): `"*"` for a whole-request refusal such as `QueryStringDenied`, `QueryCostExceeded`, a cap on the request's size or `ApplyPolicy`'s `PolicyContextNotPrepared`; the entity's short type name for a store provider's refusal; the name as written for `AmbiguousFieldName`.
+  - The recorded path is cut to its first 256 characters followed by `…`, and every control character in it is written as `\u` and four hex digits — a line feed as `\u000a` (3.1.0). A name that matches nothing is text the caller wrote: a line break in it would forge a second entry in a log written one event per line, and a name a megabyte long would be kept whole.
 - Written at most once per refusal, from an exception filter: the refusal is never changed, caught or swallowed.
 - A full buffer (`Caps.MaxAuditEvents`) records nothing, and the original refusal is still thrown.
 - Not written:
@@ -3132,7 +3212,8 @@ Document rules:
 - `forced` holds either `value` or `contextValue`, or neither for IsNull/IsNotNull. Both together throw `ArgumentException`.
 - `forced.allowNull` (3.1.0): `true` injects `(field op value OR field IS NULL)`, as `[DwForceWhere(AllowNull = true)]` does.
   - It is written only when true, so a document for any other predicate is the one earlier releases wrote and read. Absent or JSON null reads as false.
-  - Anything but a JSON boolean throws `ArgumentException` (the string `"true"` included), and so does `true` on a null check, with neither `value` nor `contextValue`.
+  - Anything but a JSON boolean throws `ArgumentException` (the string `"true"` included).
+  - `true` on a null check (`IsNull` / `IsNotNull`) throws `ArgumentException`, whether or not the object also carries a `value` or `contextValue` (3.1.0). A null check ignores its value, and an `IsNotNull` rule widened this way would render `(field IS NOT NULL OR field IS NULL)`, a scope that scopes nothing. Without `allowNull`, a stray value on a null check is still ignored.
   - The document knows no member type, so `true` is not refused on a member that can never be null; there the rule injects the comparison alone (section 21).
 - An absent operator list and an empty one stay distinct.
 - A document or row that cannot be read fails the whole load. It is never skipped.
@@ -3659,8 +3740,9 @@ PolicyException : LogicException                                   namespace Dyn
   Code          : string              ErrorCode.ToString(), for logs and JSON
   FieldPath     : string              the name the caller wrote; "*" for the whole request, including the
                                       PolicyContextNotPrepared ApplyPolicy raises; under the Strict tier "*" for
-                                      codes 1–6 and CapExceeded too (3.1.0); the entity's short type name for
-                                      PolicyRequired, StoreUnavailable and a store provider's PolicyContextNotPrepared;
+                                      codes 1–6, CapExceeded and MissingContextValue too (3.1.0); the entity's
+                                      short type name for PolicyRequired, StoreUnavailable and a store provider's
+                                      PolicyContextNotPrepared;
                                       the transformed paths joined by ", " for TransformRequiresMaterialization and
                                       AmbiguousGroupKey
   Feature       : PolicyFeature       None for ApplyPolicy's PolicyContextNotPrepared; All for a store provider's refusals
@@ -3669,8 +3751,8 @@ PolicyException : LogicException                                   namespace Dyn
   RuleId        : string? { init; }   the rule that decided, when exactly one source decided; null for codes 1–6
                                       under the Strict tier (3.1.0)
   SourceOrigin  : string? { init; }   the attribute, rule, cap or reason that decided, e.g.
-                                      "MaxPageSize cap (1000), request had 1001"; null for codes 1–6 under the
-                                      Strict tier (3.1.0)
+                                      "MaxPageSize cap (1000), request had 1001"; null for codes 1–6 and
+                                      MissingContextValue under the Strict tier (3.1.0)
   Message       "<Code>: field '<FieldPath>', feature '<Feature>', tier '<Tier>'."
 ```
 
@@ -3689,17 +3771,19 @@ through `PolicySimulator` or in dry run to see the decisions).
 5   FieldDeniedForAggregate           an aggregate field is denied, or is transformed without AllowAggregate    recorded
                                       on every stage (both tiers)
 6   FieldDeniedForSegment             a field denied for Segment is used in a Segment (both tiers); Strict:     recorded
-                                      a Segment condition on a field the caller may not Select
+                                      a Segment condition on a field the caller may not Select, and (3.1.0)
+                                      every other field refusal inside a Segment, codes 1–5 included
 7   AllSelectsDenied                  Convenience dropped every requested select (FieldPath "*")                recorded
 8   OperatorNotAllowed                an operator outside the field's allowed set ([DwOperators], rules)        recorded
 9   CapExceeded                       MaxPageSize, MaxConditions, MaxConditionDepth, MaxConditionSets,          recorded, except the
-                                      MaxOrderFields or MaxNavigationDepth exceeded; or the context already     audit buffer: throws
-                                      holds MaxAuditEvents undrained events
+                                      MaxConditionValues, MaxAggregates, MaxOrderFields or MaxNavigationDepth   audit buffer: throws
+                                      exceeded; or the context already holds MaxAuditEvents undrained events
 10  PolicyRequired                    a DynamicWhere extension method called on a                               throws
                                       [DwEntity(RequirePolicy = true)] type outside ApplyPolicy
 11  RequiredFilterMissing             a [DwRequireWhere] field has no AND-reachable condition using one of      recorded
                                       its operators
-12  MissingContextValue               a [DwForceWhere] ContextValue key is absent or null in the context        recorded
+12  MissingContextValue               a [DwForceWhere] ContextValue key is absent or null in the context;       recorded
+                                      under Strict FieldPath "*" and no SourceOrigin (3.1.0)
 13  AmbiguousFieldName                a name could mean two fields: an alias equal to a path or another alias   throws
 14  QueryStringDenied                 Strict tier and getQueryString: true (FieldPath "*")                      recorded
 15  AmbiguousGroupKey                 two summary rows share their key values once transformed                  throws
@@ -3710,7 +3794,8 @@ through `PolicySimulator` or in dry run to see the decisions).
 18  PolicyContextNotPrepared          ApplyPolicy(ctx) sees a context that never went through PrepareAsync       throws
                                       (3.1.0, store or no store), a store provider sees one it never prepared,
                                       or one that gained a User subject after it was prepared
-19  QueryCostExceeded                 the request's total field cost is above MaxQueryCost (FieldPath "*")      recorded
+19  QueryCostExceeded                 the request's total field cost is above MaxQueryCost (FieldPath "*");     recorded
+                                      under Strict checked after the field gates (3.1.0)
 20  GroupTooSmall                     the caller used the reserved name "__dwGroupSize" as an alias, Having      throws
                                       field or order field. A small group never raises it: it is suppressed
 21  MissingHashSalt                   MaskStrategy.Hash while DwPolicyOptions.HashSalt is empty                 throws
@@ -3722,7 +3807,8 @@ through `PolicySimulator` or in dry run to see the decisions).
 Under the Strict tier (3.1.0) codes 1–6 name no field and no source, so a denied field, an alias and a name that
 matches nothing on `T` answer with the same exception and the same message. Outside dry run, a condition, select,
 order, group or aggregate path that matches nothing is refused with the code of its clause, as a `[DwDenied]` field
-would be, instead of `ConditionMustHasValidFieldName`. The trace keeps the field, and so does the refusal event
+would be, instead of `ConditionMustHasValidFieldName`; inside a `Segment` every one of them is `FieldDeniedForSegment`.
+`MissingContextValue` names no field and no source either. The trace keeps the field, and so does the refusal event
 `AuditRefusals` writes (section 22). The Convenience tier still names the field, with `RuleId` and `SourceOrigin`.
 
 The library maps nothing to HTTP. `PolicyException` derives from `LogicException`, so catch it first and keep
@@ -3832,8 +3918,10 @@ There are nine. The first seven let a caller learn a value, or what the policy h
 - **Which fields exist:** Convenience answers a name that matches nothing with `ConditionMustHasValidFieldName`
   and a denied field with a refusal that names it and its source, so a caller can map the hidden columns one
   guess at a time. Strict answers both alike, with the clause's `FieldDeniedFor*` code, `FieldPath` `"*"` and
-  no source (3.1.0). What remains: cost is counted before gating, so a caller who can push a request over
-  `MaxQueryCost` can tell a `[DwCost]`-weighted field from an unknown name (section 34).
+  no source (3.1.0), and closes the side doors too: inside a `Segment` every field refusal is
+  `FieldDeniedForSegment`, a name padded with dots is normalized as a real path is, `MaxQueryCost` is checked
+  after the gates so a `[DwCost]` weight cannot set a hidden field apart, and `MissingContextValue` names
+  neither the scope's column nor its context key (section 17).
 - **Forgotten guard:** a code path that never calls `ApplyPolicy` reads everything. Use
   `[DwEntity(RequirePolicy = true)]`, which covers only DynamicWhere.ex extension methods.
 - **Empty store:** a store with no rules still leaves every attribute enforcing.
@@ -3959,8 +4047,14 @@ Read before generating policy attributes.
     ignore it. A caller who sends any `Orders` gets exactly those, so rows tied on them can still move between
     pages, and an `IQueryable` ordered before `ApplyPolicy`, or by a composed `Order` before `Page`, keeps its own
     order; a list sorted in memory before `ApplyPolicy` is not seen as ordered and gets the default, so send the
-    order with the filter. A default field the caller may not order by is left out without an error. End every
+    order with the filter. A projected query — a `Select` before `ApplyPolicy` or the guarded `Select` — takes no
+    default at all. A default field the caller may not order by is left out without an error. End every
     order meant for paging with a unique field, such as the key.
+38. **A `[DwEntity]` on a derived type replaces its base type's.** The attribute allows one per type, and .NET
+    inheritance hands a derived type its own when it declares one, so the base type's `RequirePolicy` and
+    `DefaultOrder` are gone rather than merged. `[DwEntity(DefaultOrder = "Id")]` on a subclass of a
+    `RequirePolicy` type lets a DynamicWhere call on the subclass run without `ApplyPolicy`. Repeat every setting on
+    the derived type.
 
 ---
 
@@ -4099,15 +4193,16 @@ CacheExpose.WarmupCache(typeof(Customer), "Name");
 ### Access tracking
 
 - These calls record an access before they look anything up: `GetTypeProperties`, `FindProperty`,
-  `GetCollectionElementType`, `IsCollectionType` and `ValidatePropertyPath`. The query engine's own calls
-  count too.
+  `GetCollectionElementType` and `IsCollectionType`. `ValidatePropertyPath` records one only once the path has
+  validated, so a path that fails validation records nothing (3.1.0). The query engine's own calls count too.
 - LRU writes `DateTime.UtcNow.Ticks`, LFU adds 1, and FIFO records nothing. Only `EvictionStrategy`
   decides this; the `Enable*Tracking` flags have no runtime effect.
-- A record is written even when the key never enters the store, such as a path that fails validation or
-  an internal field-type lookup. Eviction only deletes records of entries it removes. Consequences:
-  - `TrackingCounts` can exceed `CacheCounts`.
-  - Under LRU or LFU, each distinct invalid field name a caller sends stays recorded until `ClearCache`
-    or `ClearAllCaches`.
+- A record is written even when the key never enters the store, such as an internal field-type lookup.
+  Eviction only deletes records of entries it removes, so `TrackingCounts` can exceed `CacheCounts`.
+- Fixed in 3.1.0: `ValidatePropertyPath` recorded the access before validating, so under LRU (the default) or
+  LFU every distinct invalid field name a caller sent stayed recorded for the life of the process, or until
+  `ClearCache` / `ClearAllCaches`. A caller sending unique invented names grew the process without limit, faster
+  under the Strict tier, which resolves every unknown name of a request. A failed path now leaves no record.
 - Changing strategy leaves the old records in place. An entry with no record for the current strategy is
   never evicted. Example: an entry cached under FIFO and not read since the switch to LRU. Warm up after
   `Configure` for this reason.
@@ -4398,10 +4493,10 @@ MemoryCalculationInput
 ### History
 
 ```
-3.1.0   Dates rebuilt, segments combined in the database, three new caps, two new error codes, preparation enforced,
+3.1.0   Dates rebuilt, segments combined in the database, five new caps, two new error codes, preparation enforced,
         a strict tier that discloses less, declared default orders, forced predicates that admit null, audited
-        refusals. The ten bullets marked "Behaviour change" change what code written for 3.0.0 does; the others fix
-        what threw or add what was missing.
+        refusals, and long In lists that no longer end the process. The eleven bullets marked "Behaviour change"
+        change what code written for 3.0.0 does; the others fix what threw or add what was missing.
         - Behaviour change. DataType.Date / DataType.DateTime resolve the member's type before building the
           predicate. Every comparison on a DateTimeOffset member used to throw, and DataType.Date on any nullable
           date member used to throw; both work. The null guard is emitted only where the value can be null:
@@ -4435,6 +4530,23 @@ MemoryCalculationInput
           condition groups nest, and DwCaps.MaxConditionSets (default 10) how many condition sets a Segment
           carries. A guarded request nested 11 levels deep, or a segment with 11 or more sets, which 3.0.0 ran,
           is refused with CapExceeded unless the deployment raises the cap. Unguarded calls are not capped.
+        - Behaviour change for guarded requests. DwCaps.MaxConditionValues (default 1000) bounds the values one
+          condition carries, comparing the largest condition of the where clause, Having and every Segment set: an
+          In was one comparison per value for the price of one condition and one field. DwCaps.MaxAggregates
+          (default 50) bounds a summary's AggregateBy entries, on the Summary terminals and the composable Group and
+          Summary; the group floor's own count is not counted. Both refuse with CapExceeded and FieldPath "*" in
+          both tiers ("MaxConditionValues cap (1000), request had 1001"), refuse a value below 1, freeze with the
+          posture and bind from Caps:MaxConditionValues and Caps:MaxAggregates. An aggregate with no field, such as
+          a Count, is charged DefaultFieldCost toward MaxQueryCost; it was free. Every count cap is now checked
+          before any name is resolved, so an oversized request that also names an unknown field is refused with
+          CapExceeded, where 3.0.0 answered ConditionMustHasValidFieldName first. Unguarded calls are not
+          capped.
+        - Security fix. In, NotIn, IIn and INotIn on Text, and In and NotIn on Guid, Number and Enum, joined their
+          values into one flat chain, one level of expression nesting per value. EF Core and the expression compiler
+          walk that tree recursively, so a condition with about seven hundred values overflowed the request
+          thread's stack and ended the process, guarded or not; no catch can stop a stack overflow. A list longer
+          than 32 values is now a balanced tree of flat chains of at most 32 terms. A list of 32 or fewer is written
+          exactly as before, and the rows returned are the same.
         - Behaviour change. ErrorCode.SelectTypeMustHaveParameterlessConstructor replaces the English sentence a
           Select on an unconstructible type used to throw; LogicException gained Subject, which carries the type
           name.
@@ -4446,17 +4558,27 @@ MemoryCalculationInput
         - Behaviour change. Under the Strict tier an unknown field and a denied field answer alike. Outside dry
           run, a path that matches nothing is refused with its clause's FieldDeniedFor* code instead of
           LogicException ConditionMustHasValidFieldName; every FieldDeniedFor* refusal carries FieldPath "*" and
-          no RuleId or SourceOrigin, and every CapExceeded refusal carries FieldPath "*". The trace keeps the
-          field. The Convenience tier and dry run are unchanged.
+          no RuleId or SourceOrigin, and every CapExceeded refusal carries FieldPath "*". Inside a Segment every
+          field refusal is FieldDeniedForSegment, and a name padded with dots is normalized as a real path is.
+          MaxQueryCost is checked after every field gate, so a [DwCost] weight cannot tell a hidden field from a
+          missing one. MissingContextValue carries FieldPath "*" and no SourceOrigin.
+          The trace keeps the field. The Convenience tier and dry run are unchanged.
         - [DwEntity(DefaultOrder = "CreatedAt desc, Id")] orders a guarded query whose caller sends no orders,
-          less the fields that caller may not order by. Unguarded calls ignore it. PolicyModelValidator reports
-          unreadable entries, unknown fields, and fields the type's own attributes deny for ordering.
+          less the fields that caller may not order by, and in a Segment less the fields denied for segments.
+          Unguarded calls ignore it, and so does a projected query or one that composed an Order. PolicyModelValidator
+          reports unreadable entries, fields no query can order by and fields sealed attributes deny for ordering
+          as errors; unknown fields, fields only overridable attributes deny for ordering, and fields denied for
+          segments as warnings.
         - [DwForceWhere(AllowNull = true)], ForcedPredicate.AllowNull with FromConstant / FromContext overloads
           taking bool allowNull, and "allowNull" in a stored rule's forced object inject
-          (field op value OR field IS NULL). PolicyModelValidator now reports every malformed [DwForceWhere] at
-          startup; it used to surface on the first guarded query of the type.
+          (field op value OR field IS NULL). AllowNull on IsNull or IsNotNull is refused by the attribute, by both
+          factories and by a stored rule, value or no value. PolicyModelValidator now reports every malformed
+          [DwForceWhere] at startup; it used to surface on the first guarded query of the type.
         - DwPolicyOptions.AuditRefusals (default false) writes every refused guarded query to the context's audit
-          buffer. DwAuditEvent gains ErrorCode and a constructor taking it.
+          buffer, under the canonical path, cut to 256 characters with control characters escaped. DwAuditEvent
+          gains ErrorCode and a constructor taking it.
+        - The reflection cache no longer keeps an access record for a field path that fails validation. Under LRU,
+          the default, or LFU every invented name a caller sent stayed recorded for the life of the process.
 3.0.0   Field-level policies (sections 12–32) and three companion packages. Additive for 2.x callers:
         - every 2.x signature and the query engine are unchanged;
         - FilterResult<T> and SummaryResult gained Policy : PolicyTrace? (null unless guarded), so JSON output
@@ -4498,9 +4620,6 @@ MemoryCalculationInput
   before EF Core translates it. `Contains` / `StartsWith` / `EndsWith` work only on string members.
 - Cache configuration changes are eventually consistent: calls already running finish with the options they read.
 - Nothing accepts a `CancellationToken`.
-- The Strict tier answers an unknown field and a denied one alike, except through the cost budget: cost is counted
-  before gating, and a name that matches nothing costs `Caps.DefaultFieldCost`, so a caller who can drive a request
-  over `MaxQueryCost` can still tell a field weighted by `[DwCost]` from an unknown name.
 
 ---
 

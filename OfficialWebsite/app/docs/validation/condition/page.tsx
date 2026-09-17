@@ -37,6 +37,17 @@ export default function Page() {
           </tr>
           <tr>
             <td>
+              <code>Field</code>&apos;s first segment must not be a name the
+              expression parser keeps for itself — <code>new</code>,{" "}
+              <code>iif</code>, <code>np</code>, <code>isnull</code>,{" "}
+              <code>is</code>, <code>as</code>, <code>cast</code>,{" "}
+              <code>true</code>, <code>false</code>, <code>null</code>, in any
+              letter case
+            </td>
+            <td><code>{`FieldPath[{path}]StartsWithReservedName`}</code></td>
+          </tr>
+          <tr>
+            <td>
               <code>Between</code> / <code>NotBetween</code> require exactly 2
               values
             </td>
@@ -92,16 +103,33 @@ export default function Page() {
         </tbody>
       </table>
 
+      <Callout tone="warn" title="A field the parser would read as its own is refused before the lookup">
+        The expression parser reads its own functions and literals before it looks
+        for a member, so a path whose first segment is one of them never reaches
+        the member. New in <strong>3.1.0</strong>: the library refuses it by name,
+        with the first segment — trimmed — on{" "}
+        <Link href="/docs/errors#subject"><code>LogicException.Subject</code></Link>.
+        The check sits where any path is validated, so <code>Orders</code>,{" "}
+        <code>Selects</code>, <code>GroupBy.Fields</code>,{" "}
+        <code>AggregateBy.Field</code> and a <code>[DwEntity(DefaultOrder)]</code>{" "}
+        entry answer the same way, guarded or not. Only the first segment counts —{" "}
+        <code>Owner.New</code> names the member — and <code>it</code>,{" "}
+        <code>root</code>, <code>parent</code> and every predefined type name such
+        as <code>String</code> or <code>Guid</code> are ordinary members. Rename the
+        CLR property and map the column with <code>[Column]</code>. See{" "}
+        <Link href="/docs/breaking-changes#root-it-parent-members">breaking changes</Link>.
+      </Callout>
+
       <Callout tone="warn" title="A date value is read the way the predicate will read it">
         Validation reads a date value exactly as the predicate builder does, with
         the member&apos;s own <code>DateTime</code>, <code>DateTimeOffset</code> or{" "}
         <code>DateOnly</code> type. The server&apos;s culture plays no part, so a
         value is accepted or refused the same way on every host, and a value that
-        passes validation is one the builder can use. The one exception is a
-        declared format that writes its zone as a quoted literal: on a host that is
-        not on UTC it can refuse a value. See{" "}
-        <Link href="/docs/enums/data-type#declaring-date-formats">Declaring a local format</Link>.
-        ISO&nbsp;8601 (
+        passes validation is one the builder can use. A deployment that{" "}
+        <Link href="/docs/enums/data-type#declaring-date-formats">declares a local format</Link>{" "}
+        is no different: a format whose own text the built-in readers also read is
+        refused when it is configured, so no declaration can make a value depend on
+        the host&apos;s time zone. ISO&nbsp;8601 (
         <code>&quot;2026-09-15&quot;</code>,{" "}
         <code>&quot;2026-09-15T12:00:00Z&quot;</code>) and year-first dates are
         accepted everywhere; <code>&quot;01/09/2026&quot;</code> is refused with{" "}

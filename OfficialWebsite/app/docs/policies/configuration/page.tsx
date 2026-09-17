@@ -478,25 +478,32 @@ foreach (var error in inspected.Errors) logger.LogError("{E}", error);`}</Code>
         A <Link href="/docs/policies/attributes#default-order"><code>[DwEntity(DefaultOrder = ...)]</code></Link>{" "}
         is read entry by entry. A default order is never a reason to refuse a
         query, so this scan is the only place a mistake in one is reported. For{" "}
-        <code>[DwEntity(DefaultOrder = &quot;Missing desc, Watchers, Secret, Rank, Region, Id sideways&quot;)]</code>{" "}
+        <code>[DwEntity(DefaultOrder = &quot;Missing desc, Watchers, Null, Secret, Rank, Region, Id sideways&quot;)]</code>{" "}
         on a <code>Ticket</code> whose <code>Watchers</code> is a collection of
-        entities, whose <code>Secret</code> carries <code>[DwNoOrder]</code>, whose{" "}
-        <code>Rank</code> carries <code>[DwNoOrder(Overridable = true)]</code> and
-        whose <code>Region</code> carries{" "}
-        <code>[DwDeny(PolicyFeature.Segment)]</code>:
+        entities, whose <code>Null</code> is a member named after one of the
+        expression parser&apos;s own words, whose <code>Secret</code> carries{" "}
+        <code>[DwNoOrder]</code>, whose <code>Rank</code> carries{" "}
+        <code>[DwNoOrder(Overridable = true)]</code> and whose <code>Region</code>{" "}
+        carries <code>[DwDeny(PolicyFeature.Segment)]</code>:
       </p>
       <Code lang="text">{`Ticket: DefaultOrder entry 'Id sideways' is not a field optionally followed by asc or desc, so guarded queries skip it.
 Ticket: DefaultOrder names 'Missing', which Ticket does not have, so guarded queries skip it.
 Ticket: DefaultOrder names 'Watchers', which no query can order by, so guarded queries skip it.
+Ticket: DefaultOrder names 'Null', which starts with a name the expression parser keeps for itself, so no query can use it. Rename the member.
 Ticket: DefaultOrder names 'Secret', which its attributes deny for ordering, so every guarded query leaves it out.
 Ticket: DefaultOrder names 'Rank', which its attributes deny for ordering unless a rule allows it, so guarded queries leave it out until one does.
 Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so guarded segments leave it out.`}</Code>
       <p>
-        The first, third and fourth are errors: an entry that cannot be read meant
-        something, a collection of entities holds no single value to sort by, and a
-        field the type&apos;s own attributes seal against ordering is left out of
-        every guarded query, so the declared order is never the one used. The rest
-        are warnings. A model shared across types can name a field on purpose; a
+        The first, third, fourth and fifth are errors: an entry that cannot be read
+        meant something, a collection of entities holds no single value to sort by,
+        a field whose first segment is one of the parser&apos;s own words —{" "}
+        <code>new</code>, <code>iif</code>, <code>np</code>, <code>isnull</code>,{" "}
+        <code>is</code>, <code>as</code>, <code>cast</code>, <code>true</code>,{" "}
+        <code>false</code>, <code>null</code>, in any letter case — is one{" "}
+        <Link href="/docs/breaking-changes#root-it-parent-members">no query can reach at all</Link>,
+        and a field the type&apos;s own attributes seal against ordering is left out
+        of every guarded query, so the declared order is never the one used. The
+        rest are warnings. A model shared across types can name a field on purpose; a
         denial every attribute marks <code>Overridable</code> can be lifted by a
         rule for the callers it names, so <code>Rank</code> is left out only until
         one does; and <code>Region</code> is left out only of guarded segments,

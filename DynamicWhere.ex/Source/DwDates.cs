@@ -109,29 +109,6 @@ public sealed class DwDateOptions
             }
         }
 
-        // Last, because the checks above name a sharper reason for the formats they refuse. A format
-        // that writes what ISO 8601 already reads is redundant at best, and at worst says something
-        // else: "yyyy-MM-dd'T'HH:mm:ss'Z'" writes the Z as a letter, so it reads 12:00 as a wall time
-        // where ISO 8601 reads it as an instant. On a DateTime member the ISO reading converts to the
-        // host's local time, so off UTC the two readings differ and every such value is refused as
-        // ambiguous — on that host only. Refused here instead, where the answer is the same everywhere.
-        foreach (string format in declared)
-        {
-            foreach (DateTimeOffset probe in Probes)
-            {
-                string text = probe.ToString(format, CultureInfo.InvariantCulture);
-
-                if (DateValue.ReadsAsBuiltIn(text))
-                {
-                    throw new ArgumentException(
-                        $"The date format '{format}' writes '{text}', which ISO 8601 or a year-first date "
-                        + "already reads. Declaring it can only change what such a value means, and what it "
-                        + "means would then depend on the host's time zone. Remove it.",
-                        nameof(Formats));
-                }
-            }
-        }
-
         // Two formats need not read the same text to disagree. With "dd/MM/yyyy HH:mm" beside
         // "MM/dd/yyyy", "01/09/2026 00:00" is 1 September and "01/09/2026" is 9 January: one client
         // gets a different day by leaving out the time. Every declared format that leads with a day or
@@ -157,6 +134,29 @@ public sealed class DwDateOptions
             }
 
             dayOrder ??= format;
+        }
+
+        // Last, because the checks above name a sharper reason for the formats they refuse. A format
+        // that writes what ISO 8601 already reads is redundant at best, and at worst says something
+        // else: "yyyy-MM-dd'T'HH:mm:ss'Z'" writes the Z as a letter, so it reads 12:00 as a wall time
+        // where ISO 8601 reads it as an instant. On a DateTime member the ISO reading converts to the
+        // host's local time, so off UTC the two readings differ and every such value is refused as
+        // ambiguous — on that host only. Refused here instead, where the answer is the same everywhere.
+        foreach (string format in declared)
+        {
+            foreach (DateTimeOffset probe in Probes)
+            {
+                string text = probe.ToString(format, CultureInfo.InvariantCulture);
+
+                if (DateValue.ReadsAsBuiltIn(text))
+                {
+                    throw new ArgumentException(
+                        $"The date format '{format}' writes '{text}', which ISO 8601 or a year-first date "
+                        + "already reads. Declaring it can only change what such a value means, and what it "
+                        + "means would then depend on the host's time zone. Remove it.",
+                        nameof(Formats));
+                }
+            }
         }
 
         _frozen = new ReadOnlyCollection<string>(declared);

@@ -585,7 +585,9 @@ export default function Page() {
         Middleware that string-matched the old sentence stops matching, and anything
         that scraped the type name out of the message must read{" "}
         <code>Subject</code> instead. The count of stable codes went from 27 to 28
-        (29 with point&nbsp;15&apos;s <code>AmbiguousDateFormat</code>), leaving one
+        (30 with point&nbsp;15&apos;s <code>AmbiguousDateFormat</code> and
+        point&nbsp;20&apos;s{" "}
+        <code>{`FieldPath[{path}]StartsWithReservedName`}</code>), leaving one
         validation failure whose message is a sentence rather than a code —{" "}
         <code>{`Unsupported combination of DataType '{type}' and Operator '{op}'.`}</code>{" "}
         See <Link href="/docs/errors">the error code reference</Link>.
@@ -719,14 +721,59 @@ export default function Page() {
         LINQ. No setting carries a host&apos;s changes to{" "}
         <code>ParsingConfig.Default</code> into the library&apos;s parsing.
       </Callout>
-      <Callout tone="warn" title="The parser's functions and literals stay reserved">
-        The parser still reserves its functions and literals — <code>new</code>,{" "}
-        <code>iif</code>, <code>np</code>, <code>isnull</code>, <code>is</code>,{" "}
-        <code>as</code>, <code>cast</code>, <code>true</code>, <code>false</code>{" "}
-        and <code>null</code>, in any case — as the first segment of a path. A
-        condition on a member of the queried type with one of those names throws,
-        and a condition on a member named <code>Null</code> matches no rows without
-        an error.
+      <Callout tone="danger" title="A path that starts with one of the parser's own words is now refused by name">
+        The parser reads its functions and literals before it looks for a member,
+        and it still does: <code>new</code>, <code>iif</code>, <code>np</code>,{" "}
+        <code>isnull</code>, <code>is</code>, <code>as</code>, <code>cast</code>,{" "}
+        <code>true</code>, <code>false</code> and <code>null</code>, in any letter
+        case, shadow the <em>first</em> segment of a field path. So{" "}
+        <strong>3.1.0</strong> refuses such a path itself, with a{" "}
+        <code>LogicException</code> whose message is{" "}
+        <code>{`FieldPath[{path}]StartsWithReservedName`}</code> and whose{" "}
+        <Link href="/docs/errors#subject"><code>Subject</code></Link> carries that
+        first segment, trimmed. It is raised where a path is validated, so a
+        condition <code>Field</code>, an <code>Orders</code> entry, a{" "}
+        <code>Selects</code> entry, a <code>GroupBy.Fields</code> entry, an{" "}
+        <code>AggregateBy.Field</code> and the member a <code>[DwAlias]</code>{" "}
+        stands for all answer alike — guarded or not. A <code>DefaultOrder</code>{" "}
+        entry naming one is skipped instead, as an unreadable entry is, because a
+        default order never refuses a query; the startup scan reports it. A member that cannot be reached cannot be filtered, sorted, grouped,
+        aggregated or projected: rename the CLR property and keep the column with{" "}
+        <code>[Column(&quot;New&quot;)]</code>.
+      </Callout>
+      <Callout tone="danger" title="What a member with one of those names did before 3.1.0">
+        Nothing announced itself. <code>New</code>, <code>Iif</code>,{" "}
+        <code>Np</code>, <code>IsNull</code>, <code>Is</code>, <code>As</code> and{" "}
+        <code>Cast</code> raised the parser&apos;s <code>ParseException</code>,{" "}
+        <code>True</code> and <code>False</code> an{" "}
+        <code>InvalidOperationException</code>, and <code>Null</code> was read as
+        the null literal — so the predicate compared null with the caller&apos;s
+        value and the query returned <strong>no rows and no error</strong>. A typed{" "}
+        <code>Selects</code> entry naming such a member used to work, because a
+        typed projection is built without the parser; it is refused now too, so one
+        rule covers every clause. Under <code>ApplyPolicy</code> the{" "}
+        <code>Convenience</code> tier and any dry run give the new code, while the{" "}
+        <code>Strict</code> tier outside a dry run answers with the clause&apos;s{" "}
+        <code>FieldDeniedFor*</code> code and <code>FieldPath</code>{" "}
+        <code>&quot;*&quot;</code>, as it answers for every name it cannot use. The{" "}
+        <Link href="/docs/policies/configuration#validate">startup scan</Link>{" "}
+        reports a <code>DefaultOrder</code> entry naming one as an error.
+      </Callout>
+      <Callout tone="note" title="Names that only look reserved">
+        Only the first segment is the parser&apos;s: <code>Owner.New</code> names
+        the member, because the parser looks for a member after a dot. An alias
+        named after one of these words still works — only the path it stands for is
+        checked. And <code>it</code>, <code>root</code>, <code>parent</code> and{" "}
+        <code>outerIt</code>, whose keywords this point turns off, are members like
+        any other identifier, as is every predefined type name the parser
+        knows: <code>String</code>, <code>Boolean</code>, <code>Char</code>,{" "}
+        <code>Byte</code>, <code>SByte</code>, <code>Int16</code>,{" "}
+        <code>Int32</code>, <code>Int64</code>, <code>UInt16</code>,{" "}
+        <code>UInt32</code>, <code>UInt64</code>, <code>Single</code>,{" "}
+        <code>Double</code>, <code>Decimal</code>, <code>DateTime</code>,{" "}
+        <code>DateTimeOffset</code>, <code>TimeSpan</code>, <code>Guid</code>,{" "}
+        <code>Math</code>, <code>Convert</code>, <code>Uri</code>,{" "}
+        <code>Object</code> and <code>Enum</code>.
       </Callout>
 
       <h2 id="condition-depth-and-set-caps">21. <code>MaxConditionDepth</code> and <code>MaxConditionSets</code> Refuse Guarded Requests 3.0 Ran</h2>
@@ -1033,7 +1080,7 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
       <h2 id="next">See also</h2>
       <ul>
         <li>
-          <Link href="/docs/errors">Error Codes Reference →</Link> the 29 stable
+          <Link href="/docs/errors">Error Codes Reference →</Link> the 30 stable
           validation messages.
         </li>
         <li>

@@ -132,16 +132,18 @@ public class Ticket
       <p>
         A default is never a reason for the library to refuse a query. An entry
         naming a field the type does not have is skipped, so is an entry that is not
-        a field and a direction, and so is one no query can order by, such as a
-        collection of entities; a field named twice is ordered by once. Nothing is ordered that the
+        a field and a direction, so is one no query can order by, such as a
+        collection of entities, and so is one starting with a name the expression
+        parser keeps for itself; a field named twice is ordered by once. Nothing is ordered that the
         declaration does not name, so a type without a <code>DefaultOrder</code> is
         ordered only as its caller asks.{" "}
         <Link href="/docs/policies/configuration#validate">Startup validation</Link>{" "}
-        reports an unreadable entry, a field no query can order by and a field the
-        type&apos;s own attributes seal against ordering as errors. A field the type
-        does not have, a field only <code>Overridable</code> attributes deny for
-        ordering — a rule can lift those — and a field denied for segments are
-        warnings.
+        reports an unreadable entry, a field no query can order by, a field whose
+        name starts with one of the expression parser&apos;s own words — which no
+        query can reach at all — and a field the type&apos;s own attributes seal
+        against ordering as errors. A field the type does not have, a field only{" "}
+        <code>Overridable</code> attributes deny for ordering — a rule can lift
+        those — and a field denied for segments are warnings.
       </p>
       <Callout tone="warn" title="End it with a unique field">
         Rows that share every value the default names can still change places

@@ -177,11 +177,10 @@ export default function Page() {
         and in the predicate builder alike, as the member&apos;s own{" "}
         <code>DateTime</code>, <code>DateTimeOffset</code> or{" "}
         <code>DateOnly</code>. The host&apos;s culture and calendar play no part,
-        so a value is accepted or refused the same way on every server. The one
-        exception is a declared format that writes its zone as a quoted literal,
-        described under{" "}
-        <a href="#declaring-date-formats">Declaring a local format</a>. Every
-        deployment accepts these forms:
+        so a value is accepted or refused the same way on every server — including
+        one that <a href="#declaring-date-formats">declares a local format</a>,
+        since a format whose text the built-in readers also read is refused at
+        configuration. Every deployment accepts these forms:
       </p>
       <table>
         <thead>
@@ -345,14 +344,22 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
           September and <code>01/09/2026</code> as 9 January.
         </li>
         <li>
-          A declared format that writes its zone as a quoted literal, such as{" "}
-          <code>yyyy-MM-dd&apos;T&apos;HH:mm:ss&apos;Z&apos;</code>, is not caught
-          when formats are checked at configuration. ISO&nbsp;8601 reads the same
-          text as a zoned instant, and on a <code>DateTime</code> member converts it
-          to the host&apos;s local time. The declared format reads the digits as
-          written. On a host that is not on UTC the two readings differ, and the
-          value is refused with <code>AmbiguousDateFormat</code>. Declare no format
-          that ISO&nbsp;8601 already reads.
+          So is a format whose own text ISO&nbsp;8601 or a year-first date already
+          reads. <code>yyyy-MM-dd</code>, <code>yyyy/M/d</code>,{" "}
+          <code>yyyy-MM-dd HH:mm:ss</code> and{" "}
+          <code>yyyy-MM-dd&apos;T&apos;HH:mm:ss&apos;Z&apos;</code> are refused;{" "}
+          <code>dd/MM/yyyy</code>, <code>dd/MM/yyyy HH:mm</code>,{" "}
+          <code>yyyy-MM</code>, <code>dd MMM yyyy</code> and <code>d/M/yy</code>{" "}
+          are accepted. Declaring one can only change what such a value{" "}
+          <em>means</em>: the <code>&apos;Z&apos;</code> in{" "}
+          <code>yyyy-MM-dd&apos;T&apos;HH:mm:ss&apos;Z&apos;</code> is a quoted
+          letter rather than a zone, so that format reads <code>12:00</code> as a
+          wall time where ISO&nbsp;8601 reads an instant — and on a{" "}
+          <code>DateTime</code> member the ISO reading converts to the host&apos;s
+          local time, so off UTC the two readings differed and every such value was
+          refused as <code>AmbiguousDateFormat</code>, on that host only. The
+          refusal at configuration is the same on every host. It runs after the
+          checks above, which name a sharper reason.
         </li>
         <li>
           The formats are process-wide and every query reads them without a lock,
@@ -380,8 +387,9 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
               <code>ArgumentException</code> for a blank or malformed format, a
               format that cannot read back what it writes, a format with no year or
               with a day but no month, two that read one text as different dates,
-              or two that put the day and the month in opposite orders; and{" "}
-              <code>InvalidOperationException</code> on a second call.
+              two that put the day and the month in opposite orders, or a format
+              that writes text ISO&nbsp;8601 or a year-first date already reads;
+              and <code>InvalidOperationException</code> on a second call.
             </td>
           </tr>
           <tr>

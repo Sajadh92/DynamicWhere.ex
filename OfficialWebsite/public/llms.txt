@@ -500,14 +500,17 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
   - a format with a day but no month — `dd/mm/yyyy`, where `mm` is minutes;
   - two formats that read one text as different dates — `dd/MM/yyyy` beside `MM/dd/yyyy`, or `yyyy-dd-MM` against
     ISO;
+  - a format whose own text ISO 8601 or a year-first date already reads — `yyyy-MM-dd`, `yyyy/M/d`,
+    `yyyy-MM-dd HH:mm:ss`, `yyyy-MM-dd'T'HH:mm:ss'Z'` (3.1.0). Declaring one can only change what such a value
+    means: a quoted `'Z'` is a letter, not a zone, so that format reads `12:00` as a wall time where ISO 8601 reads
+    an instant. On a `DateTime` member the ISO reading converts to the host's local time, so off UTC the two
+    readings differed and every such value was refused as `AmbiguousDateFormat` — on that host only. The refusal is
+    the same on every host. Checked last, after the rules above, which name a sharper reason;
   - two formats that lead with the day and the month in opposite orders, even in different shapes —
     `dd/MM/yyyy HH:mm` beside `MM/dd/yyyy` would make `"01/09/2026 00:00"` 1 September and `"01/09/2026"`
     9 January. Declare one day/month order.
-  - A format with a year but no day, such as `yyyy-MM`, is accepted and reads the 1st.
-- Not caught at `Configure`: a declared format that writes its zone as a quoted literal, such as
-  `yyyy-MM-dd'T'HH:mm:ss'Z'`. ISO 8601 reads the same text as a zoned instant, and on a `DateTime` member converts it
-  to the host's local time. The declared format reads the digits as written. On a host that is not on UTC the two
-  readings differ, and the value is refused with `AmbiguousDateFormat`. Declare no format that ISO 8601 already reads.
+  - A format with a year but no day, such as `yyyy-MM`, is accepted and reads the 1st. So are `dd/MM/yyyy`,
+    `dd/MM/yyyy HH:mm` and `dd MMM yyyy`: ISO 8601 reads none of them.
 - `Bind` throws `InvalidOperationException`, at startup instead of leaving the defaults in force, for a key
   nothing answers to (`ErrorOnUnknownConfiguration`) such as a misspelt `Fromats`, and for a single value where the
   list belongs: `"Formats": "dd/MM/yyyy"`, or one environment variable `DynamicWhere__Dates__Formats`. Write
@@ -561,17 +564,36 @@ Path                              Where predicate generated
   declared name (`orders.totalamount` → `Orders.TotalAmount`). Fields and serializer names (`[JsonPropertyName]`,
   `[Column]`) are not recognized: camelCase works, snake_case does not. Spaces around segments and empty segments
   are removed (`"Orders . TotalAmount"`, `"Orders..TotalAmount"`). A path of only dots fails.
-- **Names the parser reserves.** A member named `Root`, `It` or `Parent`, in any case, is an ordinary segment, and so
+- **Names that look reserved.** A member named `Root`, `It` or `Parent`, in any case, is an ordinary segment, and so
   is an alias named `root`, `it` or `parent`. Before 3.1.0 System.Linq.Dynamic.Core read such a name as its context
   keyword: `Root.Name` and `It.Name` addressed the row's own `Name`, `Parent` threw `ParseException`, and an
   `AggregateBy.Alias` named `root`, `it` or `parent` failed in `Having` and `Summary.Orders`. Under `ApplyPolicy`
   the gate decided on the path the caller named while the query read the row's own column, so a denied value could
   be projected and a forced scope reached through such a navigation filtered the wrong column.
   - Expressions are parsed with the context keywords off, so `it`, `root` and `parent` name members like any other
-    identifier. The parser still reserves its functions and literals — `new`, `iif`, `np`, `isnull`, `is`, `as`,
-    `cast`, `true`, `false` and `null`, in any case — as the first segment of a path. A condition on a member of the
-    queried type with one of those names throws, and a condition on a member named `Null` matches no rows
-    without an error.
+    identifier. The parser's predefined type names name members too: `String`, `Boolean`, `Char`, `Byte`, `SByte`,
+    `Int16`, `Int32`, `Int64`, `UInt16`, `UInt32`, `UInt64`, `Single`, `Double`, `Decimal`, `DateTime`,
+    `DateTimeOffset`, `TimeSpan`, `Guid`, `Math`, `Convert`, `Uri`, `Object` and `Enum`.
+- **Names the library refuses (3.1.0).** A path whose first segment is one of the parser's own functions or
+  literals — `new`, `iif`, `np`, `isnull`, `is`, `as`, `cast`, `true`, `false`, `null`, whatever the letter case —
+  throws `LogicException("FieldPath[<path>]StartsWithReservedName")`, with that first segment, trimmed, on
+  `LogicException.Subject`.
+  - Raised where a path is validated, so every clause a caller writes answers alike, guarded or not: condition
+    fields, `Orders`, `Selects`, `GroupBy.Fields`, `AggregateBy.Field`, and the target of a `[DwAlias]` the caller
+    names.
+  - Only the first segment. `Owner.New` names the member, because the parser looks for a member after a dot. An
+    alias named after one of these words still works: only the path it stands for is checked.
+  - Under `ApplyPolicy`, the Convenience tier and any dry run give that code. The Strict tier, outside a dry run,
+    answers with the clause's `FieldDeniedFor*` code and `FieldPath` `"*"`, as it answers for every name it cannot
+    use (section 17).
+  - A `DefaultOrder` entry naming one refuses nothing: a guarded query drops it, as it drops an entry it cannot
+    read, and `ValidateModel` reports it as an error (sections 13 and 20).
+  - The parser used to answer instead, because it reads its own functions and literals before it looks for a
+    member: `New`, `Iif`, `Np`, `IsNull`, `Is`, `As` and `Cast` raised its `ParseException`, `True` and `False` an
+    `InvalidOperationException`, and `Null` was read as the null literal, so the query returned no rows and no
+    error. A typed `Selects` entry naming such a member did work, because a typed projection is built without the
+    parser; it is refused now too, so one rule covers every clause.
+  - The remedy for such a column: rename the CLR property and map the column with `[Column("New")]`.
 - **Errors.** A missing segment or a null / blank path throws `LogicException("ConditionMustHasValidFieldName")`,
   the same string for Condition, OrderBy, GroupBy and AggregateBy paths. A null or blank `Selects` entry throws
   `ArgumentNullException` instead. Under `ApplyPolicy` in the Strict tier, outside dry run, a path that matches
@@ -906,6 +928,12 @@ ConditionMustHasValidFieldName                                         a Conditi
                                                                        field is null or blank, or a path does not resolve on T. Under
                                                                        ApplyPolicy in the Strict tier, outside dry run, an unresolved
                                                                        path is a PolicyException instead (3.1.0, section 17)
+FieldPath[<path>]StartsWithReservedName                                a Condition / OrderBy / GroupBy / AggregateBy / Selects path, or a
+                                                                       [DwAlias] target, whose first segment is one of the parser's own
+                                                                       words — new, iif, np, isnull, is, as, cast, true, false, null,
+                                                                       whatever the letter case. Subject = that segment, trimmed. Not a
+                                                                       member of ErrorCode: the string is built where the path is
+                                                                       validated. 3.1.0, section 5
 ConditionWithOperator[<Operator>]MustHasOnlyOneValue                   an operator other than those below has 0 or 2+ values
 ConditionWithOperator[Between-NotBetween]MustHasOnlyTwoValues          Between / NotBetween without exactly 2 values
 ConditionWithOperator[In-IIn-NotIn-INotIn]MustHasOneOrMoreValues       an In-family operator with no values
@@ -1786,9 +1814,10 @@ public class Ticket { … }
 - `[DwEntity]` allows one attribute per type and is inherited the .NET way: a `[DwEntity]` on a derived type replaces
   its base type's instead of merging with it. `[DwEntity(RequirePolicy = true)]` on a type whose base declares
   `DefaultOrder` has no default order, and the reverse drops `RequirePolicy`. Repeat both on the derived type.
-- An entry naming a field the type does not have, one that is not a field and a direction (`"Id sideways"`), or one
-  the core refuses to order by, a path ending on a collection of entities (`"Tags"`), is skipped, never refused, and
-  `PolicyModelValidator` reports all three (section 20). A path through a collection to a value (`"Tags.Value"`) is
+- An entry naming a field the type does not have, one that is not a field and a direction (`"Id sideways"`), one
+  the core refuses to order by, a path ending on a collection of entities (`"Tags"`), or one whose name the parser
+  keeps for itself (`"Null"`, section 5) is skipped, never refused, and `PolicyModelValidator` reports all four
+  (section 20). A path through a collection to a value (`"Tags.Value"`) is
   kept and sorted as section 6 sorts it, by the smallest value ascending or the largest descending.
 - The sanitizer applies it for this caller, after the caller's own orders are gated:
   - a default field this caller may not order by is left out, never refused, and recorded as a `Dropped` decision
@@ -2584,6 +2613,9 @@ Errors:
 - `[DwEntity(DefaultOrder = ...)]` (3.1.0):
   - an entry that is not a field optionally followed by `asc` or `desc`:
     `"{Type}: DefaultOrder entry '{entry}' is not a field optionally followed by asc or desc, so guarded queries skip it."`
+  - a field whose name begins with one of the parser's own words (section 5), judged before the type is asked
+    whether it has the member, because the type may well have it:
+    `"{Type}: DefaultOrder names '{field}', which starts with a name the expression parser keeps for itself, so no query can use it. Rename the member."`
   - a field no query can order by, a path ending on a collection of entities:
     `"{Type}: DefaultOrder names '{field}', which no query can order by, so guarded queries skip it."`
   - a field the type's own attributes deny for ordering, unless every one of those denials is `Overridable` (then a
@@ -4318,6 +4350,9 @@ Reflection members:
     a class deriving from `List<T>`, and `string`.
   - `IsCollectionType(t)` is `GetCollectionElementType(t) != null`.
 - `ValidatePropertyPath`:
+  - throws `LogicException` with message `"FieldPath[<path>]StartsWithReservedName"` when the first segment is one
+    of the parser's own words (3.1.0, section 5). Checked before anything is looked up, so nothing is cached and
+    no access is recorded;
   - splits on `.`, trims each segment and drops empty ones;
   - matches segments case-insensitively, stepping into the element type of a recognized collection;
   - returns the declared names joined by `.`, e.g. `" contact . EMAIL"` → `"Contact.Email"`;
@@ -4559,7 +4594,9 @@ MemoryCalculationInput
           lenient forms such as "12:00" are InvalidFormat. The server's culture no longer decides anything.
           DateTimeOffset values normalise to UTC, and a value with no zone is read as UTC. C# date objects in
           Values are written year-first; a DateTime of Kind Local compared under DataType.DateTime with a
-          DateTimeOffset member is written with its UTC offset, so it filters on the moment it holds.
+          DateTimeOffset member is written with its UTC offset, so it filters on the moment it holds. Configure
+          refuses a declared format whose own text ISO 8601 or a year-first date already reads, such as
+          yyyy-MM-dd'T'HH:mm:ss'Z': declaring one could only change what such a value means, and off UTC it did.
         - DateOnly members can be compared; no comparison on one worked under either date data type (IsNull and
           IsNotNull did).
         - HAVING on a date alias takes its type from the aggregate, so it works on DateTimeOffset.
@@ -4568,7 +4605,13 @@ MemoryCalculationInput
           sorted, grouped, aggregated and projected the row's own Name; Parent threw. Under ApplyPolicy that
           projected [DwDenied] values, let a filter test a denied column, and applied a [DwForceWhere] scope
           reached through such a navigation to the row's own column. Expressions are parsed with a library-owned
-          ParsingConfig with the context keywords off, and ParsingConfig.Default is no longer read.
+          ParsingConfig with the context keywords off, and ParsingConfig.Default is no longer read. The words the
+          parser does keep are refused by name: a path whose first segment is new, iif, np, isnull, is, as, cast,
+          true, false or null, whatever the letter case, throws LogicException
+          FieldPath[<path>]StartsWithReservedName in every clause, guarded or not. Seven of them used to raise the
+          parser's ParseException, True and False an InvalidOperationException, and Null was read as the null
+          literal, so the query returned no rows and no error. Only a path's first segment is affected, so Owner.New
+          names the member. Predefined type names such as String, Math and Guid name members too, and always did.
         - Behaviour change. ToListAsync(Segment) combines its condition sets into one query the database answers.
           Union and Intersect combine the sets' conditions; Except removes its set's rows with NOT EXISTS on the
           primary key; a type with no primary key uses SQL UNION / INTERSECT / EXCEPT. The sets used to be loaded
@@ -4678,16 +4721,12 @@ MemoryCalculationInput
 - Values are inlined as escaped literals, not SQL parameters. EF Core escapes them for SQL, so this is not an
   injection path, but every distinct value is a distinct statement and a separate plan-cache entry.
 - A path through a collection means "any element matches". There is no `All()` and no negated `Any()`.
-- Expressions are parsed with the context keywords off, so `it`, `root` and `parent` name members like any other
-  identifier. The parser still reserves its functions and literals — `new`, `iif`, `np`, `isnull`, `is`, `as`,
-  `cast`, `true`, `false` and `null`, in any case — as the first segment of a path. A condition on a member of the
-  queried type with one of those names throws, and a condition on a member named `Null` matches no rows
-  without an error (section 5).
-- A declared format that writes its zone as a quoted literal, such as `yyyy-MM-dd'T'HH:mm:ss'Z'`, is not caught when
-  formats are checked at configuration. ISO 8601 reads the same text as a zoned instant, and on a `DateTime` member
-  converts it to the host's local time. The declared format reads the digits as written. On a host that is not on
-  UTC the two readings differ, and the value is refused with `AmbiguousDateFormat`. Declare no format that ISO 8601
-  already reads (section 4).
+- A member whose name is one of the parser's own words — `new`, `iif`, `np`, `isnull`, `is`, `as`, `cast`, `true`,
+  `false`, `null` — cannot be queried at all. No clause can name it as a path's first segment: the path is refused
+  with `FieldPath[<path>]StartsWithReservedName` (section 5). Rename the CLR property and map the column with
+  `[Column]`. Reached through a navigation (`Owner.New`) it is an ordinary member.
+- A declared date format may not write text ISO 8601 or a year-first date already reads; `DwDates.Configure`
+  refuses one (section 4). ISO 8601 and year-first dates are read on every deployment and cannot be turned off.
 - Summary rows flatten dotted group fields (`CategoryName`); `SelectDynamic` rows nest them (`Category.Name`).
 - `Filter` applies `Orders` and `Page` on T before the projection, so order fields need not be selected.
 - `getQueryString` needs an EF Core provider.

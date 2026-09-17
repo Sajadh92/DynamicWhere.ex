@@ -91,6 +91,17 @@ export default function Page() {
           <code>InvalidField</code>.
         </li>
         <li>
+          <code>Field</code>&apos;s first segment must not be one of the expression
+          parser&apos;s own words — <code>new</code>, <code>iif</code>,{" "}
+          <code>np</code>, <code>isnull</code>, <code>is</code>, <code>as</code>,{" "}
+          <code>cast</code>, <code>true</code>, <code>false</code>,{" "}
+          <code>null</code>, in any letter case —{" "}
+          <code>{`FieldPath[{path}]StartsWithReservedName`}</code>. The same check
+          covers <code>Orders</code>, <code>Selects</code>,{" "}
+          <code>GroupBy.Fields</code> and <code>AggregateBy.Field</code>; only the
+          first segment counts, so <code>Owner.New</code> names the member.
+        </li>
+        <li>
           <code>Between</code> / <code>NotBetween</code> require exactly 2
           values — <code>RequiredTwoValue</code>.
         </li>

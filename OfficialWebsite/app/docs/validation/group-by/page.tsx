@@ -51,6 +51,17 @@ export default function Page() {
           </tr>
           <tr>
             <td>
+              A <code>GroupBy</code> field or an <code>AggregateBy.Field</code>{" "}
+              cannot start with a name the expression parser keeps for itself —{" "}
+              <code>new</code>, <code>iif</code>, <code>np</code>,{" "}
+              <code>isnull</code>, <code>is</code>, <code>as</code>,{" "}
+              <code>cast</code>, <code>true</code>, <code>false</code>,{" "}
+              <code>null</code>, in any letter case. Only the first segment counts
+            </td>
+            <td><code>{`FieldPath[{path}]StartsWithReservedName`}</code></td>
+          </tr>
+          <tr>
+            <td>
               Aggregation alias must be a plain identifier — a leading letter
               (any script) or underscore, then letters, digits, or underscores
             </td>

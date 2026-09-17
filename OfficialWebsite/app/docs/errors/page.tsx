@@ -18,7 +18,7 @@ export default function Page() {
       <p>
         Every validation failure in DynamicWhere.ex throws a{" "}
         <code>LogicException</code> (which inherits from <code>Exception</code>).
-        The <code>Message</code> property carries one of the 29 stable error strings
+        The <code>Message</code> property carries one of the 30 stable error strings
         listed below, so you can pattern‑match them in middleware and surface
         meaningful problems to API callers.
       </p>
@@ -69,7 +69,7 @@ export default function Page() {
 });`}</Code>
       </Callout>
 
-      <h2 id="all-errors">All 29 error codes</h2>
+      <h2 id="all-errors">All 30 error codes</h2>
       <p>
         Codes wrapped in <code>(parens)</code> are parameterized — the bracketed
         token in the message is replaced at runtime with the offending operator,
@@ -108,6 +108,22 @@ export default function Page() {
         <code>DwDates.Configure</code>. See{" "}
         <Link href="/docs/enums/data-type#date-formats">date formats</Link> and{" "}
         <Link href="/docs/breaking-changes#date-value-formats">breaking changes</Link>.
+      </Callout>
+
+      <Callout tone="danger" title="New in 3.1.0: StartsWithReservedName">
+        A field path whose first segment is one of the expression parser&apos;s own
+        words — <code>new</code>, <code>iif</code>, <code>np</code>,{" "}
+        <code>isnull</code>, <code>is</code>, <code>as</code>, <code>cast</code>,{" "}
+        <code>true</code>, <code>false</code>, <code>null</code>, in any letter
+        case — is refused with{" "}
+        <code>{`FieldPath[{path}]StartsWithReservedName`}</code> and that segment on{" "}
+        <code>Subject</code>. The parser reads its own functions and literals before
+        it looks for a member, so the path never reached the member: before{" "}
+        <strong>3.1.0</strong> seven of the names raised <code>ParseException</code>,{" "}
+        <code>True</code> and <code>False</code> an{" "}
+        <code>InvalidOperationException</code>, and <code>Null</code> was read as
+        the null literal, so the query returned no rows and no error. See{" "}
+        <Link href="/docs/breaking-changes#root-it-parent-members">breaking changes</Link>.
       </Callout>
 
       <Callout tone="danger" title="Changed in 3.1.0: an unknown field under a strict policy">
@@ -158,6 +174,26 @@ export default function Page() {
             <td><code>InvalidField</code></td>
             <td><code>ConditionMustHasValidFieldName</code></td>
             <td>Empty or invalid field name. On a strict-tier guarded query an unknown name is a <code>PolicyException</code> instead</td>
+          </tr>
+          <tr>
+            <td><code>StartsWithReservedName(path)</code></td>
+            <td><code>{`FieldPath[{path}]StartsWithReservedName`}</code></td>
+            <td>
+              A field path whose first segment is one of the expression
+              parser&apos;s own words — <code>new</code>, <code>iif</code>,{" "}
+              <code>np</code>, <code>isnull</code>, <code>is</code>,{" "}
+              <code>as</code>, <code>cast</code>, <code>true</code>,{" "}
+              <code>false</code>, <code>null</code>, in any letter case. Raised
+              wherever a path is validated, so a condition <code>Field</code>,{" "}
+              <code>Orders</code>, <code>Selects</code>,{" "}
+              <code>GroupBy.Fields</code>, <code>AggregateBy.Field</code> and the
+              member a <code>[DwAlias]</code> stands for all answer alike. A{" "}
+              <code>DefaultOrder</code> entry naming one is skipped, and reported by
+              the startup scan. Only the first segment counts: <code>Owner.New</code> names the member. The
+              segment, trimmed, is on <code>Subject</code>. On a strict-tier
+              guarded query it arrives as that clause&apos;s{" "}
+              <code>FieldDeniedFor*</code> instead
+            </td>
           </tr>
           <tr>
             <td><code>InvalidValue</code></td>
@@ -325,10 +361,12 @@ export default function Page() {
         matching read-only property <code>Subject</code> (<code>string?</code>).
         It carries what a refusal is <em>about</em> where the code alone does not
         say: the rejected type&apos;s <code>Name</code> on{" "}
-        <code>SelectTypeMustHaveParameterlessConstructor</code>, and the field —
+        <code>SelectTypeMustHaveParameterlessConstructor</code>, the field —
         or the <code>Having</code> alias — on <code>AmbiguousDateFormat</code> and
         on an <code>InvalidFormat</code> raised by a <code>Date</code> or{" "}
-        <code>DateTime</code> value. Under <code>ApplyPolicy</code> the field is
+        <code>DateTime</code> value, and the offending first segment, trimmed, on{" "}
+        <code>{`FieldPath[{path}]StartsWithReservedName`}</code>. Under{" "}
+        <code>ApplyPolicy</code> the field is
         named as the caller wrote it, so a <code>[DwAlias]</code> name is never
         swapped for the member it hides. It is <code>null</code> for every other code,
         including <code>InvalidFormat</code> on a <code>Guid</code>,{" "}
@@ -368,7 +406,11 @@ export default function Page() {
           <code>NotRequiredValues</code>, <code>RequiredTwoValue</code>,{" "}
           <code>RequiredOneValue(op)</code>, <code>InvalidFormat</code>,{" "}
           <code>AmbiguousDateFormat</code> (the two format codes are also raised
-          for a date value in a <code>Having</code> condition).
+          for a date value in a <code>Having</code> condition),{" "}
+          <code>StartsWithReservedName(path)</code> (also raised for any other
+          field path whose first segment is one of the parser&apos;s own words —{" "}
+          <code>OrderBy</code>, <code>Selects</code>, <code>GroupBy</code>,{" "}
+          <code>AggregateBy</code>).
         </li>
         <li>
           <Link href="/docs/validation/condition-group">ConditionGroup validation →</Link>{" "}

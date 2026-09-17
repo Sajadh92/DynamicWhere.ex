@@ -1753,17 +1753,49 @@ internal static class FilterSanitizer
 
         List<Condition> injected = new(gate.TypePolicy.Forced.Count);
 
+        // A predicate that lets null through is a disjunction, so it cannot sit among the root's own
+        // conditions: it goes in a group of its own, still joined to everything else by And.
+        List<ConditionGroup> widened = new();
+
         foreach (ForcedPredicate predicate in gate.TypePolicy.Forced)
         {
             Condition? condition = gate.Materialize<T>(predicate, injected.Count);
 
-            if (condition is not null)
+            if (condition is null)
             {
-                injected.Add(condition);
+                continue;
             }
+
+            if (Widens<T>(predicate, condition.Field!))
+            {
+                condition.Sort = 0;
+
+                widened.Add(new ConditionGroup
+                {
+                    // Zero is the caller's group.
+                    Sort = widened.Count + 1,
+                    Connector = Connector.Or,
+                    Conditions = new List<Condition>
+                    {
+                        condition,
+                        new()
+                        {
+                            Sort = 1,
+                            Field = condition.Field,
+                            DataType = condition.DataType,
+                            Operator = Operator.IsNull
+                        }
+                    },
+                    SubConditionGroups = new List<ConditionGroup>()
+                });
+
+                continue;
+            }
+
+            injected.Add(condition);
         }
 
-        if (injected.Count == 0)
+        if (injected.Count == 0 && widened.Count == 0)
         {
             return callers;
         }
@@ -1783,7 +1815,36 @@ internal static class FilterSanitizer
             root.SubConditionGroups.Add(callers);
         }
 
+        root.SubConditionGroups.AddRange(widened);
+
         return root;
+    }
+
+    /// <summary>
+    /// True when a forced predicate is injected as <c>(field op value OR field IS NULL)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Only where the field can actually be null. The attribute refuses <c>AllowNull</c> on a member
+    /// that never can be, but a runtime rule is written without the type to hand, and on such a member
+    /// the widening could never match a row: the comparison alone is the same predicate, and the one
+    /// that keeps the query plan simple. A path through a navigation can always be null, because the
+    /// navigation can be absent.
+    /// </remarks>
+    private static bool Widens<T>(ForcedPredicate predicate, string path) where T : class
+    {
+        if (!predicate.AllowNull)
+        {
+            return false;
+        }
+
+        if (path.IndexOf(SegmentSeparator) >= 0)
+        {
+            return true;
+        }
+
+        Type? type = CacheReflection.FindProperty(typeof(T), path)?.PropertyType;
+
+        return type is null || !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;
     }
 
     /// <summary>
@@ -2472,7 +2533,7 @@ internal static class FilterSanitizer
                 values.Add(predicate.Value!);
             }
 
-            RecordInjected(path, predicate.Operator);
+            RecordInjected(path, predicate.Operator, Widens<T>(predicate, path));
 
             if (IsDryRun)
             {
@@ -2550,9 +2611,12 @@ internal static class FilterSanitizer
         }
 
         /// <summary>Records that the library added a predicate the caller did not send.</summary>
-        internal void RecordInjected(string fieldPath, Operator op) =>
+        internal void RecordInjected(string fieldPath, Operator op, bool orNull = false) =>
             _trace.Add(new PolicyDecision(
-                fieldPath, PolicyFeature.Where, PolicyAction.Injected, $"forced predicate ({op})"));
+                fieldPath,
+                PolicyFeature.Where,
+                PolicyAction.Injected,
+                orNull ? $"forced predicate ({op}, or null)" : $"forced predicate ({op})"));
 
         /// <summary>Resolves one field's policy, once per query.</summary>
         internal FieldPolicy PolicyFor(string fieldPath, PolicyFeature feature)

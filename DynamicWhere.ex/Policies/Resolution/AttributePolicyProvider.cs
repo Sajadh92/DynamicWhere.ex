@@ -392,7 +392,7 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// Thrown when the attribute names neither a constant nor a context key, names both, or
     /// decorates a member whose CLR type has no <see cref="DataType"/> counterpart.
     /// </exception>
-    private static PolicyFragment ToFragment(
+    internal static PolicyFragment ToFragment(
         string fieldPath, PropertyInfo property, DwForceWhereAttribute attribute)
     {
         bool hasValue = attribute.Value is not null;
@@ -417,13 +417,33 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
                 (hasValue ? "it sets both." : "it sets neither."));
         }
 
+        if (attribute.AllowNull && isNullCheck)
+        {
+            throw new ArgumentException(
+                $"[DwForceWhere({attribute.Operator}, AllowNull = true)] on '{fieldPath}' already " +
+                "decides about null, so there is no comparison for AllowNull to widen.");
+        }
+
+        // A member that can never be null would make the widening dead code at best, and at worst
+        // the sign that the attribute was put on the wrong member.
+        if (attribute.AllowNull
+            && property.PropertyType.IsValueType
+            && Nullable.GetUnderlyingType(property.PropertyType) is null)
+        {
+            throw new ArgumentException(
+                $"[DwForceWhere(AllowNull = true)] on '{fieldPath}' decorates a " +
+                $"{property.PropertyType.Name}, which can never be null.");
+        }
+
         DataType dataType = DataTypeOf(property, fieldPath);
 
         ForcedPredicate forced = isNullCheck
             ? ForcedPredicate.FromNullCheck(fieldPath, attribute.Operator, dataType)
             : hasContextValue
-                ? ForcedPredicate.FromContext(fieldPath, attribute.Operator, dataType, attribute.ContextValue!)
-                : ForcedPredicate.FromConstant(fieldPath, attribute.Operator, dataType, attribute.Value!);
+                ? ForcedPredicate.FromContext(
+                    fieldPath, attribute.Operator, dataType, attribute.ContextValue!, attribute.AllowNull)
+                : ForcedPredicate.FromConstant(
+                    fieldPath, attribute.Operator, dataType, attribute.Value!, attribute.AllowNull);
 
         // PolicyFeature.None: a forced predicate is the library filtering on the caller's behalf,
         // which says nothing about whether the caller may filter on the field themselves — the two

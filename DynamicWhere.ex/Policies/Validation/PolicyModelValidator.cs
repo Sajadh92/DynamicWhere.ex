@@ -74,6 +74,7 @@ public static class PolicyModelValidator
 
             CheckAlias(property, member, aliases, errors);
             CheckFacts(property, member, errors);
+            CheckForced(property, member, errors);
 
             ValueTransform chain;
 
@@ -103,6 +104,29 @@ public static class PolicyModelValidator
             CheckTokenVault(chain, member, options, errors);
             CheckOutputType(chain, property, member, errors);
             CheckMaskedButOrderable(chain, property, member, warnings);
+        }
+    }
+
+    /// <summary>
+    /// Refuses a forced predicate that resolution would refuse, so the first query does not find it.
+    /// </summary>
+    /// <remarks>
+    /// Resolution is the one place these are decided — naming neither a constant nor a context key,
+    /// naming both, a member with no data type, and <c>AllowNull</c> where it has no comparison to
+    /// widen or no null to admit — so the scan asks it rather than restating its rules.
+    /// </remarks>
+    private static void CheckForced(PropertyInfo property, string member, List<string> errors)
+    {
+        foreach (DwForceWhereAttribute attribute in property.GetCustomAttributes<DwForceWhereAttribute>(inherit: true))
+        {
+            try
+            {
+                Resolution.AttributePolicyProvider.ToFragment(property.Name, property, attribute);
+            }
+            catch (ArgumentException malformed)
+            {
+                errors.Add($"{member}: {malformed.Message}");
+            }
         }
     }
 

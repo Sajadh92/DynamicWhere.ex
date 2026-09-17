@@ -4,6 +4,7 @@ using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Masking;
+using DefaultOrder = DynamicWhere.ex.Source.DefaultOrder;
 
 namespace DynamicWhere.ex.Policies.Validation;
 
@@ -68,6 +69,8 @@ public static class PolicyModelValidator
     {
         Dictionary<string, string> aliases = new(StringComparer.OrdinalIgnoreCase);
 
+        CheckDefaultOrder(type, errors, warnings);
+
         foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
             string member = $"{type.Name}.{property.Name}";
@@ -104,6 +107,53 @@ public static class PolicyModelValidator
             CheckTokenVault(chain, member, options, errors);
             CheckOutputType(chain, property, member, errors);
             CheckMaskedButOrderable(chain, property, member, warnings);
+        }
+    }
+
+    /// <summary>
+    /// Reports what a query would silently skip in <c>[DwEntity(DefaultOrder = ...)]</c>.
+    /// </summary>
+    /// <remarks>
+    /// A query never fails over a default order, so this scan is the only place a mistake in one is
+    /// said out loud. An entry that is not a field and a direction is an error, because the author
+    /// meant something by it; a field the type does not have is a warning, because a model shared
+    /// across types can name one on purpose; and a field the type's own attributes deny for ordering
+    /// is an error, because every caller would have it left out and the order would never be the one
+    /// declared.
+    /// </remarks>
+    private static void CheckDefaultOrder(Type type, List<string> errors, List<string> warnings)
+    {
+        (List<string> malformed, List<string> unknown) = DefaultOrder.Problems(type);
+
+        foreach (string entry in malformed)
+        {
+            errors.Add(
+                $"{type.Name}: DefaultOrder entry '{entry}' is not a field optionally followed by asc or desc, "
+                + "so queries skip it.");
+        }
+
+        foreach (string field in unknown)
+        {
+            warnings.Add($"{type.Name}: DefaultOrder names '{field}', which {type.Name} does not have, so queries skip it.");
+        }
+
+        IReadOnlyList<DefaultOrder.Entry> entries = DefaultOrder.For(type);
+
+        if (entries.Count == 0)
+        {
+            return;
+        }
+
+        Resolution.PolicyResolver attributes = new(new Resolution.IDwPolicyProvider[] { new Resolution.AttributePolicyProvider() });
+
+        foreach (DefaultOrder.Entry entry in entries)
+        {
+            if (!attributes.Resolve(type, entry.Field, new Context.DwPolicyContext()).Allows(PolicyFeature.Order))
+            {
+                errors.Add(
+                    $"{type.Name}: DefaultOrder names '{entry.Field}', which its attributes deny for ordering, "
+                    + "so every guarded query leaves it out.");
+            }
         }
     }
 

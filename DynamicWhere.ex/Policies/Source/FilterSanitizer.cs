@@ -53,6 +53,11 @@ internal static class FilterSanitizer
     /// When true, a null projection is replaced by the allowed fields if anything is denied. False
     /// when the caller is composing one clause at a time and sent no projection to speak of.
     /// </param>
+    /// <param name="applyDefaultOrder">
+    /// When true and the caller sent no orders, the type's declared default order is added, less every
+    /// field this caller may not order by. False for a clause composed on its own, which orders
+    /// nothing the caller did not ask it to.
+    /// </param>
     /// <returns>A sanitized copy, safe to hand to the existing pipeline.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     /// <exception cref="LogicException">
@@ -68,7 +73,8 @@ internal static class FilterSanitizer
         DwPolicyContext context,
         DwPolicyOptions options,
         PolicyTrace trace,
-        bool synthesizeProjection = true)
+        bool synthesizeProjection = true,
+        bool applyDefaultOrder = true)
         where T : class
     {
         if (filter is null)
@@ -112,7 +118,18 @@ internal static class FilterSanitizer
         EnforceCost(working, gate);
 
         GateConditions(working.ConditionGroup, gate);
+
+        // Read before gating: a caller whose every order was dropped still sent orders, and gets
+        // what they asked for rather than a default in their place.
+        bool callerOrdered = working.Orders is { Count: > 0 };
+
         GateOrders(working, gate);
+
+        if (applyDefaultOrder && !callerOrdered && DefaultOrders<T>(gate) is { Count: > 0 } defaults)
+        {
+            working.Orders = defaults;
+        }
+
         GateSelects(working, gate, synthesizeProjection);
 
         // Last, and after gating rather than before it. A forced predicate is the library filtering
@@ -552,6 +569,10 @@ internal static class FilterSanitizer
     /// <returns>A sanitized copy, safe to hand to the existing pipeline.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the segment.</exception>
+    /// <param name="applyDefaultOrder">
+    /// When true and the caller sent no orders, the type's declared default order is added, less every
+    /// field this caller may not order by.
+    /// </param>
     /// <remarks>
     /// Every condition set is gated independently, because each one becomes its own subquery and a
     /// field refused in one must not be reachable through another.
@@ -567,7 +588,8 @@ internal static class FilterSanitizer
         PolicyResolver resolver,
         DwPolicyContext context,
         DwPolicyOptions options,
-        PolicyTrace trace)
+        PolicyTrace trace,
+        bool applyDefaultOrder = true)
         where T : class
     {
         if (segment is null)
@@ -643,7 +665,15 @@ internal static class FilterSanitizer
             }
         }
 
+        bool callerOrdered = working.Orders is { Count: > 0 };
+
         GateSegmentOrders(working, gate);
+
+        if (applyDefaultOrder && !callerOrdered && DefaultOrders<T>(gate) is { Count: > 0 } defaults)
+        {
+            working.Orders = defaults;
+        }
+
         GateSegmentSelects(working, gate);
 
         InjectIntoSets<T>(working, gate);
@@ -1369,6 +1399,41 @@ internal static class FilterSanitizer
         }
 
         filter.Orders = kept;
+    }
+
+    /// <summary>
+    /// The type's declared default order, less every field this caller may not order by.
+    /// </summary>
+    /// <remarks>
+    /// A field left out is recorded, never refused. The caller did not send it, and a query refused
+    /// over an order it never asked for is not a refusal anyone can act on. Leaving it in would rank
+    /// the rows by a value the caller may not see. A dry run keeps it, as it keeps everything else,
+    /// and still records what enforcement would have left out.
+    /// </remarks>
+    private static List<OrderBy> DefaultOrders<T>(Gate gate) where T : class
+    {
+        List<DefaultOrder.Entry> kept = new();
+
+        foreach (DefaultOrder.Entry entry in DefaultOrder.For(typeof(T)))
+        {
+            FieldPolicy policy = gate.PolicyFor(entry.Field, PolicyFeature.Order);
+
+            if (policy.Allows(PolicyFeature.Order))
+            {
+                kept.Add(entry);
+
+                continue;
+            }
+
+            gate.SkipDefaultOrder(entry.Field, policy);
+
+            if (gate.IsDryRun)
+            {
+                kept.Add(entry);
+            }
+        }
+
+        return DefaultOrder.ToOrders(kept);
     }
 
     /// <summary>
@@ -2608,6 +2673,18 @@ internal static class FilterSanitizer
             {
                 SourceOrigin = origin
             };
+        }
+
+        /// <summary>Records that a field of the type's default order was left out for this caller.</summary>
+        internal void SkipDefaultOrder(string fieldPath, FieldPolicy policy)
+        {
+            string? sources = Describe(policy);
+
+            _trace.Add(new PolicyDecision(
+                fieldPath,
+                PolicyFeature.Order,
+                PolicyAction.Dropped,
+                sources is null ? "left out of the default order" : $"left out of the default order: {sources}"));
         }
 
         /// <summary>Records that the library added a predicate the caller did not send.</summary>

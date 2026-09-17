@@ -284,7 +284,9 @@ public sealed class PolicyQueryable<T> where T : class
     {
         PolicyTrace trace = NewTrace();
 
-        Segment sanitized = FilterSanitizer.Sanitize<T>(segment, _resolver, _context, _options, trace);
+        Segment sanitized = FilterSanitizer.Sanitize<T>(
+            segment, _resolver, _context, _options, trace,
+            applyDefaultOrder: !DefaultOrder.IsOrdered(_source.Expression));
 
         LastTrace = trace;
 
@@ -387,11 +389,21 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the page exceeds the cap.</exception>
     public PolicyQueryable<T> Page(PageBy page)
     {
-        Filter sanitized = SanitizeClause(new Filter { Page = page });
+        // A query nothing has ordered takes the type's default, gated like any other order. One the
+        // caller ordered keeps that order: a default applied here would replace it.
+        Filter sanitized = SanitizeClause(
+            new Filter { Page = page }, applyDefaultOrder: !DefaultOrder.IsOrdered(_source.Expression));
 
         using (PolicyScope.Enter(_context, LastTrace))
         {
-            return Chain(Scoped(sanitized).Page(sanitized.Page!));
+            IQueryable<T> scoped = Scoped(sanitized);
+
+            if (sanitized.Orders is { Count: > 0 })
+            {
+                scoped = scoped.Order(sanitized.Orders);
+            }
+
+            return Chain(scoped.Page(sanitized.Page!));
         }
     }
 
@@ -641,7 +653,10 @@ public sealed class PolicyQueryable<T> where T : class
     /// <summary>Sanitizes a whole filter and records the outcome.</summary>
     private Filter Sanitize(Filter filter, PolicyTrace trace)
     {
-        Filter sanitized = FilterSanitizer.Sanitize<T>(filter, _resolver, _context, _options, trace);
+        // A source the caller ordered before guarding it keeps that order, as it does unguarded.
+        Filter sanitized = FilterSanitizer.Sanitize<T>(
+            filter, _resolver, _context, _options, trace,
+            applyDefaultOrder: !DefaultOrder.IsOrdered(_source.Expression));
 
         LastTrace = trace;
 
@@ -667,12 +682,12 @@ public sealed class PolicyQueryable<T> where T : class
     /// <c>Where</c> call fail with "every projection field denied" on a type whose fields are all
     /// refused for select.
     /// </remarks>
-    private Filter SanitizeClause(Filter clause)
+    private Filter SanitizeClause(Filter clause, bool applyDefaultOrder = false)
     {
         PolicyTrace trace = NewTrace();
 
         Filter sanitized = FilterSanitizer.Sanitize<T>(
-            clause, _resolver, _context, _options, trace, synthesizeProjection: false);
+            clause, _resolver, _context, _options, trace, synthesizeProjection: false, applyDefaultOrder);
 
         LastTrace = trace;
 

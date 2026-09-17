@@ -129,6 +129,29 @@ public sealed class DateFilterTests : IDisposable
         Assert(Cond("At", DataType.DateTime, Operator.Between, "2026-08-31T00:00:00Z", "2026-09-02T00:00:00Z"), 2);
 
     [Fact]
+    public void A_local_DateTime_filters_a_DateTimeOffset_on_the_moment_it_holds()
+    {
+        // One hour before row 2's noon, as the host's own clock reads it — what DateTime.Now hands over.
+        // Written with no zone it was read as UTC, which on a host at UTC+3 is 14:00 and leaves row 2
+        // on the wrong side of the filter.
+        DateTime local = Noon.AddHours(-1).LocalDateTime;
+
+        Assert(Cond("At", DataType.DateTime, Operator.GreaterThanOrEqual, local), 2, 3);
+        Assert(Cond("At", DataType.DateTime, Operator.LessThan, local), 1);
+        Assert(Cond("MaybeAt", DataType.DateTime, Operator.GreaterThanOrEqual, local), 2, 3);
+    }
+
+    [Fact]
+    public void A_local_DateTime_compares_a_DateTimeOffset_by_the_day_it_names()
+    {
+        // Local midnight on the first is the thirty-first in UTC on any host ahead of it; a day
+        // comparison still means the first.
+        DateTime today = new(2026, 9, 1, 0, 0, 0, DateTimeKind.Local);
+
+        Assert(Cond("At", DataType.Date, Operator.Equal, today), 2);
+    }
+
+    [Fact]
     public void Each_ordered_operator_on_a_DateTimeOffset_returns_its_own_side()
     {
         Assert(Cond("At", DataType.DateTime, Operator.GreaterThanOrEqual, "2026-09-01T12:00:00Z"), 2, 3);
@@ -316,6 +339,18 @@ public sealed class DateFilterTests : IDisposable
         Xunit.Assert.Equal(
             new[] { "B" },
             TeamsInMemory(Latest(Cond("LatestAt", DataType.DateTime, Operator.GreaterThan, "2026-09-02T00:00:00Z"))));
+    }
+
+    [Fact]
+    public void Having_compares_a_DateTimeOffset_alias_with_a_local_DateTime_as_the_moment_it_holds()
+    {
+        // One hour before team A's latest noon, as the host's own clock reads it. Written with no zone,
+        // a host ahead of UTC moved it past that noon and team A dropped out.
+        DateTime local = Noon.AddHours(-1).LocalDateTime;
+
+        Xunit.Assert.Equal(
+            new[] { "A", "B" },
+            TeamsInMemory(Latest(Cond("LatestAt", DataType.DateTime, Operator.GreaterThanOrEqual, local))));
     }
 
     [Fact]

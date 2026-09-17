@@ -392,6 +392,58 @@ public class DateFormatTests
     }
 
     [Fact]
+    public void A_local_DateTime_compared_as_an_instant_with_a_DateTimeOffset_carries_its_offset()
+    {
+        // DateTime.Now was written with no zone, and a DateTimeOffset member reads text with no zone as
+        // UTC, so on a host at UTC+3 the filter named a moment three hours after the one it held.
+        DateTime local = new(2026, 9, 1, 15, 0, 0, DateTimeKind.Local);
+
+        string written = Assert.Single(
+            Normalizer.Normalize(new object?[] { local }, DataType.DateTime, typeof(DateTimeOffset)));
+
+        Assert.Equal(local.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz", CultureInfo.InvariantCulture), written);
+        Assert.Equal(
+            new DateTimeOffset(local).ToUniversalTime().ToString("o", CultureInfo.InvariantCulture),
+            Read(written, typeof(DateTimeOffset)));
+    }
+
+    [Fact]
+    public void A_local_DateTime_carries_its_offset_to_a_nullable_DateTimeOffset_too()
+    {
+        DateTime local = new(2026, 9, 1, 15, 0, 0, DateTimeKind.Local);
+
+        Assert.Equal(
+            new[] { local.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz", CultureInfo.InvariantCulture) },
+            Normalizer.Normalize(new object?[] { local }, DataType.DateTime, typeof(DateTimeOffset?)));
+    }
+
+    [Theory]
+    [InlineData(DataType.Date, typeof(DateTimeOffset))]
+    [InlineData(DataType.DateTime, typeof(DateTime))]
+    [InlineData(DataType.DateTime, typeof(DateOnly))]
+    [InlineData(DataType.DateTime, null)]
+    public void A_local_DateTime_keeps_no_zone_everywhere_else(DataType type, Type? member)
+    {
+        // A day comparison compares the day the value was written for — midnight at UTC+3 is the
+        // previous day in UTC — a DateTime member holds wall-clock time, and a DateOnly holds a day.
+        DateTime local = new(2026, 9, 1, 0, 0, 0, DateTimeKind.Local);
+
+        Assert.Equal(new[] { "2026-09-01T00:00:00" }, Normalizer.Normalize(new object?[] { local }, type, member));
+    }
+
+    [Theory]
+    [InlineData(DateTimeKind.Utc)]
+    [InlineData(DateTimeKind.Unspecified)]
+    public void A_UTC_or_unspecified_DateTime_is_written_as_it_always_was(DateTimeKind kind)
+    {
+        DateTime value = new(2026, 9, 1, 12, 0, 0, kind);
+
+        Assert.Equal(
+            new[] { "2026-09-01T12:00:00" },
+            Normalizer.Normalize(new object?[] { value }, DataType.DateTime, typeof(DateTimeOffset)));
+    }
+
+    [Fact]
     public void A_CSharp_date_filters_on_the_day_it_names_whatever_the_host()
     {
         // Before 3.1.0 a day-first host read the month-first text of a C# DateTime back as the

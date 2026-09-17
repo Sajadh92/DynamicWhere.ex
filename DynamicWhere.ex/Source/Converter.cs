@@ -437,7 +437,7 @@ internal static class Converter
                     condition.DataType,
                     condition.Operator,
                     last,
-                    Normalizer.Normalize(condition.Values),
+                    Normalizer.Normalize(condition.Values, condition.DataType, member.PropertyType),
                     member.PropertyType);
             }
         }
@@ -730,7 +730,7 @@ internal static class Converter
         Type? aliasType = null;
         aliasTypes?.TryGetValue(condition.Field!, out aliasType);
 
-        return $"({Builder.BuildCondition(condition.DataType, condition.Operator, condition.Field!, Normalizer.Normalize(condition.Values), aliasType)})";
+        return $"({Builder.BuildCondition(condition.DataType, condition.Operator, condition.Field!, Normalizer.Normalize(condition.Values, condition.DataType, aliasType), aliasType)})";
     }
 
     /// <summary>

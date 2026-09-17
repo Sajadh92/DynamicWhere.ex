@@ -6,7 +6,7 @@ import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
   title: "Policy Configuration — options, caps, tiers and defaults",
-  description: "Every DynamicWhere.ex policy option and cap with its default: tiers, dry run, hash salt, store failure modes, query cost budget, MinGroupSize, plus startup validation and the twenty-two error codes.",
+  description: "Every DynamicWhere.ex policy option and cap with its default: tiers, dry run, the trace on a result, refusal auditing, hash salt, store failure modes, query cost budget, MinGroupSize, plus startup validation and the twenty-two error codes.",
   keywords: ["DwPolicyOptions", "DwCaps", "MaxQueryCost", "MinGroupSize", "policy configuration"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/configuration/" },
 };
@@ -17,14 +17,16 @@ export default function Page() {
       <h1>Configuration</h1>
       <Code lang="csharp">{`DwPolicy.Configure(new DwPolicyOptions
 {
-    Tier            = DwTier.Convenience,
-    DryRun          = false,
-    HashSalt        = secret,              // 16 characters or more
-    TokenVault      = tokenVault,          // needed only by MaskStrategy.Tokenize
-    Services        = serviceProvider,     // resolves IValueTransformer
-    StoreFailure    = StoreFailureMode.LastKnownGood,
-    MaxSnapshotAge  = TimeSpan.FromMinutes(15),
-    RefreshInterval = TimeSpan.FromSeconds(30),
+    Tier                 = DwTier.Convenience,
+    DryRun               = false,
+    IncludeTraceInResult = null,               // null follows the tier: on here, off under Strict
+    AuditRefusals        = false,              // true also audits every refused guarded query
+    HashSalt             = secret,             // 16 characters or more
+    TokenVault           = tokenVault,         // needed only by MaskStrategy.Tokenize
+    Services             = serviceProvider,    // resolves IValueTransformer
+    StoreFailure         = StoreFailureMode.LastKnownGood,
+    MaxSnapshotAge       = TimeSpan.FromMinutes(15),
+    RefreshInterval      = TimeSpan.FromSeconds(30),
 }, providers);`}</Code>
       <Callout tone="warn" title="Frozen at startup, and refused on a second call">
         The posture is read by every request thread without synchronization. A
@@ -44,21 +46,121 @@ export default function Page() {
         <tbody>
           <tr>
             <td><code>Convenience</code> (default)</td>
-            <td>Is <strong>dropped</strong> from the projection, sort or grouping</td>
-            <td><code>getQueryString</code> allowed</td>
+            <td>Is <strong>dropped</strong> from the projection or sort</td>
+            <td><code>getQueryString</code> allowed; the trace is on the result; a refusal names the field</td>
           </tr>
           <tr>
             <td><code>Strict</code></td>
             <td><strong>Throws</strong></td>
-            <td><code>getQueryString</code> throws; deny-select implies deny-where inside a <code>Segment</code></td>
+            <td><code>getQueryString</code> throws; deny-select implies deny-where inside a <code>Segment</code>; the trace stays off the result; a field that does not exist is refused like a denied one, and no field refusal names the field</td>
           </tr>
         </tbody>
       </table>
       <p>
         A dropped field leaves nothing behind in the data, so{" "}
         <code>FilterResult&lt;T&gt;.Policy</code> is the only way a caller can
-        tell a policy drop from a null value.
+        tell a policy drop from a null value. That is why the convenience tier,
+        which drops, puts the trace on the result unless{" "}
+        <code>IncludeTraceInResult</code> is <code>false</code>.
       </p>
+
+      <h2 id="trace">The trace on a result</h2>
+      <p>
+        Every guarded query records a <code>PolicyTrace</code>: what the policy
+        dropped, refused, transformed or injected, and why.{" "}
+        <code>IncludeTraceInResult</code> (<code>bool?</code>, default{" "}
+        <code>null</code>) decides whether the terminals also put it on the result
+        — <code>FilterResult&lt;T&gt;.Policy</code>,{" "}
+        <code>SummaryResult.Policy</code> and{" "}
+        <code>SegmentResult&lt;T&gt;.Policy</code>.
+      </p>
+      <table>
+        <thead><tr><th><code>IncludeTraceInResult</code></th><th><code>Convenience</code></th><th><code>Strict</code></th></tr></thead>
+        <tbody>
+          <tr><td><code>null</code> (default)</td><td>On the result</td><td><code>Policy</code> is <code>null</code></td></tr>
+          <tr><td><code>true</code></td><td>On the result</td><td>On the result</td></tr>
+          <tr><td><code>false</code></td><td><code>Policy</code> is <code>null</code></td><td><code>Policy</code> is <code>null</code></td></tr>
+        </tbody>
+      </table>
+      <p>
+        The strict tier keeps it off because a result is where it reaches the
+        caller. An API that serializes a result serializes the trace with it, and
+        the trace names the fields a policy dropped, the attribute or rule that
+        sealed each one, and every predicate injected on the caller&apos;s behalf —
+        the detail that tier already refuses to return through{" "}
+        <code>getQueryString</code>. The trace is recorded either way, on{" "}
+        <code>PolicyQueryable&lt;T&gt;.LastTrace</code>, and audit events do not
+        depend on the setting. It freezes with the posture and binds from the key{" "}
+        <code>IncludeTraceInResult</code>. Before 3.1.0 every guarded result
+        carried the trace, whatever the tier — see{" "}
+        <Link href="/docs/breaking-changes#strict-trace-off-result">breaking changes</Link>.
+      </p>
+      <Code lang="csharp">{`// A strict deployment whose results never leave the server can keep the trace on them.
+DwPolicy.Configure(new DwPolicyOptions
+{
+    Tier                 = DwTier.Strict,
+    IncludeTraceInResult = true,
+}, providers);
+
+// Whatever the setting, the handle that ran a query holds what the policy did.
+var guarded = db.Employees.ApplyPolicy(caller);
+var result  = await guarded.ToListAsync(filter);
+PolicyTrace? trace = guarded.LastTrace;`}</Code>
+
+      <h2 id="strict-refusals">What a strict refusal says</h2>
+      <p>
+        A refusal that names the field it refused tells a probing caller that the
+        field exists. Under the <code>Strict</code> tier, outside a dry run, a
+        refusal says no more than which clause was refused:
+      </p>
+      <ul>
+        <li>
+          A field path that names nothing on the type does not fail validation. It
+          is gated as a field denied for every feature, at the step where a denial is
+          raised — after the caps and the cost budget — so it gets the code a{" "}
+          <code>[DwDenied]</code> field gets in that clause:{" "}
+          <code>FieldDeniedForWhere</code>, <code>FieldDeniedForSelect</code>,{" "}
+          <code>FieldDeniedForOrder</code>, <code>FieldDeniedForGroup</code> or{" "}
+          <code>FieldDeniedForAggregate</code>. In a segment, an unknown name — like
+          a <code>[DwDenied]</code> field — is refused in any of its clauses with{" "}
+          <code>FieldDeniedForSegment</code>.
+        </li>
+        <li>
+          Every refusal with one of those six codes has <code>FieldPath</code>{" "}
+          <code>&quot;*&quot;</code>, a <code>null</code> <code>RuleId</code> and a{" "}
+          <code>null</code> <code>SourceOrigin</code>, whether the field was denied,
+          named through an alias, or does not exist, so the message is identical
+          as well:{" "}
+          <code>{`FieldDeniedForOrder: field '*', feature 'Order', tier 'Strict'.`}</code>
+        </li>
+        <li>
+          A <code>CapExceeded</code> refusal has <code>FieldPath</code>{" "}
+          <code>&quot;*&quot;</code> too, and its <code>SourceOrigin</code> still
+          names the cap.
+        </li>
+        <li>
+          The trace keeps the real path and the reason: an unknown name is recorded
+          as <code>Denied</code>, with the reason <code>names nothing on</code>{" "}
+          followed by the type&apos;s name. With{" "}
+          <Link href="/docs/policies/configuration#audit-refusals"><code>AuditRefusals</code></Link>{" "}
+          on, the audit event keeps the real field as well.
+        </li>
+      </ul>
+      <p>
+        The <code>Convenience</code> tier answers as it always did: an unknown
+        field fails validation with <code>LogicException</code>{" "}
+        <code>ConditionMustHasValidFieldName</code>, and a refusal names the field
+        as the caller wrote it, with <code>RuleId</code> and{" "}
+        <code>SourceOrigin</code> where one source decided. In a dry run, which
+        refuses nothing, an unknown name fails validation in either tier.
+      </p>
+      <Callout tone="note" title="The cost budget can still tell them apart">
+        <code>MaxQueryCost</code> is charged before any field is gated, and a name
+        that matches nothing costs <code>DefaultFieldCost</code>. A caller who can
+        push a request over the budget can still tell a field weighted by{" "}
+        <code>[DwCost]</code> from a name that does not exist. See{" "}
+        <Link href="/docs/policies/security#probing">Security</Link>.
+      </Callout>
 
       <h2 id="caps">Caps</h2>
       <table>
@@ -96,7 +198,12 @@ export default function Page() {
         <code>MaxConditionDepth</code>, <code>MaxConditionSets</code>,{" "}
         <code>MaxOrderFields</code>,{" "}
         <code>MaxNavigationDepth</code> and <code>MaxAuditEvents</code> share{" "}
-        <code>CapExceeded</code>, naming the cap in <code>SourceOrigin</code>.{" "}
+        <code>CapExceeded</code>, naming the cap in <code>SourceOrigin</code>.
+        Under the <code>Convenience</code> tier <code>MaxNavigationDepth</code>{" "}
+        and <code>MaxAuditEvents</code> also put the field&apos;s path on{" "}
+        <code>FieldPath</code>; under <code>Strict</code> every{" "}
+        <code>CapExceeded</code> has <code>FieldPath</code>{" "}
+        <code>&quot;*&quot;</code>.{" "}
         <code>MaxQueryCost</code> is the one with a code of its own,{" "}
         <code>QueryCostExceeded</code>, because an operator reading a log needs
         to know which of the two refused: raising the wrong one changes nothing. The three schema caps never throw at all —
@@ -118,7 +225,10 @@ export default function Page() {
         contradicting each other. A page the caller did send is never replaced,
         and is still refused when it is too large. It ships off because filling
         one in on upgrade would truncate an existing caller&apos;s results with
-        nothing in the response to say so.
+        nothing in the response to say so. A page filled in for a caller who sent
+        no orders is only as stable as the query&apos;s order, so pair it with a{" "}
+        <Link href="/docs/policies/attributes#default-order"><code>[DwEntity(DefaultOrder = ...)]</code></Link>{" "}
+        that ends with a unique field.
       </p>
       <p>
         It applies to a <code>Filter</code>, <code>Summary</code> or{" "}
@@ -161,6 +271,13 @@ export default function Page() {
         <code>CapExceeded</code>.
       </p>
       <p>
+        <code>MaxConditionDepth</code> and <code>MaxConditionSets</code> are new
+        in 3.1.0, so a guarded request 3.0.0 ran — a filter nested eleven groups
+        deep, a segment with eleven sets — is refused unless the deployment raises
+        the cap. See{" "}
+        <Link href="/docs/breaking-changes#condition-depth-and-set-caps">breaking changes</Link>.
+      </p>
+      <p>
         <code>MinGroupSize</code> is the one that starts <em>unset</em> rather
         than at its default value, so that <code>MinGroupSize = 1</code> can mean
         &quot;no floor, and I mean it&quot; rather than being indistinguishable
@@ -178,6 +295,85 @@ export default function Page() {
       </p>
       <Code lang="csharp">{`var canary = new DwPolicyContext { DryRun = true }
     .WithSubject(DwSubjectKind.User, userId);`}</Code>
+
+      <h2 id="audit-refusals">Auditing refusals</h2>
+      <p>
+        <code>[DwAudit]</code> records the <em>uses</em> of the fields it
+        decorates. A caller probing for columns they may not read is refused at
+        every guess, and a guess at a field without <code>[DwAudit]</code>, or at
+        a name that does not exist, leaves nothing in that log. With{" "}
+        <code>AuditRefusals = true</code>{" "}
+        (default <code>false</code>), every <code>PolicyException</code> raised
+        by a guarded entry point — each terminal and composable method of{" "}
+        <code>PolicyQueryable&lt;T&gt;</code>, and <code>ApplyPolicy</code>&apos;s
+        refusal of an unprepared context — is written to the caller&apos;s{" "}
+        <code>DwPolicyContext</code> audit buffer,{" "}
+        <code>PendingAuditEvents</code>. It drains to <code>IDwAuditSink</code>{" "}
+        like any <code>[DwAudit]</code> event, through{" "}
+        <code>DwPolicy.DrainAuditAsync</code> or the{" "}
+        <Link href="/docs/policies/admin#audit">ASP.NET Core audit middleware</Link>.
+        The setting freezes with the posture and binds from the key{" "}
+        <code>AuditRefusals</code>.
+      </p>
+      <table>
+        <thead><tr><th><code>DwAuditEvent</code> member</th><th>On a refusal</th></tr></thead>
+        <tbody>
+          <tr><td><code>ErrorCode</code></td><td>The refusal&apos;s <code>PolicyErrorCode</code>. New in 3.1.0, and <code>null</code> on an event that records a use of an audited field.</td></tr>
+          <tr><td><code>EntityType</code></td><td>The full name of the type being queried.</td></tr>
+          <tr><td><code>FieldPath</code></td><td>The field the refusal was about. Under the <code>Strict</code> tier that is the real field, or the unknown name the caller sent, although the refusal the caller received said <code>&quot;*&quot;</code>. A refusal of the whole request, such as <code>QueryStringDenied</code> or <code>PolicyContextNotPrepared</code>, records <code>&quot;*&quot;</code>; <code>MissingContextValue</code> names the scoped field.</td></tr>
+          <tr><td><code>Feature</code></td><td>The feature the refusal concerned.</td></tr>
+          <tr><td><code>Effect</code></td><td><code>Deny</code>.</td></tr>
+          <tr><td><code>Subjects</code>, <code>Purpose</code>, <code>Tier</code></td><td>The caller and the posture, as on every event.</td></tr>
+          <tr><td><code>DryRun</code></td><td><code>false</code>: the refusal was enforced. A dry run refuses no field, so it records no field refusal; a refusal it still raises, such as <code>PolicyContextNotPrepared</code>, is recorded with <code>DryRun</code> <code>false</code>.</td></tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>
+          A refusal is written at most once, and it is never changed or swallowed:
+          the caller receives the same exception whether or not it was recorded.
+        </li>
+        <li>
+          A buffer already holding <code>MaxAuditEvents</code> events records
+          nothing, and the original refusal is still the one thrown.
+        </li>
+        <li>
+          A refusal with no guarded context to record against is not written.{" "}
+          <code>PolicyRequired</code>, raised by an unguarded read of a{" "}
+          <code>RequirePolicy</code> type, is one.
+        </li>
+        <li>
+          <code>DwAuditEvent.ToString()</code> includes the code when there is one.
+          The constructor gains an overload that takes it as a tenth argument,{" "}
+          <code>PolicyErrorCode? errorCode</code>; the nine-argument constructor is
+          unchanged.
+        </li>
+      </ul>
+      <Code lang="csharp">{`public sealed class LogAuditSink : IDwAuditSink
+{
+    private readonly ILogger<LogAuditSink> _log;
+
+    public LogAuditSink(ILogger<LogAuditSink> log) => _log = log;
+
+    public ValueTask WriteAsync(DwAuditEvent auditEvent, CancellationToken ct = default)
+    {
+        if (auditEvent.ErrorCode is PolicyErrorCode refused)
+        {
+            _log.LogWarning("{Code} on {Entity}.{Field}", refused, auditEvent.EntityType, auditEvent.FieldPath);
+        }
+        else
+        {
+            _log.LogInformation("{Feature} on {Entity}.{Field}", auditEvent.Feature, auditEvent.EntityType, auditEvent.FieldPath);
+        }
+
+        return default;
+    }
+}`}</Code>
+      <Callout tone="warn" title="Off by default, because it changes what reaches a sink">
+        A deployment that registered a sink for <code>[DwAudit]</code> starts
+        receiving events that carry an <code>ErrorCode</code>, and one that
+        registered none is warned about discarded events on every refused request
+        by the audit middleware.
+      </Callout>
 
       <h2 id="validate">Startup validation</h2>
       <Code lang="csharp">{`// Throws an InvalidOperationException listing every error, so reaching the
@@ -204,6 +400,35 @@ foreach (var error in inspected.Errors) logger.LogError("{E}", error);`}</Code>
         member type. Warnings cover things that work but probably should not,
         chiefly a transformed field that is still orderable.
       </p>
+      <p>
+        Every <code>[DwForceWhere]</code> is checked the way resolution checks
+        it, so a malformed one is reported at startup rather than on the first
+        guarded query of its type: one that sets neither or both of{" "}
+        <code>Value</code> and{" "}
+        <code>ContextValue</code>, a null check that sets either, a member whose
+        type has no <code>DataType</code>, and <code>AllowNull = true</code> on{" "}
+        <code>IsNull</code> or <code>IsNotNull</code> or on a member that can never
+        be null. Before 3.1.0 these surfaced only when a query ran.
+      </p>
+      <p>
+        A <Link href="/docs/policies/attributes#default-order"><code>[DwEntity(DefaultOrder = ...)]</code></Link>{" "}
+        is read entry by entry. A default order is never a reason to refuse a
+        query, so this scan is the only place a mistake in one is reported. For{" "}
+        <code>[DwEntity(DefaultOrder = &quot;Missing desc, Watchers, Secret, Id sideways&quot;)]</code>{" "}
+        on a <code>Ticket</code> whose <code>Watchers</code> is a collection of
+        entities and whose <code>Secret</code> carries <code>[DwNoOrder]</code>:
+      </p>
+      <Code lang="text">{`Ticket: DefaultOrder entry 'Id sideways' is not a field optionally followed by asc or desc, so guarded queries skip it.
+Ticket: DefaultOrder names 'Missing', which Ticket does not have, so guarded queries skip it.
+Ticket: DefaultOrder names 'Watchers', which no query can order by, so guarded queries skip it.
+Ticket: DefaultOrder names 'Secret', which its attributes deny for ordering, so every guarded query leaves it out.`}</Code>
+      <p>
+        All but the second are errors: an entry that cannot be read meant
+        something, a collection of entities holds no single value to sort by, and a
+        field the type&apos;s own attributes deny for ordering is left out of every
+        guarded query, so the declared order is never the one used. The second is a
+        warning, because a model shared across types can name a field on purpose.
+      </p>
 
       <h2 id="from-a-file">Configuration from a file</h2>
       <p>
@@ -223,6 +448,7 @@ foreach (var error in inspected.Errors) logger.LogError("{E}", error);`}</Code>
   "DynamicWhere": {
     "Policies": {
       "Tier": "Strict",
+      "AuditRefusals": true,
       "StoreFailure": "LastKnownGood",
       "MaxSnapshotAge": "00:15:00",
       "Caps": {
@@ -308,10 +534,10 @@ foreach (var error in inspected.Errors) logger.LogError("{E}", error);`}</Code>
       <table>
         <thead><tr><th>Code</th><th>Raised when</th></tr></thead>
         <tbody>
-          <tr><td><code>FieldDeniedForWhere</code> … <code>FieldDeniedForSegment</code> (1–6)</td><td>A field is refused for that feature. <code>Where</code>, <code>Group</code>, <code>Aggregate</code> and <code>Segment</code> throw in <strong>both</strong> tiers, because dropping one of those would widen the result set or answer a different question. Only <code>Order</code> and <code>Select</code> are tier-dependent: the <code>Convenience</code> tier drops the clause instead.</td></tr>
+          <tr><td><code>FieldDeniedForWhere</code> … <code>FieldDeniedForSegment</code> (1–6)</td><td>A field is refused for that feature. <code>Where</code>, <code>Group</code>, <code>Aggregate</code> and <code>Segment</code> throw in <strong>both</strong> tiers, because dropping one of those would widen the result set or answer a different question. Only <code>Order</code> and <code>Select</code> are tier-dependent: the <code>Convenience</code> tier drops the clause instead. Under <code>Strict</code> a field path that names nothing gets the same code, and all six carry <code>FieldPath</code> <code>&quot;*&quot;</code> with no <code>RuleId</code> or <code>SourceOrigin</code> — see <Link href="/docs/policies/configuration#strict-refusals">What a strict refusal says</Link>.</td></tr>
           <tr><td><code>AllSelectsDenied</code> (7)</td><td>Every requested field was denied.</td></tr>
           <tr><td><code>OperatorNotAllowed</code> (8)</td><td>An operator outside the permitted set.</td></tr>
-          <tr><td><code>CapExceeded</code> (9)</td><td>A cap above was exceeded.</td></tr>
+          <tr><td><code>CapExceeded</code> (9)</td><td>A cap above was exceeded; <code>SourceOrigin</code> names it. Under <code>Strict</code>, <code>FieldPath</code> is <code>&quot;*&quot;</code>.</td></tr>
           <tr><td><code>PolicyRequired</code> (10)</td><td>An unguarded query on a <code>RequirePolicy</code> type.</td></tr>
           <tr><td><code>RequiredFilterMissing</code> (11)</td><td>A <code>[DwRequireWhere]</code> field was not filtered on.</td></tr>
           <tr><td><code>MissingContextValue</code> (12)</td><td>A forced predicate needed a context value that was absent.</td></tr>

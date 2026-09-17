@@ -28,12 +28,12 @@ export default function Page() {
         Validation runs clause by clause while the query is composed, not in a
         single pass before it. Most shapes — <code>Filter</code>,{" "}
         <code>ConditionGroup</code>, <code>GroupBy</code>, <code>PageBy</code> —
-        are checked before their part of the query executes, but three entry
+        are checked before their part of the query executes, but two entry
         points reach the database first: <code>ToListDynamic</code> and{" "}
         <code>ToListAsyncDynamic</code> run the <code>COUNT</code> query before
         validating <code>Orders</code>, <code>Page</code> and{" "}
-        <code>Selects</code>, and <code>ToListAsync(Segment)</code> queries each
-        condition set before validating the clauses that follow. The async
+        <code>Selects</code>. <code>ToListAsync(Segment)</code> combines its sets
+        into one query and validates every clause before that query runs. The async
         overloads are <code>async</code> methods, so their exceptions surface at
         the <code>await</code> rather than at the call.
       </p>
@@ -110,6 +110,21 @@ export default function Page() {
         <Link href="/docs/breaking-changes#date-value-formats">breaking changes</Link>.
       </Callout>
 
+      <Callout tone="danger" title="Changed in 3.1.0: an unknown field under a strict policy">
+        On a query guarded by <code>ApplyPolicy</code> under the{" "}
+        <code>Strict</code> tier, outside a dry run, a field path that names
+        nothing on the type no longer raises{" "}
+        <code>ConditionMustHasValidFieldName</code>. It is refused the way a field
+        denied for every feature is: a <code>PolicyException</code> with the code of
+        the clause it appeared in — <code>FieldDeniedForWhere</code> …{" "}
+        <code>FieldDeniedForSegment</code> — and <code>FieldPath</code>{" "}
+        <code>&quot;*&quot;</code>, so the answer does not say whether the field
+        exists. Unguarded queries, the convenience tier and a dry run still raise{" "}
+        <code>ConditionMustHasValidFieldName</code>. See{" "}
+        <Link href="/docs/policies/configuration#strict-refusals">what a strict refusal says</Link>{" "}
+        and <Link href="/docs/breaking-changes#strict-unknown-field">breaking changes</Link>.
+      </Callout>
+
       <table>
         <thead>
           <tr>
@@ -142,7 +157,7 @@ export default function Page() {
           <tr>
             <td><code>InvalidField</code></td>
             <td><code>ConditionMustHasValidFieldName</code></td>
-            <td>Empty or invalid field name</td>
+            <td>Empty or invalid field name. On a strict-tier guarded query an unknown name is a <code>PolicyException</code> instead</td>
           </tr>
           <tr>
             <td><code>InvalidValue</code></td>

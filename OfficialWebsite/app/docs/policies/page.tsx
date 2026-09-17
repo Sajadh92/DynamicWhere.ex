@@ -52,7 +52,9 @@ existing DynamicWhere      untouched
 transform                  mask, mutate, default, generalize, truncate, format
     |
     v
-FilterResult.Policy        a PolicyTrace saying what the policy did`}</Code>
+PolicyTrace                what the policy did: always on LastTrace, and on
+                           result.Policy as IncludeTraceInResult decides
+                           (off under the strict tier by default)`}</Code>
 
       <h2 id="start">The whole thing in one screen</h2>
       <Code lang="csharp">{`// Once, at startup. A second call is refused: the tier is read by every
@@ -114,7 +116,7 @@ public class Employee
         <li><Link href="/docs/policies/store">Dynamic store</Link> — rules without a redeploy</li>
         <li><Link href="/docs/policies/providers">Store providers</Link> — Redis and Entity Framework Core</li>
         <li><Link href="/docs/policies/admin">Admin API</Link> — schema, rules, explain, simulate, health</li>
-        <li><Link href="/docs/policies/security">Security &amp; k-anonymity</Link> — the seven inference channels</li>
+        <li><Link href="/docs/policies/security">Security &amp; k-anonymity</Link> — the eight inference channels</li>
         <li><Link href="/docs/policies/configuration">Configuration</Link> — options, caps and defaults</li>
       </ul>
 

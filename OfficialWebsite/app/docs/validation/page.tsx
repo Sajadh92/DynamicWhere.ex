@@ -29,8 +29,9 @@ export default function Page() {
         <code>Message</code> whenever a rule is broken. Most failures stop the
         call before any SQL runs — but not all: the dynamic terminals run their{" "}
         <code>COUNT</code> query before <code>Orders</code>, <code>Page</code>{" "}
-        and <code>Selects</code> are validated, and a <code>Segment</code> loads
-        each condition set before validating the clauses that follow.
+        and <code>Selects</code> are validated. A <code>Segment</code> is combined
+        into one query, and every clause of it is validated before that query
+        runs.
       </p>
 
       <Callout tone="info">

@@ -74,6 +74,13 @@ export default function Page() {
           </tr>
         </tbody>
       </table>
+      <p>
+        <Link href="/docs/policies/attributes#allow-null"><code>AllowNull</code></Link>{" "}
+        does not change this for forced predicates. A predicate that lets null
+        through is injected as <code>(field op value OR field IS NULL)</code>, in a
+        group of its own joined by <code>And</code> to everything else, so it widens
+        its own term and no other source&apos;s scope.
+      </p>
 
       <h2 id="carriers">A fragment that carries something decides nothing</h2>
       <p>

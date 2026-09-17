@@ -193,6 +193,15 @@ var caller = await DwClaimsAdapter.CreateContextAsync(User, claimsOptions, ct);`
         middleware the events are built and never written; with it and no sink
         registered, they are discarded with a warning.
       </p>
+      <p>
+        It drains in a <code>finally</code>, so a request that threw still writes
+        what it recorded. With{" "}
+        <Link href="/docs/policies/configuration#audit-refusals"><code>DwPolicyOptions.AuditRefusals</code></Link>{" "}
+        on, that includes the refusal itself: a refused guarded query records an
+        event carrying its <code>ErrorCode</code>, drained in the same pass as the{" "}
+        <code>[DwAudit]</code> events. The no-sink warning names both sources:
+      </p>
+      <Code lang="text">{`{Count} policy audit events were recorded and no IDwAuditSink is registered, so they were discarded. Register one, or stop recording them: remove [DwAudit] from the fields that produced them, or turn off DwPolicyOptions.AuditRefusals.`}</Code>
     </DocPage>
   );
 }

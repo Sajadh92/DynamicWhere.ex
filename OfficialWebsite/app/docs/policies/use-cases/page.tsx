@@ -78,6 +78,28 @@ public class Invoice
         silently fails to apply is worse than a failed request, so there is no
         mode in which it is skipped.
       </Callout>
+      <p>
+        <strong>Rows that belong to no tenant.</strong> A role no institution owns
+        has a null scope column, and <code>InstitutionId = 5</code> never matches
+        null, so the scope hides that role from every caller. Two forced
+        predicates on one member are joined by <code>And</code> and cannot say
+        &quot;or null&quot;; <code>AllowNull</code> can:
+      </p>
+      <Code lang="csharp">{`public class Role
+{
+    [DwForceWhere(Operator.Equal, ContextValue = "TenantId", AllowNull = true)]
+    public int? InstitutionId { get; set; }
+}`}</Code>
+      <p>
+        <strong>What the caller gets.</strong> Their own institution&apos;s roles
+        and the roles that belong to none. The widened term sits in a group of its
+        own, so <code>(A OR B) AND (InstitutionId = 5 OR InstitutionId IS NULL)</code>{" "}
+        still cannot reach institution 9. A context with no <code>TenantId</code>{" "}
+        is still refused with <code>MissingContextValue</code>, and a{" "}
+        <code>[DwRequireWhere]</code> on the same member is not satisfied by the
+        widened term. See{" "}
+        <Link href="/docs/policies/attributes#allow-null">the attribute</Link>.
+      </p>
 
       {/* ------------------------------------------------------------------ 2 */}
       <h2 id="support">2. A support agent may find a customer but not read their card</h2>
@@ -333,6 +355,14 @@ public string FullTextNotes { get; set; } = string.Empty;`}</Code>
         <code>MaxAuditEvents</code> refuses the query rather than dropping the
         record — an audited field whose log quietly stopped being written is the
         outcome the attribute exists to prevent.
+      </p>
+      <p>
+        <code>[DwAudit]</code> records the uses of the fields it decorates, so a
+        probe aimed at other fields — denied ones, or names that do not exist —
+        leaves nothing in that log. Turn on{" "}
+        <Link href="/docs/policies/configuration#audit-refusals"><code>DwPolicyOptions.AuditRefusals</code></Link>{" "}
+        and every refused guarded query is written to the same sink, carrying its{" "}
+        <code>ErrorCode</code>.
       </p>
 
       {/* --------------------------------------------------------------- recap */}

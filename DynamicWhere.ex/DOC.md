@@ -119,7 +119,7 @@ Since 3.1.0 the predicate is built from the member's own CLR type, which is what
 | Declared formats | A deployment whose clients send a local form declares it once: `DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))`, or bound from `DynamicWhere:Dates:Formats` (a list; a single value there refuses to bind). Two formats that read one text differently, or that put the day and month in opposite orders, are refused at configuration, and so is a format that is malformed, cannot read back what it writes (`hh` without `tt`), has no year, or has a day but no month |
 | `DateOnly` member | Compared as a day under both date data types, against a `DateOnly(y, m, d)` constructor. On Npgsql, `WHERE "Day" = DATE '2026-09-01'` |
 | `HAVING` | Names an alias, so the type comes from the aggregate behind it: `Minimum`, `Maximum`, `FirstOrDefault` and `LastOrDefault` carry the member's type, nullable if the member is, and the predicate is built as for that member. On Npgsql, `HAVING max(col) > TIMESTAMPTZ '…'` |
-| `DateTimeOffset` member | Compared against a `DateTimeOffset` literal normalised to UTC. A value carrying no zone is read as UTC, so `Date` names the day the caller wrote. On Npgsql `Date` becomes `date_trunc('day', col AT TIME ZONE 'UTC')` |
+| `DateTimeOffset` member | Compared against a `DateTimeOffset` literal normalised to UTC. A value carrying no zone is read as UTC, so `Date` names the day the caller wrote. A C# `DateTime` whose `Kind` is `Local`, placed in `Values` under `DataType.DateTime`, is written with its offset and so names its own moment — see [Value Coercion](#value-coercion). On Npgsql `Date` becomes `date_trunc('day', col AT TIME ZONE 'UTC')` |
 | `DateTime` member | Compared against a `DateTime` literal. A value carrying `Z` or an offset converts to the host's local time first, as it always has — send it in the convention the column stores |
 | Nullable member | Guarded with `field != null` and unwrapped under that guard (`field.Value`, `field.Value.Date`). A null row therefore fails `NotEqual` and `NotBetween`, which is deliberate |
 | Non-nullable member | No guard at all. `IsNull` answers `false` and `IsNotNull` answers `true` — on Npgsql, `WHERE FALSE` and no predicate |
@@ -285,7 +285,7 @@ The library normalizes every element before validation/build:
 | `string` | as-is |
 | `bool` | `"true"` / `"false"` (lowercase) |
 | `JsonElement` (System.Text.Json) | unwrapped by `ValueKind` (`String` → text, `Number` → raw JSON token, `True`/`False` → lowercase) |
-| `DateTime` / `DateTimeOffset` / `DateOnly` | Year-first text: `2026-09-01T12:30:00`, `2026-09-01T12:30:00+03:00`, `2026-09-01`. Before 3.1.0 a `DateTime` became month-first `09/01/2026 12:30:00`. A `DateTime` carries no zone whatever its `Kind`, so on a `DateTimeOffset` member it reads as UTC — pass a `DateTimeOffset`, or a UTC `DateTime`, there |
+| `DateTime` / `DateTimeOffset` / `DateOnly` | Year-first text: `2026-09-01T12:30:00`, `2026-09-01T12:30:00+03:00`, `2026-09-01`. Before 3.1.0 a `DateTime` became month-first `09/01/2026 12:30:00`. A `DateTimeOffset` keeps its offset. A `DateTime` whose `Kind` is `Local` — `DateTime.Now`, or a value Newtonsoft.Json read from text carrying an offset — is written with its offset, `2026-09-17T15:00:00+03:00`, when the condition is `DataType.DateTime` on a `DateTimeOffset` or `DateTimeOffset?` member, or on a `HAVING` alias over such a member's aggregate, so it filters on the moment it holds. Every other `DateTime` is written with no zone: under `DataType.Date`, so `DateTime.Today` compares the day it was written for rather than the UTC day its midnight falls on; against a `DateTime` member, which holds wall-clock time, or a `DateOnly` member; and when its `Kind` is `Utc` or `Unspecified`, which a `DateTimeOffset` member reads as UTC |
 | numeric / other `IFormattable` | `InvariantCulture` formatting |
 | anything else (`JValue`, etc.) | `value.ToString()` |
 | `null` | `string.Empty` |
@@ -419,6 +419,7 @@ Combines filtering → grouping → having → ordering → pagination for aggre
 | `TotalCount` | `int` | Total matching records |
 | `Data` | `List<T>` | The result entities |
 | `QueryString` | `string?` | Generated SQL (when `getQueryString: true`) |
+| `Policy` | `PolicyTrace?` | What the policy decided for a guarded query. Null when the query was not guarded, and, since 3.1.0, under `DwTier.Strict` unless `DwPolicyOptions.IncludeTraceInResult` is `true` — see [Results and the trace](#results-and-the-trace) |
 
 #### `SegmentResult<T>`
 
@@ -434,6 +435,7 @@ Inherits all properties from `FilterResult<T>`. Returned by segment operations.
 | `TotalCount` | `int` | Total grouped records |
 | `Data` | `List<dynamic>` | Dynamic objects with group keys + aggregation values |
 | `QueryString` | `string?` | Generated SQL (when `getQueryString: true`) |
+| `Policy` | `PolicyTrace?` | What the policy decided for a guarded query. Null when the query was not guarded, and, since 3.1.0, under `DwTier.Strict` unless `DwPolicyOptions.IncludeTraceInResult` is `true` — see [Results and the trace](#results-and-the-trace) |
 
 ---
 
@@ -1489,12 +1491,13 @@ A context carries the snapshot it was served, and the staleness ceiling measures
 | Attribute | Applies to | Effect |
 |---|---|---|
 | `[DwEntity(RequirePolicy = true)]` | class | An unguarded query on the type throws `PolicyRequired` |
+| `[DwEntity(DefaultOrder = "CreatedAt desc, Id")]` | class | The order a guarded query takes when its caller sends none. Unguarded calls ignore it. See [Default order](#default-order) |
 | `[DwDeny(features)]` | member | Refuse any of `Where`, `Select`, `Order`, `Group`, `Aggregate`, `Segment` |
 | `[DwDenied]` | member | Refuse all six |
 | `[DwNoWhere]` `[DwNoSelect]` `[DwNoOrder]` `[DwNoGroup]` `[DwNoAggregate]` | member | Refuse one feature each |
 | `[DwOperators(Allow =, Deny =)]` | member | Restrict which operators may target the member |
 | `[DwAlias("name")]` | member | A public name, accepted anywhere a field path is, renamed back on output |
-| `[DwForceWhere(op, Value =, ContextValue =)]` | member | A predicate ANDed into every guarded query |
+| `[DwForceWhere(op, Value =, ContextValue =, AllowNull =)]` | member | A predicate ANDed into every guarded query. `AllowNull = true` lets rows whose member is null through as well — see [A forced predicate that lets null through](#a-forced-predicate-that-lets-null-through) |
 | `[DwRequireWhere(Operators =)]` | member | The caller must filter on this member |
 | `[DwMask(strategy)]` | member | `Full` `Partial` `Email` `Phone` `Regex` `Fixed` `Hash` `Null` `Tokenize` |
 | `[DwMutate(typeof(T))]` | member | Hand the value to an `IValueTransformer`; the type is checked at startup |
@@ -1526,6 +1529,57 @@ Ties break by level → specificity (an exact field beats a wildcard) → priori
 
 Two things are deliberately **not** elected: forced predicates are collected and ANDed, because a conjunction can only narrow; operator restrictions intersect. Transform stages are elected per stage, so a rule can add a truncation on top of a sealed mask but cannot replace the mask.
 
+### A forced predicate that lets null through
+
+*New in 3.1.0.* `AllowNull = true` on `[DwForceWhere]` lets a row whose member is null pass as well. It is the shape of a record that belongs to one tenant or to none, such as a system role no institution owns:
+
+```csharp
+[DwForceWhere(Operator.Equal, ContextValue = "TenantId", AllowNull = true)]
+public int? InstitutionId { get; set; }
+```
+
+The injected term is `(field op value OR field IS NULL)` — here, `InstitutionId` equal to the context's `TenantId`, or null. It sits in a group of its own, joined by `And` to the caller's group and to every other forced predicate, so a caller's `Or` cannot merge with it. No combination of forced predicates could say this before: two on one member are joined by `And`.
+
+- It works with every operator that takes a value. Combined with `Operator.IsNull` or `Operator.IsNotNull`, or placed on a member that can never be null (a non-nullable value type), it is refused with `ArgumentException` at resolution and reported by the startup check ([Checking the model at startup](#checking-the-model-at-startup)).
+- The context value is still required: a context that does not supply it is refused with `MissingContextValue`. Which rows pass widens; the caller's own scope does not.
+- The widened term is a disjunction, so it does not satisfy a `[DwRequireWhere]` on the same member. The caller must still filter on it.
+- The trace records the injection as `forced predicate (Equal, or null)`, naming the operator used. A dry run injects nothing, as for every forced predicate.
+- A runtime rule can carry it too: `ForcedPredicate.FromConstant` and `ForcedPredicate.FromContext` gain overloads taking `bool allowNull` (the four-argument ones mean `false`), and a stored rule writes `"allowNull": true` in its `forced` object, only when it is true. A rule is written without the type to hand, so on a member that can never be null it is not refused: it injects the comparison alone, which is the same predicate.
+
+### Default order
+
+*New in 3.1.0.* A type can declare the order a guarded query takes when its caller sends none:
+
+```csharp
+[DwEntity(DefaultOrder = "CreatedAt desc, Id")]
+public class Ticket { ... }
+```
+
+`DefaultOrder` is a comma-separated list. Each entry is a field path — a navigation path included — optionally followed by `asc` or `desc` in any letter case; an entry with neither is ascending, and a blank entry, such as a trailing comma leaves, is ignored. End it with a unique field such as the key, or rows sharing the leading values can still change places between pages.
+
+It applies only under `ApplyPolicy`, when the caller sends no orders (`Orders` null or empty), through:
+
+- `ToList`, `ToListAsync`, `ToListDynamic` and `ToListAsyncDynamic` with a `Filter`;
+- `ToListAsync` with a `Segment`;
+- the composable `Filter` and `FilterDynamic`;
+- the composable `Page`, on a source nothing has ordered.
+
+It is never applied:
+
+- by an unguarded call. The core extension methods on a plain `IQueryable<T>` or `IEnumerable<T>`, and a query taken out through `AsUnguardedQueryable()`, ignore the attribute and behave exactly as in 3.0;
+- when the caller sends orders — the default is not appended to them as a tiebreak;
+- to an `IQueryable<T>` that is already ordered, whether before it was guarded (`db.Tickets.OrderBy(t => t.Title).ApplyPolicy(caller)`) or by a composed `Order` earlier in the chain. An in-memory sequence sorted with LINQ to Objects before `ApplyPolicy` is not seen as ordered, because `AsQueryable()` hides the sort, so the default replaces that order;
+- to a `Summary`, or by the composable `Where`, `Select`, `Order` or `Group`.
+
+Nothing is ordered that the type's own `[DwEntity]` did not declare, and a default is never a reason for the library to refuse a query. An entry naming a field the type does not have, one that is not a field optionally followed by a direction, or one the core refuses to order by — a path ending on a collection of entities, such as `Tags` — is skipped. A path through a collection to a value, such as `Tags.Value`, is kept and sorted by its smallest value ascending or its largest descending. A field this caller may not order by is left out, in either tier, and never refused: the caller did not send it, and ordering by it would rank rows by a value they may not see. The trace records a `Dropped` decision for `Order` whose reason starts `left out of the default order`; a dry run keeps the field and still records the decision. A caller whose own orders were all dropped under `Convenience` sent orders, and gets no default in their place. The startup check reports every entry a query would skip or leave out.
+
+### Checking the model at startup
+
+`DwPolicy.ValidateModel(options, types)` inspects the policy attributes on the given types and throws `InvalidOperationException` listing every error; `PolicyModelValidator.Inspect(types, options)` returns the same `PolicyModelReport` — `Errors`, `Warnings`, `IsValid` — without throwing. Called at startup, either one lets a misconfiguration fail the deployment rather than a caller's request. Since 3.1.0 the scan also reports:
+
+- every `[DwForceWhere]` resolution would refuse: `Value` and `ContextValue` both set or both missing on a comparison, either one set on a null check, a member whose type has no `DataType`, and `AllowNull` with `IsNull` / `IsNotNull` or on a member that can never be null. Before, these surfaced on the first query that resolved them;
+- every `[DwEntity(DefaultOrder = ...)]` entry a guarded query would skip or leave out. An entry that is not a field optionally followed by `asc` or `desc` is an error; a field the type does not have is a warning; a field no query can order by, such as a collection of entities, is an error; a field the type's own attributes deny for ordering is an error, because every guarded query would leave it out.
+
 ### Blocked-action semantics
 
 | Tier | A denied field |
@@ -1533,7 +1587,52 @@ Two things are deliberately **not** elected: forced predicates are collected and
 | `Convenience` (default) | Is **dropped** — removed from the projection, the sort, the grouping |
 | `Strict` | **Throws** |
 
-A dropped field leaves nothing behind in the data, so `FilterResult<T>.Policy` (a `PolicyTrace`) is the only way a caller can tell a policy drop from a null value. `Strict` also refuses `getQueryString` and makes a deny-select field automatically deny-where inside a `Segment`.
+A dropped field leaves nothing behind in the data, so the trace is the only way a caller can tell a policy drop from a null value; a convenience-tier result carries it on `FilterResult<T>.Policy` unless `IncludeTraceInResult` is `false` (see [Results and the trace](#results-and-the-trace)). `Strict` also refuses `getQueryString` and makes a deny-select field automatically deny-where inside a `Segment`.
+
+**Under `Strict` an unknown field and a denied field answer alike.** A strict caller may be probing, and two different answers — a validation error for a name that matches nothing, a refusal naming the path and the attribute that sealed it for a denied field — list the columns that caller may not see, one guess at a time. Since 3.1.0, outside a dry run:
+
+- A name that matches nothing on the type is no longer refused as `LogicException` `ConditionMustHasValidFieldName` while the request is read. It is gated as a field denied for every feature, at the step a denial is raised — after the caps — so it receives the refusal a `[DwDenied]` field receives in that clause: `FieldDeniedForWhere`, `FieldDeniedForSelect`, `FieldDeniedForOrder`, `FieldDeniedForGroup` or `FieldDeniedForAggregate`. In a segment, where a `[DwDenied]` field is refused in any clause with `FieldDeniedForSegment`, so is an unknown name.
+- Every refusal carrying one of those six codes has `FieldPath` `"*"`, a null `RuleId` and a null `SourceOrigin`, whatever the field — a real denied field and an alias included — so its message is the same too.
+- A `CapExceeded` refusal names no path either. `MaxNavigationDepth` used to return the canonical spelling of the path the caller wrote, which confirmed that it named something. `SourceOrigin` still names the cap.
+- The trace keeps the real path and reason, and records an unknown name as `Denied` with the reason `names nothing on {TypeName}`. An audited refusal keeps the real field too (see [Auditing](#auditing)).
+
+The convenience tier is unchanged: an unknown name fails validation with `LogicException` `ConditionMustHasValidFieldName`, and a refusal names the field as the caller wrote it, with `RuleId` and `SourceOrigin` where a single source decided. A dry run refuses no field, so an unknown name fails validation there in either tier.
+
+One distinction survives. A caller who can drive a request over `MaxQueryCost` can still tell a field weighted by `[DwCost]` from an unknown name, because cost is counted before anything is gated and an unknown name costs `DefaultFieldCost`.
+
+### Results and the trace
+
+Every guarded query records a `PolicyTrace`: its tier, whether it ran dry, and a `PolicyDecision` — `FieldPath`, `Feature`, `Action`, `Reason` — for each thing the policy decided. `PolicyQueryable<T>.LastTrace` holds it for the most recent call on the handle, the composable methods included.
+
+`DwPolicyOptions.IncludeTraceInResult` (`bool?`, default null, new in 3.1.0) decides whether the guarded terminals also return it on `FilterResult<T>.Policy`, `SummaryResult.Policy` and `SegmentResult<T>.Policy`:
+
+| `IncludeTraceInResult` | `Convenience` | `Strict` |
+|---|---|---|
+| `null` (default), following the tier | Carried | Null |
+| `true` | Carried | Carried |
+| `false` | Null | Null |
+
+The trace names the fields a policy dropped, the attribute or rule that sealed each one, and every predicate injected on the caller's behalf. That is the detail the strict tier already refuses to return through `getQueryString`, and an API that serializes a result sends it to the caller, so under `Strict` it stays in the process by default. `LastTrace` is recorded whatever the option says, and the audit is unaffected. Before 3.1.0 every guarded result carried the trace (breaking point 17). The option freezes with the posture and binds from the configuration key `IncludeTraceInResult`.
+
+### Auditing
+
+`[DwAudit(features)]` records every use of a field, whatever the policy decided, as a `DwAuditEvent` in the caller's context (`DwPolicyContext.PendingAuditEvents`). Nothing is stored until the buffer is drained to an `IDwAuditSink`, by `DwPolicy.DrainAuditAsync(context, sink)` or, per request, by the ASP.NET Core middleware `app.UseDwPolicyAudit()`. A buffer already holding `DwCaps.MaxAuditEvents` refuses the next audited use with `CapExceeded`.
+
+A log of uses never shows a caller probing for columns they may not read: every guess is refused, so nothing was used. `DwPolicyOptions.AuditRefusals` (`bool`, default `false`, new in 3.1.0) records the refusals too. When it is on, every `PolicyException` raised by a guarded entry point of `PolicyQueryable<T>` — terminal or composable — and `ApplyPolicy(context)`'s refusal of an unprepared context are written to the same buffer and drain the same way:
+
+| `DwAuditEvent` | On a refusal |
+|---|---|
+| `EntityType` | The type's full name |
+| `FieldPath` | The field the refusal was about. Under `Strict`, the real field or the unknown name the caller sent, although the caller's refusal said `"*"`. `"*"` for a refusal of the whole request, such as `QueryStringDenied` or `PolicyContextNotPrepared`; `MissingContextValue` names the scoped field |
+| `Feature` | The refused feature |
+| `Effect` | `Deny` |
+| `Subjects`, `Purpose`, `Tier` | The caller's subjects and purpose, and the tier in force |
+| `DryRun` | `false`: the refusal was enforced. A dry run refuses no field, so it records no field refusal; a refusal it still raises, such as `PolicyContextNotPrepared`, is recorded with `DryRun` `false` |
+| `ErrorCode` | The `PolicyErrorCode`. Null on an event recording a use |
+
+Each refusal is written at most once, and is never changed or swallowed. A full buffer records nothing and the original refusal is still thrown. A refusal with no guarded context behind it, such as `PolicyRequired` on an unguarded read of a `RequirePolicy` type, is not recorded.
+
+It is off by default because it changes what reaches a sink: a deployment that registered one for `[DwAudit]` starts receiving events with an `ErrorCode`, and one that registered none is warned by the middleware on every refused request. That warning names both switches — remove `[DwAudit]` from the fields that produced the events, or turn off `DwPolicyOptions.AuditRefusals`. `DwAuditEvent` gains a constructor overload whose last parameter is `PolicyErrorCode? errorCode`; the nine-parameter constructor is unchanged, and `ToString()` includes the code when there is one. The option freezes with the posture and binds from `AuditRefusals`.
 
 ### Dynamic rules
 
@@ -1647,8 +1746,8 @@ new DwPolicyOptions { Caps = { MinGroupSize = 10 } }   // stricter
 | `MaxPageSize` | 1000 | Largest page a caller may request |
 | `DefaultPageSize` | 0 (off) | The page a guarded query is given when it asks for none. `MaxPageSize` only ever read a page the caller sent, so the request with none was the one nothing bounded. Composable `Filter`, `FilterDynamic` and `Summary` return the query already paged; `Where`, `Order`, `Select` and `Group` take no page and are never given one. A `Segment` is paged in the database like a filter, so this bounds what it reads as well as what it returns |
 | `MaxConditions` | 50 | Conditions in one filter |
-| `MaxConditionDepth` | 10 | How deep condition groups may nest, root counted as one. `MaxConditions` bounds the count and says nothing about the shape |
-| `MaxConditionSets` | 10 | Condition sets in one segment. Every set adds a condition or a `NOT EXISTS` subquery to the one statement a segment becomes, and a set with no conditions passes every other cap, so this is what bounds that statement |
+| `MaxConditionDepth` | 10 | How deep condition groups may nest: the top group counts as one and each level of `SubConditionGroups` adds one. `MaxConditions` bounds the count and says nothing about the shape. Measured on the caller's groups, before forced predicates are injected — a summary's `ConditionGroup` and `Having` each, and every set of a segment. New in 3.1.0; see breaking point 16 |
+| `MaxConditionSets` | 10 | Condition sets in one segment, empty sets included. Every set adds a condition or a `NOT EXISTS` subquery to the one statement a segment becomes, and a set with no conditions passes every other cap, so this is what bounds that statement. New in 3.1.0; see breaking point 16 |
 | `MaxOrderFields` | 10 | Order fields in one query |
 | `MaxNavigationDepth` | 4 | How deep a field path may reach |
 | `MaxQueryCost` | 1000 | Budget consumed by `[DwCost]` weights |
@@ -1658,6 +1757,8 @@ new DwPolicyOptions { Caps = { MinGroupSize = 10 } }   // stricter
 | `SchemaCycleLimit` | 2 | Times one type may appear on one path |
 | `MaxSchemaFields` | 2000 | Fields one schema response may carry before it truncates |
 | `MinGroupSize` | 5 | k-anonymity group floor. Set 1 to switch it off |
+
+An unguarded call is held to none of these caps. The structural caps — `MaxPageSize`, `MaxConditions`, `MaxConditionDepth`, `MaxConditionSets`, `MaxOrderFields` and `MaxNavigationDepth` — refuse in both tiers with `CapExceeded`, and `SourceOrigin` names the cap and what the request had: `"MaxConditionDepth cap (10), request had 11"`. Under `Strict` the refusal's `FieldPath` is `"*"` for all of them.
 
 Options are frozen at startup. Every cap refuses a value below one, except two that accept zero: `DefaultFieldCost`, which is the posture for a model weighing only its few expensive fields and leaving the rest free, and `DefaultPageSize`, where zero means no page is supplied. `DefaultPageSize` is the only one that refuses nothing — it fills a page in rather than rejecting a request that carried none, and is bounded by `MaxPageSize`.
 
@@ -1810,6 +1911,8 @@ dotnet run -c Release --project DynamicWhere.Benchmarks -- --filter "*PolicyBenc
 
 `PolicyException.ErrorCode`, values 1–22: `FieldDeniedForWhere` `FieldDeniedForSelect` `FieldDeniedForOrder` `FieldDeniedForGroup` `FieldDeniedForAggregate` `FieldDeniedForSegment` `AllSelectsDenied` `OperatorNotAllowed` `CapExceeded` `PolicyRequired` `RequiredFilterMissing` `MissingContextValue` `AmbiguousFieldName` `QueryStringDenied` `AmbiguousGroupKey` `TransformRequiresMaterialization` `StoreUnavailable` `PolicyContextNotPrepared` `QueryCostExceeded` `GroupTooSmall` `MissingHashSalt` `MissingTokenVault`.
 
+Under `Strict` the six `FieldDeniedFor…` refusals carry `FieldPath` `"*"` and no `RuleId` or `SourceOrigin`, and outside a dry run a name that matches nothing receives them too — see [Blocked-action semantics](#blocked-action-semantics).
+
 ---
 
 ## Reflection Cache & Optimization
@@ -1939,7 +2042,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `ConditionsUniqueSort` | `AnyListOfConditionsMustHasUniqueSortValue` | Duplicate Sort in Conditions |
 | `SubConditionsGroupsUniqueSort` | `AnyListOfSubConditionsGroupsMustHasUniqueSortValue` | Duplicate Sort in SubConditionGroups |
 | `RequiredIntersection` | `ConditionsSetOfIndex[1-N]MustHasIntersection` | Missing Intersection on set index 1+ |
-| `InvalidField` | `ConditionMustHasValidFieldName` | Empty or invalid field name |
+| `InvalidField` | `ConditionMustHasValidFieldName` | Empty or invalid field name. Under `ApplyPolicy` in the strict tier, outside a dry run, a name that matches nothing is refused as a `PolicyException` instead, like a denied field — see [Blocked-action semantics](#blocked-action-semantics) |
 | `InvalidValue` | `ConditionValuesAreNullOrWhiteSpace` | Defined and never thrown. A null value normalizes to `""` and is judged by the DataType like any other string |
 | `RequiredValues` | `ConditionWithOperator[In-IIn-NotIn-INotIn]MustHasOneOrMoreValues` | In/NotIn with 0 values |
 | `NotRequiredValues` | `ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues` | IsNull with values |
@@ -1950,7 +2053,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `MustHaveFields` | `MustHasFields` | Empty fields list in Select |
 | `InvalidFormat` | `InvalidFormat` | Value doesn't parse for declared DataType. For a date: not ISO 8601, year-first, or a declared format |
 | `AmbiguousDateFormat` | `AmbiguousDateFormat` | A date value that leads with a day or a month (`01/09/2026`) and matches no declared format. `LogicException.Subject` carries the field, as the caller wrote it |
-| `SelectTypeMustHaveParameterlessConstructor` | `SelectTypeMustHaveParameterlessConstructor` | `Select<T>` or `Filter.Selects` on a `T` the projection cannot construct. `LogicException.Subject` carries the type's full name |
+| `SelectTypeMustHaveParameterlessConstructor` | `SelectTypeMustHaveParameterlessConstructor` | `Select<T>` or `Filter.Selects` on a `T` the projection cannot construct. `LogicException.Subject` carries the type's name, `typeof(T).Name` |
 | `InvalidAlias` | `AggregationMustHasValidAlias` | Alias is not a plain identifier — empty, or carrying a dot, comma, space, or dash |
 | `GroupByMustHaveFields` | `GroupByMustHasAtLeastOneField` | GroupBy with no fields |
 | `GroupByFieldsMustBeUnique` | `GroupByFieldsMustBeUnique` | Duplicate GroupBy fields |
@@ -2023,6 +2126,15 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 
 15. **Members Named `Root`, `It` or `Parent` Are Ordinary Names**
     System.Linq.Dynamic.Core treats `it`, `root` and `parent` as keywords, in any case. Before 3.1.0 the library parsed with them on, so a navigation named `Root` or `It` was read as the row itself — `Root.Name` filtered, sorted, grouped, aggregated and projected the row's own `Name` — a navigation named `Parent` threw `ParseException`, and an `AggregateBy.Alias` named `root`, `it` or `parent` failed in `Having` and `Summary.Orders`. Under `ApplyPolicy` the gate decided on the path the caller named while the query read the row's own column: a dynamic projection of `Root.Name` returned a `[DwDenied]` `Name`, a filter on it tested the denied column, and a `[DwForceWhere]` scope reached through such a navigation filtered the row's own column. Every expression is now parsed with a configuration of the library's own, with the keywords off. `ParsingConfig.Default` is no longer read, so a host's changes to it do not reach DynamicWhere queries.
+
+16. **`MaxConditionDepth` and `MaxConditionSets` Refuse Guarded Requests 3.0 Ran**
+    Two caps new in 3.1.0 bound the shape of a guarded request. `DwCaps.MaxConditionDepth` bounds how deeply condition groups nest: the top group counts as one, each level of `SubConditionGroups` adds one, and the count is taken on the caller's groups before forced predicates are injected. `DwCaps.MaxConditionSets` bounds how many condition sets one `Segment` sends, empty sets included. Both default to 10, so a guarded request 3.0.0 ran with groups nested eleven levels deep, or a segment with eleven or more sets, is now refused with `PolicyException` `CapExceeded` — `SourceOrigin` `"MaxConditionDepth cap (10), request had 11"` or `"MaxConditionSets cap (10), request had 11"` — unless the deployment raises the cap. Both refuse a value below 1, freeze with the posture, and bind from `Caps:MaxConditionDepth` and `Caps:MaxConditionSets`. Only `ApplyPolicy` enforces them: an unguarded query is not affected.
+
+17. **The Strict Tier Keeps the Policy Trace Off Results**
+    Before 3.1.0 every guarded terminal put its `PolicyTrace` on `FilterResult<T>.Policy`, `SummaryResult.Policy` or `SegmentResult<T>.Policy`, in both tiers. The trace names the fields a policy dropped, the attribute or rule that sealed each one, and every injected predicate — the detail the strict tier already refuses through `getQueryString` — and an API that serializes its result sends all of it to the caller. Under `DwTier.Strict`, `Policy` is now null unless `DwPolicyOptions.IncludeTraceInResult` is `true`; under `Convenience` it is still carried unless the option is `false`. `PolicyQueryable<T>.LastTrace` still holds the trace, so a strict deployment that read `result.Policy` reads `LastTrace` instead, or sets `IncludeTraceInResult = true`. See [Results and the trace](#results-and-the-trace).
+
+18. **Under the Strict Tier an Unknown Field and a Denied Field Answer Alike**
+    Before 3.1.0 a guarded query refused a field name matching nothing on the type with `LogicException` `ConditionMustHasValidFieldName`, and a denied field with a `PolicyException` carrying its path and, where one source decided, its `RuleId` and `SourceOrigin`. The two answers let a caller list the columns they may not see, one guess at a time. Under `DwTier.Strict`, outside a dry run, an unknown name is now gated as a field denied for every feature and receives the refusal a `[DwDenied]` field receives in that clause — `FieldDeniedForWhere`, `FieldDeniedForSelect`, `FieldDeniedForOrder`, `FieldDeniedForGroup` or `FieldDeniedForAggregate`, and `FieldDeniedForSegment` anywhere in a segment — after the caps. Every refusal with one of those six codes carries `FieldPath` `"*"`, a null `RuleId` and a null `SourceOrigin`, whatever the field, and a `CapExceeded` refusal names no path either. Code that caught `ConditionMustHasValidFieldName` from a strict guarded query, or read `FieldPath`, `RuleId` or `SourceOrigin` off a strict refusal, reads `PolicyQueryable<T>.LastTrace` instead, which keeps the real path and reason, or records refusals with `DwPolicyOptions.AuditRefusals`. The convenience tier and dry runs are unchanged. See [Blocked-action semantics](#blocked-action-semantics).
 
 ---
 

@@ -106,6 +106,19 @@ export default function Page() {
         <Link href="/docs/breaking-changes#date-value-formats">breaking changes</Link>.
       </Callout>
 
+      <Callout tone="warn" title="Under a strict policy, an unknown field is a policy refusal">
+        On a query guarded by <code>ApplyPolicy</code> under the{" "}
+        <code>Strict</code> tier, outside a dry run, a <code>Field</code> that
+        names nothing on <code>T</code> does not raise <code>InvalidField</code>.
+        It is refused like a field denied for every feature — a{" "}
+        <code>PolicyException</code> with <code>FieldDeniedForWhere</code>, or{" "}
+        <code>FieldDeniedForSegment</code> inside a segment, and{" "}
+        <code>FieldPath</code> <code>&quot;*&quot;</code> — so the answer does not
+        say whether the field exists. Unguarded queries, the convenience tier and a
+        dry run raise <code>InvalidField</code> as before. See{" "}
+        <Link href="/docs/policies/configuration#strict-refusals">what a strict refusal says</Link>.
+      </Callout>
+
       <h2 id="related">Related</h2>
       <ul>
         <li>

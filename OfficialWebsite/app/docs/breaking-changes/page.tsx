@@ -17,12 +17,12 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The nineteen points below cover constraints, surprises, and corner cases —
+        The twenty-three points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
       <Callout tone="danger" title="Behaviour changes in 3.1.0">
-        Six behaviours changed in <strong>3.1.0</strong>. Each one fixes a defect,
+        Ten behaviours changed in <strong>3.1.0</strong>. Each one fixes a defect,
         and each one is visible to a caller that depended on the old shape. Date
         comparisons now read the member&apos;s type before building
         the predicate (point&nbsp;14) and accept a value only in ISO&nbsp;8601, a
@@ -31,8 +31,17 @@ export default function Page() {
         rather than <code>TotalCount</code> (point&nbsp;16); the{" "}
         <code>Select</code> constructor refusal carries a stable code instead of an
         English sentence (point&nbsp;17); a guarded query is refused unless its
-        context was prepared (point&nbsp;18); and a segment&apos;s condition sets
-        are combined, ordered and paged in the database (point&nbsp;19).
+        context was prepared (point&nbsp;18); a segment&apos;s condition sets
+        are combined, ordered and paged in the database (point&nbsp;19); a member
+        named <code>Root</code>, <code>It</code> or <code>Parent</code> is read as
+        that member rather than as the row, and{" "}
+        <code>ParsingConfig.Default</code> is no longer read (point&nbsp;20); a
+        guarded request whose condition groups nest deeper than{" "}
+        <code>MaxConditionDepth</code>, or a guarded segment with more sets than{" "}
+        <code>MaxConditionSets</code>, is refused (point&nbsp;21); and under the
+        strict tier a result no longer carries the policy trace (point&nbsp;22),
+        and a field that does not exist is refused exactly as a denied one is, with
+        no field named (point&nbsp;23).
       </Callout>
       <Callout tone="danger" title="Upgrade to 2.1.4">
         Releases before <strong>2.1.4</strong> did not escape condition values before
@@ -471,6 +480,26 @@ export default function Page() {
         on a day-first server <code>new DateTime(2026, 9, 1)</code> filtered on
         9 January.
       </Callout>
+      <Callout tone="warn" title="A local DateTime keeps its offset on a DateTimeOffset member">
+        A C# <code>DateTime</code> whose <code>Kind</code> is <code>Local</code>{" "}
+        — <code>DateTime.Now</code>, or the value Newtonsoft.Json produces from a
+        string carrying an offset — placed in <code>Values</code> with{" "}
+        <code>DataType.DateTime</code> against a <code>DateTimeOffset</code> or{" "}
+        <code>DateTimeOffset?</code> member, or against a <code>Having</code> alias
+        over such a member&apos;s aggregate, is written with its offset:{" "}
+        <code>&quot;2026-09-17T15:00:00+03:00&quot;</code>. It filters on the
+        moment it holds. Written with no zone it would be read as UTC, which on a
+        host at UTC+3 names a moment three hours later, with no error. Everything
+        else keeps no zone, on purpose. Under <code>DataType.Date</code> a local{" "}
+        <code>DateTime</code> is written without one, so{" "}
+        <code>DateTime.Today</code> compares the day it was written for — on a host
+        ahead of UTC, local midnight on the 17th is still the 16th in UTC. A{" "}
+        <code>DateTime</code> or <code>DateOnly</code> member gets none. A{" "}
+        <code>DateTime</code> of <code>Kind</code> <code>Utc</code> or{" "}
+        <code>Unspecified</code> gets none, and on a <code>DateTimeOffset</code>{" "}
+        member it is read as UTC. Text values — every JSON string System.Text.Json
+        binds — are never touched.
+      </Callout>
 
       <h2 id="unpaged-page-count">16. <code>PageCount</code> on an Unpaged Result Is <code>1</code></h2>
       <p>
@@ -596,6 +625,233 @@ export default function Page() {
         </li>
       </ul>
 
+      <h2 id="root-it-parent-members">20. Members Named <code>Root</code>, <code>It</code> or <code>Parent</code> Are Read as Members</h2>
+      <p>
+        <code>System.Linq.Dynamic.Core</code> reads <code>it</code>,{" "}
+        <code>root</code> and <code>parent</code> as keywords, in any letter case,
+        wherever an identifier can stand, and the library writes member paths into
+        its expressions as they are named. Before <strong>3.1.0</strong> it parsed
+        with those keywords on:
+      </p>
+      <ul>
+        <li>
+          A navigation named <code>Root</code> or <code>It</code> was read as the
+          row itself. <code>Root.Name</code> filtered, sorted, grouped and
+          aggregated — and through <code>SelectDynamic</code> projected — the
+          row&apos;s own <code>Name</code>.
+        </li>
+        <li>
+          A navigation named <code>Parent</code> threw <code>ParseException</code>.
+        </li>
+        <li>
+          An <code>AggregateBy.Alias</code> named <code>root</code>,{" "}
+          <code>it</code> or <code>parent</code> failed in <code>Having</code> and
+          in <code>Summary.Orders</code>.
+        </li>
+      </ul>
+      <p>
+        Every expression is now parsed with a <code>ParsingConfig</code> the
+        library owns: the parser&apos;s defaults with{" "}
+        <code>AreContextKeywordsEnabled = false</code>, so every identifier names a
+        member. No setting restores the keyword reading.
+      </p>
+      <Callout tone="danger" title="Fixed: a policy decided on one column while the query read another">
+        Under <code>ApplyPolicy</code> the gate decided on the path the caller
+        named while the database read the row&apos;s own column. A dynamic
+        projection of <code>Root.Name</code> returned the values of a{" "}
+        <code>[DwDenied]</code> <code>Name</code>, a filter on{" "}
+        <code>Root.Name</code> tested the denied column, and a{" "}
+        <code>[DwForceWhere]</code> scope reached through a navigation named{" "}
+        <code>Root</code> filtered the row&apos;s own column instead of the linked
+        record&apos;s.
+      </Callout>
+      <Callout tone="warn" title="ParsingConfig.Default is no longer read">
+        The library used to parse through the shared{" "}
+        <code>ParsingConfig.Default</code>. It no longer reads that instance, so a
+        change a host makes to it does not reach DynamicWhere queries, and the
+        library&apos;s own configuration does not reach the host&apos;s dynamic
+        LINQ. No setting carries a host&apos;s changes to{" "}
+        <code>ParsingConfig.Default</code> into the library&apos;s parsing.
+      </Callout>
+
+      <h2 id="condition-depth-and-set-caps">21. <code>MaxConditionDepth</code> and <code>MaxConditionSets</code> Refuse Guarded Requests 3.0 Ran</h2>
+      <p>
+        Two caps are new in <strong>3.1.0</strong>. Only a query guarded through{" "}
+        <Link href="/docs/policies/configuration#caps"><code>ApplyPolicy</code></Link>{" "}
+        enforces them; an unguarded call is not affected. Both default to{" "}
+        <code>10</code>, refuse a value below <code>1</code>, freeze with the rest
+        of the posture, and bind from configuration as{" "}
+        <code>Caps:MaxConditionDepth</code> and <code>Caps:MaxConditionSets</code>.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Cap</th><th>What it counts</th><th>Refusal</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>DwCaps.MaxConditionDepth</code></td>
+            <td>
+              How deeply condition groups nest. The top group counts as{" "}
+              <code>1</code> and each level of <code>SubConditionGroups</code> adds{" "}
+              <code>1</code>, counted on the caller&apos;s groups before any forced
+              predicate is injected — on a <code>Filter</code>&apos;s group, on the
+              deeper of a <code>Summary</code>&apos;s conditions and its{" "}
+              <code>Having</code>, and on each <code>Segment</code> set separately.
+            </td>
+            <td>
+              <code>PolicyException</code> with <code>CapExceeded</code> and{" "}
+              <code>SourceOrigin</code>{" "}
+              <code>&quot;MaxConditionDepth cap (10), request had 11&quot;</code>
+            </td>
+          </tr>
+          <tr>
+            <td><code>DwCaps.MaxConditionSets</code></td>
+            <td>
+              How many condition sets one <code>Segment</code> sends, empty sets
+              included.
+            </td>
+            <td>
+              <code>PolicyException</code> with <code>CapExceeded</code> and{" "}
+              <code>SourceOrigin</code>{" "}
+              <code>&quot;MaxConditionSets cap (10), request had 11&quot;</code>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Nothing bounded either shape before. <code>MaxConditions</code> counts
+        conditions and says nothing about how deeply their groups nest, and a set
+        with no conditions passes every other cap while still adding to the one
+        statement a segment becomes.
+      </p>
+      <Callout tone="danger" title="A request 3.0 ran can be refused">
+        A guarded filter nested eleven groups deep, or a guarded segment carrying
+        eleven or more condition sets, ran on 3.0.0 and is refused on 3.1.0. A
+        deployment whose clients send such requests raises the cap, in code or
+        from configuration:
+        <Code lang="csharp">{`DwPolicy.Configure(new DwPolicyOptions
+{
+    Caps = { MaxConditionDepth = 20, MaxConditionSets = 25 },
+}, providers);`}</Code>
+        <Code lang="json">{`{
+  "DynamicWhere": {
+    "Policies": {
+      "Caps": { "MaxConditionDepth": 20, "MaxConditionSets": 25 }
+    }
+  }
+}`}</Code>
+      </Callout>
+
+      <h2 id="strict-trace-off-result">22. The Strict Tier Keeps the Policy Trace Off the Result</h2>
+      <p>
+        On 3.0.0 every guarded terminal put its <code>PolicyTrace</code> on the
+        result, in both tiers:{" "}
+        <Link href="/docs/classes/filter-result"><code>FilterResult&lt;T&gt;.Policy</code></Link>{" "}
+        from <code>ToList</code>, <code>ToListAsync</code>,{" "}
+        <code>ToListDynamic</code> and <code>ToListAsyncDynamic</code> with a{" "}
+        <code>Filter</code>,{" "}
+        <Link href="/docs/classes/summary-result"><code>SummaryResult.Policy</code></Link>{" "}
+        from <code>ToList</code> and <code>ToListAsync</code> with a{" "}
+        <code>Summary</code>, and{" "}
+        <Link href="/docs/classes/segment-result"><code>SegmentResult&lt;T&gt;.Policy</code></Link>{" "}
+        from <code>ToListAsync</code> with a <code>Segment</code>. The trace names
+        every field a policy dropped, the attribute or rule that sealed each one,
+        and every predicate injected on the caller&apos;s behalf — the detail the
+        strict tier already refuses to hand over through{" "}
+        <code>getQueryString</code> — and an API that serializes a result sends it
+        to the caller.
+      </p>
+      <p>
+        <Link href="/docs/policies/configuration#trace"><code>DwPolicyOptions.IncludeTraceInResult</code></Link>{" "}
+        (<code>bool?</code>, default <code>null</code>) now decides.{" "}
+        <code>null</code> follows the tier: off under <code>DwTier.Strict</code>, on
+        under <code>DwTier.Convenience</code>. <code>true</code> or{" "}
+        <code>false</code> overrides the tier in either one. It freezes with the
+        posture and binds from the configuration key{" "}
+        <code>IncludeTraceInResult</code>.
+      </p>
+      <Callout tone="danger" title="Under the strict tier result.Policy is null">
+        Code that reads <code>Policy</code> from a strict-tier guarded result now
+        reads <code>null</code>. The trace is still recorded, on the{" "}
+        <code>PolicyQueryable&lt;T&gt;.LastTrace</code> of the handle that ran the
+        query, and audit events are written exactly as before. Set{" "}
+        <code>IncludeTraceInResult = true</code> to put the trace back on the result.
+        <Code lang="csharp">{`var guarded = db.Employees.ApplyPolicy(caller);
+var result  = await guarded.ToListAsync(filter);
+
+PolicyTrace? sent     = result.Policy;      // null under DwTier.Strict, unless IncludeTraceInResult = true
+PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting says`}</Code>
+      </Callout>
+
+      <h2 id="strict-unknown-field">23. The Strict Tier Answers an Unknown Field and a Denied Field Alike</h2>
+      <p>
+        On 3.0.0 a guarded query told a field that does not exist from one the
+        caller may not use. A name that matched nothing on <code>T</code> failed
+        validation with <code>LogicException</code>{" "}
+        <code>ConditionMustHasValidFieldName</code> before any policy decision was
+        made, and a denied field was refused with a <code>PolicyException</code>{" "}
+        naming the field — and, where one source decided, that rule or attribute on{" "}
+        <code>RuleId</code> and <code>SourceOrigin</code>. A caller probing the
+        strict tier learned which columns exist, including the ones they may never
+        read, one guess at a time, and each refusal confirmed the guess.
+      </p>
+      <p>
+        Under <code>DwTier.Strict</code>, outside a dry run, the two now answer
+        alike:
+      </p>
+      <ul>
+        <li>
+          A name that matches nothing is gated as a field denied for every feature,
+          at the step where a denial is raised — after the caps and the cost budget
+          — so it gets the code a <code>[DwDenied]</code> field gets in that clause:{" "}
+          <code>FieldDeniedForWhere</code>, <code>FieldDeniedForSelect</code>,{" "}
+          <code>FieldDeniedForOrder</code>, <code>FieldDeniedForGroup</code> or{" "}
+          <code>FieldDeniedForAggregate</code>. In a segment, an unknown name —
+          like a <code>[DwDenied]</code> field — is refused in any of its clauses
+          with <code>FieldDeniedForSegment</code>.
+        </li>
+        <li>
+          Every refusal with one of those six codes carries{" "}
+          <code>FieldPath = &quot;*&quot;</code>, <code>RuleId = null</code> and{" "}
+          <code>SourceOrigin = null</code>, whatever the field — a real denied field
+          and an alias included — so the message is the same too:{" "}
+          <code>{`FieldDeniedForWhere: field '*', feature 'Where', tier 'Strict'.`}</code>
+        </li>
+        <li>
+          A <code>CapExceeded</code> refusal names no path either.{" "}
+          <code>MaxNavigationDepth</code> and <code>MaxAuditEvents</code>, the two
+          caps that named a field, used to report its canonical path, which
+          confirmed that the path exists. They report <code>&quot;*&quot;</code>,
+          and <code>SourceOrigin</code> still names the cap.
+        </li>
+        <li>
+          The trace keeps the real path and reason: an unknown name is recorded as{" "}
+          <code>Denied</code>, with the reason <code>names nothing on</code>{" "}
+          followed by the type&apos;s name. With{" "}
+          <Link href="/docs/policies/configuration#audit-refusals"><code>AuditRefusals</code></Link>{" "}
+          on, the audit event names the field, or the unknown name the caller sent.
+        </li>
+      </ul>
+      <Callout tone="danger" title="Check anything that reads FieldPath or matches the validation code">
+        Under the strict tier an error response built from{" "}
+        <code>PolicyException.FieldPath</code> now says <code>*</code>, and a
+        handler that matched <code>ConditionMustHasValidFieldName</code> for a
+        misspelt field receives a <code>PolicyException</code> instead. It still
+        derives from <code>LogicException</code>, so an existing{" "}
+        <code>catch</code> still catches it. No setting restores the old answer
+        under the strict tier. The convenience tier is unchanged — an unknown field
+        fails validation, and a refusal names the field with its{" "}
+        <code>RuleId</code> and <code>SourceOrigin</code> — and a dry run refuses
+        nothing, so an unknown name fails validation there too.
+      </Callout>
+      <Callout tone="note" title="What can still tell them apart">
+        The cost budget is charged before any field is gated, and a name that
+        matches nothing costs <code>DwCaps.DefaultFieldCost</code>. A caller who
+        can push a request over <code>MaxQueryCost</code> can therefore still tell
+        a field weighted by <code>[DwCost]</code> from a name that does not exist,
+        by whether <code>QueryCostExceeded</code> is raised.
+      </Callout>
+
       <h2 id="next">See also</h2>
       <ul>
         <li>
@@ -622,6 +878,15 @@ export default function Page() {
         <li>
           <Link href="/docs/classes/aggregate-by"><code>AggregateBy</code> →</Link>{" "}
           context for point 13.
+        </li>
+        <li>
+          <Link href="/docs/policies/configuration">Policy configuration →</Link>{" "}
+          context for points 21, 22 and 23: the caps, the trace on a result, and
+          what a strict refusal carries.
+        </li>
+        <li>
+          <Link href="/docs/policies/security#probing">Security &amp; k-anonymity →</Link>{" "}
+          why the strict tier hides which fields exist (point 23).
         </li>
       </ul>
     </DocPage>

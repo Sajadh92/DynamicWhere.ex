@@ -105,7 +105,13 @@ export default function Page() {
             <td>
               What the policy layer did to this query.{" "}
               <code>null</code> unless the query went through{" "}
-              <Link href="/docs/policies"><code>ApplyPolicy</code></Link>.
+              <Link href="/docs/policies"><code>ApplyPolicy</code></Link>. A
+              guarded query sets it as{" "}
+              <Link href="/docs/policies/configuration#trace"><code>DwPolicyOptions.IncludeTraceInResult</code></Link>{" "}
+              decides: by default it is present under the convenience tier and{" "}
+              <code>null</code> under the strict tier (since 3.1.0 — see{" "}
+              <Link href="/docs/breaking-changes#strict-trace-off-result">breaking changes</Link>).
+              The trace is always on <code>PolicyQueryable&lt;T&gt;.LastTrace</code>.
             </td>
           </tr>
         </tbody>

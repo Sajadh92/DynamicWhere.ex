@@ -418,11 +418,18 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
         <code>2026-09-01T01:00+03:00</code> is 31 August on one and 1 September
         on the other. On a <code>DateTime</code> member a value carrying
         a zone is converted to the host&apos;s local time. A C#{" "}
-        <code>DateTime</code> placed in <code>Values</code> is written with no zone
-        whatever its <code>Kind</code>, so on a <code>DateTimeOffset</code> member{" "}
-        <code>DateTime.Now</code> reads as UTC and names an instant off by the
-        host&apos;s offset: pass a <code>DateTimeOffset</code>, or a UTC{" "}
-        <code>DateTime</code>.
+        <code>DateTime</code> placed in <code>Values</code> is written with no
+        zone, and so is read as UTC on a <code>DateTimeOffset</code> member — with
+        one exception. A <code>DateTime</code> whose <code>Kind</code> is{" "}
+        <code>Local</code> (<code>DateTime.Now</code>, or a value Newtonsoft.Json
+        produced from a string carrying an offset), compared under{" "}
+        <code>DataType.DateTime</code> with a <code>DateTimeOffset</code> or{" "}
+        <code>DateTimeOffset?</code> member or with a <code>Having</code> alias
+        over such a member&apos;s aggregate, is written with its offset —{" "}
+        <code>2026-09-17T15:00:00+03:00</code> — and filters on the moment it
+        holds. Under <code>DataType.Date</code> it keeps no zone, so{" "}
+        <code>DateTime.Today</code> compares the day it was written for rather
+        than the UTC day of local midnight.
       </Callout>
 
       <h2 id="json-examples">JSON examples per type</h2>
@@ -528,7 +535,11 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
             <td>
               Year-first text: <code>&quot;2026-09-01T12:30:00&quot;</code> (no
               zone marker), <code>&quot;2026-09-01T12:30:00+03:00&quot;</code>,{" "}
-              <code>&quot;2026-09-01&quot;</code>. Before 3.1.0 these took the
+              <code>&quot;2026-09-01&quot;</code>. The exception is a{" "}
+              <code>DateTime</code> of <code>Kind</code> <code>Local</code>{" "}
+              compared under <code>DataType.DateTime</code> with a{" "}
+              <code>DateTimeOffset</code> member, which keeps its offset:{" "}
+              <code>&quot;2026-09-01T12:30:00+03:00&quot;</code>. Before 3.1.0 these took the
               month-first invariant form, such as{" "}
               <code>&quot;09/01/2026 12:30:00&quot;</code>, which is now refused.
             </td>

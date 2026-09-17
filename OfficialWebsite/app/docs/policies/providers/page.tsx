@@ -92,6 +92,31 @@ DwPolicy.Configure(options, provider);`}</Code>
         member of several enumerations is the permissive one, so an unparsed
         value must not read as a plausible-looking default.
       </p>
+      <p>
+        A forced predicate is written as a <code>forced</code> object, in a Redis
+        document and in the EF <code>Detail</code> column alike.{" "}
+        <code>allowNull</code> is written only when it is true, so a predicate that
+        does not let null through is written exactly as earlier releases wrote it:
+      </p>
+      <Code lang="json">{`"forced": {
+  "fieldPath": "InstitutionId",
+  "operator": "Equal",
+  "dataType": "Number",
+  "contextValue": "TenantId",
+  "allowNull": true
+}`}</Code>
+      <p>
+        An absent or <code>null</code> <code>allowNull</code> reads as{" "}
+        <code>false</code>. Anything else that is not a JSON <code>true</code> or{" "}
+        <code>false</code> — the string <code>&quot;true&quot;</code>, the number{" "}
+        <code>1</code> — is refused, and so is <code>allowNull</code> on a null
+        check, which carries neither <code>value</code> nor{" "}
+        <code>contextValue</code>. A refused document fails the load rather than
+        being skipped: fatal at startup, a refresh failure afterwards. Guessing
+        at a string would go wrong one way or the other: read as true it can widen
+        a tenant scope nobody asked to widen, and read as false it can drop a
+        widening somebody wrote.
+      </p>
 
       <h2 id="readonly">Read-only deployments</h2>
       <p>

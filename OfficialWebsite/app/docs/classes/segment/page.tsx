@@ -19,8 +19,8 @@ export default function Page() {
         A <code>Segment</code> stitches together multiple{" "}
         <Link href="/docs/classes/condition-set"><code>ConditionSet</code></Link> objects with{" "}
         <code>Union</code> / <code>Intersect</code> / <code>Except</code> set operations, then
-        applies optional sort and pagination. A projection, if you give one, is applied to each
-        set <em>before</em> they are combined.
+        applies optional sort and pagination. A projection, if you give one, is applied{" "}
+        <em>after</em> they are combined, to the ordered and paged rows.
       </p>
 
       <h2 id="properties">Properties</h2>

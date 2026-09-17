@@ -164,7 +164,12 @@ export default function Page() {
             <td>
               year-first text — <code>2026-09-01T12:30:00</code>,{" "}
               <code>2026-09-01T12:30:00+03:00</code>, <code>2026-09-01</code> (since
-              3.1.0; it was the month-first <code>09/01/2026 12:30:00</code>)
+              3.1.0; it was the month-first <code>09/01/2026 12:30:00</code>). A{" "}
+              <code>DateTime</code> keeps no zone, except one of <code>Kind</code>{" "}
+              <code>Local</code> compared under <code>DataType.DateTime</code> with a{" "}
+              <code>DateTimeOffset</code> member, which is written with its offset —
+              see{" "}
+              <Link href="/docs/enums/data-type#value-coercion">DataType → Value coercion</Link>
             </td>
           </tr>
           <tr>

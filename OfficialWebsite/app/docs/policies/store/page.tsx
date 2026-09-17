@@ -53,6 +53,39 @@ export default function Page() {
         write rather than left with a rule that quietly never applies.
       </Callout>
 
+      <h2 id="forced">A forced predicate on a rule</h2>
+      <p>
+        A rule carries the runtime form of <code>[DwForceWhere]</code> as a{" "}
+        <code>ForcedPredicate</code>, built by one of three factories:{" "}
+        <code>FromConstant</code>, <code>FromContext</code> and{" "}
+        <code>FromNullCheck</code>. <code>FromConstant</code> and{" "}
+        <code>FromContext</code> each have an overload taking a fifth argument,{" "}
+        <code>bool allowNull</code>, which <code>ForcedPredicate.AllowNull</code>{" "}
+        reports; the four-argument overloads mean <code>allowNull: false</code>, and{" "}
+        <code>FromNullCheck</code> is unchanged.
+      </p>
+      <Code lang="csharp">{`// Every caller sees their own institution's roles, and the roles no institution owns.
+var scope = new PolicyRule(
+    subjectKind: DwSubjectKind.Global,
+    subjectKey:  null,
+    entityType:  typeof(Role).FullName!,
+    fieldPath:   "InstitutionId",
+    features:    PolicyFeature.None,      // carries a predicate and decides nothing
+    effect:      PolicyEffect.Allow,
+    forced:      ForcedPredicate.FromContext(
+        "InstitutionId", Operator.Equal, DataType.Number, "TenantId", allowNull: true));`}</Code>
+      <p>
+        The injected term, the refusal of a context that does not supply the
+        value, and the trace all follow{" "}
+        <Link href="/docs/policies/attributes#allow-null">the attribute</Link>. One
+        thing differs: a rule is written without the entity type to hand, so it is
+        not refused on a member that can never be null. On such a member it injects
+        the comparison alone, which is the same predicate, and the trace records{" "}
+        <code>forced predicate (Equal)</code> without <code>or null</code>. How a
+        stored rule writes the flag is on{" "}
+        <Link href="/docs/policies/providers#serialization">Store providers</Link>.
+      </p>
+
       <h2 id="zones">Two zones</h2>
       <table>
         <thead><tr><th>Zone</th><th>Holds</th><th>Lifetime</th></tr></thead>

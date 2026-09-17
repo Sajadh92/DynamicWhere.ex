@@ -130,7 +130,8 @@ public static class PolicyModelValidator
     /// </remarks>
     private static void CheckDefaultOrder(Type type, List<string> errors, List<string> warnings)
     {
-        (List<string> malformed, List<string> unknown, List<string> unorderable) = DefaultOrder.Problems(type);
+        (List<string> malformed, List<string> unknown, List<string> unorderable, List<string> reserved) =
+            DefaultOrder.Problems(type);
 
         foreach (string entry in malformed)
         {
@@ -147,6 +148,13 @@ public static class PolicyModelValidator
         foreach (string field in unorderable)
         {
             errors.Add($"{type.Name}: DefaultOrder names '{field}', which no query can order by, so guarded queries skip it.");
+        }
+
+        foreach (string field in reserved)
+        {
+            errors.Add(
+                $"{type.Name}: DefaultOrder names '{field}', which starts with a name the expression parser keeps "
+                + "for itself, so no query can use it. Rename the member.");
         }
 
         IReadOnlyList<DefaultOrder.Entry> entries = DefaultOrder.For(type);

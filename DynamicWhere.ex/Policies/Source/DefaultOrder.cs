@@ -116,21 +116,29 @@ internal static class DefaultOrder
     internal static bool Applies(Expression expression) => !IsOrdered(expression) && !IsProjected(expression);
 
     /// <summary>
-    /// Everything wrong with a type's declared default: entries that cannot be read and fields no query
-    /// can order by, which are errors, and fields the type does not have, which are skipped and so only
-    /// warnings.
+    /// Everything wrong with a type's declared default: entries that cannot be read, fields no query can
+    /// order by and fields whose name the expression parser keeps for itself, which are errors, and
+    /// fields the type does not have, which are skipped and so only warnings.
     /// </summary>
-    internal static (List<string> Malformed, List<string> Unknown, List<string> Unorderable) Problems(Type type)
+    internal static (List<string> Malformed, List<string> Unknown, List<string> Unorderable, List<string> Reserved)
+        Problems(Type type)
     {
         List<string> malformed = new();
         List<string> unknown = new();
         List<string> unorderable = new();
+        List<string> reserved = new();
 
         foreach (string part in Parts(type))
         {
             if (!TryParse(part, out string field, out _))
             {
                 malformed.Add(part.Trim());
+            }
+            else if (ReservedNames.Starts(field))
+            {
+                // Before the path is validated, which refuses such a field without saying why: the type
+                // may well have the member, and the reason no query can reach it is the parser's.
+                reserved.Add(field);
             }
             else if (Canonical(type, field) is not { } canonical)
             {
@@ -142,7 +150,7 @@ internal static class DefaultOrder
             }
         }
 
-        return (malformed, unknown, unorderable);
+        return (malformed, unknown, unorderable, reserved);
     }
 
     private static IReadOnlyList<Entry> Read(Type type)

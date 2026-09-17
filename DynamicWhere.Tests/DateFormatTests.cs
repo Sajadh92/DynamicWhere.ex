@@ -185,6 +185,42 @@ public class DateFormatTests
         Assert.Contains("MM/dd/yyyy", thrown.Message);
     }
 
+    [Theory]
+    [InlineData("yyyy-MM-dd'T'HH:mm:ss'Z'")]
+    [InlineData("yyyy-MM-dd")]
+    [InlineData("yyyy/M/d")]
+    [InlineData("yyyy-MM-dd HH:mm:ss")]
+    public void A_format_ISO_8601_already_reads_is_refused_when_declared(string format)
+    {
+        // Declaring one can only change what such a value means, and on a DateTime member it does: ISO
+        // 8601 reads "2026-09-01T12:00:00Z" as an instant and converts it to the host's local time,
+        // while a format whose Z is a quoted letter reads 12:00 as written. Off UTC the two readings
+        // differ and every such value would be AmbiguousDateFormat — on that host only.
+        DwDateOptions redundant = new();
+
+        redundant.Formats.Add(format);
+
+        ArgumentException thrown = Assert.Throws<ArgumentException>(() => redundant.Freeze());
+
+        Assert.Contains("already reads", thrown.Message);
+    }
+
+    [Theory]
+    [InlineData("dd/MM/yyyy")]
+    [InlineData("dd/MM/yyyy HH:mm")]
+    [InlineData("yyyy-MM")]
+    [InlineData("dd MMM yyyy")]
+    public void A_format_ISO_8601_does_not_read_is_accepted(string format)
+    {
+        DwDateOptions options = new();
+
+        options.Formats.Add(format);
+
+        options.Freeze();
+
+        Assert.True(options.IsFrozen);
+    }
+
     [Fact]
     public void A_format_that_contradicts_ISO_8601_is_refused_when_declared()
     {

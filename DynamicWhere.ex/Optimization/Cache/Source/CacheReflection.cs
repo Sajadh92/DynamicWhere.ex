@@ -1,6 +1,7 @@
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Optimization.Cache.Config;
 using DynamicWhere.ex.Optimization.Cache.Input;
+using DynamicWhere.ex.Source;
 using System.Reflection;
 
 namespace DynamicWhere.ex.Optimization.Cache.Source;
@@ -190,9 +191,16 @@ internal static class CacheReflection
     /// <param name="rootType">The root type to validate against.</param>
     /// <param name="propertyPath">The property path to validate.</param>
     /// <returns>The validated and normalized property path.</returns>
-    /// <exception cref="LogicException">Thrown when the path is invalid.</exception>
+    /// <exception cref="LogicException">
+    /// Thrown when the path is invalid, and with <c>FieldPath[{path}]StartsWithReservedName</c> when it
+    /// begins with a name the expression parser keeps for itself.
+    /// </exception>
     public static string ValidatePropertyPath(Type rootType, string propertyPath)
     {
+        // Before the lookup, because such a path is refused whatever the type has: the parser reads its
+        // own name there and never asks for the member. Nothing is cached and no access is tracked.
+        ReservedNames.Refuse(propertyPath);
+
         var cacheKey = (rootType, propertyPath);
         var config = GetCacheConfigOptions();
 

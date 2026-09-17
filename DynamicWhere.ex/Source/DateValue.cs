@@ -149,6 +149,18 @@ internal static class DateValue
     }
 
     /// <summary>
+    /// True when the built-in ISO 8601 and year-first formats already read this text.
+    /// </summary>
+    /// <remarks>
+    /// Asked of the same spellings and styles a request is read with, so a format declared at startup is
+    /// measured against exactly what a value would meet.
+    /// </remarks>
+    /// <param name="text">The text a declared format writes.</param>
+    internal static bool ReadsAsBuiltIn(string text) =>
+        DateTimeOffset.TryParseExact(
+            Iso((text ?? string.Empty).Trim()), BuiltInFormats, CultureInfo.InvariantCulture, Universal, out _);
+
+    /// <summary>
     /// Adds what the formats read the text as, in the form the predicate will embed.
     /// </summary>
     private static void Collect(string text, string[] formats, Kind kind, HashSet<string> readings)

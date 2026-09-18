@@ -25,13 +25,20 @@ export default function Page() {
 
       <h2 id="payload">Payload</h2>
       <Code lang="json">{`{
-  "fields": ["Category"],
+  "fields": ["Category.Name"],
   "aggregateBy": [
     { "field": null, "alias": "TotalCount", "aggregator": "Count" },
     { "field": "Price", "alias": "AvgPrice", "aggregator": "Average" },
     { "field": "Price", "alias": "MaxPrice", "aggregator": "Maximum" }
   ]
 }`}</Code>
+      <p>
+        Every group field must end on a simple type, so the key is{" "}
+        <code>Category.Name</code> rather than <code>Category</code>: grouping
+        by the navigation itself throws{" "}
+        <code>GroupByFieldCannotBeComplexType</code>. Each row names the key by
+        the path with its dots removed — here <code>CategoryName</code>.
+      </p>
 
       <h2 id="related">Related</h2>
       <ul>

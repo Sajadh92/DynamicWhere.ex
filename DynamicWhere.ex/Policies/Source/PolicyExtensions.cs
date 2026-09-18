@@ -1,5 +1,8 @@
+using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Policies.Audit;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
+using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Resolution;
 
 namespace DynamicWhere.ex.Policies.Source;
@@ -20,6 +23,10 @@ public static class PolicyExtensions
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="query"/> or <paramref name="context"/> is null.
     /// </exception>
+    /// <exception cref="PolicyException">
+    /// Thrown with <c>PolicyContextNotPrepared</c> when <paramref name="context"/> never went through
+    /// <see cref="DwPolicy.PrepareAsync"/>, whether or not a store is configured.
+    /// </exception>
     /// <remarks>
     /// The posture and the policy sources come from <see cref="DwPolicy"/> rather than from
     /// arguments here, because a posture that has to be passed at every call site is one that will
@@ -32,7 +39,7 @@ public static class PolicyExtensions
     /// </example>
     public static PolicyQueryable<T> ApplyPolicy<T>(this IQueryable<T> query, DwPolicyContext context)
         where T : class =>
-        ApplyPolicy(query, context, DwPolicy.Options, DwPolicy.Resolver);
+        ApplyPolicy(query, RequirePrepared<T>(context, DwPolicy.Options), DwPolicy.Options, DwPolicy.Resolver);
 
     /// <summary>
     /// Attaches a caller to an in-memory sequence.
@@ -44,6 +51,10 @@ public static class PolicyExtensions
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="query"/> or <paramref name="context"/> is null.
     /// </exception>
+    /// <exception cref="PolicyException">
+    /// Thrown with <c>PolicyContextNotPrepared</c> when <paramref name="context"/> never went through
+    /// <see cref="DwPolicy.PrepareAsync"/>, whether or not a store is configured.
+    /// </exception>
     /// <remarks>
     /// The unguarded surface carries the same overloads, and leaving them off here would mean a
     /// caller holding an <see cref="IEnumerable{T}"/> had to step outside the guarded path to use
@@ -53,7 +64,7 @@ public static class PolicyExtensions
         where T : class =>
         ApplyPolicy(
             query?.AsQueryable() ?? throw new ArgumentNullException(nameof(query)),
-            context,
+            RequirePrepared<T>(context, DwPolicy.Options),
             DwPolicy.Options,
             DwPolicy.Resolver);
 
@@ -101,5 +112,44 @@ public static class PolicyExtensions
         }
 
         return new PolicyQueryable<T>(query, context, resolver, options);
+    }
+
+    /// <summary>
+    /// Refuses a context that never went through <c>DwPolicy.PrepareAsync</c>.
+    /// </summary>
+    /// <remarks>
+    /// A store provider already refuses one, because it has no pinned snapshot to answer from. With
+    /// attributes alone nothing refused it, so the same missing call was a failure in one deployment
+    /// and silence in another — and the deployment where it was silent is the one that later adds a
+    /// store and starts refusing in production. Preparation is the ceremony that says which caller
+    /// this is; a query that skipped it is refused wherever it runs.
+    /// <para>
+    /// Only on the overloads that read <see cref="DwPolicy"/>, because that is where
+    /// <c>PrepareAsync</c> is the documented ceremony. A host composing its own options and resolver
+    /// owns preparation itself, and a store it hands in still refuses an unprepared context.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="PolicyException">Thrown with <c>PolicyContextNotPrepared</c>.</exception>
+    internal static DwPolicyContext RequirePrepared<T>(DwPolicyContext context, DwPolicyOptions options)
+    {
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        if (!context.IsPrepared)
+        {
+            PolicyException refusal = new(
+                PolicyErrorCode.PolicyContextNotPrepared,
+                "*",
+                PolicyFeature.None,
+                options.Tier);
+
+            RefusalAudit.Record(context, options, typeof(T), refusal);
+
+            throw refusal;
+        }
+
+        return context;
     }
 }

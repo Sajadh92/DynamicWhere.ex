@@ -223,7 +223,35 @@ public class PolicyAliasTests
     public void A_refusal_names_the_alias_the_caller_used_not_the_internal_path()
     {
         // Handing back the real column path for a field the caller only ever named by alias turns
-        // every refusal into schema disclosure.
+        // every refusal into schema disclosure. A filter is refused in both tiers, so the convenience
+        // tier shows the name it hands back.
+        FakePolicyProvider noFiltering = new FakePolicyProvider()
+            .Add("Contact.Phone", PolicyFeature.Where, PolicyEffect.Deny, PolicyLevel.SealedAttribute)
+            .AddAlias("Contact.Phone", "phone_number", PolicyLevel.SealedAttribute);
+
+        PolicyException error = Assert.Throws<PolicyException>(
+            () => Sanitize<AliasedCustomer>(
+                new Filter
+                {
+                    ConditionGroup = new ConditionGroup
+                    {
+                        Conditions =
+                        {
+                            new Condition { Field = "phone_number", DataType = DataType.Text, Operator = Operator.Equal, Values = { "1" } }
+                        }
+                    }
+                },
+                DwTier.Convenience,
+                noFiltering));
+
+        Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, error.ErrorCode);
+        Assert.Equal("phone_number", error.FieldPath);
+        Assert.DoesNotContain("Contact.Phone", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_strict_refusal_names_neither_the_alias_nor_the_internal_path()
+    {
         PolicyException error = Assert.Throws<PolicyException>(
             () => Sanitize<AliasedCustomer>(
                 new Filter
@@ -233,8 +261,11 @@ public class PolicyAliasTests
                 DwTier.Strict));
 
         Assert.Equal(PolicyErrorCode.FieldDeniedForOrder, error.ErrorCode);
-        Assert.Equal("phone_number", error.FieldPath);
+        Assert.Equal("*", error.FieldPath);
         Assert.DoesNotContain("Contact.Phone", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("phone_number", error.Message, StringComparison.Ordinal);
+        Assert.Null(error.SourceOrigin);
+        Assert.Null(error.RuleId);
     }
 
     [Fact]

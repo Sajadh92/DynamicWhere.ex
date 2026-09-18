@@ -24,13 +24,15 @@ public sealed class ForcedPredicate
         Operator op,
         DataType dataType,
         string? value,
-        string? contextValue)
+        string? contextValue,
+        bool allowNull = false)
     {
         FieldPath = fieldPath;
         Operator = op;
         DataType = dataType;
         Value = value;
         ContextValue = contextValue;
+        AllowNull = allowNull;
     }
 
     /// <summary>The field the predicate filters on.</summary>
@@ -52,6 +54,18 @@ public sealed class ForcedPredicate
     public bool ReadsContext => ContextValue is not null;
 
     /// <summary>
+    /// True when a row whose field is null also passes: the predicate is injected as
+    /// <c>(field op value OR field IS NULL)</c>.
+    /// </summary>
+    /// <remarks>
+    /// The shape of a record that belongs to one tenant or to none, such as a system role no
+    /// institution owns. Two forced predicates on one member are joined by <c>And</c>, so no pair of
+    /// them can say "or null"; this is the only way to. Never true for a null check, which compares
+    /// against nothing and has no comparison to widen.
+    /// </remarks>
+    public bool AllowNull { get; }
+
+    /// <summary>
     /// Creates a predicate filtering by a constant.
     /// </summary>
     /// <param name="fieldPath">The field to filter on.</param>
@@ -61,12 +75,29 @@ public sealed class ForcedPredicate
     /// <exception cref="ArgumentException">
     /// Thrown when <paramref name="fieldPath"/> or <paramref name="value"/> is blank.
     /// </exception>
-    public static ForcedPredicate FromConstant(string fieldPath, Operator op, DataType dataType, string value)
+    public static ForcedPredicate FromConstant(string fieldPath, Operator op, DataType dataType, string value) =>
+        FromConstant(fieldPath, op, dataType, value, allowNull: false);
+
+    /// <summary>
+    /// Creates a predicate filtering by a constant, optionally letting a null field pass as well.
+    /// </summary>
+    /// <param name="fieldPath">The field to filter on.</param>
+    /// <param name="op">The operator to use.</param>
+    /// <param name="dataType">The field's data type.</param>
+    /// <param name="value">The constant, in string form.</param>
+    /// <param name="allowNull">True to inject <c>(field op value OR field IS NULL)</c>.</param>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="fieldPath"/> or <paramref name="value"/> is blank, or when
+    /// <paramref name="allowNull"/> is true for <c>IsNull</c> or <c>IsNotNull</c>.
+    /// </exception>
+    public static ForcedPredicate FromConstant(
+        string fieldPath, Operator op, DataType dataType, string value, bool allowNull)
     {
         Require(fieldPath, nameof(fieldPath), "A forced predicate requires a field path.");
         Require(value, nameof(value), "A forced predicate built from a constant requires a value.");
+        RefuseWidenedNullCheck(op, allowNull);
 
-        return new ForcedPredicate(fieldPath.Trim(), op, dataType, value, contextValue: null);
+        return new ForcedPredicate(fieldPath.Trim(), op, dataType, value, contextValue: null, allowNull);
     }
 
     /// <summary>
@@ -77,18 +108,83 @@ public sealed class ForcedPredicate
     /// <param name="dataType">The field's data type.</param>
     /// <param name="contextValue">The context key holding the value.</param>
     /// <exception cref="ArgumentException">
-    /// Thrown when <paramref name="fieldPath"/> or <paramref name="contextValue"/> is blank.
+    /// Thrown when <paramref name="fieldPath"/> or <paramref name="contextValue"/> is blank, or when
+    /// <paramref name="op"/> is <c>IsNull</c> or <c>IsNotNull</c>, which read no value: build those with
+    /// <see cref="FromNullCheck"/>.
     /// </exception>
     public static ForcedPredicate FromContext(
-        string fieldPath, Operator op, DataType dataType, string contextValue)
+        string fieldPath, Operator op, DataType dataType, string contextValue) =>
+        FromContext(fieldPath, op, dataType, contextValue, allowNull: false);
+
+    /// <summary>
+    /// Creates a predicate filtering by a value read from the caller's context, optionally letting a
+    /// null field pass as well.
+    /// </summary>
+    /// <param name="fieldPath">The field to filter on.</param>
+    /// <param name="op">The operator to use.</param>
+    /// <param name="dataType">The field's data type.</param>
+    /// <param name="contextValue">The context key holding the value.</param>
+    /// <param name="allowNull">True to inject <c>(field op value OR field IS NULL)</c>.</param>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="fieldPath"/> or <paramref name="contextValue"/> is blank, when
+    /// <paramref name="allowNull"/> is true for <c>IsNull</c> or <c>IsNotNull</c>, or when
+    /// <paramref name="op"/> is <c>IsNull</c> or <c>IsNotNull</c> at all, which read no value: build those
+    /// with <see cref="FromNullCheck"/>.
+    /// </exception>
+    /// <remarks>
+    /// The context value itself must still be supplied. Allowing a null field says which rows pass;
+    /// it does not let a caller with no tenant through as though they had one.
+    /// </remarks>
+    public static ForcedPredicate FromContext(
+        string fieldPath, Operator op, DataType dataType, string contextValue, bool allowNull)
     {
         Require(fieldPath, nameof(fieldPath), "A forced predicate requires a field path.");
         Require(
             contextValue,
             nameof(contextValue),
             "A forced predicate reading the context requires a key to read.");
+        RefuseWidenedNullCheck(op, allowNull);
+        RefuseNullCheckReadingContext(op);
 
-        return new ForcedPredicate(fieldPath.Trim(), op, dataType, value: null, contextValue.Trim());
+        return new ForcedPredicate(fieldPath.Trim(), op, dataType, value: null, contextValue.Trim(), allowNull);
+    }
+
+    /// <summary>
+    /// Refuses a null check that reads a value from the caller's context.
+    /// </summary>
+    /// <remarks>
+    /// There is nowhere for the value to go. The key was still required, so a caller without it was
+    /// refused, and a caller with it had the value added to a null-check condition, which validation
+    /// refuses: every guarded query on the type failed, for every caller. Refused where it is built, as
+    /// the attribute refuses a <c>ContextValue</c> on a null check, so the mistake surfaces once, at
+    /// startup or when the rule is loaded, rather than on each query.
+    /// </remarks>
+    private static void RefuseNullCheckReadingContext(Operator op)
+    {
+        if (op is Operator.IsNull or Operator.IsNotNull)
+        {
+            throw new ArgumentException(
+                $"'{op}' compares against nothing, so it reads no context value; build it with FromNullCheck.",
+                nameof(op));
+        }
+    }
+
+    /// <summary>
+    /// Refuses <c>AllowNull</c> on a null check, where a value was supplied anyway.
+    /// </summary>
+    /// <remarks>
+    /// A null check compares against nothing, so a constant given to it is ignored, and widening it would
+    /// test the field for null or not null at once: <c>(field IS NOT NULL OR field IS NULL)</c> filters
+    /// nothing, and a scope written that way would silently be no scope. The attribute refuses the same
+    /// combination.
+    /// </remarks>
+    private static void RefuseWidenedNullCheck(Operator op, bool allowNull)
+    {
+        if (allowNull && op is Operator.IsNull or Operator.IsNotNull)
+        {
+            throw new ArgumentException(
+                "AllowNull widens a comparison, and a null check compares against nothing.", nameof(allowNull));
+        }
     }
 
     /// <summary>

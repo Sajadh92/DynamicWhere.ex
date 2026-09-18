@@ -28,10 +28,20 @@ internal static class Builder
     /// <param name="_operator">Operator to apply.</param>
     /// <param name="field">Field access expression (e.g., <c>"x.Email"</c>).</param>
     /// <param name="values">Operator values (validated upstream; count depends on <paramref name="_operator"/>).</param>
+    /// <param name="memberType">
+    /// The CLR type of the member the field resolves to, or null where the caller has none to give —
+    /// a <c>HAVING</c> clause names an aggregate alias rather than a member. Only the date types read
+    /// it, and only to decide what a null guard, a literal and <c>.Date</c> have to look like.
+    /// </param>
     /// <returns>Dynamic LINQ predicate snippet.</returns>
     /// <exception cref="LogicException">Thrown if the combination of <paramref name="dataType"/> and <paramref name="_operator"/> is unsupported.</exception>
-    public static string BuildCondition(DataType dataType, Operator _operator, string field, List<string> values)
+    public static string BuildCondition(
+        DataType dataType, Operator _operator, string field, List<string> values, Type? memberType = null)
     {
+        // The values as validation saw them. A date is parsed and rebuilt rather than embedded, so it
+        // is read from these: escaping first would hand the reader a backslash validation never saw.
+        List<string> unescaped = values;
+
         // Normalize value tokens by trimming whitespace; validation already happened upstream.
         // Escape them for embedding in a dynamic LINQ string literal — see Escape.
         values = values.Select(v => Escape(v.Trim())).ToList();
@@ -96,25 +106,25 @@ internal static class Builder
                     case Operator.In:
                     {
                         var ors = values.Select(v => $"{field} == \"{v}\"");
-                        return $"{field} != null && ({string.Join(" || ", ors)})";
+                        return $"{field} != null && ({JoinValues(ors, "||")})";
                     }
 
                     case Operator.IIn:
                     {
                         var ors = values.Select(v => $"{field}.ToLower() == \"{v.ToLower()}\"");
-                        return $"{field} != null && ({string.Join(" || ", ors)})";
+                        return $"{field} != null && ({JoinValues(ors, "||")})";
                     }
 
                     case Operator.NotIn:
                     {
                         var ands = values.Select(v => $"{field} != \"{v}\"");
-                        return $"{field} != null && ({string.Join(" && ", ands)})";
+                        return $"{field} != null && ({JoinValues(ands, "&&")})";
                     }
 
                     case Operator.INotIn:
                     {
                         var ands = values.Select(v => $"{field}.ToLower() != \"{v.ToLower()}\"");
-                        return $"{field} != null && ({string.Join(" && ", ands)})";
+                        return $"{field} != null && ({JoinValues(ands, "&&")})";
                     }
 
                     case Operator.IsNull: return $"{field} == null";
@@ -139,13 +149,13 @@ internal static class Builder
                     case Operator.In:
                     {
                         var ors = values.Select(v => $"{field} == \"{v}\"");
-                        return $"{field} != null && ({string.Join(" || ", ors)})";
+                        return $"{field} != null && ({JoinValues(ors, "||")})";
                     }
 
                     case Operator.NotIn:
                     {
                         var ands = values.Select(v => $"{field} != \"{v}\"");
-                        return $"{field} != null && ({string.Join(" && ", ands)})";
+                        return $"{field} != null && ({JoinValues(ands, "&&")})";
                     }
 
                     case Operator.IsNull: return $"{field} == null";
@@ -171,13 +181,13 @@ internal static class Builder
                     case Operator.In:
                     {
                         var ors = values.Select(v => $"{field} == {v}");
-                        return $"{field} != null && ({string.Join(" || ", ors)})";
+                        return $"{field} != null && ({JoinValues(ors, "||")})";
                     }
 
                     case Operator.NotIn:
                     {
                         var ands = values.Select(v => $"{field} != {v}");
-                        return $"{field} != null && ({string.Join(" && ", ands)})";
+                        return $"{field} != null && ({JoinValues(ands, "&&")})";
                     }
 
                     case Operator.Between:
@@ -211,75 +221,13 @@ internal static class Builder
             // DATETIME (expect ISO 8601 strings)
             // ----------------------------------------------------------
             case DataType.DateTime:
-            {
-                switch (_operator)
-                {
-                    case Operator.Equal:
-                        return $"{field} != null && {field} == DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.NotEqual:
-                        return $"{field} != null && {field} != DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.GreaterThan:
-                        return $"{field} != null && {field} > DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.GreaterThanOrEqual:
-                        return $"{field} != null && {field} >= DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.LessThan:
-                        return $"{field} != null && {field} < DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.LessThanOrEqual:
-                        return $"{field} != null && {field} <= DateTime.Parse(\"{values[0]}\")";
-
-                    case Operator.Between:
-                        return $"{field} != null && {field} >= DateTime.Parse(\"{values[0]}\") && {field} <= DateTime.Parse(\"{values[1]}\")";
-
-                    case Operator.NotBetween:
-                        return $"{field} != null && ({field} < DateTime.Parse(\"{values[0]}\") || {field} > DateTime.Parse(\"{values[1]}\") )";
-
-                    case Operator.IsNull: return $"{field} == null";
-                    case Operator.IsNotNull: return $"{field} != null";
-                }
-            }
-            break;
+                return BuildDate(dataType, _operator, field, unescaped, memberType);
 
             // ----------------------------------------------------------
             // DATE (compare by .Date)
             // ----------------------------------------------------------
             case DataType.Date:
-            {
-                switch (_operator)
-                {
-                    case Operator.Equal:
-                        return $"{field} != null && {field}.Date == DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.NotEqual:
-                        return $"{field} != null && {field}.Date != DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.GreaterThan:
-                        return $"{field} != null && {field}.Date > DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.GreaterThanOrEqual:
-                        return $"{field} != null && {field}.Date >= DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.LessThan:
-                        return $"{field} != null && {field}.Date < DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.LessThanOrEqual:
-                        return $"{field} != null && {field}.Date <= DateTime.Parse(\"{values[0]}\").Date";
-
-                    case Operator.Between:
-                        return $"{field} != null && {field}.Date >= DateTime.Parse(\"{values[0]}\").Date && {field}.Date <= DateTime.Parse(\"{values[1]}\").Date";
-
-                    case Operator.NotBetween:
-                        return $"{field} != null && ({field}.Date < DateTime.Parse(\"{values[0]}\").Date || {field}.Date > DateTime.Parse(\"{values[1]}\").Date)";
-
-                    case Operator.IsNull: return $"{field} == null";
-                    case Operator.IsNotNull: return $"{field} != null";
-                }
-            }
-            break;
+                return BuildDate(dataType, _operator, field, unescaped, memberType);
 
             // ----------------------------------------------------------
             // Enum
@@ -315,13 +263,13 @@ internal static class Builder
                     case Operator.In:
                     {
                         var ors = values.Select(v => $"{field} == \"{v}\"");
-                        return $"{field} != null && ({string.Join(" || ", ors)})";
+                        return $"{field} != null && ({JoinValues(ors, "||")})";
                     }
 
                     case Operator.NotIn:
                     {
                         var ands = values.Select(v => $"{field} != \"{v}\"");
-                        return $"{field} != null && ({string.Join(" && ", ands)})";
+                        return $"{field} != null && ({JoinValues(ands, "&&")})";
                     }
 
                     case Operator.IsNull: return $"{field} == null";
@@ -332,6 +280,206 @@ internal static class Builder
         }
 
         throw new LogicException($"Unsupported combination of DataType '{dataType}' and Operator '{_operator}'.");
+    }
+
+    /// <summary>
+    /// Builds a predicate for <see cref="DataType.DateTime"/> or <see cref="DataType.Date"/>.
+    /// </summary>
+    /// <remarks>
+    /// One method for both date types because the three things that decide the shape are the same in
+    /// each: whether the member can be null, which of the two date types it is, and whether the
+    /// comparison is by instant or by calendar day.
+    /// <para>
+    /// The null guard is emitted only for a member that can actually be null. On a non-nullable
+    /// member it was never merely redundant: System.Linq.Dynamic.Core compares a struct against the
+    /// null constant by looking for an implicit conversion and, finding none, falls through to
+    /// <c>Expression.NotEqual</c>, which throws for <c>DateTimeOffset</c>. <c>DateTime</c> and
+    /// <c>int</c> escape that only because the parser carries an exclusion list that
+    /// <c>DateTimeOffset</c> is not on. Where the guard is dropped, <c>IsNull</c> and
+    /// <c>IsNotNull</c> answer with the constant the guard already implied.
+    /// </para>
+    /// <para>
+    /// The literal is built as the member's own type: <c>DateTimeOffset >= DateTime</c> has no
+    /// signature, so a literal of the wrong type fails even where the guard is right. A nullable
+    /// member is unwrapped with <c>.Value</c> under the guard that protects it, because
+    /// <c>DateTime?</c> has no <c>.Date</c>.
+    /// </para>
+    /// <para>
+    /// Values are parsed here, with the invariant culture, and re-emitted in round-trip form. The
+    /// shipped predicate used to carry the caller's text into a <c>DateTime.Parse</c> the runtime
+    /// evaluated in the host's culture, so the same filter meant different days on two servers.
+    /// A <c>DateTimeOffset</c> is normalised to UTC and a value with no zone is read as UTC, which
+    /// is what keeps a day comparison naming the day the caller wrote.
+    /// </para>
+    /// </remarks>
+    private static string BuildDate(
+        DataType dataType, Operator _operator, string field, List<string> values, Type? memberType)
+    {
+        Type? nullableOf = memberType is null ? null : Nullable.GetUnderlyingType(memberType);
+
+        // An unknown member type keeps the guard: a HAVING alias can be anything, and the shape that
+        // has shipped for it is the one its callers already depend on.
+        bool nullable = memberType is null || nullableOf is not null || !memberType.IsValueType;
+        DateValue.Kind kind = DateValue.KindOf(memberType);
+
+        // A DateOnly is already a day, and has no .Date to ask for.
+        bool byDay = dataType == DataType.Date && kind != DateValue.Kind.DateOnly;
+
+        string member = nullableOf is not null ? $"{field}.Value" : field;
+        string access = byDay ? $"{member}.Date" : member;
+
+        // A member that cannot hold null can still be out of reach. "Approval.ApprovedAt" has no value
+        // for an invoice with no approval, and a provider reads it as NULL: without a guard IsNotNull
+        // would be true for that invoice, and NotEqual's null compensation would return it — a forced
+        // scope included. Each navigation on the way is guarded instead of the member.
+        List<string> reach = nullable ? new List<string>() : Navigations(field);
+
+        string guard = nullable
+            ? $"{field} != null && "
+            : string.Concat(reach.Select(navigation => $"{navigation} != null && "));
+
+        string Literal(string value)
+        {
+            // The same reader validation uses, so a value it accepted is one this can build.
+            string parsed = DateValue.Read(value, memberType, field);
+
+            string call = kind switch
+            {
+                // A constructor, not DateOnly.Parse: the runtime evaluates the literal in the host's
+                // culture, and DateOnly.Parse reads "2026-09-01" as the year 1483 on a Thai server and
+                // refuses it on a Saudi one. DateTime.Parse and DateTimeOffset.Parse recognise round-trip
+                // text under every calendar, so those two stay as they are.
+                DateValue.Kind.DateOnly => $"DateOnly({DateOnlyArguments(parsed)})",
+                DateValue.Kind.Offset => $"DateTimeOffset.Parse(\"{parsed}\")",
+                _ => $"DateTime.Parse(\"{parsed}\")"
+            };
+
+            return byDay ? $"{call}.Date" : call;
+        }
+
+        switch (_operator)
+        {
+            case Operator.Equal:
+                return $"{guard}{access} == {Literal(values[0])}";
+
+            case Operator.NotEqual:
+                return $"{guard}{access} != {Literal(values[0])}";
+
+            case Operator.GreaterThan:
+                return $"{guard}{access} > {Literal(values[0])}";
+
+            case Operator.GreaterThanOrEqual:
+                return $"{guard}{access} >= {Literal(values[0])}";
+
+            case Operator.LessThan:
+                return $"{guard}{access} < {Literal(values[0])}";
+
+            case Operator.LessThanOrEqual:
+                return $"{guard}{access} <= {Literal(values[0])}";
+
+            case Operator.Between:
+                return $"{guard}{access} >= {Literal(values[0])} && {access} <= {Literal(values[1])}";
+
+            case Operator.NotBetween:
+                return $"{guard}({access} < {Literal(values[0])} || {access} > {Literal(values[1])})";
+
+            // A member that cannot hold null is null exactly when a navigation on its way is, and on
+            // the entity itself it is never null. Comparing the member to null is not an option: the
+            // parser cannot build that comparison, which is what throws.
+            case Operator.IsNull:
+                return nullable ? $"{field} == null"
+                    : reach.Count == 0 ? "false"
+                    : $"({string.Join(" || ", reach.Select(navigation => $"{navigation} == null"))})";
+
+            case Operator.IsNotNull:
+                return nullable ? $"{field} != null"
+                    : reach.Count == 0 ? "true"
+                    : $"({string.Join(" && ", reach.Select(navigation => $"{navigation} != null"))})";
+        }
+
+        throw new LogicException(
+            $"Unsupported combination of DataType '{dataType}' and Operator '{_operator}'.");
+    }
+
+    /// <summary>
+    /// The navigations a member access passes through, outermost first: <c>A</c> and <c>A.B</c> for
+    /// <c>A.B.Member</c>.
+    /// </summary>
+    /// <remarks>
+    /// The parameter a collection step introduces — <c>i1</c> in <c>i1.Approval.ApprovedAt</c>, inside
+    /// the <c>Any</c> the converter writes — is an element of that collection, which a provider never
+    /// yields as null, so it is not one of them.
+    /// </remarks>
+    private static List<string> Navigations(string field)
+    {
+        string[] segments = field.Split('.');
+
+        int first = segments.Length > 1 && IsCollectionParameter(segments[0]) ? 1 : 0;
+
+        List<string> navigations = new();
+
+        for (int end = first + 1; end < segments.Length; end++)
+        {
+            navigations.Add(string.Join(".", segments, 0, end));
+        }
+
+        return navigations;
+    }
+
+    /// <summary>True for <c>i</c> followed by digits, the lambda parameter a collection step is given.</summary>
+    private static bool IsCollectionParameter(string segment) =>
+        segment.Length > 1 && segment[0] == 'i' && segment.Skip(1).All(c => c >= '0' && c <= '9');
+
+    /// <summary>Turns <c>yyyy-MM-dd</c> into the three arguments of the <c>DateOnly</c> constructor.</summary>
+    private static string DateOnlyArguments(string day)
+    {
+        string[] parts = day.Split('-');
+
+        return $"{int.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture)}, " +
+               $"{int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture)}, " +
+               $"{int.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture)}";
+    }
+
+    /// <summary>
+    /// The most terms a value list is written with as one flat chain.
+    /// </summary>
+    private const int FlatValueTerms = 32;
+
+    /// <summary>
+    /// Joins the per-value terms of an <c>In</c> or <c>NotIn</c> with one operator, grouping a long list
+    /// into a balanced tree.
+    /// </summary>
+    /// <remarks>
+    /// The expression parser reads <c>a || b || c</c> as a chain one level deeper per term, and EF Core
+    /// walks a query tree recursively: a few hundred values overflowed the stack of a request thread
+    /// and ended the process, which no <c>catch</c> can stop. Split in halves, and each half in
+    /// parentheses, ten thousand values nest about nine levels past a flat run instead of ten thousand.
+    /// <para>
+    /// A list no longer than <see cref="FlatValueTerms"/> is written exactly as it was before, so the
+    /// predicate, and the SQL a provider makes of it, is unchanged for every list of that size. The
+    /// terms are all joined by the same operator, so grouping them changes nothing they mean.
+    /// </para>
+    /// </remarks>
+    /// <param name="terms">One comparison per value, in the caller's order.</param>
+    /// <param name="op">The operator joining them: <c>||</c> or <c>&amp;&amp;</c>.</param>
+    /// <returns>The joined terms, without surrounding parentheses.</returns>
+    private static string JoinValues(IEnumerable<string> terms, string op)
+    {
+        List<string> list = terms as List<string> ?? terms.ToList();
+
+        return JoinValues(list, 0, list.Count, op);
+    }
+
+    private static string JoinValues(List<string> terms, int start, int count, string op)
+    {
+        if (count <= FlatValueTerms)
+        {
+            return string.Join($" {op} ", terms.GetRange(start, count));
+        }
+
+        int half = count / 2;
+
+        return $"({JoinValues(terms, start, half, op)}) {op} ({JoinValues(terms, start + half, count - half, op)})";
     }
 
     /// <summary>

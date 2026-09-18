@@ -1,9 +1,11 @@
 ﻿using System.Reflection;
+using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Masking;
+using DynamicWhere.ex.Policies.Source;
 
 namespace DynamicWhere.ex.Policies.Validation;
 
@@ -68,12 +70,15 @@ public static class PolicyModelValidator
     {
         Dictionary<string, string> aliases = new(StringComparer.OrdinalIgnoreCase);
 
+        CheckDefaultOrder(type, errors, warnings);
+
         foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
             string member = $"{type.Name}.{property.Name}";
 
             CheckAlias(property, member, aliases, errors);
             CheckFacts(property, member, errors);
+            CheckForced(property, member, errors);
 
             ValueTransform chain;
 
@@ -103,6 +108,140 @@ public static class PolicyModelValidator
             CheckTokenVault(chain, member, options, errors);
             CheckOutputType(chain, property, member, errors);
             CheckMaskedButOrderable(chain, property, member, warnings);
+        }
+    }
+
+    /// <summary>
+    /// Reports what a guarded query would silently skip in <c>[DwEntity(DefaultOrder = ...)]</c>.
+    /// </summary>
+    /// <remarks>
+    /// A guarded query never fails over a default order, so this scan is the only place a mistake in one is
+    /// said out loud. An entry that is not a field and a direction is an error, because the author
+    /// meant something by it; a field the type does not have is a warning, because a model shared
+    /// across types can name one on purpose; a field no query can order by, such as a collection of
+    /// entities, is an error, because it can never be applied; and a field the type's own attributes
+    /// deny for ordering is an error, because every caller would have it left out and the order would
+    /// never be the one declared.
+    /// <para>
+    /// Only where the denial is sealed. One every attribute marks overridable can be lifted by a rule
+    /// for some callers, so it is a warning: a model that grants ordering at runtime is valid. A field
+    /// denied for segments alone is a warning too, since only a segment leaves it out.
+    /// </para>
+    /// </remarks>
+    private static void CheckDefaultOrder(Type type, List<string> errors, List<string> warnings)
+    {
+        (List<string> malformed, List<string> unknown, List<string> unorderable, List<string> reserved) =
+            DefaultOrder.Problems(type);
+
+        foreach (string entry in malformed)
+        {
+            errors.Add(
+                $"{type.Name}: DefaultOrder entry '{entry}' is not a field optionally followed by asc or desc, "
+                + "so guarded queries skip it.");
+        }
+
+        foreach (string field in unknown)
+        {
+            warnings.Add($"{type.Name}: DefaultOrder names '{field}', which {type.Name} does not have, so guarded queries skip it.");
+        }
+
+        foreach (string field in unorderable)
+        {
+            errors.Add($"{type.Name}: DefaultOrder names '{field}', which no query can order by, so guarded queries skip it.");
+        }
+
+        foreach (string field in reserved)
+        {
+            errors.Add(
+                $"{type.Name}: DefaultOrder names '{field}', which starts with a name the expression parser keeps "
+                + "for itself, so no query can use it. Rename the member.");
+        }
+
+        IReadOnlyList<DefaultOrder.Entry> entries = DefaultOrder.For(type);
+
+        if (entries.Count == 0)
+        {
+            return;
+        }
+
+        Resolution.PolicyResolver attributes = new(new Resolution.IDwPolicyProvider[] { new Resolution.AttributePolicyProvider() });
+
+        foreach (DefaultOrder.Entry entry in entries)
+        {
+            FieldPolicy policy = attributes.Resolve(type, entry.Field, new Context.DwPolicyContext());
+
+            if (!policy.Allows(PolicyFeature.Order))
+            {
+                if (DeniedOnlyOverridably(type, entry.Field, PolicyFeature.Order))
+                {
+                    warnings.Add(
+                        $"{type.Name}: DefaultOrder names '{entry.Field}', which its attributes deny for ordering "
+                        + "unless a rule allows it, so guarded queries leave it out until one does.");
+                }
+                else
+                {
+                    errors.Add(
+                        $"{type.Name}: DefaultOrder names '{entry.Field}', which its attributes deny for ordering, "
+                        + "so every guarded query leaves it out.");
+                }
+            }
+            else if (!policy.Allows(PolicyFeature.Segment))
+            {
+                warnings.Add(
+                    $"{type.Name}: DefaultOrder names '{entry.Field}', which its attributes deny for segments, "
+                    + "so guarded segments leave it out.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when the member a path ends on is denied a feature by its own attributes, and every one of
+    /// those attributes is overridable.
+    /// </summary>
+    private static bool DeniedOnlyOverridably(Type type, string path, PolicyFeature feature)
+    {
+        PropertyInfo? member = null;
+
+        foreach (string segment in path.Split('.'))
+        {
+            member = CacheReflection.FindProperty(type, segment);
+
+            if (member is null)
+            {
+                return false;
+            }
+
+            type = CacheReflection.GetCollectionElementType(member.PropertyType) ?? member.PropertyType;
+        }
+
+        List<DwDenyAttribute> denials = member!
+            .GetCustomAttributes<DwDenyAttribute>(inherit: true)
+            .Where(attribute => (attribute.Features & feature) == feature)
+            .ToList();
+
+        return denials.Count > 0 && denials.TrueForAll(attribute => attribute.Overridable);
+    }
+
+    /// <summary>
+    /// Refuses a forced predicate that resolution would refuse, so the first query does not find it.
+    /// </summary>
+    /// <remarks>
+    /// Resolution is the one place these are decided — naming neither a constant nor a context key,
+    /// naming both, a member with no data type, and <c>AllowNull</c> where it has no comparison to
+    /// widen or no null to admit — so the scan asks it rather than restating its rules.
+    /// </remarks>
+    private static void CheckForced(PropertyInfo property, string member, List<string> errors)
+    {
+        foreach (DwForceWhereAttribute attribute in property.GetCustomAttributes<DwForceWhereAttribute>(inherit: true))
+        {
+            try
+            {
+                Resolution.AttributePolicyProvider.ToFragment(property.Name, property, attribute);
+            }
+            catch (ArgumentException malformed)
+            {
+                errors.Add($"{member}: {malformed.Message}");
+            }
         }
     }
 

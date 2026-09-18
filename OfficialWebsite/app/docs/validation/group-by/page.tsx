@@ -39,16 +39,31 @@ export default function Page() {
             <td><code>GroupByFieldsMustBeUnique</code></td>
           </tr>
           <tr>
-            <td>Fields cannot be complex/navigation types</td>
+            <td>
+              Fields cannot be complex/navigation types — a collection of
+              entities fails here too
+            </td>
             <td><code>GroupByFieldCannotBeComplexType</code></td>
           </tr>
           <tr>
-            <td>Fields cannot be collection types</td>
+            <td>Fields cannot be a collection of collections</td>
             <td><code>GroupByFieldCannotBeCollectionType</code></td>
           </tr>
           <tr>
             <td>
-              Aggregation alias must not be empty and must not contain dots
+              A <code>GroupBy</code> field or an <code>AggregateBy.Field</code>{" "}
+              cannot start with a name the expression parser keeps for itself —{" "}
+              <code>new</code>, <code>iif</code>, <code>np</code>,{" "}
+              <code>isnull</code>, <code>is</code>, <code>as</code>,{" "}
+              <code>cast</code>, <code>true</code>, <code>false</code>,{" "}
+              <code>null</code>, in any letter case. Only the first segment counts
+            </td>
+            <td><code>{`FieldPath[{path}]StartsWithReservedName`}</code></td>
+          </tr>
+          <tr>
+            <td>
+              Aggregation alias must be a plain identifier — a leading letter
+              (any script) or underscore, then letters, digits, or underscores
             </td>
             <td><code>InvalidAlias</code></td>
           </tr>
@@ -63,11 +78,14 @@ export default function Page() {
             </td>
           </tr>
           <tr>
-            <td>Aggregation field must be a simple type</td>
+            <td>
+              Aggregation field must be a simple type — a collection of entities
+              fails here too
+            </td>
             <td><code>AggregationFieldMustBeSimpleType</code></td>
           </tr>
           <tr>
-            <td>Aggregation field cannot be a collection</td>
+            <td>Aggregation field cannot be a collection of collections</td>
             <td><code>AggregationFieldCannotBeCollectionType</code></td>
           </tr>
           <tr>
@@ -101,6 +119,16 @@ export default function Page() {
         is flattened into an alias such as <code>CategoryName</code> in the
         result. See{" "}
         <Link href="/docs/examples/summary">the Summary example</Link>.
+      </Callout>
+
+      <Callout tone="warn">
+        A path that ends on a collection is checked against its{" "}
+        <em>element</em> type, so a collection of entities is reported as{" "}
+        <code>GroupByFieldCannotBeComplexType</code> /{" "}
+        <code>AggregationFieldMustBeSimpleType</code>, and a collection of simple
+        values (<code>List&lt;string&gt;</code>) passes validation. The{" "}
+        <code>...CannotBeCollectionType</code> codes are reached only by a
+        collection of collections.
       </Callout>
 
       <h2 id="related">Related</h2>

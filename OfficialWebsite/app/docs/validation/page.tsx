@@ -15,7 +15,7 @@ export default function Page() {
     <DocPage pathname="/docs/validation">
       <h1>Validation</h1>
       <p>
-        Before DynamicWhere.ex translates your JSON into an{" "}
+        As DynamicWhere.ex translates your JSON into an{" "}
         <code>IQueryable&lt;T&gt;</code>, every shape is validated. A bad input
         throws a <code>LogicException</code> carrying a stable, machine-readable
         error code so your API can surface a precise 400 to the client.
@@ -24,15 +24,21 @@ export default function Page() {
       <h2 id="how-validation-works">How validation works</h2>
       <p>
         Validation is performed inside each extension method on the input shape
-        you pass. The library throws <code>LogicException(ErrorCode)</code>{" "}
-        whenever a rule is broken — execution stops, no SQL is ever generated,
-        and no data is touched.
+        you pass, clause by clause as the query is composed. The library throws{" "}
+        <code>LogicException</code> carrying the error string as its{" "}
+        <code>Message</code> whenever a rule is broken. Most failures stop the
+        call before any SQL runs — but not all: the dynamic terminals run their{" "}
+        <code>COUNT</code> query before <code>Orders</code>, <code>Page</code>{" "}
+        and <code>Selects</code> are validated. A <code>Segment</code> is combined
+        into one query, and every clause of it is validated before that query
+        runs.
       </p>
 
       <Callout tone="info">
         Catch <code>LogicException</code> in your controller pipeline and map its{" "}
-        <code>ErrorCode</code> to a structured error response. See the full list
-        of codes in <Link href="/docs/errors">Error Codes</Link>.
+        <code>Message</code> — the error string itself; there is no separate code
+        property — to a structured error response. See the full list of codes in{" "}
+        <Link href="/docs/errors">Error Codes</Link>.
       </Callout>
 
       <h2 id="rule-categories">Rule categories</h2>

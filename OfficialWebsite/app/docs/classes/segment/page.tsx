@@ -19,7 +19,8 @@ export default function Page() {
         A <code>Segment</code> stitches together multiple{" "}
         <Link href="/docs/classes/condition-set"><code>ConditionSet</code></Link> objects with{" "}
         <code>Union</code> / <code>Intersect</code> / <code>Except</code> set operations, then
-        applies optional projection, sort, and pagination.
+        applies optional sort and pagination. A projection, if you give one, is applied{" "}
+        <em>after</em> they are combined, to the ordered and paged rows.
       </p>
 
       <h2 id="properties">Properties</h2>
@@ -48,7 +49,10 @@ export default function Page() {
             <td>
               <code>List&lt;string&gt;?</code>
             </td>
-            <td>Optional field projection.</td>
+            <td>
+              Optional field projection, applied last to the combined, ordered and
+              paged rows, as for a <code>Filter</code>.
+            </td>
           </tr>
           <tr>
             <td>
@@ -72,9 +76,13 @@ export default function Page() {
       </table>
 
       <Callout tone="warn" title="Async-only">
-        Segments compile to set-operation SQL (<code>UNION</code> / <code>INTERSECT</code> /{" "}
-        <code>EXCEPT</code>) and are executed exclusively through{" "}
-        <Link href="/docs/extensions/to-list-async-segment"><code>ToListAsyncSegment</code></Link>.
+        The condition sets are combined into <strong>one query</strong> that the
+        database answers: <code>Union</code> and <code>Intersect</code> join the
+        sets&apos; conditions, and <code>Except</code> removes its set&apos;s rows
+        by primary key. A type with no primary key uses SQL <code>UNION</code> /{" "}
+        <code>INTERSECT</code> / <code>EXCEPT</code>. Segments are executed
+        exclusively through{" "}
+        <Link href="/docs/extensions/to-list-async-segment"><code>ToListAsync&lt;T&gt;(Segment)</code></Link>.
         There is no synchronous counterpart.
       </Callout>
 
@@ -126,7 +134,7 @@ export default function Page() {
     Page = new PageBy { PageNumber = 1, PageSize = 50 }
 };
 
-SegmentResult<Customer> result = await dbContext.Customers.ToListAsyncSegment(segment);`}</Code>
+SegmentResult<Customer> result = await dbContext.Customers.ToListAsync(segment);`}</Code>
 
       <h2 id="json-example">JSON example</h2>
       <Code lang="json">{`{
@@ -166,7 +174,7 @@ SegmentResult<Customer> result = await dbContext.Customers.ToListAsyncSegment(se
           <Link href="/docs/classes/segment-result">SegmentResult&lt;T&gt; →</Link>
         </li>
         <li>
-          <Link href="/docs/extensions/to-list-async-segment">ToListAsyncSegment →</Link>
+          <Link href="/docs/extensions/to-list-async-segment">ToListAsync&lt;T&gt;(Segment) →</Link>
         </li>
         <li>
           <Link href="/docs/enums/intersection">Intersection enum →</Link>

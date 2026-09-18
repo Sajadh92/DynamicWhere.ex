@@ -428,7 +428,17 @@ internal static class Converter
 
                 conditionAsString = conditionAsString[..^last.Length];
 
-                conditionAsString += Builder.BuildCondition(condition.DataType, condition.Operator, last, Normalizer.Normalize(condition.Values));
+                // The member's own type goes with it: a date predicate cannot be written correctly
+                // without knowing whether the member can be null and which of the two date types it
+                // is. Validation has already resolved the path, so the lookup cannot miss.
+                var member = CacheReflection.FindProperty(type, p)!;
+
+                conditionAsString += Builder.BuildCondition(
+                    condition.DataType,
+                    condition.Operator,
+                    last,
+                    Normalizer.Normalize(condition.Values, condition.DataType, member.PropertyType),
+                    member.PropertyType);
             }
         }
 
@@ -553,8 +563,9 @@ internal static class Converter
                 Aggregator.Average => $"Average({aggregate.Field})",
                 Aggregator.Minimum => $"Min({aggregate.Field})",
                 Aggregator.Maximum => $"Max({aggregate.Field})",
-                Aggregator.FirstOrDefault => $"Select({aggregate.Field}).OrderBy(it).FirstOrDefault()",
-                Aggregator.LastOrDefault => $"Select({aggregate.Field}).OrderByDescending(it).FirstOrDefault()",
+                // $ is the current element; the library parses with the "it" keyword switched off.
+                Aggregator.FirstOrDefault => $"Select({aggregate.Field}).OrderBy($).FirstOrDefault()",
+                Aggregator.LastOrDefault => $"Select({aggregate.Field}).OrderByDescending($).FirstOrDefault()",
                 _ => throw new LogicException(ErrorCode.UnsupportedAggregatorForType(
                     aggregate.Aggregator.ToString(),
                     "Unknown"))
@@ -707,11 +718,19 @@ internal static class Converter
     /// </summary>
     /// <param name="condition">The <see cref="Condition"/> to convert.</param>
     /// <returns>A dynamic LINQ predicate snippet enclosed in parentheses.</returns>
-    public static string AsHavingString(this Condition condition)
+    /// <param name="aliasTypes">
+    /// Each alias with the type it stands for, from <c>GroupBy.AliasTypes</c>. Without it a date
+    /// condition keeps the shape it had before the builder learned member types.
+    /// </param>
+    public static string AsHavingString(
+        this Condition condition, IReadOnlyDictionary<string, Type?>? aliasTypes = null)
     {
         condition.Values ??= new List<object>();
 
-        return $"({Builder.BuildCondition(condition.DataType, condition.Operator, condition.Field!, Normalizer.Normalize(condition.Values))})";
+        Type? aliasType = null;
+        aliasTypes?.TryGetValue(condition.Field!, out aliasType);
+
+        return $"({Builder.BuildCondition(condition.DataType, condition.Operator, condition.Field!, Normalizer.Normalize(condition.Values, condition.DataType, aliasType), aliasType)})";
     }
 
     /// <summary>
@@ -722,7 +741,9 @@ internal static class Converter
     /// <returns>
     /// A dynamic LINQ predicate string enclosed in parentheses, or an empty string when the group has no conditions.
     /// </returns>
-    public static string AsHavingString(this ConditionGroup group)
+    /// <param name="aliasTypes">Each alias with the type it stands for; see the condition overload.</param>
+    public static string AsHavingString(
+        this ConditionGroup group, IReadOnlyDictionary<string, Type?>? aliasTypes = null)
     {
         // Validate structure (duplicate sort values, etc.).
         group.Validate();
@@ -738,7 +759,7 @@ internal static class Converter
 
         foreach (Condition condition in group.Conditions.OrderBy(x => x.Sort))
         {
-            string conditionAsString = condition.AsHavingString();
+            string conditionAsString = condition.AsHavingString(aliasTypes);
 
             if (!string.IsNullOrWhiteSpace(conditionAsString))
             {
@@ -748,7 +769,7 @@ internal static class Converter
 
         foreach (ConditionGroup subGroup in group.SubConditionGroups.OrderBy(x => x.Sort))
         {
-            string subGroupAsString = subGroup.AsHavingString();
+            string subGroupAsString = subGroup.AsHavingString(aliasTypes);
 
             if (!string.IsNullOrWhiteSpace(subGroupAsString))
             {

@@ -31,8 +31,17 @@ public class RequirePolicyTests
         new() { Id = 1, Name = "Widget" }
     }.AsQueryable();
 
+    /// <summary>
+    /// A caller, prepared. The guarded surface refuses a context that never went through
+    /// <c>PrepareAsync</c>, which with no store configured does nothing except record that the
+    /// ceremony happened — the point being that a deployment behaves the same before and after it
+    /// gains one.
+    /// </summary>
     private static DwPolicyContext Caller() =>
-        new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
+        DwPolicy.PrepareAsync(new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1"))
+            .AsTask()
+            .GetAwaiter()
+            .GetResult();
 
     [Fact]
     public void An_unguarded_query_on_a_type_that_requires_policy_is_refused()

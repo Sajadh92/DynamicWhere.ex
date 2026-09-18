@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import DocPage from "@/components/DocPage";
+import Callout from "@/components/Callout";
 import { Code } from "@/components/Code";
 
 export const metadata: Metadata = {
@@ -73,6 +74,13 @@ export default function Page() {
   "pageNumber": 1,
   "pageSize": 25
 }`}</Code>
+
+      <Callout tone="warn">
+        <code>Page</code> does not order. Skipping rows of an unordered query
+        lets the database return them in any order it likes, so two pages can
+        repeat or miss a row. Always send an <code>Orders</code> list with a
+        page.
+      </Callout>
 
       <h2 id="see-also">See also</h2>
       <ul>

@@ -32,6 +32,7 @@ export default function Page() {
       <Code lang="csharp">{`using DynamicWhere.ex.Source;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
+using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Enums;`}</Code>
 
       <h2 id="step-2">2. Build a Filter</h2>
@@ -103,6 +104,14 @@ foreach (var c in result.Data)
   "page": { "pageNumber": 1, "pageSize": 10 }
 }`}</Code>
 
+      <Callout tone="warn">
+        That body names its enum members as strings, so the host needs a{" "}
+        <code>JsonStringEnumConverter</code> registered — without one the
+        request fails to bind. An omitted enum property is not an error: it
+        silently takes member 0 — <code>Text</code>, <code>Equal</code>,{" "}
+        <code>And</code>, <code>Ascending</code>, <code>Count</code>.
+      </Callout>
+
       <p>And a minimal ASP.NET Core endpoint that consumes it:</p>
       <Code lang="csharp">{`app.MapPost("/customers/search", async (Filter filter, AppDbContext db) =>
 {
@@ -142,7 +151,7 @@ Console.WriteLine(result.QueryString);`}</Code>
           <Link href="/docs/enums/operator">Operator reference →</Link> every supported comparison.
         </li>
         <li>
-          <Link href="/docs/examples">JSON Cookbook →</Link> 13 copy-pasteable examples covering every extension method.
+          <Link href="/docs/examples">JSON Cookbook →</Link> 12 copy-pasteable examples covering the core extension methods.
         </li>
         <li>
           <Link href="/docs/classes/segment">Segment →</Link> when you need UNION / INTERSECT / EXCEPT.

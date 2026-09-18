@@ -15,20 +15,23 @@ export default function Page() {
   return (
     <DocPage pathname="/docs/policies/admin">
       <h1>Admin API</h1>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.AspNetCore --version 3.0.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.AspNetCore --version 3.1.0`}</Code>
       <Code lang="csharp">{`app.MapDwPolicyAdmin(options =>
 {
-    options.RoutePrefix  = "/dw-policies";
-    options.ReadPolicy   = "DwPolicyRead";    // both required
-    options.WritePolicy  = "DwPolicyWrite";
+    options.RoutePrefix  = "/dw-policies";    // the default; mount it anywhere
+    options.ReadPolicy   = "DwPolicyRead";    // both required, unless
+    options.WritePolicy  = "DwPolicyWrite";   // AllowAnonymousAccess = true
 });`}</Code>
 
       <Callout tone="danger" title="It refuses to mount without an authorization policy">
         There is deliberately no default. <code>POST /rules</code> changes what
-        every caller may see, so there is nothing safe to fall back to. Omit
-        either name and the application fails at <strong>startup</strong> rather
-        than on the first request — because for an endpoint nobody is supposed to
-        call, the first call is exactly the one that must not be the discovery.
+        every caller may see, so there is nothing safe to fall back to.{" "}
+        <code>ReadPolicy</code> and <code>WritePolicy</code> are two separate
+        names and <em>both</em> are required: leave either blank — or blank the
+        route prefix — and the application fails at <strong>startup</strong>{" "}
+        rather than on the first request, because for an endpoint nobody is
+        supposed to call, the first call is exactly the one that must not be the
+        discovery.
       </Callout>
       <p>
         <code>AllowAnonymousAccess</code> exists for a deployment where something
@@ -41,10 +44,10 @@ export default function Page() {
         <thead><tr><th>Method</th><th>Route</th><th>Auth</th><th>Purpose</th></tr></thead>
         <tbody>
           <tr><td><code>POST</code></td><td><code>/schema</code></td><td>Read</td><td>Fields for a filter UI: labels, groups, order, allowed values, cost. Takes <code>paths</code> and <code>depth</code>.</td></tr>
-          <tr><td><code>GET</code></td><td><code>/rules?subject=</code></td><td>Read</td><td>List rules.</td></tr>
-          <tr><td><code>POST</code></td><td><code>/rules</code></td><td>Write</td><td>Upsert a rule.</td></tr>
+          <tr><td><code>GET</code></td><td><code>/rules?subject=</code></td><td>Read</td><td>List rules. The filter is <code>Kind[:Key]</code> — <code>Role:auditor</code>, not a bare key. Omitted, it lists every enabled broad rule; a user&apos;s rules need <code>User:{"{key}"}</code>.</td></tr>
+          <tr><td><code>POST</code></td><td><code>/rules</code></td><td>Write</td><td>Upsert a rule. The body cannot carry a transform, operator lists, a forced predicate or facts — those go through <code>IDwPolicyWritableStore.UpsertAsync</code>.</td></tr>
           <tr><td><code>DELETE</code></td><td><code>/rules/{"{id}"}</code></td><td>Write</td><td>Delete a rule.</td></tr>
-          <tr><td><code>POST</code></td><td><code>/explain</code></td><td>Read</td><td>The decision chain for one field.</td></tr>
+          <tr><td><code>POST</code></td><td><code>/explain</code></td><td>Read</td><td>The decision chain for one field, or for every field of the entity when none is named.</td></tr>
           <tr><td><code>POST</code></td><td><code>/simulate</code></td><td>Read</td><td>The sanitized clause, without executing it.</td></tr>
           <tr><td><code>GET</code></td><td><code>/health</code></td><td>Read</td><td>Snapshot version, age, degraded state, last error.</td></tr>
         </tbody>
@@ -106,9 +109,14 @@ export default function Page() {
       </p>
       <Code lang="csharp">{`options.Entities.Expose<Employee>("Employee");`}</Code>
       <p>
-        <strong>Sealed fields never appear</strong> — the schema omits them and{" "}
-        <code>POST /rules</code> rejects them, so an operator cannot even attempt
-        to grant one. Enforced at configuration time and again at resolution time.
+        <strong>Sealed fields never appear</strong> — the schema omits them, and{" "}
+        <code>POST /rules</code> rejects a rule aimed at one with a 400 whenever
+        the body&apos;s <code>entityType</code> resolves through the exposed
+        catalogue, so an operator is told at once rather than left to discover it.
+        That check is the courtesy and not the guarantee: a rule naming a type
+        nothing resolves is stored, and then loses at resolution time, where a
+        sealed attribute outranks every dynamic level whatever any store did or
+        did not check.
       </p>
       <Callout tone="note" title="Sealed is decided per feature">
         A field whose mask is sealed but whose <code>[DwDeny(Where)]</code> is
@@ -118,18 +126,40 @@ export default function Page() {
 
       <h2 id="explain">Explain</h2>
       <p>
-        The whole chain: what won, what it overrode, what was ignored and why.
+        The whole chain, as JSON: an array of field entries, each carrying one
+        record per feature saying what won, at which level, and what it overrode.
       </p>
-      <Code lang="text">{`Salary
-  CanSelect : true (masked)
-  Mask      : Partial(keepEnd 4)
-  Decided by: Rule a3f2 - Role=Manager, Priority 10
-  Overrode  : [DwMask(Full)] attribute (Overridable = true)
-  Ignored   : Rule b21c - Global, lower precedence`}</Code>
+      <Code lang="json">{`[
+  {
+    "field": "AccountNumber", "entityType": "MyApp.Models.Customer",
+    "name": "AccountNumber", "isSealed": false,
+    "features": [
+      { "feature": "Select", "effect": "Mask",
+        "decidedBy": "Rule a3f2 [Role:Finance]", "level": "DynamicRole",
+        "attributionAmbiguous": false, "tiedWith": [],
+        "overrode": ["DwMaskAttribute"] }
+    ]
+  }
+]`}</Code>
+      <p>
+        <code>features</code> holds all six, so a feature nothing spoke about
+        comes back as <code>Allow</code> with a null <code>decidedBy</code>.{" "}
+        <code>isSealed</code> says an attribute decided at least one feature
+        absolutely. A source renders as{" "}
+        <code>Rule {"{id}"} [Kind:Key]</code>, or as the attribute&apos;s type
+        name with <code>(sealed)</code> appended.
+      </p>
+      <p>
+        Send <code>field</code> to explain one field; leave it out and every
+        field of this caller&apos;s schema comes back, one entry each. There is
+        no list of what was ignored.
+      </p>
       <p>
         When two sources tie on level, specificity, priority and effect alike,
         the decided effect is still deterministic — only which of the equal
-        sources is named here is arbitrary. See{" "}
+        sources <code>decidedBy</code> names is arbitrary, and{" "}
+        <code>attributionAmbiguous</code> with <code>tiedWith</code> is how the
+        endpoint says so rather than crediting one of them. See{" "}
         <Link href="/docs/policies/precedence">Precedence</Link>.
       </p>
 
@@ -155,10 +185,23 @@ var caller = await DwClaimsAdapter.CreateContextAsync(User, claimsOptions, ct);`
       <h2 id="audit">Audit middleware</h2>
       <Code lang="csharp">{`app.UseDwPolicyAudit();`}</Code>
       <p>
-        Drains whatever a request recorded against its context to the configured{" "}
-        <code>IDwAuditSink</code>, once, at the end of the request. Without it the
-        events are built and never written.
+        Drains whatever a request recorded against its context to an{" "}
+        <code>IDwAuditSink</code>, once, at the end of the request. The sink is
+        resolved from the request&apos;s own services, and the context it drains
+        is the one stored in <code>HttpContext.Features</code> — a context built
+        outside the pipeline records events nothing collects. Without the
+        middleware the events are built and never written; with it and no sink
+        registered, they are discarded with a warning.
       </p>
+      <p>
+        It drains in a <code>finally</code>, so a request that threw still writes
+        what it recorded. With{" "}
+        <Link href="/docs/policies/configuration#audit-refusals"><code>DwPolicyOptions.AuditRefusals</code></Link>{" "}
+        on, that includes the refusal itself: a refused guarded query records an
+        event carrying its <code>ErrorCode</code>, drained in the same pass as the{" "}
+        <code>[DwAudit]</code> events. The no-sink warning names both sources:
+      </p>
+      <Code lang="text">{`{Count} policy audit events were recorded and no IDwAuditSink is registered, so they were discarded. Register one, or stop recording them: remove [DwAudit] from the fields that produced them, or turn off DwPolicyOptions.AuditRefusals.`}</Code>
     </DocPage>
   );
 }

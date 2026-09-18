@@ -36,6 +36,9 @@ namespace DynamicWhere.ex.Policies.Attributes;
 ///
 /// [DwForceWhere(Operator.Equal, Value = "false")]             // constant, soft delete
 /// public bool IsDeleted { get; set; }
+///
+/// [DwForceWhere(Operator.Equal, ContextValue = "TenantId", AllowNull = true)]   // or no tenant
+/// public int? InstitutionId { get; set; }
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = true, Inherited = true)]
@@ -64,9 +67,28 @@ public sealed class DwForceWhereAttribute : DwPolicyAttribute
     /// The key of an ambient value on the caller's context, such as <c>"TenantId"</c>.
     /// </summary>
     /// <remarks>
-    /// A key the context does not supply, or supplies as null, throws in both tiers and in dry run.
-    /// A tenant scope that silently fails to apply is worse than a failed request, and dry run's
-    /// promise is that it changes no data — not that it grants access.
+    /// A key the context does not supply, or supplies as null, throws <c>MissingContextValue</c> in
+    /// both tiers: a tenant scope that silently fails to apply is worse than a failed request. A dry run
+    /// injects no forced predicate at all, so there the missing value is recorded in the trace and
+    /// nothing is thrown.
     /// </remarks>
     public string? ContextValue { get; set; }
+
+    /// <summary>
+    /// When true, a row whose member is null passes as well: the injected term is
+    /// <c>(field op value OR field IS NULL)</c>.
+    /// </summary>
+    /// <remarks>
+    /// For a record that belongs to one tenant or to none — a system role no institution owns.
+    /// Several forced predicates on one member are joined by <c>And</c>, so no combination of them can
+    /// say "or null", and without this such rows could carry no forced predicate at all.
+    /// <para>
+    /// Refused at resolution with <see cref="Operator.IsNull"/> or <see cref="Operator.IsNotNull"/>,
+    /// which compare against nothing, and on a member that can never be null, where it could only be
+    /// a mistake. A context value is still required: the rows that pass widen, the caller's own scope
+    /// does not. And because the term is a disjunction, it does not satisfy a
+    /// <see cref="DwRequireWhereAttribute"/> on the same member.
+    /// </para>
+    /// </remarks>
+    public bool AllowNull { get; set; }
 }

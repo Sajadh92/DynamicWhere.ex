@@ -305,7 +305,7 @@ public class FilterTests : SalesTestBase
 
         Assert.Equal(0, result.PageNumber);
         Assert.Equal(0, result.PageSize);
-        Assert.Equal(6, result.PageCount);   // pageSize 0 is treated as 1, so PageCount == TotalCount
+        Assert.Equal(1, result.PageCount);   // unpaged is one page of everything, not one page per row
         Assert.Equal(6, result.TotalCount);
     }
 

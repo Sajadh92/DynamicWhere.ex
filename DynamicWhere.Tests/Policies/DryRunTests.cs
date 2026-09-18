@@ -40,7 +40,9 @@ public class DryRunTests
 
         caller.DryRun = perCaller;
 
-        DwPolicyOptions options = new() { Tier = tier, DryRun = global };
+        // The trace is on the result so the rehearsal can be read from it; the strict tier keeps it
+        // off the result unless told otherwise.
+        DwPolicyOptions options = new() { Tier = tier, DryRun = global, IncludeTraceInResult = true };
 
         return Ledger().ApplyPolicy(caller, options, Resolver()).ToList(filter);
     }

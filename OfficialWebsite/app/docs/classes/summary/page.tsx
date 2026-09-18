@@ -114,7 +114,7 @@ export default function Page() {
         AggregateBy = new List<AggregateBy>
         {
             new AggregateBy { Aggregator = Aggregator.Count, Alias = "Total" },
-            new AggregateBy { Field = "Amount", Aggregator = Aggregator.Sum, Alias = "Revenue" }
+            new AggregateBy { Field = "Amount", Aggregator = Aggregator.Sumation, Alias = "Revenue" }
         }
     },
     Having = new ConditionGroup
@@ -152,7 +152,7 @@ SummaryResult result = await dbContext.Orders.ToListAsync(summary);`}</Code>
     "fields": ["Country"],
     "aggregateBy": [
       { "aggregator": "Count", "alias": "Total" },
-      { "field": "Amount", "aggregator": "Sum", "alias": "Revenue" }
+      { "field": "Amount", "aggregator": "Sumation", "alias": "Revenue" }
     ]
   },
   "having": {
@@ -174,7 +174,7 @@ SummaryResult result = await dbContext.Orders.ToListAsync(summary);`}</Code>
           <Link href="/docs/classes/summary-result">SummaryResult →</Link>
         </li>
         <li>
-          <Link href="/docs/extensions/to-list-async-summary">ToListAsyncSummary →</Link>
+          <Link href="/docs/extensions/to-list-async-summary">ToListAsync&lt;T&gt;(Summary) →</Link>
         </li>
         <li>
           <Link href="/docs/validation/summary">Summary validation →</Link>

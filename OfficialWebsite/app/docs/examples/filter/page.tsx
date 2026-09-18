@@ -70,10 +70,28 @@ export default function Page() {
   "pageCount": 5,
   "totalCount": 42,
   "data": [
-    { "id": 7, "name": "Laptop Pro", "price": 1299.99, "category": { "name": "Electronics" } }
+    {
+      "id": 7,
+      "name": "Laptop Pro",
+      "price": 1299.99,
+      "isActive": false,
+      "createdAt": "0001-01-01T00:00:00",
+      "category": { "id": 5, "name": "Electronics" }
+    }
   ],
   "queryString": null
 }`}</Code>
+
+      <Callout tone="warn">
+        A typed row is a whole <code>Product</code>, not a trimmed object.{" "}
+        <code>selects</code> decides which members are <em>read</em>; the rest
+        are still present, holding their defaults. A selected reference
+        navigation also carries its <code>Id</code> when the nested type has
+        one, and a row with no category comes back as an empty{" "}
+        <code>category</code> object rather than <code>null</code>. Use{" "}
+        <Link href="/docs/examples/filter-dynamic">FilterDynamic</Link> when you
+        want a payload containing only the requested members.
+      </Callout>
 
       <Callout tone="info">
         Set <code>getQueryString: true</code> on the extension method to

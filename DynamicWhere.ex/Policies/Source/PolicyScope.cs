@@ -1,6 +1,7 @@
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Context;
+using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
 
 namespace DynamicWhere.ex.Policies.Source;
@@ -30,13 +31,31 @@ internal static class PolicyScope
 {
     private static readonly AsyncLocal<DwPolicyContext?> Ambient = new();
 
+    private static readonly AsyncLocal<PolicyTrace?> Names = new();
+
     /// <summary>The context in force, or null when the current call is unguarded.</summary>
     internal static DwPolicyContext? Current => Ambient.Value;
 
     /// <summary>
     /// Marks the current logical call as guarded until the returned scope is disposed.
     /// </summary>
-    internal static Scope Enter(DwPolicyContext context) => new(context);
+    /// <param name="context">The caller.</param>
+    /// <param name="trace">
+    /// The record of the sanitization that produced the query, which knows the names the caller
+    /// wrote. Null where there is none.
+    /// </param>
+    internal static Scope Enter(DwPolicyContext context, PolicyTrace? trace = null) => new(context, trace);
+
+    /// <summary>
+    /// The name the caller wrote for a canonical field path, inside a guarded call; the path itself
+    /// anywhere else.
+    /// </summary>
+    /// <remarks>
+    /// For a refusal the query engine raises after sanitization, such as a date it cannot read. By
+    /// then an aliased field has been rewritten to its canonical path, and naming that path back to a
+    /// caller who only ever used the alias would disclose the internal name the alias exists to hide.
+    /// </remarks>
+    internal static string Spoken(string fieldPath) => Names.Value?.Spoken(fieldPath) ?? fieldPath;
 
     /// <summary>
     /// Refuses to read a type that requires a policy context when none is in force.
@@ -91,14 +110,21 @@ internal static class PolicyScope
     internal readonly struct Scope : IDisposable
     {
         private readonly DwPolicyContext? _previous;
+        private readonly PolicyTrace? _previousNames;
 
-        internal Scope(DwPolicyContext context)
+        internal Scope(DwPolicyContext context, PolicyTrace? trace)
         {
             _previous = Ambient.Value;
+            _previousNames = Names.Value;
             Ambient.Value = context;
+            Names.Value = trace;
         }
 
         /// <summary>Restores the previous scope.</summary>
-        public void Dispose() => Ambient.Value = _previous;
+        public void Dispose()
+        {
+            Ambient.Value = _previous;
+            Names.Value = _previousNames;
+        }
     }
 }

@@ -15,8 +15,9 @@ A powerful, versatile library for dynamically composing complex **filter, sort, 
 ### Using an AI coding agent?
 
 Point it at **[doc.dynamicwhere.com/llms.txt](https://doc.dynamicwhere.com/llms.txt)** — the entire API
-surface in one plain-text file: every shape and field name, every enum member verbatim, all seventeen
-methods, the whole policy layer, and the traps that produce code which compiles and is quietly wrong.
+surface in one plain-text file: every public type and member of the four packages, the JSON on the wire,
+every error string, the whole policy layer, the cache, and the traps that produce code which compiles and
+is quietly wrong.
 
 ```text
 Read https://doc.dynamicwhere.com/llms.txt before writing any
@@ -34,10 +35,10 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 
 - **JSON in → `IQueryable<T>` out.** No string LINQ. No manual expression trees.
 - **Three composable shapes** — `Filter`, `Segment`, `Summary` — cover where, set operations, and group-by reporting.
-- **Seventeen extension methods** on `IQueryable<T>` and `IEnumerable<T>`.
+- **Twenty-one extension methods** on `IQueryable<T>` and `IEnumerable<T>`.
 - **Nested navigation** through references and collections, with auto-wrapped `.Any()` lambdas where needed.
 - **Heterogeneous `Condition.Values`** — pass raw numbers, booleans, strings; normalized per `DataType`.
-- **Thread-safe reflection cache** with FIFO / LRU / LFU eviction and six tuned presets.
+- **Thread-safe reflection cache** with FIFO / LRU / LFU eviction and five tuned presets.
 - **Field-level policies** *(new in 3.0)* — decide per caller what may be filtered, sorted, selected, grouped, aggregated and seen. Opt-in: nothing enforces until you ask.
 - **Free Forever.** Targets .NET 6, 7, 8, 9, 10.
 
@@ -46,13 +47,13 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 ## Install
 
 ```bash
-dotnet add package DynamicWhere.ex --version 3.0.0
+dotnet add package DynamicWhere.ex --version 3.1.0
 ```
 
 Or via Package Manager:
 
 ```powershell
-Install-Package DynamicWhere.ex -Version 3.0.0
+Install-Package DynamicWhere.ex -Version 3.1.0
 ```
 
 Dependencies (restored automatically):
@@ -61,6 +62,9 @@ Dependencies (restored automatically):
 |---------|--------:|
 | `Microsoft.EntityFrameworkCore` | `6.0.22` |
 | `System.Linq.Dynamic.Core` | `1.6.7` |
+| `Microsoft.Extensions.Configuration.Abstractions` | `6.0.0` |
+| `Microsoft.Extensions.Configuration.Binder` | `6.0.0` |
+| `Microsoft.Extensions.DependencyInjection.Abstractions` | `6.0.0` |
 
 ---
 
@@ -89,6 +93,7 @@ Dependencies (restored automatically):
 ```csharp
 using DynamicWhere.ex.Source;
 using DynamicWhere.ex.Classes.Complex;
+using DynamicWhere.ex.Classes.Result;
 
 app.MapPost("/products/search", async (Filter filter, AppDbContext db) =>
 {
@@ -106,11 +111,20 @@ app.MapPost("/products/search", async (Filter filter, AppDbContext db) =>
   "pageCount": 5,
   "totalCount": 42,
   "data": [
-    { "id": 7, "name": "Laptop Pro", "price": 1299.99, "category": { "name": "Electronics" } }
+    {
+      "id": 7,
+      "name": "Laptop Pro",
+      "price": 1299.99,
+      "isActive": false,
+      "createdAt": "0001-01-01T00:00:00",
+      "category": { "id": 5, "name": "Electronics" }
+    }
   ],
   "queryString": null
 }
 ```
+
+A typed row is a whole `Product`: `selects` decides which members are read, and the rest hold their defaults. `ToListAsyncDynamic` returns only the selected members.
 
 That's the whole loop. Full walk-through in **[Quick Start](https://doc.dynamicwhere.com/docs/quick-start)**.
 
@@ -126,7 +140,7 @@ That's the whole loop. Full walk-through in **[Quick Start](https://doc.dynamicw
 | **[`Segment`](https://doc.dynamicwhere.com/docs/classes/segment)** | set1 ∪/∩/∖ set2 ∪/∩/∖ set3 → order → page | UNION / INTERSECT / EXCEPT across multiple condition sets |
 | **[`Summary`](https://doc.dynamicwhere.com/docs/classes/summary)** | where → group → having → order → page | Aggregate reporting (`GROUP BY` + `SUM` / `AVG` / `COUNT` …) |
 
-### Seventeen extension methods
+### Twenty-one extension methods
 
 Projection, filtering, composition, and materialization on `IQueryable<T>` and `IEnumerable<T>`:
 
@@ -296,11 +310,11 @@ Neither closes equality, and that is the point of both: the same value maps to t
 
 ## Reflection cache
 
-A thread-safe `ConcurrentDictionary`-backed cache across three stores (TypeProperties · PropertyPath · CollectionElementType) eliminates reflection overhead on repeated queries. Three eviction strategies and six tuned presets:
+A thread-safe `ConcurrentDictionary`-backed cache across three stores (TypeProperties · PropertyPath · CollectionElementType) eliminates reflection overhead on repeated queries. Three eviction strategies, and five preset factories beside the default:
 
 | Preset | MaxSize | Eviction | Use case |
 |--------|--------:|:--------:|----------|
-| `Default` | 1000 | LRU | General purpose |
+| `new CacheOptions()` | 1000 | LRU | General purpose |
 | `ForHighMemoryEnvironment()` | 5000 | LRU | Servers with ample RAM |
 | `ForLowMemoryEnvironment()`  | 250  | LFU | Constrained environments |
 | `ForDevelopment()` | 100 | FIFO | Testing & debugging |
@@ -359,11 +373,34 @@ The complete reference — every enum, class, extension method, validation rule,
 
 ---
 
+## Version 3.1.0 highlights
+
+**Upgrade note — eleven behaviour changes, listed first. Read these before bumping.**
+
+- **Fixed (security): members named `Root`, `It` or `Parent`.** The expression parser read them as its `root` / `it` / `parent` keywords, so `Root.Name` addressed the row's own `Name`, and `Parent` threw. Under `ApplyPolicy` a projection of `Root.Name` returned a `[DwDenied]` column, and a `[DwForceWhere]` scope reached through such a navigation filtered the wrong column. Expressions are now parsed with the keywords off, through a configuration of the library's own: `ParsingConfig.Default` is no longer read. The words the parser does keep — `new`, `iif`, `np`, `isnull`, `is`, `as`, `cast`, `true`, `false`, `null` — are refused by name when one begins a field path, in every clause and guarded or not, with `LogicException` `FieldPath[{path}]StartsWithReservedName`. Nine of them used to throw, and a member named `Null` was read as the null literal, so the query returned no rows and no error. Only a path's first segment is affected: `Owner.New` names the member, and the remedy for such a column is to rename the property and map it with `[Column("New")]`.
+- **Fixed: `DateTimeOffset` columns.** Every comparison on a `DateTimeOffset` member threw, and `DataType.Date` on any nullable date member threw with it. The predicate is now built from the member's own type — a null guard only where the member can be null, a literal of the member's type, `.Value.Date` under the guard — and `IsNull` / `IsNotNull` on a non-nullable date member of the entity itself answer `false` / `true`. Reached through a navigation, they test the navigation. Verified against Npgsql `timestamptz`.
+- **Changed: a date value is ISO 8601 or a declared format, never a guess.** The server's culture used to decide, so `01/09/2026` was 1 September on one server and 9 January on another. Now ISO 8601 extended calendar dates (`2026-09-01`, with or without a time and zone) and year-first dates are accepted everywhere; a day/month-first date is refused with the new `AmbiguousDateFormat` unless the deployment declares its order once — `DwDates.Configure(o => o.Formats.Add("dd/MM/yyyy"))`. `DateTimeOffset` values are normalised to UTC, and `DateOnly` columns can be filtered at all. `Configure` refuses a format whose own text ISO 8601 or a year-first date already reads, such as `yyyy-MM-dd'T'HH:mm:ss'Z'`: declaring one could only change what such a value means.
+- **Changed: an unprepared context is refused with or without a store.** `ApplyPolicy(ctx)` throws `PolicyContextNotPrepared` for a context that never went through `DwPolicy.PrepareAsync`, with or without a store configured. An attributes-only deployment used to accept it and would have started refusing the day it gained a store.
+- **Changed: `Segment` set operations run in the database.** `Intersect` returned nothing, `Except` removed nothing and `Union` counted a row once per set whenever the query was untracked, projected with `Selects`, or guarded by `ApplyPolicy` — the sets were combined in memory by object reference. They are now one query: `Union` and `Intersect` combine the sets' conditions and `Except` matches rows by primary key, then the rows are ordered, paged and counted in SQL like a filter, so only the page is read. Sorting follows the database collation, and `Orders` apply before `Selects`.
+- **Changed: `PageCount` on an unpaged result is `1`** on filter, summary and segment results alike — it was `TotalCount` for the first two and `0` for a segment with condition sets.
+- **Changed: two new caps refuse guarded requests 3.0.0 ran.** `DwCaps.MaxConditionDepth` (default 10) bounds how deeply condition groups nest, and `DwCaps.MaxConditionSets` (default 10) how many condition sets a `Segment` may carry, empty sets included. A guarded request nested eleven levels deep, or a segment with eleven sets, is now refused with `CapExceeded` unless the deployment raises the cap. Unguarded calls are not affected.
+- **Changed: two more caps, and a `Count` that costs.** `DwCaps.MaxConditionValues` (default 1000) bounds the values one condition carries — an `In` was one comparison per value for the price of one condition — and `DwCaps.MaxAggregates` (default 50) the aggregates one summary computes. A guarded request over either is refused with `CapExceeded`. An aggregate with no field, such as a `Count`, is now charged `DefaultFieldCost` toward `MaxQueryCost`; it was free. Every count cap is checked before any field name is resolved, so an oversized request is refused with `CapExceeded` even when it also names a field that does not exist. Unguarded calls are not affected.
+- **Changed: a stable code where a sentence was.** `Select` on a type it cannot construct throws `SelectTypeMustHaveParameterlessConstructor`, with the type name on the new `LogicException.Subject`.
+- **Changed: the strict tier keeps the policy trace off results.** Under `DwTier.Strict`, `FilterResult<T>.Policy`, `SummaryResult.Policy` and `SegmentResult<T>.Policy` are null unless `DwPolicyOptions.IncludeTraceInResult = true`. The trace names every dropped field, the attribute or rule that sealed it and every injected predicate, and an API that serializes its result hands all of that to the caller. `PolicyQueryable<T>.LastTrace` still holds it, and the convenience tier still returns it unless the option is `false`.
+- **Changed: under the strict tier an unknown field and a denied field answer alike.** A name that matches nothing is refused like a `[DwDenied]` field, with that clause's `FieldDeniedFor…` code, instead of `LogicException` `ConditionMustHasValidFieldName`. Every such refusal carries `FieldPath` `"*"` and no `RuleId` or `SourceOrigin`, and a cap refusal names no path, so a caller can no longer list the columns they may not see one guess at a time. The side doors are shut too: inside a segment every field refusal is `FieldDeniedForSegment`, `MaxQueryCost` is checked after the field gates so a `[DwCost]` weight cannot tell a hidden field from a missing one, and `MissingContextValue` names neither the scope's column nor its context key. The trace keeps the real path; the convenience tier and dry runs are unchanged.
+- **Fixed (security): a long `In` list ended the process.** `In` and `NotIn` (and `IIn` / `INotIn` on text) joined their values into one flat `||` / `&&` chain, one level of expression nesting per value, and EF Core walks that tree recursively: a single condition carrying about seven hundred values overflowed the request thread's stack, guarded or not, and a stack overflow cannot be caught. A list longer than 32 values is now a balanced tree of short chains; a list of 32 or fewer is written exactly as before, and the rows returned are the same.
+- **Fixed: a local `DateTime` names its own moment on a `DateTimeOffset` member.** A C# `DateTime` whose `Kind` is `Local` — `DateTime.Now`, or one Newtonsoft.Json read from text with an offset — placed in `Values` under `DataType.DateTime` is written with its offset (`2026-09-17T15:00:00+03:00`). A `DateTimeOffset` member reads text with no zone as UTC, so a zoneless `DateTime.Now` would filter hours away on any host outside UTC. Under `DataType.Date`, on `DateTime` and `DateOnly` members, and for any other `Kind`, no zone is written; text values are read as sent.
+- **New: `DwCaps.DefaultPageSize`** (off by default) bounds a guarded query that sends no page — `MaxPageSize` only ever bounded a caller who had asked for one.
+- **New: `[DwForceWhere(..., AllowNull = true)]`** injects `(field op value OR field IS NULL)` in a group of its own, so a caller's `Or` cannot merge with it: the scope for a record that belongs to one tenant or to none. The context value is still required. `AllowNull` with `IsNull` / `IsNotNull` is refused on the attribute, through `ForcedPredicate` and in a stored rule. On a member that can never be null only the attribute is refused; a rule there, written without the type to hand, injects the comparison alone. The startup check now reports a refused attribute along with every other malformed `[DwForceWhere]`. Stored rules carry it as `forced.allowNull`.
+- **New: `[DwEntity(DefaultOrder = "CreatedAt desc, Id")]`** is the order a guarded query takes when its caller sends none — through the `Filter` and `Segment` terminals, the composable `Filter` and `FilterDynamic`, and `Page` on a source nothing has ordered or projected. The caller's own orders win, an already-ordered or projected query keeps its order, and a field this caller may not order by — or, in a segment, may not use in one — is left out and recorded in the trace, never refused. An audited field the default keeps is recorded as a use, as a caller's own order is; a field left out is not. Unguarded calls ignore it, and a `[DwEntity]` on a derived type replaces its base type's, so repeat `DefaultOrder` and `RequirePolicy` there.
+- **New: `DwPolicyOptions.AuditRefusals`** (off by default) writes every refused guarded query to the caller's audit buffer, drained to `IDwAuditSink` like a `[DwAudit]` event, so a caller probing for columns leaves a record. `DwAuditEvent` gains `ErrorCode`, and the event names the field by its canonical path — under the strict tier too, although the caller's refusal said `"*"` — cut to 256 characters with control, format, line separator and paragraph separator characters escaped, so an invented name cannot forge a log line or reverse the text after it.
+- **Fixed:** a healthy policy store nobody wrote to refused every guarded query fifteen minutes after its last write; the composable `Group` on a guarded query returned the small groups the k-anonymity floor suppresses; it and the composable `Summary` handed back the floor's own count column; a forced null check built with `ForcedPredicate.FromContext`, in code or in a stored rule, failed every guarded query on its type, and is now refused where it is built; and every invalid field name a caller sent kept an access record in the reflection cache for the life of the process, so unique invented names grew memory without limit.
+
 ## Version 3.0.0 highlights
 
 - **New: field-level policies.** A layer that decides what each caller may filter, sort, select, group, aggregate and see — attributes for the compile-time half, an optional store for the runtime half. See [above](#field-level-policies).
 - **New: three companion packages.** `Policies.Redis` and `Policies.EntityFrameworkCore` hold rules; `Policies.AspNetCore` mounts the admin API, explain, simulate and health, and refuses to map without a named authorization policy.
-- **No breaking changes.** The 2.x API is untouched. `FilterResult<T>` and `SummaryResult` each gain one nullable `Policy` property, null when the query was not guarded. Nothing enforces until you opt in.
+- **No API breaks.** The 2.x API is untouched and nothing enforces until you opt in. `FilterResult<T>` and `SummaryResult` each gain one nullable `Policy` property, null when the query was not guarded. Two things to know: the package takes three new `Microsoft.Extensions.*` dependencies, and `PolicyException` derives from `LogicException`, so an existing `catch (LogicException)` now also receives policy refusals.
 - **Worth knowing before you turn it on:** gating costs nothing measurable, but transforming every row of a large result costs about 1.6x in time and 7x in allocations, because each value is rebuilt after materialization rather than in SQL. `MinGroupSize` ships **on at 5**, so a guarded summary suppresses groups under five until you say otherwise — see [Security](https://doc.dynamicwhere.com/docs/policies/security) and [Configuration](https://doc.dynamicwhere.com/docs/policies/configuration).
 
 ## Version 2.1.5 highlights
@@ -388,8 +425,8 @@ The complete reference — every enum, class, extension method, validation rule,
 
 ## Version 2.1.0 highlights
 
-- **Heterogeneous `Condition.Values`** — `List<object>` with type-safe coercion. Send raw numbers and booleans without quoting. Backward-compatible with `List<string>` callers.
-- **Six tuned cache presets** — pick `ForHighMemory`, `ForLowMemory`, `ForDevelopment`, `ForHighFrequencyAccess`, `ForTemporalAccess`, or the default.
+- **Heterogeneous `Condition.Values`** — `List<object>` with type-safe coercion. Send raw numbers and booleans without quoting. JSON callers are unaffected; C# code assigning a `List<string>` no longer compiles.
+- **Five tuned cache presets** — pick `ForHighMemoryEnvironment`, `ForLowMemoryEnvironment`, `ForDevelopment`, `ForHighFrequencyAccess`, `ForTemporalAccess`, or the default `new CacheOptions()`.
 - **Official documentation site** launched at `doc.dynamicwhere.com`.
 
 See **[Breaking Changes & Known Limitations](https://doc.dynamicwhere.com/docs/breaking-changes)** for the complete migration / caveat list.
@@ -398,9 +435,9 @@ See **[Breaking Changes & Known Limitations](https://doc.dynamicwhere.com/docs/b
 
 ## Compatibility
 
-- **.NET:** 6, 7, 8, 9
+- **.NET:** 6, 7, 8, 9, 10
 - **EF Core providers:** SQL Server, PostgreSQL (Npgsql), MySQL (Pomelo), SQLite — anything that supports `ToQueryString()` for the optional `getQueryString: true` flag.
-- **Enum storage:** assumed stored as strings. Use `DataType.Number` if your column stores integers.
+- **Enum storage:** either. `DataType.Enum` matches by member name (any case) or by number, and translates against an `int` column as readily as a `string` one. What it does not do is the string operators: `Contains` and friends throw against an enum-typed member, so a `string` column that merely holds enum names wants `DataType.Text`.
 - **Case-insensitive operators:** emit `.ToLower()` on both sides. Works well on SQL Server's default collation; watch for case-sensitive PostgreSQL `C` locale.
 
 ---

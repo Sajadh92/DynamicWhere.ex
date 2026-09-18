@@ -46,8 +46,11 @@ public static class DwClaimsAdapter
     /// Thrown when the principal is not authenticated and the options do not allow it.
     /// </exception>
     /// <remarks>
-    /// For a host with no policy store, where there is nothing to prepare. Anything reading a store
-    /// should use <see cref="CreateContextAsync"/>.
+    /// The context is not prepared, and <c>ApplyPolicy(context)</c> refuses it with
+    /// <c>PolicyContextNotPrepared</c> whether or not a store is configured. Pass it through
+    /// <c>DwPolicy.PrepareAsync</c> before querying, or use <see cref="CreateContextAsync"/>, which
+    /// does both. It is for a host that adds to the context before preparing it, or that hands it to
+    /// the <c>ApplyPolicy</c> overload taking its own options and resolver.
     /// </remarks>
     public static DwPolicyContext FromClaims(ClaimsPrincipal principal, DwClaimsOptions options)
     {

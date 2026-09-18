@@ -110,13 +110,19 @@ public static class DwPolicy
     /// caller's user-level rules. Everything downstream then resolves synchronously against what was
     /// read here, and every query the context makes sees one coherent version of the policy.
     /// <para>
-    /// A context that skips this is refused by any store provider that sees it. It could only be
-    /// served from the broad zone, where a denial written for one user does not appear — and a
+    /// A context that skips this is refused with <c>PolicyContextNotPrepared</c>: by
+    /// <c>ApplyPolicy(context)</c>, store or no store, and by any store provider that sees it. It could
+    /// only be served from the broad zone, where a denial written for one user does not appear — and a
     /// denial that silently does not apply is the failure this whole layer exists to prevent.
     /// </para>
     /// <para>
-    /// Harmless and cheap when no store is configured: with nothing but attributes in force there is
-    /// nothing to pin, and the call does nothing.
+    /// Cheap when no store is configured: with nothing but attributes in force there is nothing to pin
+    /// and nothing is read, but the context is still marked prepared.
+    /// </para>
+    /// <para>
+    /// A user-level rule the store holds but cannot read throws here, for every request of the caller it
+    /// names, whatever <c>StoreFailure</c> says: it is read only for that caller, never by the load that
+    /// startup and refresh run.
     /// </para>
     /// </remarks>
     /// <example>
@@ -141,6 +147,11 @@ public static class DwPolicy
         {
             await stores[i].PrepareAsync(context, ct).ConfigureAwait(false);
         }
+
+        // Recorded even when no store pinned anything. With attributes alone there is nothing to
+        // read, but the guarded surface refuses a context that never came through here, so that a
+        // deployment behaves the same before and after it gains a store.
+        context.MarkPrepared();
 
         return context;
     }

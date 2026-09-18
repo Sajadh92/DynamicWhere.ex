@@ -341,6 +341,13 @@ public static class PolicyRuleDocument
                 writer.WriteString("contextValue", rule.Forced.ContextValue);
             }
 
+            // Written only when set, so a document for a predicate that does not widen is the one
+            // every earlier release wrote and read.
+            if (rule.Forced.AllowNull)
+            {
+                writer.WriteBoolean("allowNull", true);
+            }
+
             writer.WriteEndObject();
         }
 
@@ -597,6 +604,7 @@ public static class PolicyRuleDocument
         DataType type = ReadEnum<DataType>(forced, "dataType", required: true)!.Value;
         string? value = ReadString(forced, "value");
         string? contextValue = ReadString(forced, "contextValue");
+        bool allowNull = ReadAllowNull(forced);
 
         if (value is not null && contextValue is not null)
         {
@@ -608,12 +616,44 @@ public static class PolicyRuleDocument
 
         if (value is not null)
         {
-            return ForcedPredicate.FromConstant(field, op, type, value);
+            return ForcedPredicate.FromConstant(field, op, type, value, allowNull);
         }
 
-        return contextValue is not null
-            ? ForcedPredicate.FromContext(field, op, type, contextValue)
-            : ForcedPredicate.FromNullCheck(field, op, type);
+        if (contextValue is not null)
+        {
+            return ForcedPredicate.FromContext(field, op, type, contextValue, allowNull);
+        }
+
+        if (allowNull)
+        {
+            throw new ArgumentException(
+                "'forced.allowNull' widens a comparison, and a null check compares against nothing.");
+        }
+
+        return ForcedPredicate.FromNullCheck(field, op, type);
+    }
+
+    /// <summary>
+    /// Reads <c>forced.allowNull</c>, which is absent from every document written before it existed.
+    /// </summary>
+    /// <remarks>
+    /// Anything but a JSON boolean is refused. A string <c>"false"</c> read as true would widen a
+    /// tenant scope nobody asked to widen, and read as false would ignore a rule somebody wrote.
+    /// </remarks>
+    private static bool ReadAllowNull(JsonElement forced)
+    {
+        if (!forced.TryGetProperty("allowNull", out JsonElement allowNull)
+            || allowNull.ValueKind == JsonValueKind.Null)
+        {
+            return false;
+        }
+
+        return allowNull.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => throw new ArgumentException("'forced.allowNull' must be true or false.")
+        };
     }
 
     /// <summary>Parses a document, refusing anything that is not a JSON object.</summary>

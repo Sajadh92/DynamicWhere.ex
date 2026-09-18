@@ -28,14 +28,14 @@ export default function Page() {
       </p>
 
       <h2 id="cli">dotnet CLI</h2>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 3.0.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 3.1.0`}</Code>
 
       <h2 id="package-manager">Package Manager (Visual Studio)</h2>
-      <Code lang="powershell">{`Install-Package DynamicWhere.ex -Version 3.0.0`}</Code>
+      <Code lang="powershell">{`Install-Package DynamicWhere.ex -Version 3.1.0`}</Code>
 
       <h2 id="package-reference">PackageReference (csproj)</h2>
       <Code lang="xml">{`<ItemGroup>
-  <PackageReference Include="DynamicWhere.ex" Version="3.0.0" />
+  <PackageReference Include="DynamicWhere.ex" Version="3.1.0" />
 </ItemGroup>`}</Code>
 
       <h2 id="dependencies">Dependencies</h2>
@@ -64,6 +64,21 @@ export default function Page() {
             <td><code>1.6.7</code></td>
             <td>Enables string-based <code>Select</code> / <code>OrderBy</code> / <code>GroupBy</code> used by the dynamic variants.</td>
           </tr>
+          <tr>
+            <td><code>Microsoft.Extensions.Configuration.Abstractions</code></td>
+            <td><code>6.0.0</code></td>
+            <td>Provides <code>IConfiguration</code>, the section <code>DwPolicyOptions</code> and <code>DwDateOptions</code> bind from.</td>
+          </tr>
+          <tr>
+            <td><code>Microsoft.Extensions.Configuration.Binder</code></td>
+            <td><code>6.0.0</code></td>
+            <td>Binds that section, and refuses a key nothing answers to.</td>
+          </tr>
+          <tr>
+            <td><code>Microsoft.Extensions.DependencyInjection.Abstractions</code></td>
+            <td><code>6.0.0</code></td>
+            <td>Provides <code>IServiceCollection</code>, for <code>AddDwPolicies</code>.</td>
+          </tr>
         </tbody>
       </table>
 
@@ -72,9 +87,11 @@ export default function Page() {
       <Code lang="csharp">{`using DynamicWhere.ex.Source;            // Extension methods
 using DynamicWhere.ex.Classes.Core;      // Condition, ConditionGroup, OrderBy, PageBy, ...
 using DynamicWhere.ex.Classes.Complex;   // Filter, Segment, Summary
+using DynamicWhere.ex.Classes.Result;    // FilterResult, SegmentResult, SummaryResult
 using DynamicWhere.ex.Enums;             // DataType, Operator, Connector, ...
 using DynamicWhere.ex.Optimization.Cache.Source; // CacheExpose
-using DynamicWhere.ex.Optimization.Cache.Config; // CacheOptions, CacheEvictionStrategy`}</Code>
+using DynamicWhere.ex.Optimization.Cache.Config; // CacheOptions
+using DynamicWhere.ex.Optimization.Cache.Enums;  // CacheEvictionStrategy, CacheMemoryType`}</Code>
 
       <h2 id="verify">Verify the install</h2>
       <p>The fastest sanity check is a one-liner against an existing DbSet:</p>
@@ -105,7 +122,8 @@ using DynamicWhere.ex.Optimization.Cache.Config; // CacheOptions, CacheEvictionS
           <Link href="/docs/breaking-changes">Breaking Changes</Link> for performance notes.
         </li>
         <li>
-          <strong>Enum storage:</strong> the <code>Enum</code> data type assumes enums are stored as <em>strings</em>. If you store them as integers, filter using <code>DataType.Number</code> instead.
+          <strong>Enum storage:</strong> the <code>Enum</code> data type compares the member name you send, and works whether the column stores names or integers. See{" "}
+          <Link href="/docs/breaking-changes#enum-string-storage">Breaking Changes</Link>.
         </li>
       </ul>
 

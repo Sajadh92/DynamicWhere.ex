@@ -62,7 +62,10 @@ public static class Extension
         // Requirement: T must have a parameterless constructor.
         if (typeof(T).GetConstructor(Type.EmptyTypes) is null)
         {
-            throw new LogicException("Select projection requires a parameterless constructor on type '" + typeof(T).Name + "'.");
+            // The short name, as the old sentence had: Subject is meant for an error envelope, and a
+            // namespace tells a client how the server is laid out without helping it fix the request.
+            throw new LogicException(
+                ErrorCode.SelectTypeMustHaveParameterlessConstructor, typeof(T).Name);
         }
 
         // Build the strongly-typed projection expression.
@@ -138,7 +141,7 @@ public static class Extension
         string selector = Converter.BuildDynamicSelectString(fields, typeof(T));
 
         // Apply the string-based Dynamic LINQ select and return the non-generic IQueryable.
-        return query.Select(selector);
+        return query.Select(DynamicLinq.Config, selector);
     }
 
     /// <summary>
@@ -175,7 +178,7 @@ public static class Extension
         }
 
         // Apply the filter to the query and return the result.
-        return query.Where(where);
+        return query.Where(DynamicLinq.Config, where);
     }
 
     /// <summary>
@@ -212,7 +215,7 @@ public static class Extension
         }
 
         // Apply the filter to the query and return the result.
-        return query.Where(where);
+        return query.Where(DynamicLinq.Config, where);
     }
 
     /// <summary>
@@ -251,7 +254,7 @@ public static class Extension
         var (groupByString, selectString) = groupBy.AsString<T>();
 
         // Apply GroupBy and Select using dynamic LINQ.
-        return query.GroupBy(groupByString).Select(selectString);
+        return query.GroupBy(DynamicLinq.Config, groupByString).Select(DynamicLinq.Config, selectString);
     }
 
     /// <summary>
@@ -288,7 +291,7 @@ public static class Extension
         }
 
         // Apply the ordering to the query and return the result.
-        return query.OrderBy(orderBy);
+        return query.OrderBy(DynamicLinq.Config, orderBy);
     }
 
     /// <summary>
@@ -330,7 +333,7 @@ public static class Extension
         }
 
         // Apply the ordering to the query and return the result.
-        return query.OrderBy(orderBy);
+        return query.OrderBy(DynamicLinq.Config, orderBy);
     }
 
     /// <summary>
@@ -530,9 +533,12 @@ public static class Extension
         // Calculate the total count of entities before pagination.
         int totalCount = query.Count();
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a FilterResult containing the result data and pagination information.
         return new FilterResult<T>
@@ -609,9 +615,12 @@ public static class Extension
             ? newQuery.SelectDynamic(filter.Selects)
             : newQuery;
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a FilterResult containing the dynamic result data and pagination information.
         return new FilterResult<dynamic>
@@ -723,9 +732,12 @@ public static class Extension
         // Calculate the total count of entities before pagination.
         int totalCount = await query.CountAsync();
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a FilterResult containing the result data and pagination information.
         return new FilterResult<T>
@@ -802,9 +814,12 @@ public static class Extension
             ? newQuery.SelectDynamic(filter.Selects)
             : newQuery;
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a FilterResult containing the dynamic result data and pagination information.
         return new FilterResult<dynamic>
@@ -859,11 +874,11 @@ public static class Extension
         // Apply Having filter on grouped results.
         if (summary.Having != null)
         {
-            string havingFilter = summary.Having.AsHavingString();
+            string havingFilter = summary.Having.AsHavingString(summary.GroupBy!.AliasTypes<T>());
 
             if (!string.IsNullOrWhiteSpace(havingFilter))
             {
-                result = result.Where(havingFilter);
+                result = result.Where(DynamicLinq.Config, havingFilter);
             }
         }
 
@@ -878,7 +893,7 @@ public static class Extension
 
             if (!string.IsNullOrWhiteSpace(orderBy))
             {
-                result = result.OrderBy(orderBy);
+                result = result.OrderBy(DynamicLinq.Config, orderBy);
             }
         }
 
@@ -933,11 +948,11 @@ public static class Extension
         // Apply Having filter on grouped results.
         if (summary.Having != null)
         {
-            string havingFilter = summary.Having.AsHavingString();
+            string havingFilter = summary.Having.AsHavingString(summary.GroupBy!.AliasTypes<T>());
 
             if (!string.IsNullOrWhiteSpace(havingFilter))
             {
-                result = result.Where(havingFilter);
+                result = result.Where(DynamicLinq.Config, havingFilter);
             }
         }
 
@@ -958,7 +973,7 @@ public static class Extension
 
             if (!string.IsNullOrWhiteSpace(orderBy))
             {
-                newResult = newResult.OrderBy(orderBy);
+                newResult = newResult.OrderBy(DynamicLinq.Config, orderBy);
             }
         }
 
@@ -975,9 +990,12 @@ public static class Extension
             pageSize = summary.Page.PageSize;
         }
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a SummaryResult containing the result data and pagination information.
         return new SummaryResult
@@ -1050,11 +1068,11 @@ public static class Extension
         // Apply Having filter on grouped results.
         if (summary.Having != null)
         {
-            string havingFilter = summary.Having.AsHavingString();
+            string havingFilter = summary.Having.AsHavingString(summary.GroupBy!.AliasTypes<T>());
 
             if (!string.IsNullOrWhiteSpace(havingFilter))
             {
-                result = result.Where(havingFilter);
+                result = result.Where(DynamicLinq.Config, havingFilter);
             }
         }
 
@@ -1075,7 +1093,7 @@ public static class Extension
 
             if (!string.IsNullOrWhiteSpace(orderBy))
             {
-                newResult = newResult.OrderBy(orderBy);
+                newResult = newResult.OrderBy(DynamicLinq.Config, orderBy);
             }
         }
 
@@ -1092,9 +1110,12 @@ public static class Extension
             pageSize = summary.Page.PageSize;
         }
 
-        // Calculate the total page count based on the page size.
-        int pageCount = (int)Math.Ceiling((double)totalCount /
-                        (pageSize == 0 ? 1 : pageSize));
+        // Calculate the total page count based on the page size. An unpaged query is one page of
+        // everything: dividing by one reported as many pages as there were rows, which read as a
+        // paging shape nobody could page through.
+        int pageCount = pageSize == 0
+            ? (totalCount == 0 ? 0 : 1)
+            : (int)Math.Ceiling((double)totalCount / pageSize);
 
         // Create and return a SummaryResult containing the result data and pagination information.
         return new SummaryResult
@@ -1119,6 +1140,13 @@ public static class Extension
     /// <returns>A <see cref="SegmentResult{T}"/> containing entities that match the filter conditions in the <see cref="Segment"/> with pagination information.</returns>
     /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="segment"/> is null.</exception>
     /// <exception cref="LogicException">Thrown when <paramref name="segment"/> contains invalid data.</exception>
+    /// <remarks>
+    /// The condition sets become one query, which the database answers: Union and Intersect combine the
+    /// sets' conditions, Except excludes the rows of its set by primary key, and a type with no primary
+    /// key is combined with the database's UNION, INTERSECT and EXCEPT. Ordering, paging, projection and
+    /// the total count then run exactly as they do for a <see cref="Filter"/>, so only the requested page
+    /// is read.
+    /// </remarks>
     public static async Task<SegmentResult<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment) where T : class
     {
         // Refuse a type that requires a policy context when the call is not inside one.
@@ -1134,118 +1162,32 @@ public static class Extension
             throw new ArgumentNullException(nameof(segment));
         }
 
-        // Validate and retrieve ConditionSets from the Segment.
+        // Validate and retrieve ConditionSets from the Segment, in Sort order.
         List<ConditionSet> sets = segment.ValidateAndGetSets();
 
-        // If there are no filter conditions, return all results (respecting select/order/page).
-        if (sets.Count == 0)
+        // Combine the sets into one query. With no sets there is nothing to combine, and every row is
+        // returned (respecting select/order/page).
+        IQueryable<T> combined = sets.Count == 0 ? query : SegmentComposer.Compose(query, sets);
+
+        // Order, page, project and count the combined query the way a filter does, in the database.
+        Filter filter = new()
         {
-            // Create a new filter with the same select, order, and pagination criteria.
-            Filter filter = new()
-            {
-                ConditionGroup = null,
-                Selects = segment.Selects,
-                Orders = segment.Orders,
-                Page = segment.Page
-            };
-
-            // Retrieve the results using the filter.
-            FilterResult<T> fresult = await query.ToListAsync<T>(filter);
-
-            // Return the results as a SegmentResult.
-            return new()
-            {
-                PageNumber = fresult.PageNumber,
-                PageSize = fresult.PageSize,
-                PageCount = fresult.PageCount,
-                TotalCount = fresult.TotalCount,
-                Data = fresult.Data
-            };
-        }
-
-        // Store filtered data sets.
-        List<(int sort, Intersection? intersection, List<T> list)> dataSets = new();
-
-        foreach (ConditionSet? set in sets.OrderBy(x => x.Sort))
-        {
-            // Apply filter conditions from ConditionGroup.
-            IQueryable<T> queryable = query.Where(set.ConditionGroup);
-
-            // Apply select criteria to the query if provided.
-            if (segment.Selects != null)
-            {
-                queryable = queryable.Select(segment.Selects);
-            }
-
-            // Materialize the filtered data and store it.
-            List<T> list = await queryable.ToListAsync();
-
-            dataSets.Add(new(set.Sort, set.Intersection, list));
-        }
-
-        // Combine and apply intersection operations to the data sets.
-        List<T> data = dataSets.OrderBy(x => x.sort).First().list;
-
-        foreach ((int sort, Intersection? intersection, List<T> list) in dataSets.OrderBy(x => x.sort).Skip(1))
-        {
-            switch (intersection)
-            {
-                case Intersection.Union:
-                {
-                    // Apply union operation to the result and the current list.
-                    data = data.Union(list).ToList();
-                }
-                break;
-
-                case Intersection.Intersect:
-                {
-                    // Apply intersect operation to the result and the current list.
-                    data = data.Intersect(list).ToList();
-                }
-                break;
-
-                case Intersection.Except:
-                {
-                    // Apply except operation to the result and the current list.
-                    data = data.Except(list).ToList();
-                }
-                break;
-            }
-        }
-
-        // Create a new SegmentResult to store the result.
-        SegmentResult<T> sresult = new()
-        {
-            // Get the total count of entities in the result.
-            TotalCount = data.Count
+            ConditionGroup = null,
+            Selects = segment.Selects,
+            Orders = segment.Orders,
+            Page = segment.Page
         };
 
-        // Apply ordering if it is set.
-        if (segment.Orders != null)
+        FilterResult<T> fresult = await combined.ToListAsync<T>(filter);
+
+        // Return the results as a SegmentResult.
+        return new()
         {
-            // Apply ordering to the data.
-            data = data.AsQueryable().Order(segment.Orders).ToList();
-        }
-
-        // Apply pagination if it is set.
-        if (segment.Page != null)
-        {
-            // Apply pagination to the data.
-            sresult.Data = data.AsQueryable().Page(segment.Page).ToList();
-
-            // Set PageNumber, PageSize and PageCount.
-            sresult.PageNumber = segment.Page.PageNumber;
-            sresult.PageSize = segment.Page.PageSize;
-
-            sresult.PageCount = (int)Math.Ceiling((double)sresult.TotalCount /
-                               (sresult.PageSize == 0 ? 1 : sresult.PageSize));
-        }
-        else
-        {
-            sresult.Data = data;
-        }
-
-        // Return the result.
-        return sresult;
+            PageNumber = fresult.PageNumber,
+            PageSize = fresult.PageSize,
+            PageCount = fresult.PageCount,
+            TotalCount = fresult.TotalCount,
+            Data = fresult.Data
+        };
     }
 }

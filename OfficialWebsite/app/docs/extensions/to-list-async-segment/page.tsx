@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: ".ToListAsync<T>(Segment)",
   description:
-    "Async-only segment entry — materialize each ConditionSet independently then apply Union / Intersect / Except in-memory before ordering and pagination.",
+    "Async-only segment entry — combine the ConditionSets with Union / Intersect / Except into one query, then order, page and project it in the database like a filter.",
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/to-list-async-segment/" },
 };
 
@@ -16,29 +16,29 @@ export default function Page() {
     <DocPage pathname="/docs/extensions/to-list-async-segment">
       <h1>.ToListAsync&lt;T&gt;(Segment)</h1>
       <p>
-        Async-only segment operation. Executes each{" "}
+        Async-only segment operation. Combines every{" "}
         <Link href="/docs/classes/condition-set">
           <code>ConditionSet</code>
         </Link>{" "}
-        independently, then applies set operations (<code>Union</code> /{" "}
-        <code>Intersect</code> / <code>Except</code>), followed by ordering and
-        pagination.
+        with set operations (<code>Union</code> / <code>Intersect</code> /{" "}
+        <code>Except</code>) into one query, then orders, pages and projects it
+        in the database exactly as a <code>Filter</code> is.
       </p>
 
       <Callout tone="warn">
         <strong>Async-only.</strong>{" "}
         <code>.ToListAsync&lt;T&gt;(Segment)</code> is the only entry point for
         segment queries — there is no synchronous{" "}
-        <code>.ToList&lt;T&gt;(Segment)</code> variant. Each{" "}
-        <code>ConditionSet</code> is materialized independently into memory,
-        then set operations are performed in-memory.
+        <code>.ToList&lt;T&gt;(Segment)</code> variant. It needs an EF Core
+        provider. On a type with a primary key, only <code>Except</code> needs one
+        that translates a correlated <code>EXISTS</code>.
       </Callout>
 
       <h2 id="signature">Signature</h2>
       <Code lang="csharp">{`public static Task<SegmentResult<T>> ToListAsync<T>(
     this IQueryable<T> query,
     Segment segment)
-    where T : class, new()`}</Code>
+    where T : class`}</Code>
 
       <table>
         <thead>
@@ -65,26 +65,34 @@ export default function Page() {
       <h2 id="pipeline">Pipeline</h2>
       <ul>
         <li>
-          For each <code>ConditionSet</code> (in <code>Sort</code> order):
-          apply its <code>ConditionGroup</code> as a <code>Where</code>, then
-          materialize that set into memory.
+          Combine the sets in <code>Sort</code> order, left to right, using each
+          later set&apos;s <code>Intersection</code>. The first set&apos;s{" "}
+          <code>Intersection</code> is ignored.
         </li>
         <li>
-          Apply set operations between consecutive results using the next set's{" "}
-          <code>Intersection</code> (<code>Union</code>, <code>Intersect</code>,
-          or <code>Except</code>). The first set's <code>Intersection</code> is
-          ignored.
+          <code>Union</code> and <code>Intersect</code> join the sets&apos; own
+          conditions with <code>OR</code> and <code>AND</code>.{" "}
+          <code>Except</code> removes the rows of its set with{" "}
+          <code>NOT EXISTS</code>, matched on <code>T</code>&apos;s primary key as
+          EF Core maps it — composite, value-converted and inherited keys
+          included.
         </li>
         <li>
-          Apply <code>Orders</code> on the combined in-memory result.
-        </li>
-        <li>
-          Apply <code>Page</code> on the combined in-memory result.
-        </li>
-        <li>
-          Optionally project via <code>Selects</code> before returning.
+          Apply <code>Orders</code>, then <code>Page</code>, then{" "}
+          <code>Selects</code> to the combined query, and count it for{" "}
+          <code>TotalCount</code> — the same steps, in the same order, as{" "}
+          <Link href="/docs/extensions/to-list-async-filter"><code>ToListAsync(Filter)</code></Link>.
+          Only the requested page is read, and an order field need not be
+          selected.
         </li>
       </ul>
+      <p>
+        Which rows belong is decided in the database, not by object reference, so
+        a tracking query, an <code>AsNoTracking()</code> query and a query with{" "}
+        <code>Selects</code> all return the same rows. Ordering is the
+        database&apos;s: text sorts by its collation, and NULLs fall where the
+        provider puts them.
+      </p>
 
       <h2 id="validations">Validations</h2>
       <ul>
@@ -225,13 +233,46 @@ SegmentResult<Product> result = await dbContext.Products.ToListAsync(segment);`}
         order → paginate.
       </p>
 
+      <Callout tone="warn" title="A type with no primary key compares whole rows">
+        A keyless entity type, or a query EF Core does not map to{" "}
+        <code>T</code>, has no key to match on. Its sets are combined with SQL{" "}
+        <code>UNION</code> / <code>INTERSECT</code> / <code>EXCEPT</code>, which
+        compare every column: identical rows collapse into one, a column the
+        database cannot compare (PostgreSQL <code>json</code>, SQL Server{" "}
+        <code>xml</code>) fails the query even when it is not selected, and the
+        provider must support the operators the sets use.
+      </Callout>
+
+      <Callout tone="danger" title="Changed in 3.1.0">
+        The sets used to be loaded one query each and combined in memory by
+        object reference. With <code>AsNoTracking()</code>, with{" "}
+        <code>Selects</code>, and under <code>ApplyPolicy</code>, which is always
+        untracked, <code>Intersect</code> returned nothing, <code>Except</code>{" "}
+        removed nothing and <code>Union</code> counted a row once per set.
+        Ordering and paging ran in memory after projection, and every row of
+        every set was read. See{" "}
+        <Link href="/docs/breaking-changes#segment-in-database">breaking changes</Link>.
+      </Callout>
+
+      <p>
+        A typed row is a whole <code>Product</code>, not a trimmed object: the
+        members outside <code>Selects</code> are still present, holding their
+        defaults.
+      </p>
       <Code lang="json">{`{
   "pageNumber": 1,
   "pageSize": 20,
   "pageCount": 2,
   "totalCount": 35,
   "data": [
-    { "id": 1, "name": "Adapter Cable", "price": 9.99 }
+    {
+      "id": 1,
+      "name": "Adapter Cable",
+      "price": 9.99,
+      "isActive": false,
+      "createdAt": "0001-01-01T00:00:00",
+      "category": null
+    }
   ],
   "queryString": null
 }`}</Code>

@@ -40,16 +40,77 @@ export default function Page() {
         expiry that does not happen.
       </p>
       <Callout tone="warn" title="Bad rules are refused at the boundary">
-        Validation lives in the <code>PolicyRule</code> constructor itself, so every
-        store and the admin API get the same refusals. A rule naming a sealed
-        field is rejected on write, not ignored on read.
+        A malformed rule — an unknown subject kind, a validity window that closes
+        before it opens, an effect with no feature to apply it to — is refused by
+        the <code>PolicyRule</code> constructor itself, so every store and the
+        admin API get the same refusals. The sealed-field refusal is separate:{" "}
+        <code>SealedFields.Refuse</code>, called by each store&apos;s{" "}
+        <code>UpsertAsync</code> and by <code>POST /rules</code>. It needs a way
+        to turn the rule&apos;s entity name into a <code>Type</code>, so a store
+        built without that resolver accepts the rule instead of rejecting it —
+        which costs nothing, because a sealed attribute outranks it at resolution
+        time regardless. Hand the store a resolver and the operator is told on
+        write rather than left with a rule that quietly never applies.
+      </Callout>
+
+      <h2 id="forced">A forced predicate on a rule</h2>
+      <p>
+        A rule carries the runtime form of <code>[DwForceWhere]</code> as a{" "}
+        <code>ForcedPredicate</code>, built by one of three factories:{" "}
+        <code>FromConstant</code>, <code>FromContext</code> and{" "}
+        <code>FromNullCheck</code>. <code>FromConstant</code> and{" "}
+        <code>FromContext</code> each have an overload taking a fifth argument,{" "}
+        <code>bool allowNull</code>, which <code>ForcedPredicate.AllowNull</code>{" "}
+        reports; the four-argument overloads mean <code>allowNull: false</code>, and{" "}
+        <code>FromNullCheck</code> is unchanged. Either factory throws{" "}
+        <code>ArgumentException</code> for <code>allowNull: true</code> with{" "}
+        <code>IsNull</code> or <code>IsNotNull</code>, which compare against
+        nothing: a widened <code>IsNotNull</code> would inject{" "}
+        <code>(field IS NOT NULL OR field IS NULL)</code>, a scope that scopes
+        nothing. Without the flag, a constant handed to <code>FromConstant</code>{" "}
+        with a null check is ignored, as before. A context key is not:{" "}
+        <code>FromContext</code>, both overloads, throws{" "}
+        <code>ArgumentException</code> for <code>IsNull</code> and{" "}
+        <code>IsNotNull</code>, which read no context value. Build a null check
+        with <code>FromNullCheck</code>.
+      </p>
+      <Code lang="csharp">{`// Every caller sees their own institution's roles, and the roles no institution owns.
+var scope = new PolicyRule(
+    subjectKind: DwSubjectKind.Global,
+    subjectKey:  null,
+    entityType:  typeof(Role).FullName!,
+    fieldPath:   "InstitutionId",
+    features:    PolicyFeature.None,      // carries a predicate and decides nothing
+    effect:      PolicyEffect.Allow,
+    forced:      ForcedPredicate.FromContext(
+        "InstitutionId", Operator.Equal, DataType.Number, "TenantId", allowNull: true));`}</Code>
+      <p>
+        The injected term, the refusal of a context that does not supply the
+        value, and the trace all follow{" "}
+        <Link href="/docs/policies/attributes#allow-null">the attribute</Link>. One
+        thing differs: a rule is written without the entity type to hand, so it is
+        not refused on a member that can never be null. On such a member it injects
+        the comparison alone, which is the same predicate, and the trace records{" "}
+        <code>forced predicate (Equal)</code> without <code>or null</code>. How a
+        stored rule writes the flag is on{" "}
+        <Link href="/docs/policies/providers#serialization">Store providers</Link>.
+      </p>
+      <Callout tone="warn" title="Fixed in 3.1.0: a null check built from a context key never worked">
+        <code>FromContext</code> used to accept <code>IsNull</code> and{" "}
+        <code>IsNotNull</code>. The key was still required, so a caller without it
+        was refused with <code>MissingContextValue</code>. A caller with it had the
+        value added to the null check, which validation refuses with{" "}
+        <code>ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues</code>, so
+        every guarded query on the type failed. The factory now refuses the
+        predicate where it is built, as <code>[DwForceWhere]</code> already refused
+        a <code>ContextValue</code> on a null check.
       </Callout>
 
       <h2 id="zones">Two zones</h2>
       <table>
         <thead><tr><th>Zone</th><th>Holds</th><th>Lifetime</th></tr></thead>
         <tbody>
-          <tr><td><strong>Broad</strong></td><td>Global, tenant and role rules</td><td>Cached and shared across requests</td></tr>
+          <tr><td><strong>Broad</strong></td><td>Global, tenant, role and custom rules — everything but a user rule</td><td>Cached and shared across requests</td></tr>
           <tr><td><strong>Narrow</strong></td><td>Per-user rules</td><td>Loaded for the identities on one context</td></tr>
         </tbody>
       </table>
@@ -65,11 +126,28 @@ export default function Page() {
         .WithSubject(DwSubjectKind.User, userId)
         .WithSubject(DwSubjectKind.Tenant, tenantId));`}</Code>
       <Callout tone="danger" title="An unprepared context is refused, not tolerated">
-        Any store provider that sees one throws{" "}
-        <code>PolicyContextNotPrepared</code>. Falling back to attributes alone
-        would look exactly like a working policy with the dynamic half missing,
-        which is the worst possible failure for this feature.
+        <code>ApplyPolicy(ctx)</code> throws{" "}
+        <code>PolicyContextNotPrepared</code> before a store is consulted at
+        all, and does so whether or not one is configured. Falling back to
+        attributes alone would look exactly like a working policy with the
+        dynamic half missing, which is the worst possible failure for this
+        feature — and the deployment where the missing call was silently
+        tolerated is the one that starts refusing in production the day it gains
+        a store.
       </Callout>
+      <p>
+        That check sits in front of the store&apos;s own two rather than
+        replacing them. A provider still refuses a context it attached no
+        snapshot to, and still refuses one that gained a <code>User</code>{" "}
+        subject after it was prepared. <code>DwPolicyContext.IsPrepared</code>{" "}
+        reports which state a context is in, preparation is recorded even when
+        no store pinned anything to it, and a context copied to{" "}
+        <Link href="/docs/policies/admin">simulate</Link> a prepared caller is
+        prepared. The overload taking an explicit <code>DwPolicyOptions</code>{" "}
+        and <code>PolicyResolver</code> does not check: a host composing its own
+        configuration owns preparation, and a store it hands in refuses an
+        unprepared context by itself.
+      </p>
       <p>
         A context carries the snapshot it was served, and the staleness ceiling
         measures how old <em>that</em> snapshot is — not how fresh the provider
@@ -88,9 +166,14 @@ export default function Page() {
         </tbody>
       </table>
       <p>
-        All three are bounded by the ceiling. A startup load failure always
-        throws, whatever the mode: an application that has never loaded a policy
-        has no last known good to serve.
+        The ceiling is checked after the mode, so it binds{" "}
+        <code>LastKnownGood</code> and a healthy provider alike: a snapshot older
+        than <code>MaxSnapshotAge</code> refuses the query even when nothing has
+        failed. <code>StaticOnly</code> is the one exception, and only once the
+        provider is already degraded — it has fallen back to attributes by then
+        and never reaches the check. A startup load failure always throws,
+        whatever the mode: an application that has never loaded a policy has no
+        last known good to serve.
       </p>
 
       <h2 id="refresh">Refresh</h2>
@@ -104,7 +187,7 @@ export default function Page() {
 {
     Console.WriteLine(provider.Version);      // snapshot version
     Console.WriteLine(provider.Age);          // how old it is
-    Console.WriteLine(provider.IsDegraded);   // serving last known good
+    Console.WriteLine(provider.IsDegraded);   // the last refresh or poll failed
     Console.WriteLine(provider.LastError);    // why
 }`}</Code>
 

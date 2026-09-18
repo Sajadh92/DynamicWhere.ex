@@ -237,6 +237,123 @@ public class StoreFailureTests
     }
 
     [Fact]
+    public async Task A_poll_that_confirms_the_version_renews_the_ceiling()
+    {
+        // A store nobody writes to is never reloaded, because the loop reloads on a version change.
+        // Without the poll renewing the stamp, the snapshot's load time freezes and the ceiling
+        // refuses every guarded query once it passes — a healthy store failing closed for no reason.
+        using InMemoryPolicyStore inner = new();
+
+        inner.Seed(Rule());
+
+        PollOnlyStore store = new(inner);
+
+        DwPolicyOptions options = new() { MaxSnapshotAge = TimeSpan.FromMinutes(15) };
+
+        options.RefreshInterval = TimeSpan.FromMilliseconds(20);
+        options.Freeze();
+
+        using StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(store, options);
+
+        // Sixteen minutes on with nothing written. The next poll reads the version the provider is
+        // already serving, which renews the snapshot as much as a reload would: the store was
+        // reachable, and it holds what is being served.
+        provider.Clock = () => DateTimeOffset.UtcNow.AddMinutes(16);
+
+        await WaitFor(() => provider.Age < TimeSpan.FromMinutes(15));
+
+        Assert.True(
+            provider.Age < TimeSpan.FromMinutes(15),
+            "a poll that confirmed the served version did not renew the snapshot");
+
+        DwPolicyContext context = await provider.PrepareAsync(new DwPolicyContext());
+
+        Assert.Single(provider.GetFragments(typeof(Staff), context));
+    }
+
+    [Fact]
+    public async Task A_poll_that_confirms_the_version_clears_the_degraded_flag()
+    {
+        // Nothing is written while the store is away, so its version never moves and no reload is
+        // triggered when it comes back. Until the poll itself clears the flag, FailClosed keeps
+        // refusing a store that is answering again.
+        using InMemoryPolicyStore inner = new();
+
+        inner.Seed(Rule());
+
+        UnreachableStore store = new(inner);
+
+        DwPolicyOptions options = new() { MaxSnapshotAge = TimeSpan.FromHours(1) };
+
+        options.RefreshInterval = TimeSpan.FromMilliseconds(20);
+        options.Freeze();
+
+        using StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(store, options);
+
+        store.Broken = true;
+
+        await WaitFor(() => provider.IsDegraded);
+
+        Assert.True(provider.IsDegraded, "the failed poll was not recorded");
+
+        store.Broken = false;
+
+        await WaitFor(() => !provider.IsDegraded);
+
+        Assert.False(provider.IsDegraded);
+    }
+
+    [Fact]
+    public async Task A_poll_answered_before_a_failed_reload_does_not_clear_the_refusal()
+    {
+        // A poll reads the version; the store then moves on, the reload of the new version fails and
+        // FailClosed starts refusing; and only then does the poll's answer arrive, naming the version
+        // still being served. Taken as a confirmation, that stale answer cleared the refusal and
+        // served the old rules, without the new denial, until the next poll.
+        using InMemoryPolicyStore inner = new();
+
+        inner.Seed(Rule());
+
+        HeldPollStore store = new(inner);
+
+        DwPolicyOptions options = new()
+        {
+            StoreFailure = StoreFailureMode.FailClosed,
+            MaxSnapshotAge = TimeSpan.FromHours(1)
+        };
+
+        options.RefreshInterval = TimeSpan.FromMilliseconds(20);
+        options.Freeze();
+
+        using StorePolicyProvider provider = await StorePolicyProvider.CreateAsync(store, options);
+
+        Assert.True(await store.ReadAsync(), "the first poll never read the version");
+
+        await inner.UpsertAsync(Rule("Name"), default);
+
+        store.FailLoads = true;
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(async () => await provider.RefreshAsync());
+
+        Assert.True(provider.IsDegraded);
+
+        store.Answer();
+
+        // The next poll is held as soon as it reads, so what the first answer left behind can be
+        // examined before anything else changes it.
+        Assert.True(await store.ReadAsync(), "the poll loop stopped after the stale answer");
+
+        Assert.True(provider.IsDegraded, "a version read before the failed reload cleared the refusal");
+
+        DwPolicyContext context = await provider.PrepareAsync(new DwPolicyContext());
+
+        PolicyException refused = Assert.Throws<PolicyException>(
+            () => provider.GetFragments(typeof(Staff), context));
+
+        Assert.Equal(PolicyErrorCode.StoreUnavailable, refused.ErrorCode);
+    }
+
+    [Fact]
     public async Task A_context_pinned_too_long_ago_is_refused_even_after_the_provider_refreshed()
     {
         // The ceiling is measured on what this caller is actually being served, not on what the
@@ -389,6 +506,53 @@ public class StoreFailureTests
 
             await Task.Delay(25);
         }
+    }
+
+    /// <summary>
+    /// A store whose version reads are answered only when the test says so, and whose loads can be
+    /// made to fail.
+    /// </summary>
+    /// <remarks>
+    /// The version is read when asked and returned later, which is the in-flight window a stale
+    /// answer comes from. Every wait is bounded, and disposing the provider cancels a held read, so
+    /// a regression fails rather than hangs.
+    /// </remarks>
+    private sealed class HeldPollStore : IDwPolicyStore
+    {
+        private readonly IDwPolicyStore _inner;
+        private readonly SemaphoreSlim _read = new(0);
+        private readonly SemaphoreSlim _answer = new(0);
+
+        internal HeldPollStore(IDwPolicyStore inner) => _inner = inner;
+
+        /// <summary>True to make every load throw.</summary>
+        public bool FailLoads { get; set; }
+
+        public ValueTask<StoreSnapshot> LoadAsync(CancellationToken ct) =>
+            FailLoads ? throw new InvalidOperationException("The load failed.") : _inner.LoadAsync(ct);
+
+        public ValueTask<NarrowZone> LoadNarrowAsync(
+            IReadOnlyList<string> userIdentities, CancellationToken ct) =>
+            _inner.LoadNarrowAsync(userIdentities, ct);
+
+        public async ValueTask<long> GetVersionAsync(CancellationToken ct)
+        {
+            long version = await _inner.GetVersionAsync(ct);
+
+            _read.Release();
+
+            await _answer.WaitAsync(ct);
+
+            return version;
+        }
+
+        public IAsyncEnumerable<long>? WatchAsync(CancellationToken ct) => null;
+
+        /// <summary>Waits, at most five seconds, for the next version read to be made.</summary>
+        internal Task<bool> ReadAsync() => _read.WaitAsync(TimeSpan.FromSeconds(5));
+
+        /// <summary>Lets the oldest held read return what it read.</summary>
+        internal void Answer() => _answer.Release();
     }
 
     /// <summary>A store that cannot report changes, so the provider must poll.</summary>

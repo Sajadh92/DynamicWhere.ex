@@ -38,8 +38,11 @@ export default function Page() {
       <Callout tone="note" title="Every recipe assumes the guard is on">
         A policy only applies to a query that went through{" "}
         <code>ApplyPolicy(ctx)</code>. Add{" "}
-        <code>[DwEntity(RequirePolicy = true)]</code> to the class so a code path
-        that forgets throws instead of quietly returning everything.
+        <code>[DwEntity(RequirePolicy = true)]</code> to the class so a
+        DynamicWhere call that forgets throws instead of quietly returning
+        everything. It guards this library&apos;s extension methods and nothing
+        else: plain EF Core or LINQ against the <code>DbSet</code> still reads
+        the table.
       </Callout>
 
       {/* ------------------------------------------------------------------ 1 */}
@@ -72,9 +75,32 @@ public class Invoice
       <Callout tone="danger" title="Drop the ContextValue and the query fails, deliberately">
         A context that does not supply <code>TenantId</code> raises{" "}
         <code>MissingContextValue</code> in both tiers. A tenant scope that
-        silently fails to apply is worse than a failed request, so there is no
-        mode in which it is skipped.
+        silently fails to apply is worse than a failed request, so neither tier
+        skips it. A dry run injects no forced predicate at all, so there the
+        missing value is recorded in the trace and nothing is thrown.
       </Callout>
+      <p>
+        <strong>Rows that belong to no tenant.</strong> A role no institution owns
+        has a null scope column, and <code>InstitutionId = 5</code> never matches
+        null, so the scope hides that role from every caller. Two forced
+        predicates on one member are joined by <code>And</code> and cannot say
+        &quot;or null&quot;; <code>AllowNull</code> can:
+      </p>
+      <Code lang="csharp">{`public class Role
+{
+    [DwForceWhere(Operator.Equal, ContextValue = "TenantId", AllowNull = true)]
+    public int? InstitutionId { get; set; }
+}`}</Code>
+      <p>
+        <strong>What the caller gets.</strong> Their own institution&apos;s roles
+        and the roles that belong to none. The widened term sits in a group of its
+        own, so <code>(A OR B) AND (InstitutionId = 5 OR InstitutionId IS NULL)</code>{" "}
+        still cannot reach institution 9. A context with no <code>TenantId</code>{" "}
+        is still refused with <code>MissingContextValue</code>, and a{" "}
+        <code>[DwRequireWhere]</code> on the same member is not satisfied by the
+        widened term. See{" "}
+        <Link href="/docs/policies/attributes#allow-null">the attribute</Link>.
+      </p>
 
       {/* ------------------------------------------------------------------ 2 */}
       <h2 id="support">2. A support agent may find a customer but not read their card</h2>
@@ -230,16 +256,19 @@ public class Visit
     public string PatientNationalId { get; set; } = string.Empty;
 }`}</Code>
       <p>
-        <strong>Leave the scope off and the join silently returns nothing.</strong>{" "}
-        Tokens are namespaced by the field&apos;s own path by default, so the same
-        identifier produces a different token on each entity. That default is the
-        safe one: two columns holding one value should not give each other away
-        unless somebody decided they should.
+        <strong>The scope is what makes the join a decision rather than a
+        coincidence.</strong> Left off, the namespace falls back to the
+        field&apos;s path relative to the entity being queried, with no type name
+        in it — so these two members, spelled identically, already share tokens,
+        and would stop sharing them the day somebody renamed one or moved it
+        behind a navigation. Write the scope and the join survives both.
       </p>
       <p>
-        Naming a shared scope is that decision written down, and it costs
-        something — a caller who can see both columns learns the two rows concern
-        the same person.
+        It costs something either way, which is why it is worth writing down: a
+        caller who can see both columns learns the two rows concern the same
+        person. Two columns that should <em>not</em> give each other away need
+        distinct scopes for exactly the same reason — the default will not
+        separate them for you when the paths happen to match.
       </p>
 
       {/* ------------------------------------------------------------------ 7 */}
@@ -257,11 +286,42 @@ public string AccountNumber { get; set; } = string.Empty;
 [DwDenied]
 public string RecoveryKey { get; set; } = string.Empty;`}</Code>
       <p>
-        A runtime rule for the finance role then raises it, and{" "}
+        A rule for the finance role now outranks that mask, and{" "}
         <code>POST /dw-policies/explain</code> shows which level decided, what it
-        overrode and what it ignored. A rule targeting{" "}
-        <code>RecoveryKey</code> is rejected at write time and again at resolution
-        time — the operator cannot even attempt it.
+        overrode and what tied with it. What such a rule cannot do is hand back
+        the raw value: each transform stage is elected among the fragments that
+        carry that stage, so a rule with no mask of its own leaves the
+        attribute&apos;s mask the only candidate. A rule replaces the mask with
+        its own, or decides <code>Select</code>; it never removes one.
+      </p>
+      <p>
+        Showing one role the value itself is a transformer, not a rule — it is
+        the stage that can read the caller:
+      </p>
+      <Code lang="csharp">{`public sealed class AccountNumberForFinance : IValueTransformer
+{
+    public object? Transform(object? value, DwTransformContext context)
+    {
+        if (context.Policy.Identities(DwSubjectKind.Role).Contains("finance"))
+        {
+            return value;
+        }
+
+        string raw = value as string ?? string.Empty;
+
+        return raw.Length <= 4
+            ? raw
+            : new string('*', raw.Length - 4) + raw.Substring(raw.Length - 4);
+    }
+}
+
+[DwMutate(typeof(AccountNumberForFinance))]
+public string AccountNumber { get; set; } = string.Empty;`}</Code>
+      <p>
+        A rule targeting <code>RecoveryKey</code> is rejected at write time, when
+        the store can resolve the entity type, and loses at resolution time in
+        every case — <code>[DwDenied]</code> is sealed, so no dynamic level
+        outranks it.
       </p>
 
       {/* ------------------------------------------------------------------ 8 */}
@@ -297,6 +357,14 @@ public string FullTextNotes { get; set; } = string.Empty;`}</Code>
         record — an audited field whose log quietly stopped being written is the
         outcome the attribute exists to prevent.
       </p>
+      <p>
+        <code>[DwAudit]</code> records the uses of the fields it decorates, so a
+        probe aimed at other fields — denied ones, or names that do not exist —
+        leaves nothing in that log. Turn on{" "}
+        <Link href="/docs/policies/configuration#audit-refusals"><code>DwPolicyOptions.AuditRefusals</code></Link>{" "}
+        and every refused guarded query is written to the same sink, carrying its{" "}
+        <code>ErrorCode</code>.
+      </p>
 
       {/* --------------------------------------------------------------- recap */}
       <h2 id="pairs">The pairs, in one table</h2>
@@ -320,8 +388,8 @@ public string FullTextNotes { get; set; } = string.Empty;`}</Code>
           </tr>
           <tr>
             <td><code>AllowAggregate = true</code></td>
-            <td><code>MinGroupSize</code></td>
-            <td>a group of one returns the exact value under any aggregate</td>
+            <td>a floor left in place</td>
+            <td>a group of one returns the exact value under any aggregate — which needs the global <code>DwCaps.MinGroupSize</code> (5 by default) to have been switched off (set to 1), with no per-field floor above 1 — the larger of the two applies</td>
           </tr>
           <tr>
             <td>a mask on a filterable field</td>
@@ -341,7 +409,7 @@ public string FullTextNotes { get; set; } = string.Empty;`}</Code>
           <tr>
             <td>a token joined across entities</td>
             <td>a shared <code>TokenScope</code></td>
-            <td>each field gets its own tokens and the join finds nothing</td>
+            <td>the namespace falls back to each field&apos;s own path, so the join works only where the paths happen to match, and breaks on a rename</td>
           </tr>
           <tr>
             <td>any policy at all</td>

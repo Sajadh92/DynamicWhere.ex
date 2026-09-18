@@ -2,6 +2,7 @@
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Classes.Result;
 using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Policies.Audit;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
@@ -9,6 +10,7 @@ using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Source;
 using Microsoft.EntityFrameworkCore;
+using System.Linq.Dynamic.Core;
 
 namespace DynamicWhere.ex.Policies.Source;
 
@@ -36,6 +38,10 @@ public sealed class PolicyQueryable<T> where T : class
     private readonly DwPolicyOptions _options;
     private readonly PolicyTrace? _carried;
 
+    // True once a composed Order has run on this chain, whether or not any of its orders survived the
+    // gate. A caller whose orders were all dropped still sent orders, and gets no default in their place.
+    private readonly bool _ordered;
+
     private TypePolicy? _typePolicy;
 
     /// <summary>
@@ -46,13 +52,15 @@ public sealed class PolicyQueryable<T> where T : class
         DwPolicyContext context,
         PolicyResolver resolver,
         DwPolicyOptions options,
-        PolicyTrace? carried = null)
+        PolicyTrace? carried = null,
+        bool ordered = false)
     {
         _source = source;
         _context = context;
         _resolver = resolver;
         _options = options;
         _carried = carried;
+        _ordered = ordered;
     }
 
     /// <summary>
@@ -69,9 +77,10 @@ public sealed class PolicyQueryable<T> where T : class
     /// What the policy did to the most recent call on this handle.
     /// </summary>
     /// <remarks>
-    /// The methods returning a result object attach the record to it directly. The composable ones
-    /// return an <see cref="IQueryable{T}"/>, which has nowhere to carry it, so this is where a
-    /// caller composing a query by hand can read what was dropped.
+    /// Always set, whatever the tier. The methods returning a result object also attach the record to
+    /// it when <c>DwPolicyOptions.IncludeTraceInResult</c> allows, which by default it does not under
+    /// the strict tier. A composable method returns a query, which has nowhere to carry it, so this is
+    /// where a caller composing a query by hand, or reading a strict result, sees what was dropped.
     /// </remarks>
     public PolicyTrace? LastTrace { get; private set; }
 
@@ -84,21 +93,28 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
     public FilterResult<T> ToList(Filter filter, bool getQueryString = false)
     {
-        PolicyTrace trace = NewTrace();
-        GuardQueryString(getQueryString, trace);
-
-        Filter sanitized = Sanitize(filter, trace);
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            FilterResult<T> result = Guarded().ToList(sanitized, getQueryString);
+            PolicyTrace trace = NewTrace();
+            GuardQueryString(getQueryString, trace);
 
-            ResultTransformer.Rows(
-                result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+            Filter sanitized = Sanitize(filter, trace);
 
-            result.Policy = trace;
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                FilterResult<T> result = Guarded().ToList(sanitized, getQueryString);
 
-            return result;
+                ResultTransformer.Rows(
+                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+
+                result.Policy = _options.TraceInResult ? trace : null;
+
+                return result;
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -109,21 +125,28 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
     public async Task<FilterResult<T>> ToListAsync(Filter filter, bool getQueryString = false)
     {
-        PolicyTrace trace = NewTrace();
-        GuardQueryString(getQueryString, trace);
-
-        Filter sanitized = Sanitize(filter, trace);
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            FilterResult<T> result = await Guarded().ToListAsync(sanitized, getQueryString);
+            PolicyTrace trace = NewTrace();
+            GuardQueryString(getQueryString, trace);
 
-            ResultTransformer.Rows(
-                result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+            Filter sanitized = Sanitize(filter, trace);
 
-            result.Policy = trace;
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                FilterResult<T> result = await Guarded().ToListAsync(sanitized, getQueryString);
 
-            return result;
+                ResultTransformer.Rows(
+                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+
+                result.Policy = _options.TraceInResult ? trace : null;
+
+                return result;
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -134,26 +157,33 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
     public FilterResult<dynamic> ToListDynamic(Filter filter, bool getQueryString = false)
     {
-        PolicyTrace trace = NewTrace();
-        GuardQueryString(getQueryString, trace);
-
-        Filter sanitized = Sanitize(filter, trace);
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            FilterResult<dynamic> result = Guarded().ToListDynamic(sanitized, getQueryString);
+            PolicyTrace trace = NewTrace();
+            GuardQueryString(getQueryString, trace);
 
-            ResultTransformer.Rows(
-                result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+            Filter sanitized = Sanitize(filter, trace);
 
-            // After transformation, not before: the transform pipeline reads the generated columns
-            // by the names the projection baked in, and renaming first would leave it looking for
-            // columns that no longer exist.
-            ResultTransformer.Rename(result.Data, TypePolicy, trace);
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                FilterResult<dynamic> result = Guarded().ToListDynamic(sanitized, getQueryString);
 
-            result.Policy = trace;
+                ResultTransformer.Rows(
+                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
 
-            return result;
+                // After transformation, not before: the transform pipeline reads the generated columns
+                // by the names the projection baked in, and renaming first would leave it looking for
+                // columns that no longer exist.
+                ResultTransformer.Rename(result.Data, TypePolicy, trace);
+
+                result.Policy = _options.TraceInResult ? trace : null;
+
+                return result;
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -164,26 +194,33 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
     public async Task<FilterResult<dynamic>> ToListAsyncDynamic(Filter filter, bool getQueryString = false)
     {
-        PolicyTrace trace = NewTrace();
-        GuardQueryString(getQueryString, trace);
-
-        Filter sanitized = Sanitize(filter, trace);
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            FilterResult<dynamic> result = await Guarded().ToListAsyncDynamic(sanitized, getQueryString);
+            PolicyTrace trace = NewTrace();
+            GuardQueryString(getQueryString, trace);
 
-            ResultTransformer.Rows(
-                result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+            Filter sanitized = Sanitize(filter, trace);
 
-            // After transformation, not before: the transform pipeline reads the generated columns
-            // by the names the projection baked in, and renaming first would leave it looking for
-            // columns that no longer exist.
-            ResultTransformer.Rename(result.Data, TypePolicy, trace);
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                FilterResult<dynamic> result = await Guarded().ToListAsyncDynamic(sanitized, getQueryString);
 
-            result.Policy = trace;
+                ResultTransformer.Rows(
+                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
 
-            return result;
+                // After transformation, not before: the transform pipeline reads the generated columns
+                // by the names the projection baked in, and renaming first would leave it looking for
+                // columns that no longer exist.
+                ResultTransformer.Rename(result.Data, TypePolicy, trace);
+
+                result.Policy = _options.TraceInResult ? trace : null;
+
+                return result;
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -196,38 +233,45 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the summary.</exception>
     public SummaryResult ToList(Summary summary, bool getQueryString = false)
     {
-        PolicyTrace trace = NewTrace();
-        GuardQueryString(getQueryString, trace);
-
-        Summary sanitized = Sanitize(summary, trace);
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            SummaryResult result = Guarded().ToList(sanitized, getQueryString);
+            PolicyTrace trace = NewTrace();
+            GuardQueryString(getQueryString, trace);
 
-            // First of the three, and the order matters. A group below the floor is one the caller
-            // may not see at all, so nothing downstream should form an opinion about it: transformed
-            // second, two suppressed groups whose keys collided once rounded refused the whole
-            // summary, denying a result because of rows that were never going to be returned.
-            //
-            // It reads a column this library added and nothing has transformed, so running first
-            // costs it nothing.
-            int floor = GroupFloor.For(sanitized, TypePolicy, _options);
+            Summary sanitized = Sanitize(summary, trace);
 
-            ResultTransformer.Suppress(
-                result, floor, _options.DryRun || _context.DryRun, trace);
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                SummaryResult result = Guarded().ToList(sanitized, getQueryString);
 
-            ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
+                // First of the three, and the order matters. A group below the floor is one the caller
+                // may not see at all, so nothing downstream should form an opinion about it: transformed
+                // second, two suppressed groups whose keys collided once rounded refused the whole
+                // summary, denying a result because of rows that were never going to be returned.
+                //
+                // It reads a column this library added and nothing has transformed, so running first
+                // costs it nothing.
+                int floor = GroupFloor.For(sanitized, TypePolicy, _options);
 
-            // After the collision check, which reads the real column names. A summary key is a
-            // generated column like any other, so it follows the same vocabulary the schema
-            // advertises — and the same pass drops the group-size count the floor added for itself.
-            ResultTransformer.Rename(
-                result.Data, TypePolicy, trace, floor > 1 ? GroupFloor.SizeAlias : null);
+                ResultTransformer.Suppress(
+                    result, floor, _options.DryRun || _context.DryRun, trace);
 
-            result.Policy = trace;
+                ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
 
-            return result;
+                // After the collision check, which reads the real column names. A summary key is a
+                // generated column like any other, so it follows the same vocabulary the schema
+                // advertises — and the same pass drops the group-size count the floor added for itself.
+                ResultTransformer.Rename(
+                    result.Data, TypePolicy, trace, floor > 1 ? GroupFloor.SizeAlias : null);
+
+                result.Policy = _options.TraceInResult ? trace : null;
+
+                return result;
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -238,38 +282,45 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the summary.</exception>
     public async Task<SummaryResult> ToListAsync(Summary summary, bool getQueryString = false)
     {
-        PolicyTrace trace = NewTrace();
-        GuardQueryString(getQueryString, trace);
-
-        Summary sanitized = Sanitize(summary, trace);
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            SummaryResult result = await Guarded().ToListAsync(sanitized, getQueryString);
+            PolicyTrace trace = NewTrace();
+            GuardQueryString(getQueryString, trace);
 
-            // First of the three, and the order matters. A group below the floor is one the caller
-            // may not see at all, so nothing downstream should form an opinion about it: transformed
-            // second, two suppressed groups whose keys collided once rounded refused the whole
-            // summary, denying a result because of rows that were never going to be returned.
-            //
-            // It reads a column this library added and nothing has transformed, so running first
-            // costs it nothing.
-            int floor = GroupFloor.For(sanitized, TypePolicy, _options);
+            Summary sanitized = Sanitize(summary, trace);
 
-            ResultTransformer.Suppress(
-                result, floor, _options.DryRun || _context.DryRun, trace);
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                SummaryResult result = await Guarded().ToListAsync(sanitized, getQueryString);
 
-            ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
+                // First of the three, and the order matters. A group below the floor is one the caller
+                // may not see at all, so nothing downstream should form an opinion about it: transformed
+                // second, two suppressed groups whose keys collided once rounded refused the whole
+                // summary, denying a result because of rows that were never going to be returned.
+                //
+                // It reads a column this library added and nothing has transformed, so running first
+                // costs it nothing.
+                int floor = GroupFloor.For(sanitized, TypePolicy, _options);
 
-            // After the collision check, which reads the real column names. A summary key is a
-            // generated column like any other, so it follows the same vocabulary the schema
-            // advertises — and the same pass drops the group-size count the floor added for itself.
-            ResultTransformer.Rename(
-                result.Data, TypePolicy, trace, floor > 1 ? GroupFloor.SizeAlias : null);
+                ResultTransformer.Suppress(
+                    result, floor, _options.DryRun || _context.DryRun, trace);
 
-            result.Policy = trace;
+                ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
 
-            return result;
+                // After the collision check, which reads the real column names. A summary key is a
+                // generated column like any other, so it follows the same vocabulary the schema
+                // advertises — and the same pass drops the group-size count the floor added for itself.
+                ResultTransformer.Rename(
+                    result.Data, TypePolicy, trace, floor > 1 ? GroupFloor.SizeAlias : null);
+
+                result.Policy = _options.TraceInResult ? trace : null;
+
+                return result;
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -281,22 +332,31 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the segment.</exception>
     public async Task<SegmentResult<T>> ToListAsync(Segment segment)
     {
-        PolicyTrace trace = NewTrace();
-
-        Segment sanitized = FilterSanitizer.Sanitize<T>(segment, _resolver, _context, _options, trace);
-
-        LastTrace = trace;
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            SegmentResult<T> result = await Guarded().ToListAsync(sanitized);
+            PolicyTrace trace = NewTrace();
 
-            ResultTransformer.Rows(
-                result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+            Segment sanitized = FilterSanitizer.Sanitize<T>(
+                segment, _resolver, _context, _options, trace,
+                applyDefaultOrder: TakesDefaultOrder);
 
-            result.Policy = trace;
+            LastTrace = trace;
 
-            return result;
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                SegmentResult<T> result = await Guarded().ToListAsync(sanitized);
+
+                ResultTransformer.Rows(
+                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+
+                result.Policy = _options.TraceInResult ? trace : null;
+
+                return result;
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -307,11 +367,18 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses every requested field.</exception>
     public PolicyQueryable<T> Select(List<string> fields)
     {
-        Filter sanitized = SanitizeClause(new Filter { Selects = fields });
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            return Chain(Scoped(sanitized).Select(sanitized.Selects!));
+            Filter sanitized = SanitizeClause(new Filter { Selects = fields });
+
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                return Chain(Scoped(sanitized).Select(sanitized.Selects!));
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -320,13 +387,20 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses every requested field.</exception>
     public IQueryable SelectDynamic(List<string> fields)
     {
-        RefuseUnmaterialized(nameof(SelectDynamic), nameof(ToListDynamic));
-
-        Filter sanitized = SanitizeClause(new Filter { Selects = fields });
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            return Scoped(sanitized).SelectDynamic(sanitized.Selects!);
+            RefuseUnmaterialized(nameof(SelectDynamic), nameof(ToListDynamic));
+
+            Filter sanitized = SanitizeClause(new Filter { Selects = fields });
+
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                return Scoped(sanitized).SelectDynamic(sanitized.Selects!);
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -335,18 +409,25 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses the condition.</exception>
     public PolicyQueryable<T> Where(Condition condition)
     {
-        ConditionGroup group = new();
-
-        group.Conditions.Add(condition);
-
-        Filter sanitized = SanitizeClause(new Filter { ConditionGroup = group });
-
-        // The whole group, not Conditions[0]. Once a forced predicate is injected, index zero is
-        // the library's own term and the caller's condition has moved into a subgroup -- taking the
-        // first condition would silently drop what the caller actually asked for.
-        using (PolicyScope.Enter(_context))
+        try
         {
-            return Chain(Scoped(sanitized));
+            ConditionGroup group = new();
+
+            group.Conditions.Add(condition);
+
+            Filter sanitized = SanitizeClause(new Filter { ConditionGroup = group });
+
+            // The whole group, not Conditions[0]. Once a forced predicate is injected, index zero is
+            // the library's own term and the caller's condition has moved into a subgroup -- taking the
+            // first condition would silently drop what the caller actually asked for.
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                return Chain(Scoped(sanitized));
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -355,11 +436,18 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses any condition.</exception>
     public PolicyQueryable<T> Where(ConditionGroup group)
     {
-        Filter sanitized = SanitizeClause(new Filter { ConditionGroup = group });
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            return Chain(Scoped(sanitized));
+            Filter sanitized = SanitizeClause(new Filter { ConditionGroup = group });
+
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                return Chain(Scoped(sanitized));
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -373,11 +461,18 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown in the strict tier when the policy refuses a field.</exception>
     public PolicyQueryable<T> Order(List<OrderBy> orders)
     {
-        Filter sanitized = SanitizeClause(new Filter { Orders = orders });
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            return Chain(Scoped(sanitized).Order(sanitized.Orders!));
+            Filter sanitized = SanitizeClause(new Filter { Orders = orders });
+
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                return Chain(Scoped(sanitized).Order(sanitized.Orders!), ordered: true);
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -386,26 +481,61 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the page exceeds the cap.</exception>
     public PolicyQueryable<T> Page(PageBy page)
     {
-        Filter sanitized = SanitizeClause(new Filter { Page = page });
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            return Chain(Scoped(sanitized).Page(sanitized.Page!));
+            // A query nothing has ordered takes the type's default, gated like any other order. One the
+            // caller ordered keeps that order: a default applied here would replace it.
+            Filter sanitized = SanitizeClause(new Filter { Page = page }, applyDefaultOrder: TakesDefaultOrder);
+
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                IQueryable<T> scoped = Scoped(sanitized);
+
+                if (sanitized.Orders is { Count: > 0 })
+                {
+                    scoped = scoped.Order(sanitized.Orders);
+                }
+
+                return Chain(scoped.Page(sanitized.Page!));
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
     /// <summary>Groups and aggregates, unless the policy refuses a key or an aggregate.</summary>
     /// <param name="groupBy">The grouping to apply.</param>
     /// <exception cref="PolicyException">Thrown when the policy refuses a key or an aggregated field.</exception>
+    /// <remarks>
+    /// Runs through the summary pipeline rather than core <c>Group</c>. The sanitizer adds the group
+    /// floor's count and the <c>HAVING</c> that enforces it, and core <c>Group</c> takes no
+    /// <c>Having</c> — so grouping directly here would hand back exactly the small groups the floor
+    /// exists to suppress, with the floor's own count sitting in them as a column.
+    /// </remarks>
     public IQueryable Group(GroupBy groupBy)
     {
-        RefuseUnmaterialized(nameof(Group), "ToList(Summary)");
-
-        Summary sanitized = Sanitize(new Summary { GroupBy = groupBy }, NewTrace());
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            return Scoped(sanitized.ConditionGroup).Group(sanitized.GroupBy!);
+            RefuseUnmaterialized(nameof(Group), "ToList(Summary)");
+
+            Summary sanitized = Sanitize(new Summary { GroupBy = groupBy }, NewTrace());
+
+            // No page. The sanitizer fills one in from DwCaps.DefaultPageSize for a summary that sent
+            // none, but Group takes no page and no order: what came back would be the first groups in no
+            // particular order, with nothing a caller could pass to reach the rest. The caller pages
+            // what this returns, as it always did, or sends a Summary, which carries a page.
+            sanitized.Page = null;
+
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                return WithoutGroupSize(Guarded().Summary(sanitized), sanitized);
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -414,12 +544,19 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
     public PolicyQueryable<T> Filter(Filter filter)
     {
-        PolicyTrace trace = NewTrace();
-        Filter sanitized = Sanitize(filter, trace);
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            return Chain(Guarded().Filter(sanitized));
+            PolicyTrace trace = NewTrace();
+            Filter sanitized = Sanitize(filter, trace);
+
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                return Chain(Guarded().Filter(sanitized));
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -428,14 +565,21 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
     public IQueryable FilterDynamic(Filter filter)
     {
-        RefuseUnmaterialized(nameof(FilterDynamic), nameof(ToListDynamic));
-
-        PolicyTrace trace = NewTrace();
-        Filter sanitized = Sanitize(filter, trace);
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            return Guarded().FilterDynamic(sanitized);
+            RefuseUnmaterialized(nameof(FilterDynamic), nameof(ToListDynamic));
+
+            PolicyTrace trace = NewTrace();
+            Filter sanitized = Sanitize(filter, trace);
+
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                return Guarded().FilterDynamic(sanitized);
+            }
+        }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
         }
     }
 
@@ -444,14 +588,55 @@ public sealed class PolicyQueryable<T> where T : class
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the summary.</exception>
     public IQueryable Summary(Summary summary)
     {
-        RefuseUnmaterialized(nameof(Summary), "ToList(Summary)");
-
-        Summary sanitized = Sanitize(summary, NewTrace());
-
-        using (PolicyScope.Enter(_context))
+        try
         {
-            return Guarded().Summary(sanitized);
+            RefuseUnmaterialized(nameof(Summary), "ToList(Summary)");
+
+            Summary sanitized = Sanitize(summary, NewTrace());
+
+            using (PolicyScope.Enter(_context, LastTrace))
+            {
+                return WithoutGroupSize(Guarded().Summary(sanitized), sanitized);
+            }
         }
+        catch (PolicyException refusal) when (Refused(refusal))
+        {
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Projects the group floor's own count back out of a composable result.
+    /// </summary>
+    /// <param name="grouped">The grouped query, as the summary pipeline built it.</param>
+    /// <param name="sanitized">The summary that ran, carrying the caller's keys and aliases.</param>
+    /// <returns>The query projected onto what the caller actually asked for.</returns>
+    /// <remarks>
+    /// The terminal methods drop the column while they transform the materialized rows. A composable
+    /// call has no such pass, so without this the caller receives a column the library added for
+    /// itself — one they could order by, page on, or hand to a client as data.
+    /// <para>
+    /// Group keys are named by their path with the dots removed, which is what the grouping
+    /// projection emits, and the aggregates by their aliases.
+    /// </para>
+    /// </remarks>
+    private static IQueryable WithoutGroupSize(IQueryable grouped, Summary sanitized)
+    {
+        if (sanitized.GroupBy is not { } groupBy || !groupBy.AggregateBy.Any(IsGroupSize))
+        {
+            return grouped;
+        }
+
+        IEnumerable<string> columns = groupBy.Fields
+            .Select(field => field.Replace(".", string.Empty))
+            .Concat(groupBy.AggregateBy
+                .Where(aggregate => !IsGroupSize(aggregate))
+                .Select(aggregate => aggregate.Alias!));
+
+        return grouped.Select(DynamicLinq.Config, $"new ({string.Join(", ", columns)})");
+
+        static bool IsGroupSize(AggregateBy aggregate) =>
+            string.Equals(aggregate.Alias, GroupFloor.SizeAlias, StringComparison.OrdinalIgnoreCase);
     }
 
     // ------------------------------------------------------------------------ internals
@@ -488,8 +673,16 @@ public sealed class PolicyQueryable<T> where T : class
     public IQueryable<T> AsUnguardedQueryable() => _source;
 
     /// <summary>Wraps a composed query back into a handle, carrying the trace so far.</summary>
-    private PolicyQueryable<T> Chain(IQueryable<T> composed) =>
-        new(composed, _context, _resolver, _options, LastTrace);
+    /// <param name="composed">The composed query.</param>
+    /// <param name="ordered">True when the composing call was an <c>Order</c>.</param>
+    private PolicyQueryable<T> Chain(IQueryable<T> composed, bool ordered = false) =>
+        new(composed, _context, _resolver, _options, LastTrace, _ordered || ordered);
+
+    /// <summary>
+    /// True when a query over this handle takes the type's default order: the caller composed no
+    /// <c>Order</c>, and nothing ordered or projected the source.
+    /// </summary>
+    private bool TakesDefaultOrder => !_ordered && DefaultOrder.Applies(_source.Expression);
 
     /// <summary>
     /// Refuses a method that hands back a query the caller materializes, when this type's values
@@ -594,7 +787,9 @@ public sealed class PolicyQueryable<T> where T : class
     /// <summary>Sanitizes a whole filter and records the outcome.</summary>
     private Filter Sanitize(Filter filter, PolicyTrace trace)
     {
-        Filter sanitized = FilterSanitizer.Sanitize<T>(filter, _resolver, _context, _options, trace);
+        // A source the caller ordered before guarding it keeps that order: a default would replace it.
+        Filter sanitized = FilterSanitizer.Sanitize<T>(
+            filter, _resolver, _context, _options, trace, applyDefaultOrder: TakesDefaultOrder);
 
         LastTrace = trace;
 
@@ -620,16 +815,31 @@ public sealed class PolicyQueryable<T> where T : class
     /// <c>Where</c> call fail with "every projection field denied" on a type whose fields are all
     /// refused for select.
     /// </remarks>
-    private Filter SanitizeClause(Filter clause)
+    private Filter SanitizeClause(Filter clause, bool applyDefaultOrder = false)
     {
         PolicyTrace trace = NewTrace();
 
         Filter sanitized = FilterSanitizer.Sanitize<T>(
-            clause, _resolver, _context, _options, trace, synthesizeProjection: false);
+            clause, _resolver, _context, _options, trace, synthesizeProjection: false, applyDefaultOrder);
 
         LastTrace = trace;
 
         return sanitized;
+    }
+
+    /// <summary>
+    /// Writes a refusal to the caller's audit buffer when the posture audits refusals, and lets it go on
+    /// its way.
+    /// </summary>
+    /// <returns>
+    /// Always false, so the exception filter that calls it never catches anything: the refusal leaves
+    /// with its own stack, and a nested call that sees it again does not record it twice.
+    /// </returns>
+    private bool Refused(PolicyException refusal)
+    {
+        RefusalAudit.Record(_context, _options, typeof(T), refusal);
+
+        return false;
     }
 
     /// <summary>

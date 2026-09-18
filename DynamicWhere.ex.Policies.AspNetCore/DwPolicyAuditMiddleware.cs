@@ -80,8 +80,8 @@ public sealed class DwPolicyAuditMiddleware
         {
             _log?.LogWarning(
                 "{Count} policy audit events were recorded and no IDwAuditSink is registered, so "
-                + "they were discarded. Register one, or remove [DwAudit] from the fields that "
-                + "produced them.",
+                + "they were discarded. Register one, or stop recording them: remove [DwAudit] from "
+                + "the fields that produced them, or turn off DwPolicyOptions.AuditRefusals.",
                 context.PendingAuditEvents.Count);
 
             return;

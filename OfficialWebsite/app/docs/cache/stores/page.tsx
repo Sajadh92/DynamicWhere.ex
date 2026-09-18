@@ -49,7 +49,7 @@ export default function Page() {
             <td><strong>CollectionElementType</strong></td>
             <td><code>Type</code></td>
             <td><code>Type?</code></td>
-            <td>Element type for collection types — e.g. <code>List&lt;Order&gt;</code> → <code>Order</code>. <code>null</code> for non-collection types.</td>
+            <td>Element type for recognized collections — arrays plus exactly <code>List&lt;&gt;</code>, <code>ICollection&lt;&gt;</code>, <code>IEnumerable&lt;&gt;</code>, <code>IList&lt;&gt;</code>, <code>HashSet&lt;&gt;</code> and <code>ISet&lt;&gt;</code> — e.g. <code>List&lt;Order&gt;</code> → <code>Order</code>. <code>null</code> for everything else, <code>IReadOnlyList&lt;T&gt;</code> included.</td>
           </tr>
         </tbody>
       </table>
@@ -65,7 +65,7 @@ export default function Page() {
 
       <h2 id="targeting">Targeting a specific store</h2>
       <Code lang="csharp">{`using DynamicWhere.ex.Optimization.Cache.Source;
-using DynamicWhere.ex.Optimization.Cache.Config;
+using DynamicWhere.ex.Optimization.Cache.Enums;
 
 // Clear only the validated-path store, leave property metadata intact
 CacheExpose.ClearCache(CacheMemoryType.PropertyPath);
@@ -78,10 +78,11 @@ bool collectionsFull = CacheExpose.IsCacheFull(CacheMemoryType.CollectionElement
       <h2 id="sizing">Sizing</h2>
       <p>
         All three stores share the same <code>MaxCacheSize</code> from your{" "}
-        <Link href="/docs/cache/options"><code>CacheOptions</code></Link>. With
-        the default of <code>1000</code>, each store independently holds up to
-        1000 entries — so the cache ceiling totals 3000 entries across the
-        process. Increase or decrease this through a{" "}
+        <Link href="/docs/cache/options"><code>CacheOptions</code></Link>. The
+        cap is a strictly-greater test, evaluated on a miss before the new entry
+        is written, so with the default of <code>1000</code> each store settles
+        at 1001 entries — 3003 across the process, and more when misses land
+        concurrently. Increase or decrease this through a{" "}
         <Link href="/docs/cache/presets">preset</Link> or a custom options
         object.
       </p>
@@ -89,7 +90,7 @@ bool collectionsFull = CacheExpose.IsCacheFull(CacheMemoryType.CollectionElement
       <h2 id="lifetime">Entry lifetime</h2>
       <ul>
         <li>Entries are added on first reflection miss for a given key.</li>
-        <li>Entries record access (timestamp / hit count) on every read when LRU / LFU tracking is enabled.</li>
+        <li>Entries record an access on every read — a timestamp under LRU, a counter under LFU, nothing under FIFO. <code>EvictionStrategy</code> alone decides which; the <code>Enable*Tracking</code> flags do not.</li>
         <li>Entries are removed only when an eviction pass runs (automatic on overflow, or manual via <code>ForceEvictionOnAllCaches</code> / <code>ClearCache</code> / <code>ClearAllCaches</code>).</li>
       </ul>
 

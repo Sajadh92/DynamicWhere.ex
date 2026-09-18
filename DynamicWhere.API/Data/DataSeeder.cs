@@ -425,6 +425,33 @@ public static class DataSeeder
             code++;
         }
 
+        // A former engineer, so the forced IsActive scope has a row to keep out. Everyone above is
+        // serving, and a scope over rows that all pass it cannot be seen doing anything.
+        await context.Employees.AddAsync(new Employee
+        {
+            Id = Guid.NewGuid(),
+            FirstName = "Noor",
+            LastName = "Karimi",
+            Email = "noor.karimi@company.com",
+            EmployeeCode = $"EMP{code:D3}",
+            HireDate = DateTime.SpecifyKind(new DateTime(2018, 3, 1), DateTimeKind.Utc),
+            TerminationDate = DateTime.SpecifyKind(new DateTime(2024, 6, 30), DateTimeKind.Utc),
+            IsActive = false,
+            Salary = 101000m,
+            EmploymentType = EmploymentType.FullTime,
+            Department = "Engineering",
+            Position = "Senior Engineer",
+            ManagerId = manager.Id,
+            Address = new Address
+            {
+                Street = $"{100 + code} Market Street",
+                City = "San Francisco",
+                State = "CA",
+                Country = "USA",
+                ZipCode = "94105"
+            }
+        });
+
         await context.SaveChangesAsync();
 
         // Seed Orders (after customers and products are saved)

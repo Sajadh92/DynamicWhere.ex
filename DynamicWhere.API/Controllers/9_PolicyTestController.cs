@@ -385,6 +385,125 @@ public class PolicyTestController : ControllerBase
     }
 
     /// <summary>
+    /// Every condition set of a segment is scoped before the sets are combined in the database.
+    /// </summary>
+    /// <remarks>
+    /// The seed keeps one former engineer, a Senior Engineer with <c>IsActive = false</c>, who matches
+    /// the sets of every operation below. Each result is compared with the same sets evaluated in
+    /// plain LINQ over serving employees, so a set that reached the table unscoped fails the test by
+    /// returning that row.
+    /// </remarks>
+    [HttpGet("injection/forced-predicate-segment")]
+    public async Task<ActionResult<PerformanceResult>> TestForcedPredicateSegment()
+    {
+        DwPolicyContext caller = await CallerAsync();
+
+        return await Allows(
+            "Injection - [DwForceWhere] scopes every set of a Segment",
+            "IsActive = true is ANDed into every condition set before Union, Intersect and Except "
+            + "combine them in the database. The former engineer in the seed matches the sets of all "
+            + "three operations, and none of the three results may contain them.",
+            async () =>
+            {
+                var outcomes = new List<object>();
+
+                foreach (Intersection operation in new[] { Intersection.Union, Intersection.Intersect, Intersection.Except })
+                {
+                    // The two sets, and the same two sets as LINQ predicates.
+                    ConditionGroup first, second;
+                    Func<Employee, bool> inFirst, inSecond;
+
+                    switch (operation)
+                    {
+                        // The former engineer sits in the second set of the Union and the first set of
+                        // the Except, so a scope missing from either position returns them.
+                        case Intersection.Union:
+                            first = InDepartment("Support");
+                            second = InPosition("Engineering", "Senior Engineer");
+                            inFirst = e => e.Department == "Support";
+                            inSecond = e => e.Department == "Engineering" && e.Position == "Senior Engineer";
+                            break;
+
+                        case Intersection.Intersect:
+                            first = InDepartment();
+                            second = InPosition("Engineering", "Senior Engineer");
+                            inFirst = e => e.Department == "Engineering";
+                            inSecond = e => e.Department == "Engineering" && e.Position == "Senior Engineer";
+                            break;
+
+                        default:
+                            first = InDepartment();
+                            second = InPosition("Engineering", "Engineer");
+                            inFirst = e => e.Department == "Engineering";
+                            inSecond = e => e.Department == "Engineering" && e.Position == "Engineer";
+                            break;
+                    }
+
+                    SegmentResult<Employee> result = await _context.Employees
+                        .ApplyPolicy(caller)
+                        .ToListAsync(new Segment
+                        {
+                            ConditionSets =
+                            [
+                                new ConditionSet { Sort = 1, ConditionGroup = first },
+                                new ConditionSet { Sort = 2, Intersection = operation, ConditionGroup = second }
+                            ],
+                            Page = new PageBy { PageNumber = 1, PageSize = 50 }
+                        });
+
+                    List<Employee> everyone = await _context.Employees.AsNoTracking().ToListAsync();
+
+                    bool Combined(Employee e) => operation switch
+                    {
+                        Intersection.Union => inFirst(e) || inSecond(e),
+                        Intersection.Intersect => inFirst(e) && inSecond(e),
+                        _ => inFirst(e) && !inSecond(e)
+                    };
+
+                    var expected = everyone.Where(e => e.IsActive && Combined(e)).Select(e => e.Id).ToHashSet();
+                    int outOfScope = everyone.Count(e => !e.IsActive && Combined(e));
+                    var returned = (result.Data ?? []).Select(e => e.Id).ToHashSet();
+
+                    if (!returned.SetEquals(expected) || result.TotalCount != expected.Count)
+                    {
+                        throw new InvalidOperationException(
+                            $"FAILED OPEN. {operation} returned {returned.Count} rows (TotalCount "
+                            + $"{result.TotalCount}) where the scoped sets hold {expected.Count}. "
+                            + $"{outOfScope} inactive employees match the unscoped sets.");
+                    }
+
+                    outcomes.Add(new
+                    {
+                        Operation = operation.ToString(),
+                        result.TotalCount,
+                        Returned = returned.Count,
+                        InactiveEmployeesTheUnscopedSetsWouldAdd = outOfScope,
+                        EveryRowIsActive = (result.Data ?? []).TrueForAll(e => e.IsActive)
+                    });
+                }
+
+                return outcomes;
+            });
+    }
+
+    /// <summary>A filter naming a department and a position within it.</summary>
+    private static ConditionGroup InPosition(string department, string position)
+    {
+        ConditionGroup group = InDepartment(department);
+
+        group.Conditions.Add(new Condition
+        {
+            Sort = 2,
+            Field = "Position",
+            DataType = DataType.Text,
+            Operator = Operator.Equal,
+            Values = [position]
+        });
+
+        return group;
+    }
+
+    /// <summary>
     /// A request that does not filter on a required field is refused.
     /// </summary>
     [HttpGet("injection/required-filter-missing")]

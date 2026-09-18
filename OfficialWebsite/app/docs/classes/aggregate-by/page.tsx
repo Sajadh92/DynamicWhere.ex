@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "AggregateBy",
   description:
-    "A single aggregation within a GroupBy — Count / Sum / Min / Max / Avg with an output alias.",
+    "A single aggregation within a GroupBy — Count / Sumation / Minimum / Maximum / Average with an output alias.",
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/classes/aggregate-by/" },
 };
 
@@ -88,15 +88,15 @@ export default function Page() {
       <Code lang="csharp">{`var aggregations = new List<AggregateBy>
 {
     new AggregateBy { Aggregator = Aggregator.Count, Alias = "OrderCount" },
-    new AggregateBy { Field = "Amount", Aggregator = Aggregator.Sum, Alias = "Revenue" },
-    new AggregateBy { Field = "Amount", Aggregator = Aggregator.Avg, Alias = "AverageAmount" }
+    new AggregateBy { Field = "Amount", Aggregator = Aggregator.Sumation, Alias = "Revenue" },
+    new AggregateBy { Field = "Amount", Aggregator = Aggregator.Average, Alias = "AverageAmount" }
 };`}</Code>
 
       <h2 id="json-example">JSON example</h2>
       <Code lang="json">{`[
   { "aggregator": "Count", "alias": "OrderCount" },
-  { "field": "Amount", "aggregator": "Sum", "alias": "Revenue" },
-  { "field": "Amount", "aggregator": "Avg", "alias": "AverageAmount" }
+  { "field": "Amount", "aggregator": "Sumation", "alias": "Revenue" },
+  { "field": "Amount", "aggregator": "Average", "alias": "AverageAmount" }
 ]`}</Code>
 
       <h2 id="see-also">See also</h2>

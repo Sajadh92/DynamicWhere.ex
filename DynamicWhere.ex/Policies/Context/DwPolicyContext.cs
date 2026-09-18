@@ -50,6 +50,23 @@ public sealed class DwPolicyContext
     public bool DryRun { get; set; }
 
     /// <summary>
+    /// True once <c>DwPolicy.PrepareAsync</c> has run against this context.
+    /// </summary>
+    /// <remarks>
+    /// Preparation does nothing visible while a deployment has no store, which is exactly why it is
+    /// recorded: a query that ran unprepared would keep running unprepared until the day a store was
+    /// added, and then start refusing. The flag makes the ceremony mean the same thing on both.
+    /// <para>
+    /// A context prepared once stays prepared. It does not expire, and it says nothing about whether
+    /// a store's snapshot is still fresh — <c>MaxSnapshotAge</c> is what answers that.
+    /// </para>
+    /// </remarks>
+    public bool IsPrepared { get; private set; }
+
+    /// <summary>Records that preparation has run.</summary>
+    internal void MarkPrepared() => IsPrepared = true;
+
+    /// <summary>
     /// An optional declared purpose for the query, for purpose-bound rules.
     /// </summary>
     public string? Purpose { get; set; }
@@ -202,6 +219,13 @@ public sealed class DwPolicyContext
     internal DwPolicyContext ForSimulation()
     {
         DwPolicyContext copy = new() { DryRun = DryRun, Purpose = Purpose };
+
+        // A simulation of a prepared caller is prepared: it answers about the same snapshot, and
+        // refusing it for a ceremony the original already went through would describe nothing.
+        if (IsPrepared)
+        {
+            copy.MarkPrepared();
+        }
 
         copy._subjects.AddRange(_subjects);
 

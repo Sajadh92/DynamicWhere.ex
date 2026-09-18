@@ -4,8 +4,25 @@
     {
       "name": "docs",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "OfficialWebsite"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "OfficialWebsite"
+      ],
       "port": 3000
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "/Users/sajadh92/.dotnet/dotnet",
+      "runtimeArgs": [
+        "run",
+        "--project",
+        "DynamicWhere.API/DynamicWhere.API.csproj",
+        "--launch-profile",
+        "http"
+      ],
+      "port": 5167
     }
   ]
 }

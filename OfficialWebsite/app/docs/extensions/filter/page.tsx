@@ -23,7 +23,7 @@ export default function Page() {
 
       <h2 id="signature">Signature</h2>
       <Code lang="csharp">{`public static IQueryable<T> Filter<T>(this IQueryable<T> query, Filter filter)
-    where T : class, new()`}</Code>
+    where T : class`}</Code>
 
       <table>
         <thead>
@@ -82,9 +82,11 @@ export default function Page() {
           <code>PageSize</code> must be &gt; 0.
         </li>
         <li>
-          Because select uses{" "}
+          When <code>Selects</code> is provided, select runs through{" "}
           <Link href="/docs/extensions/select"><code>.Select&lt;T&gt;</code></Link>
-          , <code>T</code> must have a parameterless constructor.
+          , so <code>T</code> must have a parameterless constructor — checked at
+          run time, not by a type constraint —{" "}
+          <code>SelectTypeMustHaveParameterlessConstructor</code>.
         </li>
       </ul>
 

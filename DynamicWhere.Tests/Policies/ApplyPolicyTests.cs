@@ -27,8 +27,17 @@ public class ApplyPolicyTests
         new() { Id = 2, Name = "Bo", NationalId = "BBB", Salary = 200m, InternalNotes = "n2" }
     }.AsQueryable();
 
+    /// <summary>
+    /// A caller, prepared. The guarded surface refuses a context that never went through
+    /// <c>PrepareAsync</c>, which with no store configured does nothing except record that the
+    /// ceremony happened — the point being that a deployment behaves the same before and after it
+    /// gains one.
+    /// </summary>
     private static DwPolicyContext Caller() =>
-        new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
+        DwPolicy.PrepareAsync(new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1"))
+            .AsTask()
+            .GetAwaiter()
+            .GetResult();
 
     private static DwPolicyOptions Posture(DwTier tier) => new() { Tier = tier };
 
@@ -131,10 +140,12 @@ public class ApplyPolicyTests
             Orders = new List<OrderBy> { new() { Field = "Name", Direction = Direction.Descending } }
         };
 
-        FilterResult<SecuredEmployee> result = Guarded(DwTier.Strict).ToList(filter);
+        PolicyQueryable<SecuredEmployee> guarded = Guarded(DwTier.Strict);
+
+        FilterResult<SecuredEmployee> result = guarded.ToList(filter);
 
         Assert.Equal(new[] { "Bo", "Ada" }, result.Data.Select(r => r.Name));
-        Assert.Empty(result.Policy!.Decisions);
+        Assert.Empty(guarded.LastTrace!.Decisions);
     }
 
     [Fact]
@@ -165,11 +176,14 @@ public class ApplyPolicyTests
     [Fact]
     public void The_trace_reports_the_tier_the_query_actually_ran_under()
     {
-        FilterResult<SecuredEmployee> result = Guarded(DwTier.Strict).ToList(
-            new Filter { Selects = new List<string> { "Name" } });
+        // Read from the query rather than the result: under the strict tier the trace stays
+        // in-process unless IncludeTraceInResult says otherwise.
+        PolicyQueryable<SecuredEmployee> guarded = Guarded(DwTier.Strict);
 
-        Assert.Equal(DwTier.Strict, result.Policy!.Tier);
-        Assert.False(result.Policy.DryRun);
+        guarded.ToList(new Filter { Selects = new List<string> { "Name" } });
+
+        Assert.Equal(DwTier.Strict, guarded.LastTrace!.Tier);
+        Assert.False(guarded.LastTrace.DryRun);
     }
 
     // ------------------------------------------------------------ configuration
@@ -187,6 +201,44 @@ public class ApplyPolicyTests
         // A policy layer that does nothing until someone remembers to switch it on is worse than
         // none at all: the attributes in the source read as though they are already in force.
         FilterResult<SecuredEmployee> result = People().ApplyPolicy(Caller()).ToList(new Filter());
+
+        Assert.All(result.Data, row => Assert.Equal(string.Empty, row.NationalId));
+    }
+
+    [Fact]
+    public void A_context_that_was_never_prepared_is_refused()
+    {
+        // A store provider always refused one. With attributes alone nothing did, so the same
+        // missing call was a failure in one deployment and silence in another — and the silent one
+        // is the deployment that later adds a store and starts refusing in production.
+        DwPolicyContext raw = new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
+
+        PolicyException thrown = Assert.Throws<PolicyException>(
+            () => People().ApplyPolicy(raw).ToList(new Filter()));
+
+        Assert.Equal(PolicyErrorCode.PolicyContextNotPrepared, thrown.ErrorCode);
+    }
+
+    [Fact]
+    public void An_unprepared_in_memory_query_is_refused_the_same_way()
+    {
+        DwPolicyContext raw = new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
+
+        PolicyException thrown = Assert.Throws<PolicyException>(
+            () => People().ToList().ApplyPolicy(raw).ToList(new Filter()));
+
+        Assert.Equal(PolicyErrorCode.PolicyContextNotPrepared, thrown.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Preparation_is_recorded_even_when_no_store_is_configured()
+    {
+        DwPolicyContext prepared = await DwPolicy.PrepareAsync(
+            new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1"));
+
+        Assert.True(prepared.IsPrepared);
+
+        FilterResult<SecuredEmployee> result = People().ApplyPolicy(prepared).ToList(new Filter());
 
         Assert.All(result.Data, row => Assert.Equal(string.Empty, row.NationalId));
     }

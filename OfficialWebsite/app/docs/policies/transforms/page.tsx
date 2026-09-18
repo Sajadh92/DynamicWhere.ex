@@ -78,7 +78,7 @@ public string PassportNumber { get; set; }    // stable per vault, useful for jo
       <table>
         <thead><tr><th></th><th><code>Hash</code></th><th><code>Tokenize</code></th></tr></thead>
         <tbody>
-          <tr><td>Output</td><td>32 hex characters</td><td>32 hex characters</td></tr>
+          <tr><td>Output</td><td>64 hex characters</td><td>32 hex characters</td></tr>
           <tr><td>Derived from the value</td><td>yes</td><td>no</td></tr>
           <tr><td>Reversed by</td><td>holding the salt</td><td>reading the vault</td></tr>
           <tr><td>A weak secret</td><td>brute-forced offline</td><td>does not exist</td></tr>
@@ -107,10 +107,14 @@ public string PassportNumber { get; set; }    // stable per vault, useful for jo
         safely because a token is written once and never rewritten.
       </p>
       <p>
-        Tokens are namespaced by the field&apos;s own path, so two columns holding
-        the same value get different tokens. Name a shared <code>TokenScope</code>{" "}
-        on both when you want them to match — at the cost of telling a caller the two
-        rows concern the same subject.
+        Tokens are namespaced by <code>TokenScope</code>, and where none is given
+        the namespace falls back to the field&apos;s path relative to the entity
+        being queried — with no type name in it. Two columns reached by different
+        paths therefore get different tokens for the same value, and two entities
+        whose member path is spelled identically share them, whether or not
+        anybody decided they should. Name the scope explicitly on both sides when
+        you want the match — at the cost of telling a caller the two rows concern
+        the same subject — and name a distinct one on each when you do not.
       </p>
       <Callout tone="warn" title="Neither one hides equality">
         The same value maps to the same output under both, which is what makes the
@@ -156,15 +160,28 @@ project into a type whose member is a string.`}</Code>
         at a time. A runtime rule can add a stage on top of a sealed one and
         cannot replace it.
       </p>
-      <Code lang="csharp">{`[DwGeneralize(GeneralizeMode.Round, Step = 1000)]
-[DwFormat("C0")]
+      <Code lang="csharp">{`[DwGeneralize(GeneralizeMode.Bucket, Step = 5000)]   // 45000-49999
+[DwTruncate(5, Ellipsis = "+")]                      // 45000+
 public string SalaryBand { get; set; } = string.Empty;`}</Code>
       <p>
-        The member is a <code>string</code> because <code>[DwFormat]</code> ends
-        the chain in text, and startup validation refuses a chain that emits text
-        into a member that cannot hold it. Reduce a number while keeping its type
-        with <code>[DwGeneralize]</code> alone.
+        The member is a <code>string</code> because both stages emit text, and
+        startup validation refuses a chain that emits text into a member that
+        cannot hold it. Reduce a number while keeping its type with{" "}
+        <code>[DwGeneralize]</code> alone.
       </p>
+      <Callout tone="warn" title="Order decides whether a stage does anything">
+        Stages run in a fixed order — <code>[DwDefault]</code>,{" "}
+        <code>[DwMutate]</code>, <code>[DwGeneralize]</code>,{" "}
+        <code>[DwFormat]</code>, <code>[DwMask]</code>,{" "}
+        <code>[DwTruncate]</code> — and not in the order you wrote them.{" "}
+        <code>[DwFormat]</code> applies its format string only to an{" "}
+        <code>IFormattable</code>, and <code>Round</code> converts back to the
+        value&apos;s own runtime type. So{" "}
+        <code>[DwGeneralize(Round)]</code> with <code>[DwFormat(&quot;C0&quot;)]</code>{" "}
+        on a string member rounds a string back into a string and leaves the
+        format nothing to act on: it is dropped in silence, with no error at
+        startup and none at query time.
+      </Callout>
 
       <h2 id="graph">Through the graph</h2>
       <p>

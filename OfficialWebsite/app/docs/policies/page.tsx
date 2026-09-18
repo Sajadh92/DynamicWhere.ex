@@ -52,7 +52,9 @@ existing DynamicWhere      untouched
 transform                  mask, mutate, default, generalize, truncate, format
     |
     v
-FilterResult.Policy        a PolicyTrace saying what the policy did`}</Code>
+PolicyTrace                what the policy did: always on LastTrace, and on
+                           result.Policy as IncludeTraceInResult decides
+                           (off under the strict tier by default)`}</Code>
 
       <h2 id="start">The whole thing in one screen</h2>
       <Code lang="csharp">{`// Once, at startup. A second call is refused: the tier is read by every
@@ -63,7 +65,8 @@ DwPolicy.Configure(new DwPolicyOptions
     HashSalt = secret,
 });
 
-// Once per request, never once per query.
+// Once per request, never once per query. A context that skipped this is
+// refused: ApplyPolicy throws PolicyContextNotPrepared, store or no store.
 var caller = await DwPolicy.PrepareAsync(
     new DwPolicyContext()
         .WithSubject(DwSubjectKind.User, userId)
@@ -74,7 +77,7 @@ var caller = await DwPolicy.PrepareAsync(
 // Then query through the guarded handle instead of the raw IQueryable.
 var result = await db.Employees.ApplyPolicy(caller).ToListAsync(filter);`}</Code>
 
-      <Code lang="csharp">{`[DwEntity(RequirePolicy = true)]        // an unguarded read throws
+      <Code lang="csharp">{`[DwEntity(RequirePolicy = true)]        // an unguarded DynamicWhere read throws
 public class Employee
 {
     [DwMask(MaskStrategy.Email), DwNoOrder]
@@ -107,13 +110,13 @@ public class Employee
 
       <h2 id="where">Where to go next</h2>
       <ul>
-        <li><Link href="/docs/policies/attributes">Attributes</Link> — all eighteen, with what each one does</li>
+        <li><Link href="/docs/policies/attributes">Attributes</Link> — all twenty-two, with what each one does</li>
         <li><Link href="/docs/policies/precedence">Precedence</Link> — six levels, and why attributes are sealed by default</li>
         <li><Link href="/docs/policies/transforms">Transforms &amp; masking</Link> — nine mask strategies and five other transforms</li>
         <li><Link href="/docs/policies/store">Dynamic store</Link> — rules without a redeploy</li>
         <li><Link href="/docs/policies/providers">Store providers</Link> — Redis and Entity Framework Core</li>
         <li><Link href="/docs/policies/admin">Admin API</Link> — schema, rules, explain, simulate, health</li>
-        <li><Link href="/docs/policies/security">Security &amp; k-anonymity</Link> — the seven inference channels</li>
+        <li><Link href="/docs/policies/security">Security &amp; k-anonymity</Link> — the eight inference channels</li>
         <li><Link href="/docs/policies/configuration">Configuration</Link> — options, caps and defaults</li>
       </ul>
 

@@ -59,11 +59,15 @@ export default function Page() {
           <code>GroupByFieldCannotBeComplexType</code>.
         </li>
         <li>
-          Fields cannot be collection types —{" "}
-          <code>GroupByFieldCannotBeCollectionType</code>.
+          Fields cannot be a collection of collections —{" "}
+          <code>GroupByFieldCannotBeCollectionType</code>. A path ending on a
+          collection is checked by its element type, so a collection of entities
+          fails the rule above and a <code>List&lt;string&gt;</code> passes.
         </li>
         <li>
-          Aggregation alias must not be empty and must not contain dots —{" "}
+          Aggregation alias must be an identifier — a letter or{" "}
+          <code>_</code>, then letters, digits or <code>_</code>. Spaces, dots,
+          hyphens and a leading digit all fail —{" "}
           <code>InvalidAlias</code>.
         </li>
         <li>
@@ -79,8 +83,9 @@ export default function Page() {
           <code>AggregationFieldMustBeSimpleType</code>.
         </li>
         <li>
-          Aggregation field cannot be a collection —{" "}
-          <code>AggregationFieldCannotBeCollectionType</code>.
+          Aggregation field cannot be a collection of collections —{" "}
+          <code>AggregationFieldCannotBeCollectionType</code>. As for a group
+          field, a collection is checked by its element type.
         </li>
         <li>
           <code>Sumation</code> / <code>Average</code> only work on numeric
@@ -110,7 +115,7 @@ export default function Page() {
       <h2 id="example">Example</h2>
       <Code lang="csharp">{`var groupBy = new GroupBy
 {
-    Fields = new List<string> { "Category" },
+    Fields = new List<string> { "Category.Name" },
     AggregateBy = new List<AggregateBy>
     {
         new AggregateBy { Field = null,    Alias = "TotalCount", Aggregator = Aggregator.Count },
@@ -122,7 +127,7 @@ export default function Page() {
 var grouped = dbContext.Products.Group(groupBy);`}</Code>
 
       <Code lang="json">{`{
-  "fields": ["Category"],
+  "fields": ["Category.Name"],
   "aggregateBy": [
     { "field": null,    "alias": "TotalCount", "aggregator": "Count" },
     { "field": "Price", "alias": "AvgPrice",   "aggregator": "Average" },

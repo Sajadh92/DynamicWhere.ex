@@ -22,7 +22,7 @@ export default function Page() {
       </p>
 
       <h2 id="redis">Redis</h2>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.Redis --version 3.0.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.Redis --version 3.1.0`}</Code>
       <Code lang="csharp">{`var redis = await ConnectionMultiplexer.ConnectAsync(connectionString);
 var store = new RedisPolicyStore(redis);
 
@@ -37,14 +37,22 @@ DwPolicy.Configure(options, provider);`}</Code>
       </Callout>
 
       <h2 id="ef">Entity Framework Core</h2>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.EntityFrameworkCore --version 3.0.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.EntityFrameworkCore --version 3.1.0`}</Code>
       <Code lang="csharp">{`var policyDbOptions = new DbContextOptionsBuilder<DwPolicyDbContext>()
     .UseNpgsql(connection, sql => sql.MigrationsAssembly("YourProject"))
     .Options;
 
 // A new context per read: the provider polls on a background timer, and a
 // context shared with request threads would be used concurrently.
-var store = new EfPolicyStore(() => new DwPolicyDbContext(policyDbOptions));
+//
+// The second argument turns a rule's entity name into a Type. Without it the
+// store cannot run its sealed-field check on a write and accepts the rule.
+// A lambda, not DwPolicy.Options.Entities.Resolve: a method group binds the
+// options in force now, which before Configure are the empty defaults, so
+// every rule would pass the check.
+var store = new EfPolicyStore(
+    () => new DwPolicyDbContext(policyDbOptions),
+    name => DwPolicy.Options.Entities.Resolve(name));
 
 var provider = await StorePolicyProvider.CreateAsync(store, options);
 
@@ -60,23 +68,66 @@ DwPolicy.Configure(options, provider);`}</Code>
         registration and any design-time factory.
       </Callout>
 
-      <p>Two tables, on their own migration history:</p>
+      <p>Three tables, on their own migration history:</p>
       <table>
         <thead><tr><th>Table</th><th>Holds</th></tr></thead>
         <tbody>
           <tr><td><code>DwPolicyRules</code></td><td>One row per rule, indexed by entity and field, and by subject.</td></tr>
           <tr><td><code>DwPolicyVersion</code></td><td>A single row carrying the snapshot version.</td></tr>
+          <tr><td><code>DwPolicyTokens</code></td><td>The <code>EfTokenVault</code> mapping, one row per tokenized value.</td></tr>
         </tbody>
       </table>
 
-      <h2 id="serialization">One serializer, three stores</h2>
+      <h2 id="serialization">Two serializers, three stores</h2>
       <p>
-        <code>PolicyPayload</code> is the only place a rule payload is read or
-        written. Neither provider parses JSON of its own, because three parsers
-        would become three standards. Every enumeration is written and read{" "}
+        <code>PolicyRuleDocument</code> is the only place a whole rule is read or
+        written, the EF <code>Detail</code> column included.{" "}
+        <code>PolicyPayload</code> sits under it and handles one thing: the
+        transform object. Neither provider parses JSON of its own, because three
+        parsers would become three standards — and the rule carries a forced
+        predicate, an alias and two operator lists that a serializer can drop in
+        silence, turning a tenant scope into a rule that is still listed and no
+        longer applies. Every enumeration is written and read{" "}
         <strong>by name</strong>, in JSON and in a database column alike: the zero
         member of several enumerations is the permissive one, so an unparsed
         value must not read as a plausible-looking default.
+      </p>
+      <p>
+        A forced predicate is written as a <code>forced</code> object, in a Redis
+        document and in the EF <code>Detail</code> column alike.{" "}
+        <code>allowNull</code> is written only when it is true, so a predicate that
+        does not let null through is written exactly as earlier releases wrote it:
+      </p>
+      <Code lang="json">{`"forced": {
+  "fieldPath": "InstitutionId",
+  "operator": "Equal",
+  "dataType": "Number",
+  "contextValue": "TenantId",
+  "allowNull": true
+}`}</Code>
+      <p>
+        An absent or <code>null</code> <code>allowNull</code> reads as{" "}
+        <code>false</code>. Anything else that is not a JSON <code>true</code> or{" "}
+        <code>false</code> — the string <code>&quot;true&quot;</code>, the number{" "}
+        <code>1</code> — is refused. Guessing
+        at a string would go wrong one way or the other: read as true it can widen
+        a tenant scope nobody asked to widen, and read as false it can drop a
+        widening somebody wrote. <code>allowNull: true</code> on a null check is
+        refused too, whether or not the object also carries a <code>value</code>{" "}
+        or <code>contextValue</code>: a widened <code>IsNotNull</code> would filter
+        nothing. A null check that carries a <code>contextValue</code> is refused
+        with or without the flag, because the reader builds it through{" "}
+        <code>ForcedPredicate.FromContext</code>, which refuses a null check. A{" "}
+        <code>value</code> on a null check is still ignored.
+      </p>
+      <p>
+        A refused document is never skipped: it fails the load that reads it. A
+        broad rule fails the load: fatal at startup, a refresh failure afterwards,
+        where <code>StoreFailure</code> applies. A <code>User</code> rule is read
+        only when a context is prepared, so it fails{" "}
+        <code>DwPolicy.PrepareAsync</code> for the callers it names, in every{" "}
+        <code>StoreFailure</code> mode. It never fails startup or a refresh, and
+        never degrades the provider.
       </p>
 
       <h2 id="readonly">Read-only deployments</h2>

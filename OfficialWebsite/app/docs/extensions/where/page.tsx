@@ -91,6 +91,17 @@ export default function Page() {
           <code>InvalidField</code>.
         </li>
         <li>
+          <code>Field</code>&apos;s first segment must not be one of the expression
+          parser&apos;s own words — <code>new</code>, <code>iif</code>,{" "}
+          <code>np</code>, <code>isnull</code>, <code>is</code>, <code>as</code>,{" "}
+          <code>cast</code>, <code>true</code>, <code>false</code>,{" "}
+          <code>null</code>, in any letter case —{" "}
+          <code>{`FieldPath[{path}]StartsWithReservedName`}</code>. The same check
+          covers <code>Orders</code>, <code>Selects</code>,{" "}
+          <code>GroupBy.Fields</code> and <code>AggregateBy.Field</code>; only the
+          first segment counts, so <code>Owner.New</code> names the member.
+        </li>
+        <li>
           <code>Between</code> / <code>NotBetween</code> require exactly 2
           values — <code>RequiredTwoValue</code>.
         </li>
@@ -107,9 +118,6 @@ export default function Page() {
           <code>RequiredOneValue({"{Operator}"})</code>.
         </li>
         <li>
-          Values must not be null/whitespace — <code>InvalidValue</code>.
-        </li>
-        <li>
           <code>Guid</code> values must parse as <code>Guid</code> —{" "}
           <code>InvalidFormat</code>.
         </li>
@@ -122,8 +130,20 @@ export default function Page() {
           <code>InvalidFormat</code>.
         </li>
         <li>
-          <code>Date</code> / <code>DateTime</code> values must parse as{" "}
-          <code>DateTime</code> — <code>InvalidFormat</code>.
+          <code>Date</code> / <code>DateTime</code> values must be ISO&nbsp;8601,
+          year-first, or a format declared with <code>DwDates.Configure</code> —{" "}
+          <code>AmbiguousDateFormat</code> for a day/month-first date such as{" "}
+          <code>01/09/2026</code>, <code>InvalidFormat</code> otherwise. The
+          server&apos;s culture decides nothing. See{" "}
+          <Link href="/docs/validation/condition">Condition validation</Link>.
+        </li>
+        <li>
+          The <code>DataType</code> / <code>Operator</code> pair must be one the
+          library supports — checked last, when the predicate is built, and
+          reported as{" "}
+          <code>
+            {`Unsupported combination of DataType '<DataType>' and Operator '<Operator>'.`}
+          </code>
         </li>
       </ul>
 

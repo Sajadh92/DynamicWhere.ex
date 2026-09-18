@@ -20,9 +20,10 @@ export default function Page() {
         consecutive{" "}
         <Link href="/docs/classes/condition-set"><code>ConditionSet</code></Link>{" "}
         results inside a{" "}
-        <Link href="/docs/classes/segment"><code>Segment</code></Link>. It maps
-        onto LINQ's <code>Union</code> / <code>Intersect</code> /{" "}
-        <code>Except</code> and the matching SQL set operators.
+        <Link href="/docs/classes/segment"><code>Segment</code></Link>. The sets
+        are combined into <strong>one query</strong> the database answers.{" "}
+        <code>Union</code> and <code>Intersect</code> combine the sets&apos; own
+        conditions, and only <code>Except</code> matches rows, by primary key.
       </p>
 
       <h2 id="values">Values</h2>
@@ -31,27 +32,36 @@ export default function Page() {
           <tr>
             <th>Value</th>
             <th>Description</th>
-            <th>SQL equivalent</th>
+            <th>Generated as</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td><code>Union</code></td>
-            <td>Combines both sets — every item from either side.</td>
-            <td><code>UNION</code></td>
+            <td>Combines both sets — every row from either side, once.</td>
+            <td><code>OR</code> of the sets&apos; conditions</td>
           </tr>
           <tr>
             <td><code>Intersect</code></td>
-            <td>Keeps only items present in both sets.</td>
-            <td><code>INTERSECT</code></td>
+            <td>Keeps only rows present in both sets.</td>
+            <td><code>AND</code> of the sets&apos; conditions</td>
           </tr>
           <tr>
             <td><code>Except</code></td>
-            <td>Removes items found in the second set from the first.</td>
-            <td><code>EXCEPT</code></td>
+            <td>Removes rows found in the second set from the first.</td>
+            <td><code>NOT EXISTS</code> on the primary key</td>
           </tr>
         </tbody>
       </table>
+
+      <Callout tone="warn">
+        A type with no primary key has no row identity to match on, so its sets
+        use SQL <code>UNION</code> / <code>INTERSECT</code> /{" "}
+        <code>EXCEPT</code> instead. Those compare whole rows: identical rows
+        collapse into one, and a column the database cannot compare, such as
+        PostgreSQL <code>json</code>, fails the query even when it is not
+        selected.
+      </Callout>
 
       <h2 id="ordering">Ordering and the first set</h2>
       <p>
@@ -65,8 +75,8 @@ export default function Page() {
 
       <Callout tone="warn">
         Set operations are <strong>async-only</strong>. The only entry point is{" "}
-        <code>.ToListAsync&lt;T&gt;(Segment)</code>. Each set is materialized
-        independently in memory before the operation is applied.
+        <code>.ToListAsync&lt;T&gt;(Segment)</code>. Sets combine left to right:{" "}
+        <code>((set1 op2 set2) op3 set3)</code>.
       </Callout>
 
       <h2 id="json">JSON example — Union then Except</h2>

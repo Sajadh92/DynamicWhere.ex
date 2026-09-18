@@ -26,10 +26,13 @@ export default function Page() {
       <h2 id="value-counts">Required values at a glance</h2>
       <p>
         Each operator expects a specific number of entries in{" "}
-        <code>Condition.Values</code>. Sending the wrong count throws a
-        validation error (<code>RequiredOneValue</code>,{" "}
-        <code>RequiredTwoValue</code>, <code>RequiredValues</code>, or{" "}
-        <code>NotRequiredValues</code>).
+        <code>Condition.Values</code>. Sending the wrong count throws a{" "}
+        <code>LogicException</code> whose message is one of{" "}
+        <code>ConditionWithOperator[&lt;op&gt;]MustHasOnlyOneValue</code>,{" "}
+        <code>ConditionWithOperator[Between-NotBetween]MustHasOnlyTwoValues</code>,{" "}
+        <code>ConditionWithOperator[In-IIn-NotIn-INotIn]MustHasOneOrMoreValues</code>, or{" "}
+        <code>ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues</code>. There is
+        no error-code property — the string is the message.
       </p>
       <table>
         <thead>
@@ -49,7 +52,9 @@ export default function Page() {
             <td><strong>1</strong></td>
             <td>
               All equality, contains, starts-with, ends-with, and ordered
-              comparisons (24 operators total).
+              comparisons (20 operators total — the 28 minus the two null
+              checks, the two range checks, and the four <code>In</code>{" "}
+              variants).
             </td>
           </tr>
           <tr>
@@ -215,6 +220,18 @@ export default function Page() {
         </tbody>
       </table>
 
+      <Callout tone="note" title="Long lists">
+        A list of up to 32 values is written as one chain of comparisons, and a
+        longer one as a balanced tree of such chains, which returns the same rows.
+        Before 3.1.0 every list was one chain, and a single condition carrying about
+        seven hundred values could overflow the request thread&apos;s stack and end
+        the process — see{" "}
+        <Link href="/docs/breaking-changes#values-are-literals">breaking changes</Link>.
+        Under <code>ApplyPolicy</code>,{" "}
+        <Link href="/docs/policies/configuration#caps"><code>MaxConditionValues</code></Link>{" "}
+        (default 1000) bounds the values one condition may carry.
+      </Callout>
+
       <h2 id="ranges">Ordered comparisons &amp; ranges</h2>
       <table>
         <thead>
@@ -281,9 +298,24 @@ export default function Page() {
         </tbody>
       </table>
 
+      <Callout tone="info" title="On a date member that cannot be null">
+        With <code>DataType.Date</code> or <code>DataType.DateTime</code>, the
+        library reads the member&apos;s type first. A non-nullable{" "}
+        <code>DateTime</code>, <code>DateTimeOffset</code> or{" "}
+        <code>DateOnly</code> of the entity itself can never be null, so{" "}
+        <code>IsNull</code> answers the constant <code>false</code> — no rows — and{" "}
+        <code>IsNotNull</code> the constant <code>true</code> — every row. On
+        PostgreSQL that is <code>WHERE FALSE</code> and no predicate at all.
+        Reached through a navigation, as in <code>Approval.ApprovedAt</code>, they
+        test the navigation instead: <code>IsNull</code> matches the rows with no{" "}
+        <code>Approval</code>. On a nullable date member they test the column as
+        usual. See{" "}
+        <Link href="/docs/breaking-changes#date-member-type">breaking changes</Link>.
+      </Callout>
+
       <Callout tone="warn">
         Sending any value with <code>IsNull</code> / <code>IsNotNull</code>{" "}
-        throws <code>NotRequiredValues</code>. Send an empty array:{" "}
+        throws <code>ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues</code>. Send an empty array:{" "}
         <code>"values": []</code>.
       </Callout>
 
@@ -324,7 +356,7 @@ export default function Page() {
         </li>
         <li>
           <Link href="/docs/validation/condition">Condition validation →</Link>{" "}
-          the exact error codes thrown on count mismatches.
+          the exact messages thrown on count mismatches.
         </li>
         <li>
           <Link href="/docs/errors">Error codes →</Link> full reference.

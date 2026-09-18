@@ -131,14 +131,27 @@ public class PolicyInjectionTests
     [InlineData(DwTier.Strict)]
     public void A_missing_context_value_throws_in_both_tiers(DwTier tier)
     {
-        // A tenant scope that silently fails to apply is worse than a failed request.
+        // A tenant scope that silently fails to apply is worse than a failed request. Under the strict
+        // tier the refusal names neither the scope's column nor the key it reads: together they describe
+        // how the rows are partitioned. The audit keeps both.
         DwPolicyContext blank = new DwPolicyContext().WithSubject(DwSubjectKind.User, "u1");
 
         PolicyException error = Assert.Throws<PolicyException>(
             () => Sanitize<ScopedInvoice>(new Filter(), blank, tier));
 
         Assert.Equal(PolicyErrorCode.MissingContextValue, error.ErrorCode);
-        Assert.Equal("TenantId", error.FieldPath);
+
+        if (tier == DwTier.Strict)
+        {
+            Assert.Equal("*", error.FieldPath);
+            Assert.Null(error.SourceOrigin);
+            Assert.DoesNotContain("TenantId", error.Message, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Equal("TenantId", error.FieldPath);
+            Assert.Contains("TenantId", error.SourceOrigin!, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -404,7 +417,14 @@ public class PolicyInjectionTests
     [Fact]
     public void The_composable_group_applies_the_scope()
     {
-        int groups = Handle()
+        // The k-anonymity floor is switched off here so that what is asserted is the scope. With
+        // the default floor of five, the one group the scope leaves is below it and the floor
+        // removes it too — which is its own test, in PolicyGroupFloorTests.
+        DwPolicyOptions options = new();
+
+        options.Caps.MinGroupSize = 1;
+
+        int groups = Books().AsQueryable().ApplyPolicy(Tenant(), options, Attributes())
             .Group(new GroupBy { Fields = new List<string> { "Number" } })
             .ToDynamicList()
             .Count;

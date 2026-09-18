@@ -132,6 +132,83 @@ public class PolicyRuleDocumentTests
     }
 
     [Fact]
+    public void A_forced_predicate_that_lets_null_through_survives()
+    {
+        // Lost on the way through the store, a scope meant to admit the rows belonging to no tenant
+        // would stop admitting them, and nothing about the loaded rule would say why.
+        PolicyRule reading = Rule(
+            forced: ForcedPredicate.FromContext(
+                "InstitutionId", Operator.Equal, DataType.Number, "TenantId", allowNull: true));
+        PolicyRule constant = Rule(
+            forced: ForcedPredicate.FromConstant(
+                "InstitutionId", Operator.NotEqual, DataType.Number, "7", allowNull: true));
+
+        Assert.True(PolicyRuleDocument.ToRule(PolicyRuleDocument.ToJson(reading)).Forced!.AllowNull);
+        Assert.True(PolicyRuleDocument.ToRule(PolicyRuleDocument.ToJson(constant)).Forced!.AllowNull);
+    }
+
+    [Fact]
+    public void A_forced_predicate_that_does_not_widen_is_written_as_before()
+    {
+        PolicyRule rule = Rule(
+            forced: ForcedPredicate.FromContext("TenantId", Operator.Equal, DataType.Number, "TenantId"));
+
+        string json = PolicyRuleDocument.ToJson(rule);
+
+        Assert.DoesNotContain("allowNull", json, StringComparison.Ordinal);
+        Assert.False(PolicyRuleDocument.ToRule(json).Forced!.AllowNull);
+    }
+
+    [Theory]
+    [InlineData("\"true\"")]
+    [InlineData("1")]
+    public void An_allowNull_that_is_not_a_boolean_is_refused(string allowNull)
+    {
+        string json = PolicyRuleDocument.ToJson(Rule(
+            forced: ForcedPredicate.FromContext("TenantId", Operator.Equal, DataType.Number, "TenantId")));
+
+        string tampered = json.Replace(
+            "\"contextValue\":\"TenantId\"",
+            "\"contextValue\":\"TenantId\",\"allowNull\":" + allowNull,
+            StringComparison.Ordinal);
+
+        Assert.NotEqual(json, tampered);
+        Assert.Throws<ArgumentException>(() => PolicyRuleDocument.ToRule(tampered));
+    }
+
+    [Fact]
+    public void An_allowNull_on_a_null_check_that_carries_a_value_is_refused()
+    {
+        // Written from code with a stray value, a null check is accepted and the value ignored; widened,
+        // it would filter nothing, so the document refuses it rather than store a scope that scopes nothing.
+        string json = PolicyRuleDocument.ToJson(Rule(
+            forced: ForcedPredicate.FromConstant("ApprovalId", Operator.IsNotNull, DataType.Number, "0")));
+
+        string tampered = json.Replace(
+            "\"dataType\":\"Number\"",
+            "\"dataType\":\"Number\",\"allowNull\":true",
+            StringComparison.Ordinal);
+
+        Assert.NotEqual(json, tampered);
+        Assert.Throws<ArgumentException>(() => PolicyRuleDocument.ToRule(tampered));
+    }
+
+    [Fact]
+    public void An_allowNull_on_a_null_check_is_refused()
+    {
+        string json = PolicyRuleDocument.ToJson(Rule(
+            forced: ForcedPredicate.FromNullCheck("DeletedAt", Operator.IsNull, DataType.DateTime)));
+
+        string tampered = json.Replace(
+            "\"dataType\":\"DateTime\"",
+            "\"dataType\":\"DateTime\",\"allowNull\":true",
+            StringComparison.Ordinal);
+
+        Assert.NotEqual(json, tampered);
+        Assert.Throws<ArgumentException>(() => PolicyRuleDocument.ToRule(tampered));
+    }
+
+    [Fact]
     public void An_operator_restriction_survives()
     {
         PolicyRule rule = Rule(allowed: new[] { Operator.Equal, Operator.In });
@@ -304,6 +381,17 @@ public class PolicyRuleDocumentTests
             () => PolicyRuleDocument.ToRule(Document("""
                 "detail":{"forced":{"fieldPath":"TenantId","operator":"Equal","dataType":"Number",
                 "value":"1","contextValue":"TenantId"}}
+                """)));
+    }
+
+    [Fact]
+    public void A_null_check_reading_a_context_key_is_refused()
+    {
+        // It never worked: the key was required, and its value landed on a null check validation refuses.
+        Assert.ThrowsAny<ArgumentException>(
+            () => PolicyRuleDocument.ToRule(Document("""
+                "detail":{"forced":{"fieldPath":"DeletedAt","operator":"IsNull","dataType":"DateTime",
+                "contextValue":"TenantId"}}
                 """)));
     }
 

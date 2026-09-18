@@ -24,7 +24,7 @@ export default function Page() {
 
       <h2 id="signature">Signature</h2>
       <Code lang="csharp">{`public static IQueryable<T> Select<T>(this IQueryable<T> query, List<string> fields)
-    where T : class, new()`}</Code>
+    where T : class`}</Code>
 
       <table>
         <thead>
@@ -112,8 +112,8 @@ export default function Page() {
 
       <Callout tone="note">
         For nested entities (reference or collection), the <code>Id</code>{" "}
-        property is always automatically included alongside any requested
-        sub-fields.
+        property is automatically included alongside any requested sub-fields —
+        but only when the nested type actually declares an <code>Id</code>.
       </Callout>
 
       <h2 id="validations">Validations</h2>
@@ -125,7 +125,9 @@ export default function Page() {
           auto-normalized).
         </li>
         <li>
-          <code>T</code> must have a parameterless constructor.
+          <code>T</code> must have a parameterless constructor — checked at run
+          time, not by a type constraint —{" "}
+          <code>SelectTypeMustHaveParameterlessConstructor</code>.
         </li>
       </ul>
 
@@ -133,9 +135,14 @@ export default function Page() {
         <strong>Parameterless constructor required.</strong>{" "}
         <code>.Select&lt;T&gt;(fields)</code> requires <code>T</code> to have a
         parameterless (default) constructor. If <code>T</code> does not have
-        one, a <code>LogicException</code> is thrown. Most EF Core entity
-        classes have parameterless constructors by default. If your type does
-        not, use{" "}
+        one, a <code>LogicException</code> is thrown whose <code>Message</code>{" "}
+        is the stable code{" "}
+        <code>SelectTypeMustHaveParameterlessConstructor</code> and whose{" "}
+        <code>Subject</code> is <code>T</code>&apos;s name. Before 3.1.0 the
+        message was an English sentence with the type name inside it — see{" "}
+        <Link href="/docs/breaking-changes#select-code">breaking changes</Link>.
+        Most EF Core entity classes have parameterless constructors by default.
+        If your type does not, use{" "}
         <Link href="/docs/extensions/select-dynamic">
           <code>.SelectDynamic&lt;T&gt;</code>
         </Link>{" "}

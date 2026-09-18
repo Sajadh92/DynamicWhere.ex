@@ -19,7 +19,7 @@ export default function Page() {
         <code>CacheEvictionStrategy</code> selects the algorithm DynamicWhere.ex
         uses to evict entries from its internal reflection cache when a store
         reaches <code>MaxCacheSize</code>. It lives in{" "}
-        <code>DynamicWhere.ex.Optimization.Cache.Config</code>.
+        <code>DynamicWhere.ex.Optimization.Cache.Enums</code>.
       </p>
 
       <h2 id="values">Values</h2>
@@ -34,8 +34,10 @@ export default function Page() {
           <tr>
             <td><code>FIFO</code></td>
             <td>
-              First-In-First-Out. Predictable, minimal overhead — no per-access
-              bookkeeping.
+              First-In-First-Out in name only: eviction takes the first keys a{" "}
+              <code>ConcurrentDictionary</code> enumerates, and that type keeps
+              no insertion order — so the oldest entries are not the ones
+              removed. Minimal overhead — no per-access bookkeeping.
             </td>
           </tr>
           <tr>
@@ -68,9 +70,10 @@ export default function Page() {
           <tr>
             <td><code>FIFO</code></td>
             <td>
-              Testing, debugging, predictable behavior. Easy to reason about.
+              Testing and debugging, when all you want is for the store to be
+              trimmed — not for a particular entry to survive.
             </td>
-            <td>Minimal — only insertion order.</td>
+            <td>Minimal — no ordering data is kept.</td>
             <td>None per-access.</td>
           </tr>
           <tr>
@@ -81,7 +84,8 @@ export default function Page() {
             </td>
             <td>Light — timestamp per access.</td>
             <td>
-              <code>EnableLruTracking</code> auto-enabled.
+              Timestamps, because the strategy is LRU.{" "}
+              <code>EnableLruTracking</code> is set to match, for reporting.
             </td>
           </tr>
           <tr>
@@ -92,16 +96,18 @@ export default function Page() {
             </td>
             <td>Light — counter per access.</td>
             <td>
-              <code>EnableLfuTracking</code> auto-enabled.
+              Counters, because the strategy is LFU.{" "}
+              <code>EnableLfuTracking</code> is set to match, for reporting.
             </td>
           </tr>
         </tbody>
       </table>
 
       <Callout tone="info">
-        Tracking flags are managed automatically based on the strategy you
-        select. You normally don't need to touch <code>EnableLruTracking</code>{" "}
-        or <code>EnableLfuTracking</code> directly.
+        <code>EvictionStrategy</code> alone decides what is tracked. The two
+        flags only report that choice — auto-validation overwrites whatever you
+        set, and with <code>AutoValidateConfiguration = false</code> a flag that
+        does not match the strategy throws. Leave both alone.
       </Callout>
 
       <h2 id="csharp">C# usage</h2>
@@ -109,6 +115,7 @@ export default function Page() {
       <p>Builder pattern:</p>
       <Code lang="csharp">{`using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Optimization.Cache.Config;
+using DynamicWhere.ex.Optimization.Cache.Enums;
 
 CacheExpose.Configure(options =>
 {

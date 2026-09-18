@@ -40,6 +40,13 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     private DateTimeOffset _loadedAt;
     private bool _degraded;
     private Exception? _lastError;
+
+    /// <summary>
+    /// Every refresh or poll that has failed, counted under <see cref="_swap"/>. A poll compares it
+    /// across its own read, because a failure recorded while that read was in flight is newer than
+    /// anything the read can confirm.
+    /// </summary>
+    private long _failures;
     private Task? _refreshing;
     private bool _disposed;
 
@@ -80,7 +87,8 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     }
 
     /// <summary>
-    /// When this provider last loaded the store successfully, by its own clock.
+    /// When this provider last loaded the store successfully, or last confirmed with a poll that the
+    /// store still holds the version it serves, by its own clock.
     /// </summary>
     /// <remarks>
     /// The provider's clock, not the store's. A store clock running ahead would make every snapshot
@@ -108,7 +116,8 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     /// </summary>
     /// <remarks>
     /// Kept so a health endpoint can say why an instance is degraded rather than only that it is.
-    /// Cleared by a refresh that succeeds, so it never outlives the condition it describes.
+    /// Cleared by a refresh that succeeds, or by a poll that confirms the version served, so it never
+    /// outlives the condition it describes.
     /// </remarks>
     public Exception? LastError
     {
@@ -178,13 +187,19 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
     /// </summary>
     /// <param name="context">The caller's context, built once per request.</param>
     /// <param name="ct">Cancels the narrow load.</param>
-    /// <returns>The same context, prepared, for chaining.</returns>
+    /// <returns>The same context, with this provider's snapshot pinned, for chaining.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="context"/> is null.</exception>
     /// <remarks>
+    /// This pins and reads; it does not mark the context prepared, so <c>ApplyPolicy(context)</c> still
+    /// refuses it. Prepare a context through <see cref="DwPolicy.PrepareAsync"/>, which calls this
+    /// for every configured store.
+    /// <para>
     /// Call this before the context's first query. Everything downstream then resolves synchronously
     /// against what was read here, and every query made with this context sees one coherent version.
+    /// </para>
     /// <para>
-    /// A narrow load failure is not caught. There is no safe way to continue: an empty narrow zone
+    /// A narrow load failure is not caught, whatever <c>StoreFailure</c> says, and neither is a
+    /// user-level rule the store cannot read. There is no safe way to continue: an empty narrow zone
     /// is a real answer meaning "this caller has no user rules", so substituting one for a failed
     /// read would drop a denial written for exactly this caller.
     /// </para>
@@ -278,6 +293,11 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
         // this is being honoured on trust nobody has renewed — which is how "the store died six
         // hours ago" becomes "we have been honouring revoked grants all afternoon".
         //
+        // Renewed by a reload, or by a poll that reads back the version being served: both establish
+        // that the store is reachable and that this snapshot is what it holds. A provider built with
+        // autoRefresh: false renews on neither, so such a host has to call RefreshAsync itself,
+        // more often than the ceiling.
+        //
         // Measured against the load time this provider stamped, not the one the store reported. A
         // store's clock is not this library's to trust: running behind it would only fail closed,
         // but running ahead it would make every snapshot look fresh and extend the ceiling without
@@ -339,6 +359,7 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
             {
                 _degraded = true;
                 _lastError = failure;
+                _failures++;
             }
 
             throw;
@@ -472,7 +493,7 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
         }
     }
 
-    /// <summary>Reloads when a poll shows the version has moved.</summary>
+    /// <summary>Reloads when a poll shows the version has moved, and renews the snapshot when it has not.</summary>
     private async Task PollLoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -481,9 +502,17 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
             {
                 await Task.Delay(_options.RefreshInterval, ct).ConfigureAwait(false);
 
+                (DateTimeOffset asked, long failures) = BeforeRead();
+
                 long version = await _store.GetVersionAsync(ct).ConfigureAwait(false);
 
-                if (version != Current.Version)
+                // A poll that reads back the version already being served is a renewal, not a
+                // no-op: the store was reachable and it holds what this provider is serving, which
+                // is everything a reload would have established. Without counting it, a store
+                // nobody writes to is never reloaded, the load stamp freezes, and the staleness
+                // ceiling refuses every guarded query one MaxSnapshotAge after the last write —
+                // a healthy store failing closed with nothing wrong.
+                if (!Confirm(version, asked, failures))
                 {
                     await Attempt(ct).ConfigureAwait(false);
                 }
@@ -500,8 +529,64 @@ public sealed class StorePolicyProvider : IDwPolicyProvider, IDwPolicyRefresher,
                 lock (_swap)
                 {
                     _degraded = true;
+                    _failures++;
                 }
             }
+        }
+    }
+
+    /// <summary>What a poll records before it reads the version: when it asked, and the failures so far.</summary>
+    private (DateTimeOffset Asked, long Failures) BeforeRead()
+    {
+        lock (_swap)
+        {
+            return (Clock(), _failures);
+        }
+    }
+
+    /// <summary>
+    /// Renews the snapshot when the store still reports the version being served.
+    /// </summary>
+    /// <param name="version">The version the store just reported.</param>
+    /// <param name="asked">When the poll asked for it, which is as recent as the answer can vouch for.</param>
+    /// <param name="failures">The failure count when the poll asked.</param>
+    /// <returns>True when it matched and the snapshot was renewed; false when a reload is needed.</returns>
+    /// <remarks>
+    /// Nothing is confirmed when a refresh or poll failed while the read was in flight. The answer
+    /// was read before that failure, perhaps before the very write whose reload failed, so taking it
+    /// as current would clear a <see cref="StoreFailureMode.FailClosed"/> refusal and serve the
+    /// older rules until the next poll. Returning false sends the loop to reload instead, which
+    /// settles it either way.
+    /// <para>
+    /// The stamp is the time of asking, not of answering, and it never moves backwards: a reload
+    /// that landed while the read was in flight keeps its own, later load time.
+    /// </para>
+    /// <para>
+    /// This clears the degraded flag for the same reason it renews the stamp. A store that answers
+    /// a version read is reachable, and a version that matches means nothing has been missed — so
+    /// an instance that failed one poll and has written nothing since stops refusing under
+    /// <see cref="StoreFailureMode.FailClosed"/> as soon as the store answers again, rather than
+    /// waiting for a write that may never come.
+    /// </para>
+    /// </remarks>
+    private bool Confirm(long version, DateTimeOffset asked, long failures)
+    {
+        lock (_swap)
+        {
+            if (_snapshot.Version != version || _failures != failures)
+            {
+                return false;
+            }
+
+            if (asked > _loadedAt)
+            {
+                _loadedAt = asked;
+            }
+
+            _degraded = false;
+            _lastError = null;
+
+            return true;
         }
     }
 

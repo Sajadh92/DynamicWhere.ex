@@ -22,8 +22,9 @@ export default function Page() {
       </p>
 
       <h2 id="namespaces">Namespaces</h2>
-      <Code lang="csharp">{`using DynamicWhere.ex.Optimization.Cache.Source;
-using DynamicWhere.ex.Optimization.Cache.Config;`}</Code>
+      <Code lang="csharp">{`using DynamicWhere.ex.Optimization.Cache.Source;   // CacheExpose
+using DynamicWhere.ex.Optimization.Cache.Config;   // CacheOptions
+using DynamicWhere.ex.Optimization.Cache.Enums;    // CacheEvictionStrategy`}</Code>
 
       <h2 id="option-1-preset">Option 1 — Use a preset</h2>
       <p>
@@ -84,7 +85,7 @@ app.Run();`}</Code>
       <h2 id="related">Related</h2>
       <ul>
         <li><Link href="/docs/cache/options">CacheOptions reference →</Link></li>
-        <li><Link href="/docs/cache/presets">All six presets →</Link></li>
+        <li><Link href="/docs/cache/presets">All five presets →</Link></li>
         <li><Link href="/docs/cache/warmup">Warmup after configure →</Link></li>
         <li><Link href="/docs/enums/cache-eviction-strategy">CacheEvictionStrategy →</Link></li>
       </ul>

@@ -16,8 +16,8 @@ export default function Page() {
     <DocPage pathname="/docs/policies/attributes">
       <h1>Policy Attributes</h1>
       <p>
-        The compile-time half of the feature. Every attribute below is{" "}
-        <strong>sealed by default</strong> — no runtime rule can lift it unless
+        The compile-time half of the feature. Every field-level attribute below
+        is <strong>sealed by default</strong> — no runtime rule can lift it unless
         you write <code>Overridable = true</code>. See{" "}
         <Link href="/docs/policies/precedence">Precedence</Link>.
       </p>
@@ -30,12 +30,132 @@ export default function Page() {
             <td><code>[DwEntity(RequirePolicy = true)]</code></td>
             <td>Querying this type without a policy context throws <code>PolicyRequired</code> instead of returning rows.</td>
           </tr>
+          <tr>
+            <td><code>[DwEntity(DefaultOrder = &quot;CreatedAt desc, Id&quot;)]</code></td>
+            <td>The order a guarded query takes when its caller sends none. See <Link href="/docs/policies/attributes#default-order">Default order</Link>.</td>
+          </tr>
         </tbody>
       </table>
-      <Callout tone="warn" title="This is the one that catches a forgotten guard">
+      <Callout tone="warn" title="RequirePolicy is the one that catches a forgotten guard">
         Without it, a code path that never calls <code>ApplyPolicy</code> returns
         everything, and nothing complains. With it, the omission is a startup-
         loud failure on the first call rather than a silent disclosure.
+        <strong>Only this library&apos;s own extension methods run the check</strong>,
+        so plain EF Core or LINQ against the <code>DbSet</code> is not intercepted
+        and returns rows as it always did.
+      </Callout>
+
+      <h2 id="default-order">Default order</h2>
+      <p>
+        A caller who pages a query without ordering it gets whichever rows the
+        database returns first, so two pages can repeat or miss a row.{" "}
+        <code>DefaultOrder</code> names the order a guarded query takes when its
+        caller sends none — <code>Orders</code> null or empty.
+      </p>
+      <Code lang="csharp">{`[DwEntity(RequirePolicy = true, DefaultOrder = "CreatedAt desc, Id")]
+public class Ticket
+{
+    public int Id { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string Title { get; set; } = string.Empty;
+}`}</Code>
+      <ul>
+        <li>
+          Entries are separated by commas. Each is a field path, optionally
+          followed by <code>asc</code> or <code>desc</code> in any letter case, and
+          ascending when neither is written. A path may cross a navigation, and a
+          blank entry — the one a trailing comma leaves — is ignored.
+        </li>
+        <li>
+          It applies only through <code>ApplyPolicy</code>: to{" "}
+          <code>ToList</code>, <code>ToListAsync</code>, <code>ToListDynamic</code>{" "}
+          and <code>ToListAsyncDynamic</code> with a <code>Filter</code>, to{" "}
+          <code>ToListAsync</code> with a <code>Segment</code>, to the composable{" "}
+          <code>Filter</code> and <code>FilterDynamic</code>, and to the composable{" "}
+          <code>Page</code> on a source nothing has ordered or projected.
+        </li>
+        <li>
+          It never applies outside the guarded handle. A core method on a plain{" "}
+          <code>IQueryable&lt;T&gt;</code> or <code>IEnumerable&lt;T&gt;</code> —
+          including one called on what <code>AsUnguardedQueryable()</code>{" "}
+          returns — does not read it, and orders only as its caller asks, as in
+          3.0.0.
+        </li>
+        <li>
+          The caller&apos;s own orders win, and the default is not appended to
+          them as a tiebreak. A query that is already ordered keeps its order,
+          whether an <code>IQueryable&lt;T&gt;</code> was ordered before it was
+          guarded —{" "}
+          <code>{`db.Tickets.OrderBy(t => t.Title).ApplyPolicy(caller)`}</code> — or
+          an <code>Order</code> was composed on the guarded handle first, as in{" "}
+          <code>{`guarded.Order(order).Page(page)`}</code> — even when the policy
+          dropped every order that call sent. An in-memory
+          sequence sorted before <code>ApplyPolicy</code> is not recognised as
+          ordered, because it reaches the policy as a query with no{" "}
+          <code>OrderBy</code> in it, so it takes the default; send that order with
+          the filter instead. A <code>Summary</code> never takes the default, and
+          neither do the composable <code>Where</code>, <code>Select</code> and{" "}
+          <code>Order</code>.
+        </li>
+        <li>
+          A projected query takes no default. A <code>Select</code> anywhere in the
+          chain — the guarded <code>Select</code>, as in{" "}
+          <code>{`guarded.Select(fields).Page(page)`}</code>, or a projection made
+          before <code>ApplyPolicy</code> — leaves the query in its own order: a
+          default applied after a projection can name a field the projection left
+          out, which EF Core cannot translate.
+        </li>
+      </ul>
+      <p>
+        The default is gated like any order. A field in it that this caller may not
+        order by is left out — never refused, because the caller did not send it —
+        and the trace records a <code>Dropped</code> decision for{" "}
+        <code>Order</code> whose reason starts{" "}
+        <code>left out of the default order</code>. Ordering by that field would
+        rank rows by a value the caller may not see. In a <code>Segment</code> a
+        field this caller may not use in a segment is left out too, and recorded the
+        same way, because a segment refuses that field in any clause; a filter
+        still orders by it. A dry run keeps the field and still records the
+        decision, and a caller whose own orders were all dropped under the{" "}
+        <code>Convenience</code> tier gets no default in their place.
+      </p>
+      <p>
+        A field the default keeps that is audited for <code>Order</code>, by{" "}
+        <code>[DwAudit(PolicyFeature.Order)]</code> or by a rule, is recorded as a
+        use, with <code>Effect</code> <code>Allow</code>, each time a guarded query
+        orders by it, as a caller&apos;s own order is. A field the default leaves
+        out is not recorded: the query does not order by it, and the caller never
+        named it. A dry run keeps the field, so it records it with its{" "}
+        <code>Order</code> effect — <code>Deny</code> for a field this caller may
+        not order by — and <code>DryRun</code> <code>true</code>.
+      </p>
+      <p>
+        A default is never a reason for the library to refuse a query. An entry
+        naming a field the type does not have is skipped, so is an entry that is not
+        a field and a direction, so is one no query can order by, such as a
+        collection of entities, and so is one starting with a name the expression
+        parser keeps for itself; a field named twice is ordered by once. Nothing is ordered that the
+        declaration does not name, so a type without a <code>DefaultOrder</code> is
+        ordered only as its caller asks.{" "}
+        <Link href="/docs/policies/configuration#validate">Startup validation</Link>{" "}
+        reports an unreadable entry, a field no query can order by, a field whose
+        name starts with one of the expression parser&apos;s own words — which no
+        query can reach at all — and a field the type&apos;s own attributes seal
+        against ordering as errors. A field the type does not have, a field only{" "}
+        <code>Overridable</code> attributes deny for ordering — a rule can lift
+        those — and a field denied for segments are warnings.
+      </p>
+      <Callout tone="warn" title="End it with a unique field">
+        Rows that share every value the default names can still change places
+        between pages. End the default with the key —{" "}
+        <code>&quot;CreatedAt desc, Id&quot;</code> — so that no two rows tie.
+      </Callout>
+      <Callout tone="warn" title="A derived type's [DwEntity] replaces its base type's">
+        <code>[DwEntity]</code> allows one per type, and .NET attribute inheritance
+        hands a derived type its own when it declares one. The base type&apos;s{" "}
+        <code>DefaultOrder</code> and <code>RequirePolicy</code> are then gone, not
+        merged: a subclass declaring <code>[DwEntity(DefaultOrder = &quot;Id&quot;)]</code>{" "}
+        no longer requires a policy. Repeat both on the derived type.
       </Callout>
 
       <h2 id="access">Access control</h2>
@@ -62,7 +182,7 @@ public string EmployeeCode { get; set; }`}</Code>
         <thead><tr><th>Attribute</th><th>Effect</th></tr></thead>
         <tbody>
           <tr><td><code>[DwAlias("name")]</code></td><td>A public name, accepted anywhere a field path is. Renamed back on the way out, after materialization.</td></tr>
-          <tr><td><code>[DwForceWhere(op, Value =, ContextValue =)]</code></td><td>A predicate ANDed into every guarded query, whether the caller asked or not.</td></tr>
+          <tr><td><code>[DwForceWhere(op, Value =, ContextValue =, AllowNull =)]</code></td><td>A predicate ANDed into every guarded query, whether the caller asked or not. With <code>AllowNull = true</code> a row whose member is null passes as well — see <Link href="/docs/policies/attributes#allow-null">below</Link>.</td></tr>
           <tr><td><code>[DwRequireWhere(Operators =)]</code></td><td>The caller must filter on this field. Throws in both tiers.</td></tr>
         </tbody>
       </table>
@@ -81,6 +201,54 @@ public string Department { get; set; }`}</Code>
         tighten a tenant scope and can never discard one.
       </Callout>
 
+      <h2 id="allow-null">A forced predicate that lets null through</h2>
+      <p>
+        A record can belong to one tenant or to none — a system role no
+        institution owns. An equality scope never matches the row whose column is
+        null, and several forced predicates on one member are joined by{" "}
+        <code>And</code>, so no combination of them can say &quot;or null&quot;.{" "}
+        <code>AllowNull = true</code> widens one predicate to{" "}
+        <code>(field op value OR field IS NULL)</code>.
+      </p>
+      <Code lang="csharp">{`// Tenant 5 sees its own roles, and the roles no institution owns.
+[DwForceWhere(Operator.Equal, ContextValue = "TenantId", AllowNull = true)]
+public int? InstitutionId { get; set; }`}</Code>
+      <ul>
+        <li>
+          The widened term is placed in a group of its own and joined by{" "}
+          <code>And</code> to the caller&apos;s group and to every other forced
+          predicate, so a caller&apos;s <code>Or</code> cannot merge with it:{" "}
+          <code>(Name = A OR Name = B) AND (InstitutionId = 5 OR InstitutionId IS NULL)</code>.
+        </li>
+        <li>
+          It works with every operator that takes a value. It is refused with{" "}
+          <code>ArgumentException</code> at resolution, and reported by{" "}
+          <Link href="/docs/policies/configuration#validate">startup validation</Link>,
+          on <code>Operator.IsNull</code> or <code>Operator.IsNotNull</code>, which
+          already decide about null, and on a member that can never be null, such
+          as an <code>int</code>.
+        </li>
+        <li>
+          The context value is still required. A context that does not supply{" "}
+          <code>TenantId</code> is refused with <code>MissingContextValue</code>:
+          the flag widens which rows pass, not which callers are scoped.
+        </li>
+        <li>
+          The widened term is a disjunction, so it does not satisfy a{" "}
+          <code>[DwRequireWhere]</code> on the same member. The caller still has to
+          filter on it.
+        </li>
+        <li>
+          The trace records the injection as{" "}
+          <code>forced predicate (Equal, or null)</code>, with the operator&apos;s
+          name. A dry run injects nothing, as for every forced predicate.
+        </li>
+      </ul>
+      <p>
+        A runtime rule sets the same flag on its <code>ForcedPredicate</code> — see{" "}
+        <Link href="/docs/policies/store#forced">Dynamic store</Link>.
+      </p>
+
       <h2 id="transforms">Transformation</h2>
       <p>
         Covered in full on <Link href="/docs/policies/transforms">Transforms &amp; masking</Link>.
@@ -88,7 +256,7 @@ public string Department { get; set; }`}</Code>
       <table>
         <thead><tr><th>Attribute</th><th>Effect</th></tr></thead>
         <tbody>
-          <tr><td><code>[DwMask(strategy)]</code></td><td>Obscure the value. Eight strategies.</td></tr>
+          <tr><td><code>[DwMask(strategy)]</code></td><td>Obscure the value. Nine strategies.</td></tr>
           <tr><td><code>[DwMutate(typeof(T))]</code></td><td>Hand the value to your own <code>IValueTransformer</code>.</td></tr>
           <tr><td><code>[DwDefault]</code> / <code>[DwDefault("v")]</code></td><td>Replace with the type default or a constant.</td></tr>
           <tr><td><code>[DwGeneralize(mode)]</code></td><td>Reduce precision, keeping the type.</td></tr>
@@ -110,15 +278,23 @@ public string Department { get; set; }`}</Code>
           <tr><td><code>[DwDescribe(Label =, Description =, Group =, Order =)]</code></td><td>Describes the field for the schema endpoint, so a front end builds its filter UI from the entity rather than a hand-maintained copy.</td></tr>
           <tr><td><code>[DwAllowedValues(...)]</code></td><td>Offer a list rather than a free-text box.</td></tr>
           <tr><td><code>[DwCost(weight)]</code></td><td>Charge the field against the query budget, so an expensive field costs more of a caller allowance.</td></tr>
-          <tr><td><code>[DwAudit(features)]</code></td><td>Record every use to <code>IDwAuditSink</code>.</td></tr>
+          <tr><td><code>[DwAudit(features)]</code></td><td>Record every use to <code>IDwAuditSink</code>. Refused queries are recorded separately, whether or not a field carries this attribute, by <Link href="/docs/policies/configuration#audit-refusals"><code>DwPolicyOptions.AuditRefusals</code></Link>.</td></tr>
         </tbody>
       </table>
 
       <h2 id="overridable">Overridable</h2>
       <p>
-        Every policy attribute carries <code>Overridable</code>, which defaults
-        to <strong>false</strong>. One attribute can be sealed while another on
-        the same member is replaceable.
+        Every field-level policy attribute carries <code>Overridable</code>, which
+        defaults to <strong>false</strong>. One attribute can be sealed while
+        another on the same member is replaceable.
+      </p>
+      <p>
+        Two exceptions. The type-level <code>[DwEntity]</code> derives from{" "}
+        <code>Attribute</code> rather than the policy base and has no{" "}
+        <code>Overridable</code> at all. And the flag decides nothing on{" "}
+        <code>[DwOperators]</code> or <code>[DwForceWhere]</code>, because those
+        two are intersected and collected rather than elected — see{" "}
+        <Link href="/docs/policies/precedence">Precedence</Link>.
       </p>
       <Code lang="csharp">{`// The mask is absolute; the description is a suggestion an operator may change.
 [DwMask(MaskStrategy.Full)]

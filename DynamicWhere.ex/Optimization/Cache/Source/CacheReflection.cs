@@ -1,6 +1,7 @@
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Optimization.Cache.Config;
 using DynamicWhere.ex.Optimization.Cache.Input;
+using DynamicWhere.ex.Source;
 using System.Reflection;
 
 namespace DynamicWhere.ex.Optimization.Cache.Source;
@@ -190,19 +191,20 @@ internal static class CacheReflection
     /// <param name="rootType">The root type to validate against.</param>
     /// <param name="propertyPath">The property path to validate.</param>
     /// <returns>The validated and normalized property path.</returns>
-    /// <exception cref="LogicException">Thrown when the path is invalid.</exception>
+    /// <exception cref="LogicException">
+    /// Thrown when the path is invalid, and with <c>FieldPath[{path}]StartsWithReservedName</c> when it
+    /// begins with a name the expression parser keeps for itself.
+    /// </exception>
     public static string ValidatePropertyPath(Type rootType, string propertyPath)
     {
+        // Before the lookup, because such a path is refused whatever the type has: the parser reads its
+        // own name there and never asks for the member. Nothing is cached and no access is tracked.
+        ReservedNames.Refuse(propertyPath);
+
         var cacheKey = (rootType, propertyPath);
         var config = GetCacheConfigOptions();
 
-        // Update access tracking based on eviction strategy
-        var accessTrackingInput = AccessTrackingInput<(Type, string)>.Create(cacheKey, config,
-            CacheDatabase.PropertyPathAccessTime,
-            CacheDatabase.PropertyPathAccessCount);
-        CacheDatabase.UpdateAccessTracking(accessTrackingInput);
-
-        return CacheDatabase.GetOrAddPropertyPath(cacheKey, key =>
+        string validated = CacheDatabase.GetOrAddPropertyPath(cacheKey, key =>
         {
             // Check if eviction is needed and perform it if necessary
             CacheEviction.EvictPropertyPathEntries(config);
@@ -210,6 +212,16 @@ internal static class CacheReflection
             // Perform the actual property path validation
             return ValidatePropertyPathInternal(key.Item1, key.Item2);
         });
+
+        // Tracked only once the path has validated. A path that fails adds no cache entry for eviction
+        // to remove, so tracking it kept one access record per invented name for the life of the
+        // process, and a caller sending unique names grew the process without limit.
+        var accessTrackingInput = AccessTrackingInput<(Type, string)>.Create(cacheKey, config,
+            CacheDatabase.PropertyPathAccessTime,
+            CacheDatabase.PropertyPathAccessCount);
+        CacheDatabase.UpdateAccessTracking(accessTrackingInput);
+
+        return validated;
     }
 
     /// <summary>

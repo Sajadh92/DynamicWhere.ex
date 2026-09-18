@@ -79,8 +79,15 @@ app.Run();`}</Code>
       <ul>
         <li><code>TypeProperties</code> — for every type along the path.</li>
         <li><code>PropertyPath</code> — the validated and normalized path string.</li>
-        <li><code>CollectionElementType</code> — for any collection segment in the path (e.g. <code>OrderItems</code>).</li>
+        <li><code>CollectionElementType</code> — one entry per segment's property type, collection or not; <code>null</code> is cached for the non-collections.</li>
       </ul>
+
+      <Callout tone="warn">
+        A path that fails validation is skipped silently —{" "}
+        <code>WarmupCache</code> swallows the error, so a typo in a warmup path
+        stays invisible until a real query uses it. Only paths that validate
+        reach the <code>PropertyPath</code> store.
+      </Callout>
 
       <h2 id="related">Related</h2>
       <ul>

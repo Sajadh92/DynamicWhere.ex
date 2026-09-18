@@ -48,7 +48,7 @@ export default function Page() {
             <td><code>MostUsedThreshold</code></td>
             <td><code>int</code></td>
             <td><code>75</code></td>
-            <td>Percentage of entries to keep — always equal to <code>100 − LeastUsedThreshold</code>.</td>
+            <td>Bookkeeping only — must equal <code>100 − LeastUsedThreshold</code>, and <code>Validate()</code> corrects it when it does not. Eviction reads <code>LeastUsedThreshold</code> alone.</td>
           </tr>
           <tr>
             <td><code>EvictionStrategy</code></td>
@@ -62,13 +62,13 @@ export default function Page() {
             <td><code>EnableLruTracking</code></td>
             <td><code>bool</code></td>
             <td><code>true</code></td>
-            <td>Tracks per-entry access timestamps. Auto-managed based on <code>EvictionStrategy</code>.</td>
+            <td>Reported only. Timestamp tracking follows <code>EvictionStrategy</code>; auto-validation overwrites whatever you set here.</td>
           </tr>
           <tr>
             <td><code>EnableLfuTracking</code></td>
             <td><code>bool</code></td>
             <td><code>false</code></td>
-            <td>Tracks per-entry hit counters. Auto-managed based on <code>EvictionStrategy</code>.</td>
+            <td>Reported only. Frequency tracking follows <code>EvictionStrategy</code>; auto-validation overwrites whatever you set here.</td>
           </tr>
           <tr>
             <td><code>AutoValidateConfiguration</code></td>
@@ -80,14 +80,21 @@ export default function Page() {
       </table>
 
       <Callout tone="info">
-        <code>LeastUsedThreshold</code> and <code>MostUsedThreshold</code>{" "}
-        always sum to 100. Setting one updates the other when{" "}
-        <code>AutoValidateConfiguration</code> is on (the default).
+        Set <code>LeastUsedThreshold</code> on its own. There is no setter
+        logic: the two values are reconciled inside <code>Validate()</code>,
+        which <code>Configure</code> calls, and only in one direction —{" "}
+        <code>MostUsedThreshold</code> becomes{" "}
+        <code>100 − LeastUsedThreshold</code> when{" "}
+        <code>AutoValidateConfiguration</code> is on (the default), and throws
+        when it is off. The 50–99 range check on <code>MostUsedThreshold</code>{" "}
+        runs first, so an out-of-range value still throws even though the
+        correction would have overwritten it.
       </Callout>
 
       <h2 id="defaults-in-code">Defaults in code</h2>
       <p>
-        The default options object is equivalent to <code>CacheOptions.Default</code>:
+        There is no <code>CacheOptions.Default</code>. The default options
+        object is <code>new CacheOptions()</code>, equivalent to:
       </p>
       <Code lang="csharp">{`var defaults = new CacheOptions
 {
@@ -102,9 +109,11 @@ export default function Page() {
 
       <h2 id="strategy-tracking">Strategy ↔ tracking matrix</h2>
       <p>
-        When <code>AutoValidateConfiguration</code> is on, the two tracking
-        flags are kept consistent with <code>EvictionStrategy</code> so that
-        you never run an LFU eviction over zero hit counters.
+        When <code>AutoValidateConfiguration</code> is on, <code>Validate()</code>{" "}
+        overwrites the two tracking flags to match <code>EvictionStrategy</code>.
+        With it off, a flag that does not match the strategy throws instead —
+        including the <code>EnableLruTracking</code> default of <code>true</code>{" "}
+        under FIFO or LFU.
       </p>
       <table>
         <thead>

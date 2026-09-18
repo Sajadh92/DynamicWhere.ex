@@ -5,8 +5,8 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Security & k-anonymity — the seven inference channels",
-  description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own: set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, and SQL leakage.",
+  title: "Security & k-anonymity — the eight inference channels",
+  description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own: set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, SQL leakage, and schema probing through refusals.",
   keywords: ["k-anonymity", "MinGroupSize", "inference attack", "data disclosure", "aggregate disclosure", "EF Core security"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/security/" },
 };
@@ -17,9 +17,9 @@ export default function Page() {
       <h1>Security &amp; k-anonymity</h1>
       <p>
         Denying a field is easy. The hard part is the set of ways a caller can
-        learn a value <em>without</em> reading it. Seven such channels are closed;
-        each has a test that reproduces the attack and goes red if the control is
-        removed.
+        learn a value <em>without</em> reading it. Six such channels follow, then
+        two bypasses that are not channels; each has a test that reproduces the
+        attack and goes red if the control is removed.
       </p>
 
       <Callout tone="warn" title="MinGroupSize ships on, at 5">
@@ -117,7 +117,11 @@ new DwPolicyOptions { Caps = { MinGroupSize = 10 } }  // stricter`}</Code>
         is transformed but still orderable, and <code>[DwNoOrder]</code> is the
         explicit fix. A warning rather than an error because there are models
         where the ordering is the point and the transform is cosmetic — the
-        engine names the fix rather than deciding for you.
+        engine names the fix rather than deciding for you. A declared default
+        order cannot reopen the channel: a field in{" "}
+        <Link href="/docs/policies/attributes#default-order"><code>[DwEntity(DefaultOrder = ...)]</code></Link>{" "}
+        that the caller may not order by is left out of their query, and recorded
+        in the trace.
       </p>
       <Code lang="text">{`Employee.Email: the value is transformed on output but the field can still be
 sorted on, and sorting runs against the real value. Paging through it ranks the
@@ -130,14 +134,62 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         <code>QueryStringDenied</code>; the <code>Convenience</code> tier allows
         it, documented.
       </p>
+      <p>
+        The trace a result carries names the same things — the fields a policy
+        dropped, what sealed each one, and every injected predicate — and an API
+        that serializes a result hands it over. The <code>Strict</code> tier
+        therefore keeps it off the result unless{" "}
+        <Link href="/docs/policies/configuration#trace"><code>IncludeTraceInResult</code></Link>{" "}
+        is <code>true</code>; it stays on <code>PolicyQueryable&lt;T&gt;.LastTrace</code>,
+        in-process.
+      </p>
 
-      <h2 id="two-more">6 and 7. The two that are not channels</h2>
+      <h2 id="probing">6. A refusal tells a missing field from a denied one</h2>
+      <p>
+        A caller who may not read a column can still ask about it. When a name that
+        matches nothing fails validation while a denied field is refused by the
+        policy — naming the field and the attribute that sealed it — every guess is
+        answered: this column does not exist, that one does and is hidden. Repeated,
+        the probe lists the schema, the columns the caller may never read included.
+      </p>
+      <p>
+        <strong>Closed by:</strong> under the <code>Strict</code> tier, outside a
+        dry run, a name that matches nothing is gated as a field denied for every
+        feature, at the step where a denial is raised and after the same caps a
+        real field passes, so it receives the code a{" "}
+        <code>[DwDenied]</code> field receives in that clause —{" "}
+        <code>FieldDeniedForWhere</code> … <code>FieldDeniedForSegment</code>.
+        All six codes carry <code>FieldPath</code> <code>&quot;*&quot;</code> and
+        no <code>RuleId</code> or <code>SourceOrigin</code>, and{" "}
+        <code>CapExceeded</code> names no path either, so the two refusals are
+        identical. The trace keeps the real path, and{" "}
+        <Link href="/docs/policies/configuration#audit-refusals"><code>AuditRefusals</code></Link>{" "}
+        writes every refused guess to the audit — a guess at a name that does not
+        exist included, which no <code>[DwAudit]</code> could record. The{" "}
+        <code>Convenience</code> tier still names the field, documented. See{" "}
+        <Link href="/docs/policies/configuration#strict-refusals">What a strict refusal says</Link>.
+      </p>
+      <p>
+        The strict tier closes the side doors too. Inside a <code>Segment</code> every
+        field refusal is <code>FieldDeniedForSegment</code>, so a field denied for
+        every clause but not for segments cannot answer by clause while a missing
+        name answers for taking part. A name padded with dots or blank segments is
+        normalized the way a real path is, so it cannot trip the navigation cap
+        that a padded real field passes. <code>MaxQueryCost</code> is checked only
+        after every field has passed its gate, so a field weighted by{" "}
+        <code>[DwCost]</code> is refused as denied before its weight could set it
+        apart from a name that does not exist. And <code>MissingContextValue</code>{" "}
+        names neither the scope&apos;s column nor the context key it reads, which
+        together describe how the rows are partitioned.
+      </p>
+
+      <h2 id="two-more">7 and 8. The two that are not channels</h2>
       <table>
         <thead><tr><th>Attack</th><th>Control</th></tr></thead>
         <tbody>
           <tr>
-            <td>An unguarded call on a type that requires a policy</td>
-            <td><code>[DwEntity(RequirePolicy = true)]</code> throws rather than returning rows</td>
+            <td>An unguarded DynamicWhere call on a type that requires a policy</td>
+            <td><code>[DwEntity(RequirePolicy = true)]</code> throws <code>PolicyRequired</code> rather than returning rows. Only this library&apos;s own extension methods run the check, so plain EF Core or LINQ against the <code>DbSet</code> is not intercepted — the flag closes the hole in <em>this</em> API, not every route to the table.</td>
           </tr>
           <tr>
             <td>An empty policy store</td>
@@ -149,11 +201,15 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
       <h2 id="posture">Getting the posture right</h2>
       <ul>
         <li>Use <code>DwTier.Strict</code> unless you need <code>getQueryString</code>.</li>
+        <li>Leave <code>IncludeTraceInResult</code> unset under <code>Strict</code>. A serialized result carries the trace to the caller; read it from <code>LastTrace</code> instead.</li>
+        <li>Turn on <code>AuditRefusals</code> once an <code>IDwAuditSink</code> is registered, so a probe for hidden columns leaves a record.</li>
         <li>Leave <code>MinGroupSize</code> alone unless you have a reason; setting it to 1 is a decision, not a default.</li>
         <li>Prefer <code>Tokenize</code> over <code>Hash</code> where you can run a durable vault: neither hides equality, but only one of them can be undone by a leaked constant.</li>
         <li>Run <code>DwPolicy.ValidateModel(...)</code> at startup and treat its warnings as a checklist.</li>
-        <li>Put <code>[DwEntity(RequirePolicy = true)]</code> on anything sensitive, so a missed guard fails loudly.</li>
+        <li>Put <code>[DwEntity(RequirePolicy = true)]</code> on anything sensitive, so a DynamicWhere call that forgets <code>ApplyPolicy</code> fails loudly.</li>
         <li>Prefer <code>[DwOperators]</code> over allowing free filtering on a protected field.</li>
+        <li>Set <code>DwCaps.DefaultPageSize</code> if the API does not page for itself. It ships off, and the request <code>MaxPageSize</code> never bounded is the one that sent no page at all.</li>
+        <li>Keep <code>DwCaps.MaxConditionSets</code> near the number of sets your clients really send. A set with no conditions passes every other cap, and every set adds a condition or a subquery to the statement a segment becomes.</li>
       </ul>
     </DocPage>
   );

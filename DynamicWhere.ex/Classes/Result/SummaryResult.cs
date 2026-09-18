@@ -38,7 +38,9 @@ public class SummaryResult
     public string? QueryString { get; set; }
 
     /// <summary>
-    /// What the policy did to this query, or null when the query was not guarded.
+    /// What the policy did to this query. Null when the query was not guarded, and when
+    /// <c>DwPolicyOptions.IncludeTraceInResult</c> keeps the trace off the result, as it does by default
+    /// under the strict tier.
     /// </summary>
     public DTOs.PolicyTrace? Policy { get; set; }
 }

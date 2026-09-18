@@ -26,7 +26,8 @@ public enum StoreFailureMode
     LastKnownGood = 0,
 
     /// <summary>
-    /// Refuse every guarded query until a load succeeds.
+    /// Refuse every guarded query until a load succeeds, or a poll confirms that the store still holds
+    /// the version this instance serves.
     /// </summary>
     /// <remarks>
     /// Implemented by throwing rather than by emitting a blanket denial. A denial competes in the

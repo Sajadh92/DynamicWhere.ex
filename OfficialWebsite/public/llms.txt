@@ -2331,8 +2331,9 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
     JSON column (3.2.0; 3.1.0 asked only about simple members, so a denied `byte[]` or owned member came back).
   - A denial beneath a member counts when its value can reach the result:
     - on an entity, beneath a column, an owned or complex member, or a navigation something loads: an `Include` or
-      `ThenInclude` on the query (a form the library cannot read counts as loading every navigation), an automatic
-      include, or a lazy loader (proxies, or an injected `ILazyLoader`, whose navigations fill after the query). A
+      `ThenInclude` on the query (a form the library cannot read, or an include off the query's own chain such as on
+      a join's inner source, counts as loading every navigation), an automatic include, or a lazy loader (proxies,
+      or an injected `ILazyLoader`, whose navigations fill after the query). A
       denial beneath a navigation nothing loads never leaves the database and needs no projection, so a connected
       model is read as it was in 3.1.0;
     - on a row a projection builds, beneath a member its initializer assigns;

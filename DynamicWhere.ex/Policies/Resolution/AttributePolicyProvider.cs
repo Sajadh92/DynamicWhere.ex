@@ -487,6 +487,31 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     }
 
     /// <summary>
+    /// The type a property holds, then each collection layer beneath it, down to the element
+    /// <see cref="Peeled"/> reaches: <c>List&lt;Tags&gt;</c>, then <c>Tags</c>, then <see cref="string"/>.
+    /// </summary>
+    internal static IEnumerable<Type> Layers(Type propertyType)
+    {
+        Type current = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+
+        yield return current;
+
+        for (int layer = 0; layer < MaxCollectionLayers; layer++)
+        {
+            Type? element = ElementTypeOf(current);
+
+            if (element is null)
+            {
+                yield break;
+            }
+
+            current = Nullable.GetUnderlyingType(element) ?? element;
+
+            yield return current;
+        }
+    }
+
+    /// <summary>
     /// Returns the element type of one collection layer — the element of an array, or the <c>T</c>
     /// of the first <see cref="IEnumerable{T}"/> a type implements — or null when the type is not a
     /// collection.

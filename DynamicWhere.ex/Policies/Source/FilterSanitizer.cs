@@ -1913,7 +1913,7 @@ internal static class FilterSanitizer
             // Two members share the name, one hidden with new under another type or spelled in another case:
             // the core reads one of them, and a row carries both. What either can hold is asked about, and a
             // projection, which cannot tell them apart, leaves the name out.
-            if (gate.SharedName(name) is { Shared: true } shared
+            if (gate.SharedName(name, rows) is { Shared: true } shared
                 && (shared.Denies || gate.Beneath(name, PolicyFeature.None).Denied.Any(d => rows.Materializes(d.Path))))
             {
                 anyDenied = true;
@@ -2008,6 +2008,18 @@ internal static class FilterSanitizer
             anyDenied = true;
 
             gate.LeaveOut(path, "left out: a type derived from the row's type declares it, and the projection builds the row's type");
+        }
+
+        // A member a base type declares and T hides with new is still held by a row in memory, and read by
+        // anyone reading the row as the base type. A projection builds T and leaves it out.
+        if (rows.Kind == RowKind.InMemory)
+        {
+            foreach (string name in gate.HiddenDenials())
+            {
+                anyDenied = true;
+
+                gate.LeaveOut(name, "left out: a base type's member of this name, which the row's own member hides");
+            }
         }
 
         // A member that asks for nothing itself is still left out, or narrowed, as the projection would build
@@ -2740,11 +2752,12 @@ internal static class FilterSanitizer
         /// </remarks>
         internal static bool HoldsValue(Type type) =>
             CacheReflection.IsSimpleType(AttributePolicyProvider.Peeled(type))
-            && !OwnsMembers(Nullable.GetUnderlyingType(type) ?? type);
+            && !AttributePolicyProvider.Layers(type).Any(layer => OwnsMembers(layer) && Facts(layer).DeniesSelect);
 
         /// <summary>
         /// True for an application's own collection class, one deriving from <c>List&lt;string&gt;</c> or a
-        /// <c>Dictionary</c> say, that declares members beside the elements it holds.
+        /// <c>Dictionary</c> say, that declares members beside the elements it holds. A collection of values
+        /// stays a value unless a member of its own is denied.
         /// </summary>
         private static bool OwnsMembers(Type type) =>
             type.IsClass
@@ -2755,6 +2768,47 @@ internal static class FilterSanitizer
                 .Any(property => property.GetIndexParameters().Length == 0
                                  && property.DeclaringType is { } declaring
                                  && !AttributePolicyProvider.IsFramework(declaring));
+
+        /// <summary>
+        /// The names of members a base type of T declares, T hides with <c>new</c>, and this caller may not have,
+        /// or that hold a denied field no path names.
+        /// </summary>
+        internal List<string> HiddenDenials()
+        {
+            List<string> found = new();
+            PropertyInfo[] shown = _entityType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+            for (Type? declaring = _entityType.BaseType; declaring is not null && declaring != typeof(object); declaring = declaring.BaseType)
+            {
+                foreach (PropertyInfo hidden in declaring.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    if (!hidden.CanRead
+                        || hidden.GetIndexParameters().Length != 0
+                        || found.Contains(hidden.Name, StringComparer.Ordinal)
+                        || shown.Any(member => member.Name == hidden.Name && SameSlot(member, hidden)))
+                    {
+                        continue;
+                    }
+
+                    if (DeclaresDenial(hidden)
+                        || (!HoldsValue(hidden.PropertyType) && Carried(hidden.PropertyType, hidden.Name, exact: false).DeniesSelect))
+                    {
+                        found.Add(hidden.Name);
+                    }
+                }
+            }
+
+            return found;
+        }
+
+        /// <summary>True when two properties' getters are one method, or one overrides the other.</summary>
+        private static bool SameSlot(PropertyInfo left, PropertyInfo right) =>
+            left.GetGetMethod() is { } first
+            && right.GetGetMethod() is { } second
+            && first.GetBaseDefinition() is { } a
+            && second.GetBaseDefinition() is { } b
+            && a.MetadataToken == b.MetadataToken
+            && a.Module == b.Module;
 
         /// <summary>The names more than one readable member of a type shares, compared as the core compares names.</summary>
         private static readonly ConcurrentDictionary<Type, HashSet<string>> SharedNames = new();
@@ -2775,7 +2829,7 @@ internal static class FilterSanitizer
         /// A member hidden with <c>new</c> under another type, or two names differing only in case. The core
         /// reads one of them by name, and a row carries every one, which a serializer writes.
         /// </remarks>
-        internal (bool Shared, bool Denies) SharedName(string name)
+        internal (bool Shared, bool Denies) SharedName(string name, RowShape rows)
         {
             if (!SharedNames.GetOrAdd(_entityType, ReadSharedNames).Contains(name))
             {
@@ -2794,9 +2848,14 @@ internal static class FilterSanitizer
                 return (false, false);
             }
 
-            return (true, variants.Exists(variant => Denies(name, variant)
-                                                    || (!HoldsValue(variant.PropertyType)
-                                                        && Carried(variant.PropertyType, name, exact: false).DeniesSelect)));
+            // An entity's model says which of them EF Core maps and what loads beneath it; any other row can
+            // hold what either type can.
+            bool beneath = rows.LoadedBeneath(name) is not null
+                ? Unnamed(name, rows).DeniesSelect
+                : variants.Exists(variant => !HoldsValue(variant.PropertyType)
+                                             && Carried(variant.PropertyType, name, exact: false).DeniesSelect);
+
+            return (true, beneath || variants.Exists(variant => Denies(name, variant)));
         }
 
         /// <summary>
@@ -3287,6 +3346,12 @@ internal static class FilterSanitizer
 
         private bool Grant(Type type, string path, bool exact, HashSet<Type> onPath)
         {
+            // A value, a collection of them among values, holds no path to name.
+            if (HoldsValue(type))
+            {
+                return true;
+            }
+
             if (AttributePolicyProvider.NavigationTypeOf(type) is not { } node)
             {
                 TypeFacts facts = Facts(type, exact: false);
@@ -3399,18 +3464,21 @@ internal static class FilterSanitizer
             void Enqueue(Type candidate, bool root)
             {
                 Type peeled = AttributePolicyProvider.Peeled(candidate);
-                Type unwrapped = Nullable.GetUnderlyingType(candidate) ?? candidate;
 
-                // An application's own collection class declares members beside the elements it holds.
-                if (OwnsMembers(unwrapped))
+                // An application's own collection class declares members beside the elements it holds, at any
+                // layer: the member's own type, or the element of a list or an array of it.
+                foreach (Type layer in AttributePolicyProvider.Layers(candidate))
                 {
-                    holdsMembers = true;
-
-                    Read(unwrapped);
-
-                    if (!(root && exact))
+                    if (OwnsMembers(layer))
                     {
-                        Subtypes(unwrapped);
+                        holdsMembers = true;
+
+                        Read(layer);
+
+                        if (!(root && exact))
+                        {
+                            Subtypes(layer);
+                        }
                     }
                 }
 

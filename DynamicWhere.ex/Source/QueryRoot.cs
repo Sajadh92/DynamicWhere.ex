@@ -282,7 +282,8 @@ internal static class QueryRoot
 
     /// <summary>
     /// True for a call EF Core evaluates before it translates the query: one that reads no parameter of the
-    /// lambdas around it and hands back a query or an expression, which the query then holds.
+    /// lambdas around it and hands back a query or an expression, which the query then holds. A query the
+    /// tree already holds inline, over a root EF Core put there, is read where it stands.
     /// </summary>
     private static bool Evaluable(MethodCallExpression call)
     {
@@ -298,7 +299,7 @@ internal static class QueryRoot
         return !parameters.Found;
     }
 
-    /// <summary>Finds a parameter of a lambda outside the expression it is given.</summary>
+    /// <summary>Finds a parameter of a lambda outside the expression it is given, or a query root.</summary>
     private sealed class ParameterFinder : ExpressionVisitor
     {
         private readonly HashSet<ParameterExpression> _declared = new();
@@ -317,6 +318,13 @@ internal static class QueryRoot
         protected override Expression VisitParameter(ParameterExpression node)
         {
             Found |= !_declared.Contains(node);
+
+            return node;
+        }
+
+        protected override Expression VisitExtension(Expression node)
+        {
+            Found = true;
 
             return node;
         }

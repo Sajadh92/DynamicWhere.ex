@@ -13,31 +13,39 @@ namespace DynamicWhere.ex.Policies.Source;
 /// member the policy reads as clean, unless the subtypes are read too.
 /// <para>
 /// Every object's type is loaded before the object exists, so the loaded assemblies are the whole answer
-/// for any value a query returns. Only an assembly that is the type's own, or references it, can declare
-/// a subtype, which keeps the framework's and every unrelated library's assemblies out of the search.
-/// Loading another assembly may add subtypes, so each answer is kept only until the next one loads;
-/// an assembly emitted at run time is not searched, since it cannot declare a policy attribute a
-/// compiled type does not already carry.
+/// for any value a query returns. The framework's own assemblies are left out: none of them declares a
+/// subtype of an application's type, and a framework type carries no policy. Every other assembly is
+/// indexed once, each type under every base class and interface it has, so a search is a lookup. A
+/// generic type is indexed under its definition as well as its own instantiation, and a subtype that is
+/// itself generic is returned open, since the instantiation a row holds is not known.
+/// </para>
+/// <para>
+/// Loading another such assembly may add subtypes, so the index is rebuilt after one loads. An assembly
+/// emitted at run time, or one holding only resources, cannot declare one.
 /// </para>
 /// </remarks>
 internal static class KnownSubtypes
 {
-    private static readonly ConcurrentDictionary<Type, (int Epoch, Type[] Types)> Found = new();
+    private static readonly object Building = new();
+
+    /// <summary>Every assembly seen loading, in case one raises its event before the domain lists it.</summary>
+    private static readonly ConcurrentDictionary<Assembly, byte> SeenLoading = new();
 
     private static int _epoch;
 
-    private static Snapshot? _snapshot;
+    private static Index? _index;
 
     static KnownSubtypes() =>
         AppDomain.CurrentDomain.AssemblyLoad += (_, loaded) =>
         {
-            if (!loaded.LoadedAssembly.IsDynamic)
+            if (Searched(loaded.LoadedAssembly))
             {
+                SeenLoading.TryAdd(loaded.LoadedAssembly, 0);
                 Interlocked.Increment(ref _epoch);
             }
         };
 
-    /// <summary>Changes whenever an assembly loads, and with it any answer read from the subtypes.</summary>
+    /// <summary>Changes whenever an assembly that could declare a subtype loads, and with it every answer read from one.</summary>
     internal static int Epoch => Volatile.Read(ref _epoch);
 
     /// <summary>Every loaded type, other than the type itself, whose values the type's members can hold.</summary>
@@ -48,68 +56,134 @@ internal static class KnownSubtypes
             return Array.Empty<Type>();
         }
 
-        int epoch = Epoch;
+        Index index = Current();
+        List<Type>? found = null;
 
-        if (Found.TryGetValue(type, out (int Epoch, Type[] Types) known) && known.Epoch == epoch)
+        if (index.Descendants.TryGetValue(type, out Type[]? direct))
         {
-            return known.Types;
+            found = new List<Type>(direct);
         }
 
-        Type[] types = Search(type, Assemblies(epoch));
-
-        Found[type] = (epoch, types);
-
-        return types;
-    }
-
-    private static Type[] Search(Type type, IEnumerable<Candidate> assemblies)
-    {
-        string home = type.Assembly.GetName().Name ?? string.Empty;
-        List<Type> found = new();
-
-        foreach (Candidate candidate in assemblies)
+        // A subtype declared over the definition, class Tagged<T> : Base<T>, may be any instantiation of it;
+        // and a type still open itself may be any instantiation, so every subtype of the definition counts.
+        if (type.IsGenericType
+            && index.Descendants.TryGetValue(type.GetGenericTypeDefinition(), out Type[]? byDefinition))
         {
-            if (candidate.Assembly != type.Assembly && !candidate.References.Contains(home))
-            {
-                continue;
-            }
+            found ??= new List<Type>();
 
-            foreach (Type declared in candidate.Types.Value)
+            foreach (Type candidate in byDefinition)
             {
-                if (declared != type && !declared.ContainsGenericParameters && type.IsAssignableFrom(declared))
+                if ((type.ContainsGenericParameters || candidate.ContainsGenericParameters) && !found.Contains(candidate))
                 {
-                    found.Add(declared);
+                    found.Add(candidate);
                 }
             }
         }
 
-        return found.ToArray();
+        return found is null ? Array.Empty<Type>() : found;
     }
 
-    /// <summary>
-    /// The loaded assemblies that could declare a subtype, each with the names it references, read once
-    /// per epoch; an assembly's types are read only when a search reaches it.
-    /// </summary>
-    private static Candidate[] Assemblies(int epoch)
+    /// <summary>The index for the assemblies loaded now, built once for each epoch.</summary>
+    private static Index Current()
     {
-        if (Volatile.Read(ref _snapshot) is { } snapshot && snapshot.Epoch == epoch)
+        if (Volatile.Read(ref _index) is { } index && index.Epoch == Epoch)
         {
-            return snapshot.Candidates;
+            return index;
         }
 
-        Candidate[] candidates = AppDomain.CurrentDomain.GetAssemblies()
-            .Where(assembly => !assembly.IsDynamic)
-            .Select(assembly => new Candidate(
-                assembly,
-                new HashSet<string>(
-                    assembly.GetReferencedAssemblies().Select(reference => reference.Name ?? string.Empty),
-                    StringComparer.Ordinal),
-                new Lazy<Type[]>(() => TypesOf(assembly))))
-            .ToArray();
+        lock (Building)
+        {
+            if (_index is { } built && built.Epoch == Epoch)
+            {
+                return built;
+            }
 
-        Volatile.Write(ref _snapshot, new Snapshot(epoch, candidates));
+            // The epoch is read before the assemblies, so one loading meanwhile rebuilds the index again.
+            int epoch = Epoch;
+            Index fresh = Build(epoch);
 
-        return candidates;
+            Volatile.Write(ref _index, fresh);
+
+            return fresh;
+        }
+    }
+
+    private static Index Build(int epoch)
+    {
+        HashSet<Assembly> assemblies = new(AppDomain.CurrentDomain.GetAssemblies().Where(Searched));
+
+        assemblies.UnionWith(SeenLoading.Keys);
+
+        Dictionary<Type, List<Type>> descendants = new();
+
+        void Add(Type ancestor, Type type)
+        {
+            Type key = ancestor.IsGenericType && ancestor.ContainsGenericParameters
+                ? ancestor.GetGenericTypeDefinition()
+                : ancestor;
+
+            if (!descendants.TryGetValue(key, out List<Type>? list))
+            {
+                descendants[key] = list = new List<Type>();
+            }
+
+            list.Add(type);
+
+            if (key != ancestor || !ancestor.IsGenericType)
+            {
+                return;
+            }
+
+            // A closed ancestor, Base<int>, is also one instantiation of its definition.
+            Type definition = ancestor.GetGenericTypeDefinition();
+
+            if (!descendants.TryGetValue(definition, out List<Type>? byDefinition))
+            {
+                descendants[definition] = byDefinition = new List<Type>();
+            }
+
+            byDefinition.Add(type);
+        }
+
+        foreach (Assembly assembly in assemblies)
+        {
+            foreach (Type type in TypesOf(assembly))
+            {
+                for (Type? ancestor = type.BaseType; ancestor is not null && ancestor != typeof(object); ancestor = ancestor.BaseType)
+                {
+                    Add(ancestor, type);
+                }
+
+                foreach (Type contract in Interfaces(type))
+                {
+                    Add(contract, type);
+                }
+            }
+        }
+
+        return new Index(epoch, descendants.ToDictionary(entry => entry.Key, entry => entry.Value.Distinct().ToArray()));
+    }
+
+    /// <summary>An assembly that can declare a subtype of an application's type.</summary>
+    private static bool Searched(Assembly assembly)
+    {
+        if (assembly.IsDynamic)
+        {
+            return false;
+        }
+
+        AssemblyName name = assembly.GetName();
+
+        if (!string.IsNullOrEmpty(name.CultureName))
+        {
+            return false;
+        }
+
+        string simple = name.Name ?? string.Empty;
+
+        return !(simple is "mscorlib" or "netstandard" or "System" or "WindowsBase"
+                 || simple.StartsWith("System.", StringComparison.Ordinal)
+                 || simple.StartsWith("Microsoft.", StringComparison.Ordinal));
     }
 
     private static Type[] TypesOf(Assembly assembly)
@@ -124,7 +198,17 @@ internal static class KnownSubtypes
         }
     }
 
-    private sealed record Candidate(Assembly Assembly, HashSet<string> References, Lazy<Type[]> Types);
+    private static Type[] Interfaces(Type type)
+    {
+        try
+        {
+            return type.GetInterfaces();
+        }
+        catch (TypeLoadException)
+        {
+            return Array.Empty<Type>();
+        }
+    }
 
-    private sealed record Snapshot(int Epoch, Candidate[] Candidates);
+    private sealed record Index(int Epoch, Dictionary<Type, Type[]> Descendants);
 }

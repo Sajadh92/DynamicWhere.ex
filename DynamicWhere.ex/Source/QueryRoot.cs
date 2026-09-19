@@ -104,6 +104,67 @@ internal static class QueryRoot
         return false;
     }
 
+    /// <summary>
+    /// True when a call along the chain that <see cref="KeepsRows"/> does not know constructs an object in
+    /// one of its lambdas: a projection, such as the one behind <c>Select(x =&gt; x)</c>, an anonymous row
+    /// or a conditional, assigns what it builds, and loads whatever navigation it assigns.
+    /// </summary>
+    internal static bool Builds(Expression expression)
+    {
+        ConstructionFinder finder = new();
+
+        for (Expression? node = expression; node is MethodCallExpression call;
+             node = call.Arguments.Count > 0 ? call.Arguments[0] : null)
+        {
+            if (call.Arguments.Count > 1
+                && call.Method.Name is nameof(Queryable.Concat) or nameof(Queryable.Union) or "UnionBy"
+                    or nameof(Queryable.Intersect) or "IntersectBy" or nameof(Queryable.Except) or "ExceptBy"
+                && Builds(call.Arguments[1]))
+            {
+                return true;
+            }
+
+            if (KeepsRows(call))
+            {
+                continue;
+            }
+
+            foreach (Expression argument in call.Arguments.Skip(1))
+            {
+                finder.Visit(argument);
+
+                if (finder.Found)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Finds an object construction anywhere in an expression.</summary>
+    private sealed class ConstructionFinder : ExpressionVisitor
+    {
+        internal bool Found { get; private set; }
+
+        public override Expression? Visit(Expression? node) => Found ? node : base.Visit(node);
+
+        protected override Expression VisitNew(NewExpression node)
+        {
+            Found = true;
+
+            return node;
+        }
+
+        protected override Expression VisitMemberInit(MemberInitExpression node)
+        {
+            Found = true;
+
+            return node;
+        }
+    }
+
     /// <summary>Finds the first query root that names an entity type.</summary>
     private sealed class RootFinder : ExpressionVisitor
     {

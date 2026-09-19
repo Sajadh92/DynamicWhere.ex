@@ -26,7 +26,7 @@ namespace DynamicWhere.ex.Policies.Source;
 ///     only when something loads it: an <c>Include</c>, an automatic include or a lazy loader. A value
 ///     beneath a navigation nothing loads never reaches the result, so a denial there needs no
 ///     projection; and projecting the navigation would load it. A member the model does not map is
-///     never filled by EF Core at all.
+///     computed by the class, from whatever EF Core loaded into it, so it counts as holding its type.
 ///   </description></item>
 ///   <item><description>
 ///     A projection holds exactly the members its initializer assigns. The others hold defaults, and
@@ -62,6 +62,7 @@ internal sealed class RowShape
     private static readonly ConditionalWeakTable<IEntityType, HashSet<string>> ComplexByType = new();
 
     private readonly HashSet<string>? _assigned;
+    private readonly Dictionary<string, Type> _built = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _narrowable = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _kept = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _includes = new(StringComparer.OrdinalIgnoreCase);
@@ -71,11 +72,18 @@ internal sealed class RowShape
 
     private RowShape(RowKind kind) => Kind = kind;
 
-    private RowShape(RowKind kind, HashSet<string>? assigned, IEnumerable<string> narrowable)
+    private RowShape(
+        RowKind kind, HashSet<string>? assigned, IEnumerable<string> narrowable, Type? built, IDictionary<string, Type> members)
         : this(kind)
     {
         _assigned = assigned;
         _narrowable.UnionWith(narrowable);
+        Built = built;
+
+        foreach (KeyValuePair<string, Type> member in members)
+        {
+            _built[member.Key] = member.Value;
+        }
     }
 
     private RowShape(IEntityType entity, IEnumerable<string> includes, bool includeUnknown)
@@ -126,6 +134,20 @@ internal sealed class RowShape
     internal RowKind Kind { get; }
 
     /// <summary>
+    /// The type a projection constructs its rows as, which may be a subtype of the query's element type;
+    /// null for any other source.
+    /// </summary>
+    internal Type? Built { get; }
+
+    /// <summary>
+    /// The type a projection constructs a member's value as, or each element of a list it builds, when
+    /// the initializer says: <c>Contact = new ContactRow { … }</c> holds a <c>ContactRow</c> whatever the
+    /// member is declared as. Null when the value is read from somewhere else.
+    /// </summary>
+    internal Type? BuiltType(string member) =>
+        Kind == RowKind.Projected && _built.TryGetValue(member, out Type? type) ? type : null;
+
+    /// <summary>
     /// True when a synthesized projection may keep a member holding an object: one a projection
     /// assigned, or an entity's column, owned or complex member. Never an entity's navigation, which
     /// projecting would load, and never an object held by a row in memory.
@@ -173,10 +195,11 @@ internal sealed class RowShape
     /// </summary>
     /// <remarks>
     /// A navigation is loaded when it is owned, included, automatically included, or reachable by a
-    /// lazy loader. A member the model does not map is one EF Core never fills, so nothing reaches the
-    /// result through it. Anything the model cannot answer for counts as loaded, which only ever asks for
-    /// a projection that turns out not to be needed. A rule may spell a path in any letter case, so each
-    /// segment is read through the member it names.
+    /// lazy loader. A member the model does not map is computed by the class, and a getter over a mapped
+    /// field or a private navigation hands out what EF Core loaded, so it counts as loaded too. Anything
+    /// the model cannot answer for counts as loaded, which only ever asks for a projection that turns out
+    /// not to be needed. A rule may spell a path in any letter case, so each segment is read through the
+    /// member it names.
     /// </remarks>
     internal bool Materializes(string path)
     {
@@ -215,7 +238,12 @@ internal sealed class RowShape
             INavigationBase? navigation =
                 (INavigationBase?)current.FindNavigation(name) ?? current.FindSkipNavigation(name);
 
-            if (navigation is null || !Loads(current, navigation, prefix))
+            if (navigation is null)
+            {
+                return true;
+            }
+
+            if (!Loads(current, navigation, prefix))
             {
                 return false;
             }
@@ -234,9 +262,9 @@ internal sealed class RowShape
     /// Naming a member in a projection loads it, so the path's own segments are not asked about. Beneath
     /// it the model decides: an entity's columns, owned and complex members, and the navigations
     /// something loads, and the same for every type the model derives from it, whose rows EF Core
-    /// materializes as that type. A member the model does not map holds nothing EF Core read. A lazy
-    /// loader in reach can fill any navigation, which bounds nothing, and so does a query whose includes
-    /// cannot be read.
+    /// materializes as that type. A member the model does not map is read whole, as a column is: its
+    /// getter can hand out anything the entity holds. A lazy loader in reach can fill any navigation,
+    /// which bounds nothing, and so does a query whose includes cannot be read.
     /// </remarks>
     internal List<Loaded>? LoadedBeneath(string path)
     {
@@ -267,9 +295,10 @@ internal sealed class RowShape
             INavigationBase? navigation =
                 (INavigationBase?)entity.FindNavigation(member.Name) ?? entity.FindSkipNavigation(member.Name);
 
+            // A member the model does not map holds what its getter computes: read it whole, as its type.
             if (navigation is null)
             {
-                return new List<Loaded>();
+                return i == segments.Length - 1 ? new List<Loaded> { new(prefix, member, true) } : null;
             }
 
             entity = navigation.TargetEntityType;
@@ -352,7 +381,15 @@ internal sealed class RowShape
                 INavigationBase? navigation =
                     (INavigationBase?)type.FindNavigation(member.Name) ?? type.FindSkipNavigation(member.Name);
 
-                if (navigation is null || !Loads(type, navigation, path))
+                // Not mapped: whatever its getter computes from what EF Core loaded, read as its type.
+                if (navigation is null)
+                {
+                    loaded.Add(new Loaded(path, member, true));
+
+                    continue;
+                }
+
+                if (!Loads(type, navigation, path))
                 {
                     continue;
                 }
@@ -383,9 +420,11 @@ internal sealed class RowShape
     /// builds its rows, which is how a caller makes its own row type out of entities. What is left is an
     /// entity query, read from the EF Core model; without one, the source is <see cref="Unknown"/>. A
     /// chain that reaches its rows through anything but the root's own, <c>Select(o =&gt; o.Customer)</c>,
-    /// a <c>SelectMany</c>, a <c>Join</c> or a projection behind another <c>Select</c>, holds entities
-    /// whose navigations were loaded from another root or by a projection, so every navigation counts as
-    /// loaded there.
+    /// a <c>SelectMany</c>, a <c>Join</c> or a <c>GroupBy</c>, holds entities EF Core loaded along
+    /// another path. Its includes name paths from another root, which EF Core still applies, and a
+    /// projection inside it, such as one behind an identity <c>Select</c>, loads whatever it assigns: with
+    /// either, every navigation counts as loaded. With neither, only an automatic include or a lazy
+    /// loader fills one, which the model says.
     /// </remarks>
     internal static RowShape Of<T>(IQueryable<T> source) where T : class
     {
@@ -405,7 +444,8 @@ internal sealed class RowShape
         }
 
         HashSet<string> includes = new(StringComparer.OrdinalIgnoreCase);
-        bool unknown = !ReadIncludes(source.Expression, includes) || QueryRoot.Reshapes(source.Expression);
+        bool unknown = !ReadIncludes(source.Expression, includes, out int included)
+                       || (QueryRoot.Reshapes(source.Expression) && (included > 0 || QueryRoot.Builds(source.Expression)));
 
         return new RowShape(entity, includes, unknown);
     }
@@ -419,33 +459,74 @@ internal sealed class RowShape
         MethodCallExpression select = DefaultOrder.RowSelect(source.Expression)!;
         LambdaExpression selector = (LambdaExpression)DefaultOrder.StripQuotes(select.Arguments[1]);
         Expression body = DefaultOrder.StripConversions(selector.Body);
+        Dictionary<string, Type> built = new(StringComparer.OrdinalIgnoreCase);
 
-        // A constructor with arguments says nothing about which member each argument sets, whether or
-        // not an initializer follows it: every member counts as assigned, and none can be narrowed.
-        if (body is not MemberInitExpression initializer || initializer.NewExpression.Arguments.Count > 0)
+        if (body is not MemberInitExpression initializer)
         {
-            return new RowShape(RowKind.Projected, null, Array.Empty<string>());
+            // A constructor with arguments says nothing about which member each argument sets: every
+            // member counts as assigned, and none can be narrowed.
+            return new RowShape(RowKind.Projected, null, Array.Empty<string>(), body.Type, built);
         }
 
-        HashSet<string> assigned = new(StringComparer.OrdinalIgnoreCase);
         List<string> narrowable = new();
 
         ParameterExpression row = selector.Parameters[0];
         bool efCore = source.Provider is IAsyncQueryProvider;
         IEntityType? rowSource = efCore ? QueryRoot.EntityType(source.Expression, row.Type) : null;
+        HashSet<string>? assigned = initializer.NewExpression.Arguments.Count > 0
+            ? null
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (MemberBinding binding in initializer.Bindings)
         {
-            assigned.Add(binding.Member.Name);
+            // After a constructor with arguments every member counts as assigned, since the constructor
+            // may set any of them; the initializer's own bindings still say what they hold.
+            assigned?.Add(binding.Member.Name);
+
+            if (binding is not MemberAssignment assignment)
+            {
+                continue;
+            }
+
+            if (BuiltBy(assignment.Expression) is { } type)
+            {
+                built[binding.Member.Name] = type;
+            }
 
             // The narrowing reads the member through EF.Property, so only EF Core can run it.
-            if (efCore && binding is MemberAssignment assignment && CanNarrow(assignment, row, rowSource))
+            if (efCore && CanNarrow(assignment, row, rowSource))
             {
                 narrowable.Add(binding.Member.Name);
             }
         }
 
-        return new RowShape(RowKind.Projected, assigned, narrowable);
+        return new RowShape(RowKind.Projected, assigned, narrowable, initializer.Type, built);
+    }
+
+    /// <summary>
+    /// The type an assigned value is constructed as, <c>new ContactRow { … }</c>, or each element of a
+    /// list a subquery builds, <c>o.Lines.Select(l =&gt; new LineRow { … }).ToList()</c>; null otherwise.
+    /// </summary>
+    private static Type? BuiltBy(Expression expression)
+    {
+        Expression value = DefaultOrder.StripConversions(expression);
+
+        if (value is MemberInitExpression or NewExpression)
+        {
+            return value.Type;
+        }
+
+        if (value is MethodCallExpression { Method.Name: "ToList" or "ToArray" or "ToHashSet" } read
+            && (read.Method.DeclaringType == typeof(Enumerable) || read.Method.DeclaringType == typeof(Queryable))
+            && DefaultOrder.StripConversions(read.Arguments[0]) is MethodCallExpression { Method.Name: "Select" } select
+            && select.Arguments.Count == 2
+            && DefaultOrder.StripQuotes(select.Arguments[1]) is LambdaExpression { Body: var element }
+            && DefaultOrder.StripConversions(element) is MemberInitExpression or NewExpression)
+        {
+            return DefaultOrder.StripConversions(element).Type;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -492,7 +573,7 @@ internal sealed class RowShape
     /// with its prefixes. False when one names its path in a form this cannot read, so every navigation
     /// counts as loaded.
     /// </summary>
-    private static bool ReadIncludes(Expression expression, HashSet<string> includes)
+    private static bool ReadIncludes(Expression expression, HashSet<string> includes, out int included)
     {
         List<MethodCallExpression> calls = new();
 
@@ -510,6 +591,8 @@ internal sealed class RowShape
         IncludeCounter counter = new();
 
         counter.Visit(expression);
+
+        included = counter.Count;
 
         bool readable = counter.Count == calls.Count;
         string? current = null;
@@ -619,8 +702,8 @@ internal sealed class RowShape
     /// <summary>
     /// True when a lazy loader can fill this entity's navigations after the query: EF Core's proxies and
     /// an injected <c>ILazyLoader</c> give it a service property, and a loader the class takes in its
-    /// constructor, the delegate form above all, may be kept in a field or a property of any name,
-    /// where the model has no record of it.
+    /// constructor, either delegate form above all, may be kept in a field or a property of any name,
+    /// where the model has no record of it. An injected <c>DbContext</c> can load anything.
     /// </summary>
     private static bool LoadsLazily(IEntityType entity) =>
         entity.GetServiceProperties().Any(service => IsLoader(service.ClrType))
@@ -647,7 +730,11 @@ internal sealed class RowShape
         return false;
     }
 
-    private static bool IsLoader(Type type) => type == typeof(ILazyLoader) || type == typeof(Action<object, string>);
+    private static bool IsLoader(Type type) =>
+        type == typeof(ILazyLoader)
+        || type == typeof(Action<object, string>)
+        || type == typeof(Func<object, CancellationToken, string, Task>)
+        || typeof(DbContext).IsAssignableFrom(type);
 
     /// <summary>
     /// The names of an entity type's complex properties, which EF Core 8 introduced and loads with the

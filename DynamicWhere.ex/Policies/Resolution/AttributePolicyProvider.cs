@@ -6,6 +6,7 @@ using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
+using DynamicWhere.ex.Policies.Source;
 
 namespace DynamicWhere.ex.Policies.Resolution;
 
@@ -13,7 +14,8 @@ namespace DynamicWhere.ex.Policies.Resolution;
 /// Produces policy fragments by reflecting over the attributes on a type.
 /// </summary>
 /// <remarks>
-/// The result is identical for every caller, so it is computed once per type and cached. An
+/// The result is identical for every caller, so it is computed once per type and cached, until an
+/// assembly that could declare a subtype loads (see the denials below). An
 /// attribute with <c>Overridable = false</c> lands at <see cref="PolicyLevel.SealedAttribute"/> and
 /// nothing at runtime can replace it; one with <c>Overridable = true</c> lands at
 /// <see cref="PolicyLevel.OverridableAttribute"/>, the least authoritative level, and acts only as
@@ -21,7 +23,7 @@ namespace DynamicWhere.ex.Policies.Resolution;
 /// </remarks>
 public sealed class AttributePolicyProvider : IDwPolicyProvider
 {
-    private static readonly ConcurrentDictionary<Type, IReadOnlyList<PolicyFragment>> Cache = new();
+    private static readonly ConcurrentDictionary<Type, (int Epoch, IReadOnlyList<PolicyFragment> Fragments)> Cache = new();
 
     /// <summary>
     /// How many navigation segments a generated field path may contain. Matches the default
@@ -38,7 +40,19 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             throw new ArgumentNullException(nameof(entityType));
         }
 
-        return Cache.GetOrAdd(entityType, Build);
+        int epoch = KnownSubtypes.Epoch;
+
+        if (Cache.TryGetValue(entityType, out (int Epoch, IReadOnlyList<PolicyFragment> Fragments) known)
+            && known.Epoch == epoch)
+        {
+            return known.Fragments;
+        }
+
+        IReadOnlyList<PolicyFragment> fragments = Build(entityType);
+
+        Cache[entityType] = (epoch, fragments);
+
+        return fragments;
     }
 
     /// <summary>
@@ -103,6 +117,11 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             string path = prefix.Length == 0 ? property.Name : $"{prefix}.{property.Name}";
 
             foreach (DwDenyAttribute attribute in property.GetCustomAttributes<DwDenyAttribute>(inherit: true))
+            {
+                fragments.Add(ToFragment(path, attribute));
+            }
+
+            foreach (DwDenyAttribute attribute in DenialsElsewhere(type, property))
             {
                 fragments.Add(ToFragment(path, attribute));
             }
@@ -179,6 +198,137 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             ancestors.Remove(type);
         }
     }
+
+    /// <summary>
+    /// The denials a member carries from another declaration of it: the interface member it implements,
+    /// and, in a type loaded below the one walked, the override or the implementation that a row of that
+    /// type runs.
+    /// </summary>
+    /// <remarks>
+    /// Attributes are read from the declaration walked, and inheritance only reaches up the chain. A row
+    /// read through a base type or an interface is still the subtype it is, though, and its member returns
+    /// what the subtype's declaration returns: a <c>[DwDenied]</c> on <c>override Code</c>, or on the
+    /// class's implementation of <c>IAccount.Iban</c>, was never seen through the base path, which filtered,
+    /// sorted, grouped and returned it. Each such denial applies to the path for every row, since a
+    /// projection cannot withhold a field from some rows only.
+    /// </remarks>
+    internal static IEnumerable<DwDenyAttribute> DenialsElsewhere(Type type, PropertyInfo property)
+    {
+        if (property.GetGetMethod() is not { } getter)
+        {
+            yield break;
+        }
+
+        if (!type.IsInterface)
+        {
+            foreach (Type contract in type.GetInterfaces())
+            {
+                if (Declaration(Implemented(type, contract, getter), contract) is { } declared)
+                {
+                    foreach (DwDenyAttribute attribute in declared.GetCustomAttributes<DwDenyAttribute>(inherit: false))
+                    {
+                        yield return attribute;
+                    }
+                }
+            }
+        }
+
+        foreach (Type subtype in KnownSubtypes.Of(type))
+        {
+            PropertyInfo? below = type.IsInterface
+                ? Implementation(subtype, type, getter)
+                : Override(subtype, getter);
+
+            if (below is null)
+            {
+                continue;
+            }
+
+            foreach (DwDenyAttribute attribute in below.GetCustomAttributes<DwDenyAttribute>(inherit: false))
+            {
+                yield return attribute;
+            }
+        }
+    }
+
+    /// <summary>The property a subtype declares that overrides a getter, or null.</summary>
+    private static PropertyInfo? Override(Type subtype, MethodInfo getter)
+    {
+        if (!getter.IsVirtual)
+        {
+            return null;
+        }
+
+        MethodInfo root = getter.GetBaseDefinition();
+
+        foreach (PropertyInfo candidate in subtype.GetProperties(
+                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+        {
+            if (candidate.GetGetMethod(nonPublic: true) is { } overriding
+                && Same(overriding.GetBaseDefinition(), root)
+                && !Same(overriding, getter))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The property a type declares that implements an interface's getter, or null.</summary>
+    private static PropertyInfo? Implementation(Type subtype, Type contract, MethodInfo getter)
+    {
+        if (subtype.IsInterface || Implemented(subtype, contract, getter) is not { } target)
+        {
+            return null;
+        }
+
+        return target.DeclaringType?
+            .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .FirstOrDefault(candidate => candidate.GetGetMethod(nonPublic: true) is { } method && Same(method, target));
+    }
+
+    /// <summary>
+    /// For a class member, the interface getter it implements; for an interface getter, the method a type
+    /// implements it with. Null when there is none, or when the runtime cannot map an open generic type.
+    /// </summary>
+    private static MethodInfo? Implemented(Type type, Type contract, MethodInfo getter)
+    {
+        InterfaceMapping map;
+
+        try
+        {
+            map = type.GetInterfaceMap(contract);
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or NotSupportedException)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < map.InterfaceMethods.Length; i++)
+        {
+            if (Same(map.InterfaceMethods[i], getter))
+            {
+                return map.TargetMethods[i];
+            }
+
+            if (Same(map.TargetMethods[i], getter))
+            {
+                return map.InterfaceMethods[i];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The interface property an interface getter belongs to.</summary>
+    private static PropertyInfo? Declaration(MethodInfo? method, Type contract) =>
+        method is null || method.DeclaringType != contract
+            ? null
+            : contract.GetProperties().FirstOrDefault(candidate => candidate.GetGetMethod() is { } getter && Same(getter, method));
+
+    private static bool Same(MethodInfo left, MethodInfo right) =>
+        left.MetadataToken == right.MetadataToken && left.Module == right.Module;
 
     /// <summary>
     /// How many collection layers <see cref="NavigationTypeOf"/> peels off a single property type

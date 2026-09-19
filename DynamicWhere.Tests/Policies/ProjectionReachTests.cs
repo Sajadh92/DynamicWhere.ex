@@ -218,7 +218,7 @@ namespace DynamicWhere.Tests.Policies
         public string? Pin { get; set; }
     }
 
-    /// <summary>Members EF Core does not map, which hold only what the class puts there.</summary>
+    /// <summary>A member EF Core does not map that can hold an object of any type.</summary>
     public class RcBag
     {
         public int Id { get; set; }
@@ -231,15 +231,6 @@ namespace DynamicWhere.Tests.Policies
 
         [NotMapped]
         public object? Extra { get; set; }
-
-        [NotMapped]
-        public RcScratch Scratch { get; set; } = new();
-    }
-
-    public class RcScratch
-    {
-        [DwDenied]
-        public string? Cost { get; set; }
     }
 
     public class RcBagOwner
@@ -306,6 +297,48 @@ namespace DynamicWhere.Tests.Policies
         public string Name { get; set; } = string.Empty;
     }
 
+    /// <summary>An owned chain whose last owned type exposes a mapped field through a getter the model does not map.</summary>
+    public class RcRoom
+    {
+        public int Id { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+
+        public RcShelf Shelf { get; set; } = new();
+    }
+
+    public class RcShelf
+    {
+        public string Label { get; set; } = string.Empty;
+
+        public RcBox Box { get; set; } = new();
+    }
+
+    public class RcBox
+    {
+        public string Label { get; set; } = string.Empty;
+
+        public RcLid Lid { get; set; } = new();
+    }
+
+    public class RcLid
+    {
+        private string? _code;
+
+        public string Colour { get; set; } = string.Empty;
+
+        [NotMapped]
+        public RcCodeView Code => new() { Value = _code };
+
+        public void Seal(string code) => _code = code;
+    }
+
+    public class RcCodeView
+    {
+        [DwDenied]
+        public string? Value { get; set; }
+    }
+
     public sealed class ProjectionReachContext : DbContext
     {
         private readonly SqliteConnection _connection;
@@ -338,6 +371,8 @@ namespace DynamicWhere.Tests.Policies
 
         public DbSet<RcStore> Stores => Set<RcStore>();
 
+        public DbSet<RcRoom> Rooms => Set<RcRoom>();
+
         protected override void OnConfiguring(DbContextOptionsBuilder options) => options.UseSqlite(_connection);
 
         protected override void OnModelCreating(ModelBuilder model)
@@ -352,6 +387,8 @@ namespace DynamicWhere.Tests.Policies
             model.Entity<RcBadgeHolder>().Navigation(h => h.Badge).AutoInclude();
             model.Entity<RcShop>().OwnsOne(s => s.Address, a => a.Property(x => x.Zip));
             model.Entity<RcStore>().OwnsOne(s => s.Place);
+            model.Entity<RcRoom>().OwnsOne(
+                r => r.Shelf, s => s.OwnsOne(x => x.Box, b => b.OwnsOne(y => y.Lid, l => l.Property<string?>("_code"))));
         }
     }
 
@@ -539,6 +576,32 @@ namespace DynamicWhere.Tests.Policies
         public RcNode? Head { get; set; }
     }
 
+    /// <summary>A base type whose subtype's field a rule denies, no attribute anywhere.</summary>
+    public class RcPet
+    {
+        public string Name { get; set; } = string.Empty;
+    }
+
+    public class RcHamster : RcPet
+    {
+        public string? Tag { get; set; }
+    }
+
+    public class RcCage
+    {
+        public int Id { get; set; }
+
+        public RcPet? Pet { get; set; }
+    }
+
+    /// <summary>A row in memory holding an object of any type, with nothing denied anywhere.</summary>
+    public class RcNote
+    {
+        public int Id { get; set; }
+
+        public object? Payload { get; set; }
+    }
+
     /// <summary>Rows in memory whose subtype declares a denied field.</summary>
     public class RcAnimal
     {
@@ -600,6 +663,10 @@ namespace DynamicWhere.Tests.Policies
             _db.Bags.Add(new RcBag { Name = "B1", Owner = new RcBagOwner { Name = "W1" } });
             _db.Shops.Add(new RcShop { Name = "S1", Notes = "notes", Address = new RcAddress("Basra", "zip-secret") });
             _db.Stores.Add(new RcStore { Name = "T1", Place = new RcPlace { City = "Basra", Zone = "Z1" }, Keeper = new RcStoreKeeper { Name = "K" } });
+
+            RcRoom room = new() { Name = "R1", Shelf = new RcShelf { Label = "s", Box = new RcBox { Label = "b", Lid = new RcLid { Colour = "red" } } } };
+            room.Shelf.Box.Lid.Seal("lid-secret");
+            _db.Rooms.Add(room);
 
             _db.SaveChanges();
             _db.ChangeTracker.Clear();
@@ -1114,11 +1181,63 @@ namespace DynamicWhere.Tests.Policies
         }
 
         /// <summary>
-        /// A member EF Core does not map holds only what the class puts there, never a value the query read,
-        /// so neither an <c>object</c> nor a policed type there asks for a projection.
+        /// A getter the model does not map, past the walker's four segments in an owned chain, hands out a
+        /// mapped field: what it returns counts as loaded, so its denied field asks for the projection.
         /// </summary>
         [Fact]
-        public void A_member_the_model_does_not_map_asks_for_nothing()
+        public void A_getter_the_model_does_not_map_past_the_walk_counts_as_loaded()
+        {
+            Assert.True(Holds(_db.Rooms.AsNoTracking().ToList(), "lid-secret"));
+
+            PolicyQueryable<RcRoom> guarded = Guard(_db.Rooms);
+            RcRoom room = guarded.ToList(new Filter()).Data.Single();
+
+            Assert.False(Holds(room, "lid-secret"));
+            Assert.Equal("red", room.Shelf.Box.Lid.Colour);
+        }
+
+        /// <summary>
+        /// A rule on a field only a subtype declares, reached through a member declared as the base type, is
+        /// enforced like an attribute there would be: named or not, the field does not come back.
+        /// </summary>
+        [Theory]
+        [InlineData(DwTier.Strict)]
+        [InlineData(DwTier.Convenience)]
+        public void A_rule_on_a_subtype_field_through_a_base_typed_member_is_enforced(DwTier tier)
+        {
+            RcCage[] rows = { new() { Id = 1, Pet = new RcHamster { Name = "Ham", Tag = "tag-by-rule" } } };
+            FakePolicyProvider rules = new FakePolicyProvider()
+                .Add("Pet.Tag", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicGlobal);
+
+            Assert.False(Holds(Guard(rows.AsQueryable(), tier, rules).ToList(new Filter()).Data, "tag-by-rule"));
+
+            Exception? named = Record.Exception(() =>
+                Assert.False(Holds(Guard(rows.AsQueryable(), tier, rules).ToList(Selecting("Id", "Pet")).Data, "tag-by-rule")));
+
+            Assert.True(named is null or PolicyException, named?.ToString());
+        }
+
+        /// <summary>
+        /// With nothing denied, a row in memory holding an object of any type is returned as it is: such a
+        /// member asks for no projection on its own.
+        /// </summary>
+        [Fact]
+        public void A_row_in_memory_holding_an_object_with_nothing_denied_is_returned_as_it_is()
+        {
+            RcNote[] rows = { new() { Id = 1, Payload = new Dictionary<string, object> { ["a"] = 1 } } };
+
+            PolicyQueryable<RcNote> guarded = Guard(rows.AsQueryable());
+
+            Assert.Same(rows[0], guarded.ToList(new Filter()).Data.Single());
+            Assert.DoesNotContain(guarded.LastTrace!.Decisions, d => d.Action == PolicyAction.Dropped);
+        }
+
+        /// <summary>
+        /// A member that can hold an object of any type asks for no projection: the policy cannot see into it
+        /// whether or not one is built. The entity comes back as loaded, its included navigation with it.
+        /// </summary>
+        [Fact]
+        public void A_member_that_can_hold_anything_asks_for_nothing()
         {
             PolicyQueryable<RcBag> guarded = Guard(_db.Bags.Include(b => b.Owner));
             RcBag bag = guarded.ToList(new Filter()).Data.Single();

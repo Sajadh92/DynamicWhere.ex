@@ -301,13 +301,24 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
             </td>
           </tr>
           <tr>
-            <td>Put the <code>[DwDenied]</code> on an override, on a member a subtype hides with <code>new</code>, or on a class&apos;s implementation of an interface member, and read the member through the base type or the interface</td>
+            <td>Put the <code>[DwDenied]</code> on an override, on a public member a subtype hides with <code>new</code>, or on a class&apos;s implementation of an interface member, and read the member through the base type or the interface, a variant instantiation of it included</td>
             <td>
               The denial applies to the path for every row, in every clause. The
               attribute walker read the declaration it walked and the attributes
               above it, never an override, a hiding member or an implementation
               below, so the base path filtered, sorted, grouped and returned the
               value.
+            </td>
+          </tr>
+          <tr>
+            <td>Guard a query through a provider that wraps EF Core&apos;s, as LinqKit&apos;s <code>AsExpandable</code> or DelegateDecompiler&apos;s <code>Decompile</code> do</td>
+            <td>
+              The query runs untracked. EF Core&apos;s <code>AsNoTracking</code>{" "}
+              hands such a query back unchanged, so it tracked: the context filled
+              in navigations it already held, the denied ones included, and a
+              masked value became a pending change the next{" "}
+              <code>SaveChanges</code> would write. The call now goes into the
+              query itself.
             </td>
           </tr>
           <tr>

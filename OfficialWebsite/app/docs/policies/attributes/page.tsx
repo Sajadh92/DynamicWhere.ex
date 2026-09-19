@@ -237,9 +237,10 @@ public string EmployeeCode { get; set; }`}</Code>
         An access-control attribute on another declaration of a member applies
         to its path too: on the interface member a class or its subtype
         implements with it, on an override of either accessor a subtype
-        declares, on a member a subtype hides with <code>new</code>, and on the
-        implementation a type gives an interface member, explicit, inherited or
-        declared by an open generic class. A row read through the base type or
+        declares, on a public member a subtype hides with <code>new</code>, and
+        on the implementation a type gives an interface member, explicit,
+        inherited or declared by an open generic class, through a variant
+        instantiation too. A row read through the base type or
         the interface is still that subtype, so the denial holds for the path on
         every row, in every clause. Until 3.2.0 only the declaration walked, and
         the attributes above it, were read. The other attributes are still read

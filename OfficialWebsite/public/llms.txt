@@ -1787,7 +1787,9 @@ How this differs from the unguarded surface:
 
 Rules:
 - Every guarded query runs over `AsNoTracking()`. Returned EF Core entities are detached, so a masked value is never
-  saved back. An in-memory source has no such copy: without `Selects` and with nothing denied, the rows returned are
+  saved back. Through a provider that wraps EF Core's, as LinqKit's `AsExpandable` and DelegateDecompiler's
+  `Decompile` do, EF Core's extension would hand the query back still tracking, so the call is put into the query
+  itself (3.2.0). An in-memory source has no such copy: without `Selects` and with nothing denied, the rows returned are
   the source objects themselves, transformed in place. When a projection is synthesized the rows are new, and they
   hold no member of an object type, so the source objects are left as they were.
 - Chaining keeps decisions: each composable returns a new handle, and the terminal's trace includes the earlier links' decisions.
@@ -1978,8 +1980,9 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   counted.
 - One on another declaration of the member applies to the path too (3.2.0): on the interface member a class, or a
   loaded subtype of it, implements with the member; on an override of either accessor a loaded subtype declares; on
-  a member a loaded subtype hides with `new`; and on the implementation a loaded type gives an interface member,
-  explicit, inherited from a base class or declared by an open generic class. A row read through the base type or
+  a public member a loaded subtype hides with `new`; and on the implementation a loaded type gives an interface
+  member, explicit, inherited from a base class or declared by an open generic class, through that interface or an
+  instantiation variance lets stand for it (`IFeed<VisaCard>` for a member typed `IFeed<Card>`, with `out T`). A row read through the base type or
   the interface is still that subtype, and its member returns what the subtype's declaration returns, so the denial
   holds for the path on every row, Where, Order, Group and Select alike. A member hidden with `new` counts because
   whether it reads the member it hides cannot be told from outside, and a row serialized as its own type writes it
@@ -2371,10 +2374,14 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
       chain that reaches its rows through anything but the root's own rows (`Select(o => o.Customer)`, a
       `SelectMany`, a `Join`, a `GroupBy`) when it also has an include, which EF Core applies from the root to the
       entities it reaches, or when one of its lambdas hands its rows an object: one it builds (a projection behind an
-      identity `Select`, a member of an anonymous row, a conditional), which loads whatever it assigns; one an
-      application's method returns; or one it captured, another query with its own include or projection, or an
-      object in memory. What only feeds a predicate or a key is a value and hands a row nothing. Such a chain with
-      none of these is read from the model. A denial beneath a navigation nothing loads never leaves the database
+      identity `Select`, or an object built inside an anonymous row or a conditional), which loads whatever it
+      assigns; one an application's method returns from what the lambda gives it; or one it captured, another query
+      with its own include or projection, or an object in memory. A call that reads nothing of the lambda's and returns
+      a query or an expression (a specification, a repository's query, `FromSql`, a context's `Set` through an
+      interface) is evaluated as EF Core evaluates it, and what it returns is read; a context's own query function is a
+      query root; an anonymous object that only carries what the rows hold (query-syntax range variables, a
+      composite key) builds nothing; and what only feeds a predicate or a key is a value and hands a row nothing. Such
+      a chain with none of these is read from the model. A denial beneath a navigation nothing loads never leaves the database
       and needs no projection,
       so a connected model is read as it was in 3.1.0. A member EF Core does not map counts as loaded: its getter can
       hand out a mapped field or a private navigation, so its type is read whole.
@@ -2411,8 +2418,8 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
     - every allowed member holding an object or a list of them that the source carries: a member a projection's
       initializer assigns, and an entity's columns (converted or JSON), owned and complex members. It is kept whole
       when nothing beneath it is denied, nothing its value can hold is denied, it cannot hold an object of any type
-      (asked of a projected row, a row in memory, and an entity's column a value converter hands back: what EF Core
-      materializes itself never holds one), under a
+      (asked of a projected row, a row in memory, and an entity's column a value converter hands back, directly or
+      inside a complex property: what EF Core materializes itself never holds one), under a
       `"*"` deny every path beneath it the walk skips is one the policy names, no forced scope is beneath it, and no
       transform beneath it lands on a property with no setter;
     - otherwise it is narrowed to the allowed leaves beneath it, to four segments, as a caller naming it would get,
@@ -2791,7 +2798,7 @@ Errors:
     `"{Type}: DefaultOrder names '{field}', which no query can order by, so guarded queries skip it."`
   - a field the type's own attributes deny for ordering, unless every one of those denials is `Overridable` (then a
     warning, below). The attributes include those of the member's other declarations, an interface member it
-    implements and a subtype's override (3.2.0):
+    implements, a subtype's override and a public member a subtype hides with `new` (3.2.0):
     `"{Type}: DefaultOrder names '{field}', which its attributes deny for ordering, so every guarded query leaves it out."`
 - a stage that cannot be built:
   - `Round` or `Bucket` with `Step <= 0`, or `Truncate` with `Decimals < 0`
@@ -4784,10 +4791,17 @@ MemoryCalculationInput
           a lazy loader the constructor takes, delegate or ILazyLoader, kept in a field or a property of any name, and
           an initializer after a constructor with arguments counts every member as assigned. So do an injected
           DbContext and EF Core 7's asynchronous loader delegate. So does a reshaped chain whose lambda hands its rows
-          an object an application's method returns or one it captured: another query with its own include or
-          projection, or an object in memory. Each returned the denied value. A reshaped chain with none of these is
-          still read from the model, so it is not projected for a denial beneath a navigation it does not load, and a
-          value that only feeds a predicate or a key no longer counts as building its rows.
+          an object an application's method returns from the row, or one it captured: another query with its own
+          include or projection, or an object in memory. Each returned the denied value. A reshaped chain with none of
+          these is still read from the model, so it is not projected for a denial beneath a navigation it does not
+          load. A specification, a repository's query, FromSql and a context's Set through an interface are evaluated
+          as EF Core evaluates them, a context's query function is a query root, and an anonymous object carrying
+          range variables or a composite key, or a value that only feeds a predicate or a key, builds nothing.
+        - Security fix. A guarded query through a provider that wraps EF Core's, LinqKit's AsExpandable or
+          DelegateDecompiler's Decompile, ran tracking: EF Core's AsNoTracking hands such a query back unchanged. The
+          rows' navigations were then filled from entities the context already tracked, the denied ones included,
+          and a masked value became a pending change the next SaveChanges would write. AsNoTracking now goes into the
+          query itself.
         - Security fix and behaviour change. A member declared as a base type or an interface holds its subtypes,
           whose denied fields the declared type never names. They are read now: the types the EF Core model derives,
           for an entity, and every loaded subtype for a projected or in-memory row, an open generic one and an
@@ -4798,10 +4812,10 @@ MemoryCalculationInput
           typed terminals then fail with SelectTypeMustHaveParameterlessConstructor, as for any T they cannot build;
           the dynamic terminals return the root's allowed members. A rule on a subtype's field through a base-typed
           member was dropped as naming nothing; it is enforced.
-        - Security fix. A deny-family attribute on an override, on a member a subtype hides with new, on the
-          implementation of an interface member, or on the interface member a class implements, was read only from
-          its own declaration, so the base type's or the interface's path filtered, sorted, grouped and returned the
-          value. It applies to the path now.
+        - Security fix. A deny-family attribute on an override, on a public member a subtype hides with new, on the
+          implementation of an interface member (through a variant instantiation too), or on the interface member a
+          class implements, was read only from its own declaration, so the base type's or the interface's path
+          filtered, sorted, grouped and returned the value. It applies to the path now.
         - Security fix. Under a "*" deny with exact allows, a path the walk never asked about (past four segments,
           around a cycle, with no setter, on a subtype) resolved as allowed, so a member holding one was returned
           whole, named or not. Each such path is asked of the policy now; one it does not name is denied, and a
@@ -4832,12 +4846,15 @@ MemoryCalculationInput
           it can hold is denied, narrowed around a denial where the core's narrowing translates, and otherwise left out
           whole with a "left out whole" Dropped decision. An entity's navigations and the objects of a row in memory
           are left out, as before, and each one the unguarded call would have returned is recorded as Dropped; a
-          value EF Core does not map is left out too. A member that can hold an object of any type, a geometry, a
-          JSON bag or a BitArray column say, asks for no projection on its own, and an entity keeps it whole, unless a
-          value converter hands back its value: a converter is the application's code, so such a column is left out.
-          An application's own collection that is not generic has its own members read. A projected member is read as
-          the type its initializer constructs, and an initializer after a constructor with arguments narrows its own
-          bindings. The trace records a member left out only when a projection is built.
+          value EF Core does not map is left out too. A member that can hold an object of any type, a geometry or a
+          JSON bag say, asks for no projection on its own, and an entity keeps it whole, unless a value converter
+          hands back its value, directly or inside a complex property: a converter is the application's code, so
+          such a column is left out. BitArray and the framework's string collections hold values. An application's
+          own collection class, generic or not, has its own members read. Two members sharing a name, one hidden with
+          new under another type or spelled in another case, are left out when either holds a denial, since the core
+          reads one and a row carries both. A projected member is read as the type its initializer constructs, and an
+          initializer after a constructor with arguments narrows its own bindings. The trace records a member left
+          out only when a projection is built, or, in a dry run, would be.
         - Behaviour change. [DwEntity(DefaultOrder)] applies to a projected source whose outermost Select builds T
           in an object initializer assigning every field the default names a column: a mapped member, read directly,
           through reference navigations or through EF.Property. A computed value or any other projection still leaves
@@ -5016,9 +5033,11 @@ MemoryCalculationInput
   `Array`, an application's own) is opaque to the policy. It never asks for a projection; when one is needed anyway,
   a projected row, a row in memory, and an entity's converted column leave it out, and an entity's other columns
   keep it (what EF Core materializes itself holds no application object); and naming it
-  returns whatever it holds. A value converter that returns an application type through a column typed `object`,
-  and an unmapped getter typed `object` over a private navigation, are opaque the same way: with nothing else
-  denied the row comes back as loaded. Type the member as what it holds.
+  returns whatever it holds. A converted column counts as able to hold anything when its type can: `object`, a
+  `Dictionary<string, object>`, or a type with such a member. `BitArray`, `StringCollection`, `StringDictionary` and
+  `NameValueCollection` hold values. A value converter that returns an application type through a column typed
+  `object`, and an unmapped getter typed `object` over a private navigation, are opaque the same way: with nothing
+  else denied the row comes back as loaded. Type the member as what it holds.
   A framework generic holding a policed type (`Dictionary<string, LineDto>`) has no paths beneath it: naming it is
   refused in both tiers where the core cannot narrow it (at the top of T, or on a row in memory), narrowed away
   under Convenience beneath a navigation, and a synthesized projection leaves it out.

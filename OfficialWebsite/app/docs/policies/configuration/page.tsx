@@ -202,12 +202,18 @@ export default function Page() {
           <code>Join</code>, a <code>GroupBy</code> — when it also has an
           include, which EF Core applies from the root to the entities it
           reaches, or when one of its lambdas hands its rows an object: one it
-          builds, as a projection behind an identity <code>Select</code>, a
-          member of an anonymous row or a conditional does; one an
-          application&apos;s method returns; or one it captured, another query
-          with its own include or projection, or an object in memory. What only
-          feeds a predicate or a key is a value and hands a row nothing. Such a
-          chain with none of these is read from the model.
+          builds, as a projection behind an identity <code>Select</code>, or an
+          object built inside an anonymous row or a conditional, does; one an
+          application&apos;s method returns from what the lambda gives it; or
+          one it captured, another query with its own include or projection, or
+          an object in memory. A call that reads nothing of the lambda&apos;s and
+          returns a query or an expression (a specification, a repository&apos;s
+          query, <code>FromSql</code>) is evaluated as EF Core evaluates it, and
+          what it returns is read; a context&apos;s own query function is a query
+          root; an anonymous object that only carries what the rows hold, range
+          variables or a composite key, builds nothing; and what only feeds a
+          predicate or a key is a value. Such a chain with none of these is read
+          from the model.
         </li>
         <li>
           A denial beneath a navigation nothing loads never leaves the database,
@@ -284,7 +290,7 @@ export default function Page() {
           <tr>
             <td>An entity query, or a <code>Select</code> that hands back an entity, as in <code>{`db.Orders.Select(o => o.Customer)`}</code></td>
             <td>Every member EF Core maps</td>
-            <td>Its columns, converted and JSON ones included, its owned members and, on EF Core 8 or later, its complex properties, read from the EF Core model</td>
+            <td>Its columns, converted and JSON ones included, its owned members and, on EF Core 8 or later, its complex properties, read from the EF Core model; a converted value that can hold an object of any type is left out</td>
           </tr>
           <tr>
             <td>Rows in memory, as in <code>roles.ApplyPolicy(caller)</code></td>
@@ -309,8 +315,9 @@ export default function Page() {
           <strong>kept whole</strong> when nothing beneath it is denied, nothing
           its value can hold is denied (its subtypes included), it cannot hold an
           object of any type (asked of a projected row, a row in memory, and an
-          entity&apos;s column a value converter hands back: what EF Core
-          materializes itself never holds one), under a{" "}
+          entity&apos;s column a value converter hands back, directly or inside a
+          complex property: what EF Core materializes itself never holds one),
+          under a{" "}
           <code>&quot;*&quot;</code> deny every path beneath it the walk skips is
           one the policy names, no forced scope is beneath it, and no transform
           beneath it lands on a property with no setter;
@@ -418,9 +425,11 @@ left out whole: it can hold what the policy cannot name`}</Code>
         leave it out, and an entity&apos;s other columns keep it;
         and naming it returns whatever it holds. A converter returning an
         application type through a column typed <code>object</code> is opaque
-        the same way, so type the member as what it holds. An
-        application&apos;s own collection still has its own members read. A
-        framework generic holding a
+        the same way, so type the member as what it holds.{" "}
+        <code>BitArray</code> and the framework&apos;s string collections hold
+        values. An application&apos;s own collection class, generic or not,
+        still has its own members read, and two members sharing a name are left
+        out when either holds a denial. A framework generic holding a
         policed type, such as <code>Dictionary&lt;string, LineDto&gt;</code>, has
         no paths beneath it: naming it is refused in both tiers where the core
         cannot narrow it, narrowed away under <code>Convenience</code> beneath a

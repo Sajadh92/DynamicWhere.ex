@@ -1118,7 +1118,9 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
           in memory, beneath any member. A chain that reaches its rows through
           a navigation, a <code>SelectMany</code>, a <code>Join</code> or a{" "}
           <code>GroupBy</code> counts every navigation as loaded when it also has
-          an include or builds an object in a lambda. A field a subtype of{" "}
+          an include, or a lambda that builds an object, gets one from an
+          application&apos;s method, or captures a query with its own include or
+          projection. A field a subtype of{" "}
           <code>T</code> declares, one a subtype of a member&apos;s type
           declares, and one beneath a member EF Core does not map, count too. A
           member that can hold an object of any type asks for nothing on its
@@ -1132,7 +1134,8 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
           <strong>What.</strong> The allowed members, which replace the allowed
           scalars. A row a projection builds keeps the members its initializer
           assigns. An entity keeps its mapped columns, converted and JSON ones
-          included, its owned and complex members, and every collection of
+          included except a converted one that can hold an object of any type,
+          its owned and complex members, and every collection of
           simple values such as <code>byte[]</code> or{" "}
           <code>List&lt;string&gt;</code>. Rows in memory keep their values. A
           member holding an object is kept whole when nothing it can hold is
@@ -1158,13 +1161,16 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         loaded a denied value the gate read as unloaded, and so did an injected{" "}
         <code>DbContext</code> or EF Core 7&apos;s asynchronous loader delegate,
         and a reshaping lambda that got its row from an application&apos;s
-        method or from a captured query or object. A converted column typed{" "}
-        <code>object</code> was kept whole when a projection was built for
-        another field, and an application&apos;s own non-generic collection hid
-        its own denied members. A field a subtype declares — a derived entity&apos;s, or a
+        method or from a captured query or object. An application&apos;s own
+        collection class hid its own denied members, and a guarded query
+        through a provider wrapping EF Core&apos;s, such as LinqKit&apos;s{" "}
+        <code>AsExpandable</code>, ran tracking, so the context filled in
+        navigations it already held and a masked value became a pending change.
+        A field a subtype declares — a derived entity&apos;s, or a
         subclass&apos;s held by a base-typed member — was not read at all, nor
-        was a <code>[DwDenied]</code> on an override, on a member hidden with{" "}
-        <code>new</code> or on an interface member&apos;s implementation, and
+        was a <code>[DwDenied]</code> on an override, on a public member hidden
+        with <code>new</code> or on an interface member&apos;s implementation,
+        and
         under a{" "}
         <code>&quot;*&quot;</code> deny a path the walk never asked about was
         allowed. Each came back.
@@ -1180,9 +1186,9 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         <code>{`OfType<Company>()`}</code>, to keep its fields. Rows in memory
         can be any loaded subtype, so there the rows are projected whenever one
         declares a denied field. A <code>[DwDenied]</code> on an override, on a
-        member a subtype hides with <code>new</code>, or on an interface
-        member&apos;s implementation denies the base path for every row, in
-        every clause.
+        public member a subtype hides with <code>new</code>, or on an interface
+        member&apos;s implementation, through a variant instantiation too,
+        denies the base path for every row, in every clause.
       </Callout>
       <Callout tone="danger" title="Fixed (security): a denied member that holds no simple value came back">
         A field denied at the top of <code>T</code> whose own type is not a
@@ -1195,7 +1201,8 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         of a row projected before <code>ApplyPolicy</code> came back null or
         empty, and so did an entity&apos;s columns holding an object, its owned
         and complex members and its collections of simple values. They are
-        returned now, whole or narrowed. A member that cannot be narrowed is
+        returned now, whole or narrowed, except a converted value that can hold
+        an object of any type, which the policy cannot see into. A member that cannot be narrowed is
         left out whole, and the trace records a <code>Dropped</code> decision
         whose reason starts <code>left out whole</code>.
       </Callout>

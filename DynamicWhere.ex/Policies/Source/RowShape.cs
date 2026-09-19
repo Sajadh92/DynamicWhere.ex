@@ -1,6 +1,8 @@
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Source;
 using Microsoft.EntityFrameworkCore;
@@ -23,7 +25,8 @@ namespace DynamicWhere.ex.Policies.Source;
 ///     An entity query loads the entity's columns, its owned and complex members, and a navigation
 ///     only when something loads it: an <c>Include</c>, an automatic include or a lazy loader. A value
 ///     beneath a navigation nothing loads never reaches the result, so a denial there needs no
-///     projection; and projecting the navigation would load it.
+///     projection; and projecting the navigation would load it. A member the model does not map is
+///     never filled by EF Core at all.
 ///   </description></item>
 ///   <item><description>
 ///     A projection holds exactly the members its initializer assigns. The others hold defaults, and
@@ -36,7 +39,7 @@ namespace DynamicWhere.ex.Policies.Source;
 ///   </description></item>
 /// </list>
 /// Read from the query itself, never from the rows, so the sanitizer stays pure: this is decided
-/// once, before it runs.
+/// once, before it runs. Where the query does not say, every value counts as reaching the result.
 /// </remarks>
 internal sealed class RowShape
 {
@@ -45,19 +48,24 @@ internal sealed class RowShape
 
     /// <summary>
     /// A source this library cannot read: no model, not a projection it can see into, not rows in
-    /// memory. Every value beneath a member is taken to reach the result, and only members holding a
-    /// value are kept, as in 3.1.0.
+    /// memory. Every value beneath a member is taken to reach the result.
     /// </summary>
     internal static readonly RowShape Unknown = new(RowKind.Entity);
 
     /// <summary>Rows in memory.</summary>
     internal static readonly RowShape InMemory = new(RowKind.InMemory);
 
+    /// <summary>Whether a class can be handed a lazy loader, read once per class.</summary>
+    private static readonly ConcurrentDictionary<Type, bool> TakesLoader = new();
+
+    /// <summary>The complex properties of each entity type, read once per entity type.</summary>
+    private static readonly ConditionalWeakTable<IEntityType, HashSet<string>> ComplexByType = new();
+
     private readonly HashSet<string>? _assigned;
-    private readonly HashSet<string> _narrowable = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _kept = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _includes = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> _loadedWhole = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _narrowable = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _kept = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _includes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _loadedWhole = new(StringComparer.OrdinalIgnoreCase);
     private readonly IEntityType? _entity;
     private readonly bool _includeUnknown;
 
@@ -70,11 +78,11 @@ internal sealed class RowShape
         _narrowable.UnionWith(narrowable);
     }
 
-    private RowShape(IEntityType entity, HashSet<string> includes, bool includeUnknown)
+    private RowShape(IEntityType entity, IEnumerable<string> includes, bool includeUnknown)
         : this(RowKind.Entity)
     {
         _entity = entity;
-        _includes = includes;
+        _includes.UnionWith(includes);
         _includeUnknown = includeUnknown;
 
         foreach (IProperty property in entity.GetProperties())
@@ -160,25 +168,15 @@ internal sealed class RowShape
     };
 
     /// <summary>
-    /// True when a member named whole can carry anything its type can hold. An entity's navigation
-    /// cannot: projecting it loads that entity and what the entity owns, never the navigations beneath
-    /// it. Its columns, owned and complex members, and every member of any other source, can.
-    /// </summary>
-    internal bool LoadsWhole(string path)
-    {
-        string member = path.Split('.')[0];
-
-        return Kind != RowKind.Entity || _entity is null || _kept.Contains(member);
-    }
-
-    /// <summary>
     /// True when the value at a path beneath the root can reach the result: every one in memory or in
     /// a projection's assigned member, and, on an entity, one every navigation on the way to is loaded.
     /// </summary>
     /// <remarks>
     /// A navigation is loaded when it is owned, included, automatically included, or reachable by a
-    /// lazy loader. Anything the model cannot answer for counts as loaded, which only ever asks for a
-    /// projection that turns out not to be needed.
+    /// lazy loader. A member the model does not map is one EF Core never fills, so nothing reaches the
+    /// result through it. Anything the model cannot answer for counts as loaded, which only ever asks for
+    /// a projection that turns out not to be needed. A rule may spell a path in any letter case, so each
+    /// segment is read through the member it names.
     /// </remarks>
     internal bool Materializes(string path)
     {
@@ -199,34 +197,25 @@ internal sealed class RowShape
 
         for (int i = 0; i < segments.Length - 1; i++)
         {
-            prefix = i == 0 ? segments[0] : $"{prefix}.{segments[i]}";
-
-            if (current is null)
+            if (current is null || CacheReflection.FindProperty(current.ClrType, segments[i]) is not { } member)
             {
                 return true;
             }
 
+            string name = member.Name;
+
+            prefix = i == 0 ? name : $"{prefix}.{name}";
+
             // A column holding an object, or a complex property, is read whole with its row.
-            if (current.FindProperty(segments[i]) is not null || ComplexProperties(current).Contains(segments[i]))
+            if (current.FindProperty(name) is not null || ComplexProperties(current).Contains(name))
             {
                 return true;
             }
 
             INavigationBase? navigation =
-                (INavigationBase?)current.FindNavigation(segments[i]) ?? current.FindSkipNavigation(segments[i]);
+                (INavigationBase?)current.FindNavigation(name) ?? current.FindSkipNavigation(name);
 
-            if (navigation is null)
-            {
-                return true;
-            }
-
-            bool loaded = (navigation is INavigation owned && IsOwned(owned))
-                          || navigation.IsEagerLoaded
-                          || _includeUnknown
-                          || _includes.Contains(prefix)
-                          || LoadsLazily(current);
-
-            if (!loaded)
+            if (navigation is null || !Loads(current, navigation, prefix))
             {
                 return false;
             }
@@ -237,12 +226,166 @@ internal sealed class RowShape
         return true;
     }
 
+    /// <summary>
+    /// Every member the value at a path loads beneath it, each with its path from the root, when an
+    /// entity query's model can say; null when the value can carry anything its type holds.
+    /// </summary>
+    /// <remarks>
+    /// Naming a member in a projection loads it, so the path's own segments are not asked about. Beneath
+    /// it the model decides: an entity's columns, owned and complex members, and the navigations
+    /// something loads, and the same for every type the model derives from it, whose rows EF Core
+    /// materializes as that type. A member the model does not map holds nothing EF Core read. A lazy
+    /// loader in reach can fill any navigation, which bounds nothing, and so does a query whose includes
+    /// cannot be read.
+    /// </remarks>
+    internal List<Loaded>? LoadedBeneath(string path)
+    {
+        if (Kind != RowKind.Entity || _entity is null || _includeUnknown)
+        {
+            return null;
+        }
+
+        IEntityType entity = _entity;
+        string prefix = string.Empty;
+        string[] segments = path.Split('.');
+
+        for (int i = 0; i < segments.Length; i++)
+        {
+            if (CacheReflection.FindProperty(entity.ClrType, segments[i]) is not { } member)
+            {
+                return null;
+            }
+
+            prefix = i == 0 ? member.Name : $"{prefix}.{member.Name}";
+
+            // A value read whole: what it holds is its type's to say, and a path inside it names part of it.
+            if (entity.FindProperty(member.Name) is not null || ComplexProperties(entity).Contains(member.Name))
+            {
+                return i == segments.Length - 1 ? new List<Loaded> { new(prefix, member, true) } : null;
+            }
+
+            INavigationBase? navigation =
+                (INavigationBase?)entity.FindNavigation(member.Name) ?? entity.FindSkipNavigation(member.Name);
+
+            if (navigation is null)
+            {
+                return new List<Loaded>();
+            }
+
+            entity = navigation.TargetEntityType;
+        }
+
+        List<Loaded> loaded = new();
+
+        return Collect(entity, prefix, loaded, new HashSet<(IEntityType, string?)>(), derivedOnly: false)
+            ? loaded
+            : null;
+    }
+
+    /// <summary>
+    /// Every member an entity query's rows load that a type the model derives from the root declares,
+    /// each with what it loads beneath it; null when a lazy loader or an unreadable include bounds
+    /// nothing, and for any other source.
+    /// </summary>
+    /// <remarks>
+    /// EF Core materializes each row as the type the database says it is, so a query over the root of a
+    /// hierarchy returns the derived types' columns too, which the root's own members never name.
+    /// </remarks>
+    internal List<Loaded>? LoadedByDerived()
+    {
+        if (Kind != RowKind.Entity || _entity is null || _includeUnknown)
+        {
+            return null;
+        }
+
+        List<Loaded> loaded = new();
+
+        return Collect(_entity, string.Empty, loaded, new HashSet<(IEntityType, string?)>(), derivedOnly: true)
+            ? loaded
+            : null;
+    }
+
+    /// <summary>
+    /// Collects what an entity loads beneath a path, its derived types' members included. False when a
+    /// lazy loader can fill any of its navigations.
+    /// </summary>
+    private bool Collect(
+        IEntityType entity, string prefix, List<Loaded> loaded, HashSet<(IEntityType, string?)> seen, bool derivedOnly)
+    {
+        // Off an include's path, what loads depends only on the type, so a type is read once there.
+        if (!seen.Add((entity, _includes.Contains(prefix) ? prefix : null)))
+        {
+            return true;
+        }
+
+        foreach (IEntityType type in entity.GetDerivedTypesInclusive())
+        {
+            if (derivedOnly && type == entity)
+            {
+                continue;
+            }
+
+            if (LoadsLazily(type))
+            {
+                return false;
+            }
+
+            foreach (PropertyInfo member in type.ClrType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                // A derived type's inherited members are the base type's, read once from there.
+                if (!member.CanRead
+                    || member.GetIndexParameters().Length != 0
+                    || (type != entity && member.DeclaringType!.IsAssignableFrom(entity.ClrType)))
+                {
+                    continue;
+                }
+
+                string path = prefix.Length == 0 ? member.Name : $"{prefix}.{member.Name}";
+
+                if (type.FindProperty(member.Name) is not null || ComplexProperties(type).Contains(member.Name))
+                {
+                    loaded.Add(new Loaded(path, member, true));
+
+                    continue;
+                }
+
+                INavigationBase? navigation =
+                    (INavigationBase?)type.FindNavigation(member.Name) ?? type.FindSkipNavigation(member.Name);
+
+                if (navigation is null || !Loads(type, navigation, path))
+                {
+                    continue;
+                }
+
+                loaded.Add(new Loaded(path, member, false));
+
+                if (!Collect(navigation.TargetEntityType, path, loaded, seen, derivedOnly: false))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>True when something loads a navigation of an entity reached along a path.</summary>
+    private bool Loads(IEntityType owner, INavigationBase navigation, string path) =>
+        (navigation is INavigation owned && IsOwned(owned))
+        || navigation.IsEagerLoaded
+        || _includeUnknown
+        || _includes.Contains(path)
+        || LoadsLazily(owner);
+
     /// <summary>Reads the shape of a guarded query's source.</summary>
     /// <remarks>
     /// Rows in memory first, because a projection over them is still in memory. Then a projection that
     /// builds its rows, which is how a caller makes its own row type out of entities. What is left is an
-    /// entity query, or a projection handing back entities, <c>Select(o =&gt; o.Customer)</c>, both read
-    /// from the EF Core model; without one, the source is <see cref="Unknown"/>.
+    /// entity query, read from the EF Core model; without one, the source is <see cref="Unknown"/>. A
+    /// chain that reaches its rows through anything but the root's own, <c>Select(o =&gt; o.Customer)</c>,
+    /// a <c>SelectMany</c>, a <c>Join</c> or a projection behind another <c>Select</c>, holds entities
+    /// whose navigations were loaded from another root or by a projection, so every navigation counts as
+    /// loaded there.
     /// </remarks>
     internal static RowShape Of<T>(IQueryable<T> source) where T : class
     {
@@ -261,8 +404,8 @@ internal sealed class RowShape
             return Unknown;
         }
 
-        HashSet<string> includes = new(StringComparer.Ordinal);
-        bool unknown = !ReadIncludes(source.Expression, includes);
+        HashSet<string> includes = new(StringComparer.OrdinalIgnoreCase);
+        bool unknown = !ReadIncludes(source.Expression, includes) || QueryRoot.Reshapes(source.Expression);
 
         return new RowShape(entity, includes, unknown);
     }
@@ -273,17 +416,18 @@ internal sealed class RowShape
     /// </summary>
     private static RowShape Projected<T>(IQueryable<T> source) where T : class
     {
-        MethodCallExpression select = DefaultOrder.OutermostSelect(source.Expression)!;
+        MethodCallExpression select = DefaultOrder.RowSelect(source.Expression)!;
         LambdaExpression selector = (LambdaExpression)DefaultOrder.StripQuotes(select.Arguments[1]);
         Expression body = DefaultOrder.StripConversions(selector.Body);
 
-        // A constructor with arguments says nothing about which member each argument sets.
-        if (body is not MemberInitExpression initializer)
+        // A constructor with arguments says nothing about which member each argument sets, whether or
+        // not an initializer follows it: every member counts as assigned, and none can be narrowed.
+        if (body is not MemberInitExpression initializer || initializer.NewExpression.Arguments.Count > 0)
         {
             return new RowShape(RowKind.Projected, null, Array.Empty<string>());
         }
 
-        HashSet<string> assigned = new(StringComparer.Ordinal);
+        HashSet<string> assigned = new(StringComparer.OrdinalIgnoreCase);
         List<string> narrowable = new();
 
         ParameterExpression row = selector.Parameters[0];
@@ -474,11 +618,36 @@ internal sealed class RowShape
 
     /// <summary>
     /// True when a lazy loader can fill this entity's navigations after the query: EF Core's proxies and
-    /// an injected <c>ILazyLoader</c> both give it a service property.
+    /// an injected <c>ILazyLoader</c> give it a service property, and a loader the class takes in its
+    /// constructor, the delegate form above all, may be kept in a field or a property of any name,
+    /// where the model has no record of it.
     /// </summary>
     private static bool LoadsLazily(IEntityType entity) =>
-        entity.GetServiceProperties().Any(service =>
-            service.ClrType == typeof(ILazyLoader) || service.ClrType == typeof(Action<object, string>));
+        entity.GetServiceProperties().Any(service => IsLoader(service.ClrType))
+        || TakesLoader.GetOrAdd(entity.ClrType, HoldsLoader);
+
+    private static bool HoldsLoader(Type type)
+    {
+        const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+        if (type.GetConstructors(any).Any(constructor => constructor.GetParameters().Any(p => IsLoader(p.ParameterType))))
+        {
+            return true;
+        }
+
+        for (Type? current = type; current is not null && current != typeof(object); current = current.BaseType)
+        {
+            if (current.GetFields(any | BindingFlags.DeclaredOnly).Any(field => IsLoader(field.FieldType))
+                || current.GetProperties(any | BindingFlags.DeclaredOnly).Any(property => IsLoader(property.PropertyType)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsLoader(Type type) => type == typeof(ILazyLoader) || type == typeof(Action<object, string>);
 
     /// <summary>
     /// The names of an entity type's complex properties, which EF Core 8 introduced and loads with the
@@ -488,9 +657,12 @@ internal sealed class RowShape
     /// Read by reflection because the library compiles against EF Core 6. The method is declared on an
     /// interface the entity type implements, so the interfaces are searched rather than the class.
     /// </remarks>
-    private static HashSet<string> ComplexProperties(IEntityType entityType)
+    private static HashSet<string> ComplexProperties(IEntityType entityType) =>
+        ComplexByType.GetValue(entityType, ReadComplexProperties);
+
+    private static HashSet<string> ReadComplexProperties(IEntityType entityType)
     {
-        HashSet<string> names = new(StringComparer.Ordinal);
+        HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
 
         foreach (Type contract in entityType.GetType().GetInterfaces())
         {
@@ -518,6 +690,12 @@ internal sealed class RowShape
         return names;
     }
 }
+
+/// <summary>A member a value loads, with its path from the root.</summary>
+/// <param name="Path">The member's path from the root.</param>
+/// <param name="Property">The member.</param>
+/// <param name="Whole">True when EF Core reads it whole: a column or a complex property.</param>
+internal readonly record struct Loaded(string Path, PropertyInfo Property, bool Whole);
 
 /// <summary>Where a guarded query's rows come from.</summary>
 internal enum RowKind

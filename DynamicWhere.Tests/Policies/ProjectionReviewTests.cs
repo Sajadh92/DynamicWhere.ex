@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.RegularExpressions;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
@@ -697,6 +698,30 @@ namespace DynamicWhere.Tests.Policies
         }
 
         private static string Decorate(string code) => "[" + code + "]";
+
+        /// <summary>
+        /// A default applies only to a column: a framework method EF Core cannot translate, such as
+        /// <c>Regex.Replace</c>, computes the field on the client, and ordering by it would make the guarded
+        /// query fail where the unguarded one ran. A column read directly, through a navigation or through
+        /// <c>EF.Property</c> is ordered by.
+        /// </summary>
+        [Fact]
+        public void A_default_applies_only_to_a_column_the_projection_assigns()
+        {
+            IQueryable<RvLabelRow> replaced = _db.Roles.Select(r => new RvLabelRow { Id = r.Id, Label = Regex.Replace(r.Code, "R", "X") });
+            IQueryable<RvLabelRow> joined = _db.Roles.Select(r => new RvLabelRow { Id = r.Id, Label = r.Code + "!" });
+            IQueryable<RvLabelRow> direct = _db.Roles.Select(r => new RvLabelRow { Id = r.Id, Label = r.Code });
+            IQueryable<RvLabelRow> navigated = _db.Roles.Select(r => new RvLabelRow { Id = r.Id, Label = r.Keeper!.Name });
+            IQueryable<RvLabelRow> byName = _db.Roles.Select(r => new RvLabelRow { Id = r.Id, Label = EF.Property<string>(r, "Code") });
+
+            Assert.True(DefaultOrder.HidesDefault(replaced.Expression, typeof(RvLabelRow)));
+            Assert.True(DefaultOrder.HidesDefault(joined.Expression, typeof(RvLabelRow)));
+            Assert.False(DefaultOrder.HidesDefault(direct.Expression, typeof(RvLabelRow)));
+            Assert.False(DefaultOrder.HidesDefault(navigated.Expression, typeof(RvLabelRow)));
+            Assert.False(DefaultOrder.HidesDefault(byName.Expression, typeof(RvLabelRow)));
+
+            Assert.Equal("X1", Guard(replaced).ToList(new Filter()).Data.Single().Label);
+        }
 
         /// <summary>A member named with a word the parser keeps cannot be projected, so it is skipped.</summary>
         [Fact]

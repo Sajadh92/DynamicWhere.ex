@@ -4850,9 +4850,11 @@ MemoryCalculationInput
           JSON bag say, asks for no projection on its own, and an entity keeps it whole, unless a value converter
           hands back its value, directly or inside a complex property: a converter is the application's code, so
           such a column is left out. BitArray and the framework's string collections hold values. An application's
-          own collection class, generic or not, has its own members read. Two members sharing a name, one hidden with
-          new under another type or spelled in another case, are left out when either holds a denial, since the core
-          reads one and a row carries both. A projected member is read as the type its initializer constructs, and an
+          own collection class, generic or not, has its own members read; a collection of values stays a value unless
+          one of them is denied. Two members sharing a name, one hidden with new under another type or spelled in
+          another case, are left out when either holds a denial, since the core reads one and a row carries both.
+          Rows in memory are projected when a member a base type declares, and the row type hides with new, is
+          denied. A projected member is read as the type its initializer constructs, and an
           initializer after a constructor with arguments narrows its own bindings. The trace records a member left
           out only when a projection is built, or, in a dry run, would be.
         - Behaviour change. [DwEntity(DefaultOrder)] applies to a projected source whose outermost Select builds T
@@ -5061,6 +5063,17 @@ MemoryCalculationInput
   its members decides the entity's own path. Declare such a class apart from the entity to keep the path open.
 - Types from an unloadable `AssemblyLoadContext` stay referenced by the policy's caches, so the context is not
   collected while the process runs.
+- A method or property in a reshaping lambda that builds a query from captured values (a repository's query, a
+  specification) runs once more per guarded read, when the guard reads what it returns; one that returns a different
+  query on each call is enforced as it answered the guard.
+- A provider that wraps EF Core's gets `AsNoTracking` only when its query's expression shows the EF Core root, as
+  LinqKit's and DelegateDecompiler's do; one that hides it behind its own expression runs tracking.
+- A member declared as a framework collection (`IEnumerable<string>`, `List<string>`) that holds an application's own
+  collection class at run time is read as the framework type, so that class's own members are not read. Serializers
+  write only the elements.
+- On EF Core 6, a reshaped query whose projection EF Core 6 cannot translate (a count over `GroupBy`/`First`, a
+  `SelectMany` over a captured query that builds its rows) fails guarded, where it ran unguarded; EF Core 7 and later
+  translate it.
 - A default order reaches a projected row only through columns of the entity its `Select` reads: a projection over
   an anonymous or other intermediate row takes no default.
 - A simulation reads T as a source it cannot see into (section 23): every denial beneath a member counts, and a

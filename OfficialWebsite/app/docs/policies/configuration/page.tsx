@@ -428,7 +428,8 @@ left out whole: it can hold what the policy cannot name`}</Code>
         the same way, so type the member as what it holds.{" "}
         <code>BitArray</code> and the framework&apos;s string collections hold
         values. An application&apos;s own collection class, generic or not,
-        still has its own members read, and two members sharing a name are left
+        still has its own members read, and a collection of values stays a
+        value unless one of them is denied. Two members sharing a name are left
         out when either holds a denial. A framework generic holding a
         policed type, such as <code>Dictionary&lt;string, LineDto&gt;</code>, has
         no paths beneath it: naming it is refused in both tiers where the core

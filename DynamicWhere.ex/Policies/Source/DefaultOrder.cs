@@ -144,7 +144,7 @@ internal static class DefaultOrder
     }
 
     /// <summary>The <c>Select</c> nearest the end of the chain, or null when nothing projects it.</summary>
-    private static MethodCallExpression? OutermostSelect(Expression expression)
+    internal static MethodCallExpression? OutermostSelect(Expression expression)
     {
         for (Expression? node = expression; node is MethodCallExpression call;
              node = call.Arguments.Count > 0 ? call.Arguments[0] : null)
@@ -172,7 +172,7 @@ internal static class DefaultOrder
 
         if (depth == path.Length - 1)
         {
-            return true;
+            return binding is not MemberAssignment { Expression: var assigned } || Translatable(assigned);
         }
 
         return binding switch
@@ -185,10 +185,59 @@ internal static class DefaultOrder
         };
     }
 
-    private static Expression StripQuotes(Expression expression) =>
+    /// <summary>
+    /// True when EF Core can order by what an expression computes: nothing in it calls a method outside
+    /// the framework and EF Core, or invokes a delegate.
+    /// </summary>
+    /// <remarks>
+    /// An assigned field is not enough on its own. <c>Label = Decorate(r.Code)</c> assigns the field
+    /// the default names, and EF Core evaluates the application's own method on the client, where it can
+    /// project the value but cannot order by it. Such a default is left out, as the projection left the
+    /// query unordered before.
+    /// </remarks>
+    private static bool Translatable(Expression expression)
+    {
+        ClientCallFinder finder = new();
+
+        finder.Visit(expression);
+
+        return !finder.Found;
+    }
+
+    /// <summary>Finds a call EF Core would have to evaluate on the client.</summary>
+    private sealed class ClientCallFinder : ExpressionVisitor
+    {
+        internal bool Found { get; private set; }
+
+        public override Expression? Visit(Expression? node) => Found ? node : base.Visit(node);
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            string space = node.Method.DeclaringType?.Namespace ?? string.Empty;
+
+            if (!(space == "System" || space.StartsWith("System.", StringComparison.Ordinal)
+                  || space == "Microsoft.EntityFrameworkCore" || space.StartsWith("Microsoft.EntityFrameworkCore.", StringComparison.Ordinal)))
+            {
+                Found = true;
+
+                return node;
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        protected override Expression VisitInvocation(InvocationExpression node)
+        {
+            Found = true;
+
+            return node;
+        }
+    }
+
+    internal static Expression StripQuotes(Expression expression) =>
         expression is UnaryExpression { NodeType: ExpressionType.Quote } quote ? quote.Operand : expression;
 
-    private static Expression StripConversions(Expression expression)
+    internal static Expression StripConversions(Expression expression)
     {
         while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.TypeAs } conversion)
         {

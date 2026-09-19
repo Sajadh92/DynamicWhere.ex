@@ -309,8 +309,21 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             return null;
         }
 
-        return type.Namespace?.StartsWith("System", StringComparison.Ordinal) == true ? null : type;
+        return IsFramework(type) ? null : type;
     }
+
+    /// <summary>
+    /// True for a type the framework declares: one in the <c>System</c> namespace or beneath it.
+    /// </summary>
+    /// <remarks>
+    /// The namespace is compared as a whole segment. A prefix match took an application's own
+    /// <c>SystemsCorp.Payroll</c> or <c>SystemX.Domain</c> for the framework, so nothing beneath one of
+    /// its types got a fragment, and a <c>[DwDenied]</c> field there was returned and filtered on as
+    /// though it carried no policy.
+    /// </remarks>
+    internal static bool IsFramework(Type type) =>
+        type.Namespace is { } name
+        && (name == "System" || name.StartsWith("System.", StringComparison.Ordinal));
 
     /// <summary>
     /// Converts one attribute into a fragment at the level its <c>Overridable</c> flag implies.

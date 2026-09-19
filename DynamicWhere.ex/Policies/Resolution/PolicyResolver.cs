@@ -374,6 +374,19 @@ public sealed class PolicyResolver
     }
 
     /// <summary>
+    /// Every fragment every provider has for a type and caller, in one list.
+    /// </summary>
+    /// <remarks>
+    /// For the projection gate, which asks whether anything beneath a member is denied. A fragment
+    /// matches a path exactly or matches every path, so the paths these fragments name, and the
+    /// wildcard, are every place a denial can land. Walking the type instead missed the paths a walk
+    /// does not produce: a property with no setter, a type reached again through a cycle, a rule on a
+    /// path deeper than the walk goes.
+    /// </remarks>
+    internal IReadOnlyList<PolicyFragment> Fragments(Type entityType, DwPolicyContext context) =>
+        Sweep(entityType, context).ToList();
+
+    /// <summary>
     /// Reads every fragment every provider has for a type, refusing a provider that misbehaves.
     /// </summary>
     /// <remarks>

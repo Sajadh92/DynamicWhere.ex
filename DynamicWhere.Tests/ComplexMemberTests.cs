@@ -46,6 +46,47 @@ public class CxSealedBox
     public CxSecretSize Inner { get; set; } = new();
 }
 
+/// <summary>A row projected from <see cref="CxSealedBox"/>, carrying its complex value.</summary>
+[DwEntity(RequirePolicy = true)]
+public sealed class CxBoxRow
+{
+    public int Id { get; set; }
+
+    [DwDenied]
+    public string? Tenant { get; set; }
+
+    public CxSecretSize Inner { get; set; } = new();
+}
+
+/// <summary>An owned member stored as JSON, with a denial beneath it.</summary>
+public class CxJsonShelf
+{
+    public int Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+
+    public CxJsonMeta Meta { get; set; } = new();
+}
+
+public class CxJsonMeta
+{
+    public string Label { get; set; } = string.Empty;
+
+    [DwDenied]
+    public string? Code { get; set; }
+}
+
+/// <summary>A primitive collection named with a word the expression parser keeps.</summary>
+public class CxCastEntity
+{
+    public int Id { get; set; }
+
+    [DwDenied]
+    public string? Secret { get; set; }
+
+    public List<string> Cast { get; set; } = new();
+}
+
 public sealed class ComplexMemberContext : DbContext
 {
     private readonly SqliteConnection _connection;
@@ -56,12 +97,17 @@ public sealed class ComplexMemberContext : DbContext
 
     public DbSet<CxSealedBox> Boxes => Set<CxSealedBox>();
 
+    public DbSet<CxJsonShelf> JsonShelves => Set<CxJsonShelf>();
+
+    public DbSet<CxCastEntity> CastEntities => Set<CxCastEntity>();
+
     protected override void OnConfiguring(DbContextOptionsBuilder options) => options.UseSqlite(_connection);
 
     protected override void OnModelCreating(ModelBuilder model)
     {
         model.Entity<CxCrate>().ComplexProperty(crate => crate.Size);
         model.Entity<CxSealedBox>().ComplexProperty(box => box.Inner);
+        model.Entity<CxJsonShelf>().OwnsOne(shelf => shelf.Meta, meta => meta.ToJson());
     }
 }
 
@@ -86,6 +132,8 @@ public sealed class ComplexMemberTests : IDisposable
 
         _db.Crates.Add(new CxCrate { Label = "label-secret", Size = new CxSize { Width = 4, Height = 5 } });
         _db.Boxes.Add(new CxSealedBox { Name = "B1", Inner = new CxSecretSize { Width = 2, Height = 9 } });
+        _db.JsonShelves.Add(new CxJsonShelf { Name = "J1", Meta = new CxJsonMeta { Label = "L", Code = "json-secret" } });
+        _db.CastEntities.Add(new CxCastEntity { Secret = "s", Cast = new List<string> { "a" } });
         _db.SaveChanges();
         _db.ChangeTracker.Clear();
     }
@@ -109,6 +157,45 @@ public sealed class ComplexMemberTests : IDisposable
 
         Assert.Null(crate.Label);
         Assert.Equal((4, 5), (crate.Size.Width, crate.Size.Height));
+    }
+
+    /// <summary>
+    /// A projected row carrying a complex value: the core's narrowing compares it to null, which EF Core
+    /// refuses, so with a denial beneath it the value is left out whole rather than failing the query.
+    /// </summary>
+    [Fact]
+    public void A_projected_complex_value_with_a_denial_beneath_is_left_out()
+    {
+        PolicyQueryable<CxBoxRow> guarded = Guard(_db.Boxes.Select(b => new CxBoxRow { Id = b.Id, Tenant = b.Name, Inner = b.Inner }));
+
+        CxBoxRow row = guarded.ToList(new Filter()).Data.Single();
+
+        Assert.Equal((0, 0), (row.Inner.Width, row.Inner.Height));
+        Assert.Contains(guarded.LastTrace!.Decisions, decision => decision.FieldPath == "Inner"
+            && decision.Reason == "left out whole: the projection builds it in a way the core cannot narrow");
+    }
+
+    /// <summary>An owned member stored as JSON cannot be narrowed by EF Core, so it is left out whole.</summary>
+    [Fact]
+    public void An_owned_member_stored_as_json_with_a_denial_beneath_is_left_out()
+    {
+        PolicyQueryable<CxJsonShelf> guarded = Guard(_db.JsonShelves);
+
+        CxJsonShelf shelf = guarded.ToList(new Filter()).Data.Single();
+
+        Assert.Equal("J1", shelf.Name);
+        Assert.Null(shelf.Meta.Code);
+        Assert.Contains(guarded.LastTrace!.Decisions, decision => decision.FieldPath == "Meta"
+            && decision.Reason == "left out whole: it is stored as JSON, which EF Core cannot narrow");
+    }
+
+    /// <summary>A primitive collection named with a parser word cannot be projected, so it is skipped.</summary>
+    [Fact]
+    public void A_primitive_collection_named_with_a_parser_word_is_skipped()
+    {
+        CxCastEntity entity = Guard(_db.CastEntities).ToList(new Filter()).Data.Single();
+
+        Assert.Null(entity.Secret);
     }
 
     [Fact]

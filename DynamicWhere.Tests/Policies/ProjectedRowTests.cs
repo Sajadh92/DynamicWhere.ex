@@ -557,11 +557,12 @@ public sealed class ProjectedRowTests : IDisposable
     }
 
     /// <summary>
-    /// Rows in memory keep a member whole when nothing beneath it is denied. One with a denial beneath
-    /// is left out: the core's narrowing of a reference reads it through EF Core.
+    /// Rows in memory keep their values and leave every object member out once a projection is needed,
+    /// as 3.1.0 did. A member kept from them would be the caller's own object, which a transform would
+    /// then change in place, and a denial only beneath a member now needs that projection too.
     /// </summary>
     [Fact]
-    public void Rows_in_memory_keep_clean_members_whole_and_leave_out_the_rest()
+    public void Rows_in_memory_keep_their_values_and_leave_their_objects_out()
     {
         PrRoleRow[] roles =
         {
@@ -573,11 +574,12 @@ public sealed class ProjectedRowTests : IDisposable
         PolicyQueryable<PrOpenRow> guarded = open.AsQueryable().ApplyPolicy(Caller(), Options(DwTier.Strict), Resolver());
         PrOpenRow row = guarded.ToList(Everything()).Data.Single();
 
-        Assert.Equal("R1|-|One|read/|read", Describe(role));
-        Assert.Empty(row.Contents);
+        Assert.Equal("R1|-|-||read", Describe(role));
+        Assert.Equal(("R1", 0), (row.Code, row.Contents.Count));
+        Assert.Equal("s-read", open[0].Contents[0].Secret);
         Assert.Contains(
             guarded.LastTrace!.Decisions,
-            decision => decision.FieldPath == "Contents" && decision.Reason!.StartsWith("left out whole", StringComparison.Ordinal));
+            decision => decision is { FieldPath: "Contents.Secret", Action: PolicyAction.Dropped });
     }
 
     // ------------------------------------------------------------------ F2: the key the builder adds
@@ -665,7 +667,7 @@ public sealed class ProjectedRowTests : IDisposable
     [Fact]
     public void Nothing_is_synthesized_when_nothing_is_denied_at_any_depth()
     {
-        foreach (RowShape rows in new[] { RowShape.Entity, RowShape.Projected, RowShape.InMemory })
+        foreach (RowShape rows in new[] { RowShape.Unknown, RowShape.InMemory })
         {
             Filter sanitized = FilterSanitizer.Sanitize<PrShelfWithoutDenials>(
                 new Filter(), Resolver(), Caller(), Options(DwTier.Strict), new PolicyTrace(DwTier.Strict, dryRun: false), rows: rows);
@@ -681,8 +683,8 @@ public sealed class ProjectedRowTests : IDisposable
         List<string>? Synthesized(RowShape rows) => FilterSanitizer.Sanitize<PrOpenRow>(
             new Filter(), Resolver(), Caller(), Options(DwTier.Strict), new PolicyTrace(DwTier.Strict, dryRun: false), rows: rows).Selects;
 
-        Assert.Equal(new[] { "Code", "Id" }, Synthesized(RowShape.Entity)!.OrderBy(x => x, StringComparer.Ordinal));
-        Assert.Equal(new[] { "Code", "Contents.Code", "Id" }, Synthesized(RowShape.Projected)!.OrderBy(x => x, StringComparer.Ordinal));
+        Assert.Equal(new[] { "Code", "Id" }, Synthesized(RowShape.Unknown)!.OrderBy(x => x, StringComparer.Ordinal));
+        Assert.Equal(new[] { "Code", "Contents.Code", "Id" }, Synthesized(RowShape.Of(OpenRows()))!.OrderBy(x => x, StringComparer.Ordinal));
         Assert.Equal(new[] { "Code", "Id" }, Synthesized(RowShape.InMemory)!.OrderBy(x => x, StringComparer.Ordinal));
     }
 }

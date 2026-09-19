@@ -1734,6 +1734,16 @@ internal static class FilterSanitizer
 
             if (!rows.Narrows(field.Split(SegmentSeparator)[0]))
             {
+                // Narrowed only to keep a transform off a property it could not write: nothing is withheld
+                // by keeping it whole, as it always was kept.
+                if (cause is null && !hidden)
+                {
+                    Keep(field);
+                    KeepCarriedKeys(field, gate, Keep);
+
+                    continue;
+                }
+
                 gate.RefuseNarrowing(blame.Path, blame.Policy, $"'{field}' cannot be narrowed: {rows.WhyNotNarrowed(field)}");
 
                 continue;
@@ -2808,9 +2818,12 @@ internal static class FilterSanitizer
 
             foreach (PolicyFragment fragment in Fragments)
             {
+                // A rule on a path the type does not have, one written for a member since removed, holds
+                // nothing a projection could carry.
                 if (fragment.IsWildcard
                     || !fragment.FieldPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-                    || !asked.Add(fragment.FieldPath))
+                    || !asked.Add(fragment.FieldPath)
+                    || Property(_entityType, fragment.FieldPath) is null)
                 {
                     continue;
                 }

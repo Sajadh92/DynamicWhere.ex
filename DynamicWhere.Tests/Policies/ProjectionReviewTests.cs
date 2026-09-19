@@ -792,6 +792,22 @@ namespace DynamicWhere.Tests.Policies
             Assert.Throws<PolicyException>(() => Guard(rows.AsQueryable(), DwTier.Convenience, rule).ToList(Selecting("Id", "Head")));
         }
 
+        /// <summary>
+        /// A rule on a path the type does not have, one left behind by a member since removed, holds nothing
+        /// a projection could carry, so it does not stop a caller naming the member above it.
+        /// </summary>
+        [Fact]
+        public void A_rule_on_a_path_that_does_not_exist_beneath_a_member_changes_nothing()
+        {
+            RvLink[] rows = { new() { Id = 1, Head = new RvNode { Name = "n1" } } };
+            FakePolicyProvider stale = new FakePolicyProvider().Add(
+                "Head.Fax", PolicyFeature.Select, PolicyEffect.Deny, PolicyLevel.DynamicGlobal);
+
+            RvLink row = Guard(rows.AsQueryable(), DwTier.Strict, stale).ToList(Selecting("Id", "Head")).Data.Single();
+
+            Assert.Equal("n1", row.Head!.Name);
+        }
+
         /// <summary>Holds a reference to a copy of the result and its SQL, to keep a test to one statement per line.</summary>
         private sealed class FilterResultOf<T>
             where T : class

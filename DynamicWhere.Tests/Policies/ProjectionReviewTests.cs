@@ -808,6 +808,47 @@ namespace DynamicWhere.Tests.Policies
             Assert.Equal("n1", row.Head!.Name);
         }
 
+        /// <summary>
+        /// A navigation EF Core's lazy-loading proxies can fill counts as loaded as well, and the rows the
+        /// projection returns are plain objects, with no proxy left to load it.
+        /// </summary>
+        [Fact]
+        public void A_navigation_a_lazy_loading_proxy_can_fill_needs_the_projection()
+        {
+            using SqliteConnection connection = new("DataSource=:memory:");
+            connection.Open();
+
+            using ProxyContext proxies = new(connection);
+
+            proxies.Database.EnsureCreated();
+            proxies.Blogs.Add(new PxBlog { Name = "X1", Posts = { new PxPost { Title = "T", Draft = "proxy-draft" } } });
+            proxies.SaveChanges();
+            proxies.ChangeTracker.Clear();
+
+            PolicyQueryable<PxBlog> guarded = Guard(proxies.Blogs);
+            PxBlog blog = guarded.ToList(new Filter()).Data.Single();
+
+            Assert.Equal("X1", blog.Name);
+            Assert.Empty(blog.Posts);
+            Assert.Equal(typeof(PxBlog), blog.GetType());
+            Assert.Contains(guarded.LastTrace!.Decisions, decision => decision.FieldPath == "Posts.Draft");
+        }
+
+        /// <summary>
+        /// An include on a join's inner source loads a navigation of the rows the join returns, and it is
+        /// not on the chain the paths are read from, so every navigation counts as loaded.
+        /// </summary>
+        [Fact]
+        public void An_include_anywhere_in_the_query_counts()
+        {
+            IQueryable<RvRole> rows = _db.Assets.Join(_db.Roles.Include(r => r.Keeper), a => a.Id, r => r.Id, (a, r) => r);
+
+            PolicyQueryable<RvRole> guarded = Guard(rows);
+
+            Assert.Null(guarded.ToList(new Filter()).Data.Single().Keeper);
+            Assert.Contains(guarded.LastTrace!.Decisions, decision => decision.FieldPath == "Keeper.Ssn");
+        }
+
         /// <summary>Holds a reference to a copy of the result and its SQL, to keep a test to one statement per line.</summary>
         private sealed class FilterResultOf<T>
             where T : class
@@ -841,6 +882,39 @@ namespace DynamicWhere.Tests.Policies
         public string? Tenant { get; set; }
 
         public List<RvKidRow> Kids { get; set; } = new();
+    }
+
+    public class PxBlog
+    {
+        public virtual int Id { get; set; }
+
+        public virtual string Name { get; set; } = string.Empty;
+
+        public virtual List<PxPost> Posts { get; set; } = new();
+    }
+
+    public class PxPost
+    {
+        public virtual int Id { get; set; }
+
+        public virtual int PxBlogId { get; set; }
+
+        public virtual string Title { get; set; } = string.Empty;
+
+        [DwDenied]
+        public virtual string? Draft { get; set; }
+    }
+
+    public sealed class ProxyContext : DbContext
+    {
+        private readonly SqliteConnection _connection;
+
+        public ProxyContext(SqliteConnection connection) => _connection = connection;
+
+        public DbSet<PxBlog> Blogs => Set<PxBlog>();
+
+        protected override void OnConfiguring(DbContextOptionsBuilder options) =>
+            options.UseSqlite(_connection).UseLazyLoadingProxies();
     }
 
     public sealed class RvNode

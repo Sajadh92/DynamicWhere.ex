@@ -355,15 +355,19 @@ internal sealed class RowShape
         for (Expression? node = expression; node is MethodCallExpression call;
              node = call.Arguments.Count > 0 ? call.Arguments[0] : null)
         {
-            if (call.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
-                && call.Method.Name is nameof(EntityFrameworkQueryableExtensions.Include)
-                    or nameof(EntityFrameworkQueryableExtensions.ThenInclude))
+            if (IsInclude(call))
             {
                 calls.Add(call);
             }
         }
 
-        bool readable = true;
+        // An include somewhere else in the tree, in the other branch of a Concat or a Union, loads a
+        // navigation of rows this chain returns, and nothing here can say which.
+        IncludeCounter counter = new();
+
+        counter.Visit(expression);
+
+        bool readable = counter.Count == calls.Count;
         string? current = null;
 
         for (int i = calls.Count - 1; i >= 0; i--)
@@ -404,6 +408,27 @@ internal sealed class RowShape
         }
 
         return readable;
+    }
+
+    private static bool IsInclude(MethodCallExpression call) =>
+        call.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
+        && call.Method.Name is nameof(EntityFrameworkQueryableExtensions.Include)
+            or nameof(EntityFrameworkQueryableExtensions.ThenInclude);
+
+    /// <summary>Counts every <c>Include</c> and <c>ThenInclude</c> anywhere in a query.</summary>
+    private sealed class IncludeCounter : ExpressionVisitor
+    {
+        internal int Count { get; private set; }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (IsInclude(node))
+            {
+                Count++;
+            }
+
+            return base.VisitMethodCall(node);
+        }
     }
 
     /// <summary>

@@ -73,7 +73,7 @@ internal static class KnownSubtypes
 
             foreach (Type candidate in byDefinition)
             {
-                if ((type.ContainsGenericParameters || candidate.ContainsGenericParameters) && !found.Contains(candidate))
+                if ((type.ContainsGenericParameters || CanBe(candidate, type)) && !found.Contains(candidate))
                 {
                     found.Add(candidate);
                 }
@@ -81,6 +81,34 @@ internal static class KnownSubtypes
         }
 
         return found is null ? Array.Empty<Type>() : found;
+    }
+
+    /// <summary>
+    /// True when some instantiation of an open generic subtype derives from or implements a closed type:
+    /// its own base or interface of that definition is the type, or is still open. One over another
+    /// instantiation, class Fixed&lt;T&gt; : Base&lt;string&gt;, never holds a Base&lt;int&gt;.
+    /// </summary>
+    private static bool CanBe(Type candidate, Type type)
+    {
+        if (!candidate.ContainsGenericParameters)
+        {
+            return false;
+        }
+
+        Type definition = type.GetGenericTypeDefinition();
+        IEnumerable<Type> ancestors = type.IsInterface ? Interfaces(candidate) : BaseTypes(candidate);
+
+        return ancestors.Any(ancestor => ancestor.IsGenericType
+                                         && ancestor.GetGenericTypeDefinition() == definition
+                                         && (ancestor == type || ancestor.ContainsGenericParameters));
+    }
+
+    private static IEnumerable<Type> BaseTypes(Type type)
+    {
+        for (Type? ancestor = type.BaseType; ancestor is not null; ancestor = ancestor.BaseType)
+        {
+            yield return ancestor;
+        }
     }
 
     /// <summary>The index for the assemblies loaded now, built once for each epoch.</summary>
@@ -112,7 +140,14 @@ internal static class KnownSubtypes
     {
         HashSet<Assembly> assemblies = new(AppDomain.CurrentDomain.GetAssemblies().Where(Searched));
 
-        assemblies.UnionWith(SeenLoading.Keys);
+        // One the domain lists now needs no holding on to: this index reads it, and every later one will.
+        foreach (Assembly seen in SeenLoading.Keys)
+        {
+            if (!assemblies.Add(seen))
+            {
+                SeenLoading.TryRemove(seen, out _);
+            }
+        }
 
         Dictionary<Type, List<Type>> descendants = new();
 

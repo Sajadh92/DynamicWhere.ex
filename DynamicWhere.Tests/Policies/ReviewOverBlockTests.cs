@@ -747,6 +747,22 @@ namespace DynamicWhere.Tests.Policies
         }
 
         [Fact]
+        public void Zb_B10_a_filter_inside_a_reshaping_lambda_loads_nothing()
+        {
+            // A method call, and a value constructed, that only feed a predicate hand a row nothing.
+            IQueryable<ZbOrder> source = _db.Customers.SelectMany(c => c.Orders.Where(
+                o => EF.Functions.Like(o.Code, "%") && o.Id < new DateTime(2100, 1, 1).Year));
+
+            Outcome("B10 typed", Guard(source), g => g.ToList(new Filter()).Data);
+            _db.ChangeTracker.Clear();
+
+            PolicyQueryable<ZbOrder> guarded = Guard(source);
+
+            Assert.Single(guarded.ToList(new Filter()).Data);
+            Assert.False(AnyDropped(guarded), Dropped(guarded));
+        }
+
+        [Fact]
         public void Zb_B3_Join_with_nothing_loaded_beneath_is_not_projected()
         {
             IQueryable<ZbCustomer> source = _db.Orders.Join(_db.Customers, o => o.ZbCustomerId, c => c.Id, (o, c) => c);

@@ -1894,6 +1894,7 @@ internal static class FilterSanitizer
         List<string> allowed = new();
         List<(string Member, string Reason)> uncarried = new();
         bool anyDenied = false;
+        int recorded = gate.TraceCount;
 
         foreach (PropertyInfo member in gate.Members())
         {
@@ -1994,7 +1995,16 @@ internal static class FilterSanitizer
             gate.LeaveOut(path, "left out: a type derived from the row's type declares it, and the projection builds the row's type");
         }
 
-        if (!anyDenied || gate.IsDryRun)
+        // A member that asks for nothing itself is still left out, or narrowed, as the projection would build
+        // it. With no projection built nothing was, and the trace says what the query did.
+        if (!anyDenied)
+        {
+            gate.WithdrawTrace(recorded);
+
+            return null;
+        }
+
+        if (gate.IsDryRun)
         {
             return null;
         }
@@ -2997,10 +3007,11 @@ internal static class FilterSanitizer
         /// On an entity query the model says what loads beneath the member
         /// (<see cref="RowShape.LoadedBeneath"/>). Each loaded member is asked about by its path, and by
         /// its own attribute where no fragment reaches it: deeper than the walker goes, or declared by a
-        /// type the model derives. A value EF Core reads whole is read through its type. What it read
-        /// from the database holds no object of the application's, so an entity's members never count as
-        /// holding one. A projection's member is read as the type the projection constructs it as, when
-        /// it says. Any other value can carry whatever the member's type can hold, its subtypes included.
+        /// type the model derives. A value EF Core reads whole is read through its type. What EF Core
+        /// materializes from the database holds no object of the application's; what a value converter
+        /// hands back is the application's code, and holds what its type allows. A
+        /// projection's member is read as the type the projection constructs it as, when it says. Any
+        /// other value can carry whatever the member's type can hold, its subtypes included.
         /// Under a policy that denies every field it does not name, a path the walk never asks about is a
         /// denied one unless the policy names it.
         /// </remarks>
@@ -3009,16 +3020,19 @@ internal static class FilterSanitizer
             if (rows.LoadedBeneath(member) is { } loaded)
             {
                 bool denies = false;
+                bool holdsObject = false;
 
                 foreach (Loaded entry in loaded)
                 {
-                    denies |= Denies(entry.Path, entry.Property)
-                              || (entry.Whole
-                                  && !HoldsValue(entry.Property.PropertyType)
-                                  && Carried(entry.Property.PropertyType, entry.Path, exact: false).DeniesSelect);
+                    TypeFacts carried = entry.Whole && !HoldsValue(entry.Property.PropertyType)
+                        ? Carried(entry.Property.PropertyType, entry.Path, exact: false)
+                        : default;
+
+                    denies |= Denies(entry.Path, entry.Property) || carried.DeniesSelect;
+                    holdsObject |= entry.Converted && carried.HoldsObject;
                 }
 
-                return new TypeFacts(denies, false, loaded.Count > 0);
+                return new TypeFacts(denies, holdsObject, loaded.Count > 0);
             }
 
             if (!member.Contains(SegmentSeparator) && rows.BuiltType(member) is { } built)
@@ -3052,8 +3066,8 @@ internal static class FilterSanitizer
         /// <remarks>
         /// The walker puts a fragment on every path of the declared types up to its depth, a member
         /// with no setter, a path around a cycle, and a denial an override or an implementation declares
-        /// included. Past its depth, or on a member only a derived type declares, the attribute is all
-        /// there is.
+        /// included. Past its depth, or on a member only a derived type declares, the attributes are all
+        /// there is, read from every declaration a row can run.
         /// </remarks>
         private bool Denies(string path, PropertyInfo property)
         {
@@ -3064,9 +3078,33 @@ internal static class FilterSanitizer
 
             return (path.Split(SegmentSeparator).Length > AttributePolicyProvider.MaxDepth
                     || Property(_entityType, path) is null)
-                   && property.GetCustomAttributes<DwDenyAttribute>(inherit: true)
-                       .Any(attribute => (attribute.Features & PolicyFeature.Select) != 0);
+                   && DeclaresDenial(property);
         }
+
+        /// <summary>
+        /// True when a member's attributes deny Select: its own, inherited ones, and those of another
+        /// declaration a row of the type it was read from can run, an interface member or a subtype's
+        /// override among them. Read once for each member, and again once another assembly has loaded.
+        /// </summary>
+        private static bool DeclaresDenial(PropertyInfo property)
+        {
+            int epoch = KnownSubtypes.Epoch;
+
+            if (DenialsByMember.TryGetValue(property, out (int Epoch, bool Denies) known) && known.Epoch == epoch)
+            {
+                return known.Denies;
+            }
+
+            bool denies = property.GetCustomAttributes<DwDenyAttribute>(inherit: true)
+                .Concat(AttributePolicyProvider.DenialsElsewhere(property.ReflectedType ?? property.DeclaringType!, property))
+                .Any(attribute => (attribute.Features & PolicyFeature.Select) != 0);
+
+            DenialsByMember[property] = (epoch, denies);
+
+            return denies;
+        }
+
+        private static readonly ConcurrentDictionary<PropertyInfo, (int Epoch, bool Denies)> DenialsByMember = new();
 
         /// <summary>
         /// Every member a type derived from T declares that a row can carry and this caller may not
@@ -3293,7 +3331,12 @@ internal static class FilterSanitizer
                 {
                     holdsObject = true;
 
-                    return;
+                    // An application's own collection that is not generic can hold anything, and it still
+                    // declares members of its own, which are read as any other type's are.
+                    if (peeled.IsGenericParameter || AttributePolicyProvider.IsFramework(peeled))
+                    {
+                        return;
+                    }
                 }
 
                 if (AttributePolicyProvider.NavigationTypeOf(candidate) is { } navigation)
@@ -3334,8 +3377,7 @@ internal static class FilterSanitizer
                         continue;
                     }
 
-                    if (property.GetCustomAttributes<DwDenyAttribute>(inherit: true)
-                        .Any(attribute => (attribute.Features & PolicyFeature.Select) != 0))
+                    if (!denies && DeclaresDenial(property))
                     {
                         denies = true;
                     }
@@ -3801,6 +3843,12 @@ internal static class FilterSanitizer
             // source. The origin stays in the trace, where an operator reads it.
             throw Exception(fieldPath, PolicyFeature.Segment, PolicyErrorCode.FieldDeniedForSegment, policy);
         }
+
+        /// <summary>How many decisions the query's trace holds.</summary>
+        internal int TraceCount => _trace.Count;
+
+        /// <summary>Withdraws the decisions recorded after the first <paramref name="count"/>.</summary>
+        internal void WithdrawTrace(int count) => _trace.Withdraw(count);
 
         /// <summary>
         /// Records that a synthesized projection left a member out whole, and why: something beneath it

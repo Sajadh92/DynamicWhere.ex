@@ -200,9 +200,9 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     }
 
     /// <summary>
-    /// The denials a member carries from another declaration of it: the interface member it implements,
-    /// and, in a type loaded below the one walked, the override or the implementation that a row of that
-    /// type runs.
+    /// The denials a member carries from another declaration of it: an interface member it implements,
+    /// and, in a type loaded below the one walked, the override, the member hidden with <c>new</c>, or the
+    /// implementation that a row of that type runs.
     /// </summary>
     /// <remarks>
     /// Attributes are read from the declaration walked, and inheritance only reaches up the chain. A row
@@ -211,19 +211,95 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// class's implementation of <c>IAccount.Iban</c>, was never seen through the base path, which filtered,
     /// sorted, grouped and returned it. Each such denial applies to the path for every row, since a
     /// projection cannot withhold a field from some rows only.
+    /// <para>
+    /// Every declaration a row can run counts: an override of either accessor, an implementation declared
+    /// explicitly, inherited from a base class or by an open generic class, and an interface a subtype adds
+    /// over a member it inherits. So does a member a subtype hides with <c>new</c>: whether it reads the
+    /// member it hides cannot be told from outside, and a row serialized as its own type writes it under the
+    /// same name.
+    /// </para>
     /// </remarks>
-    internal static IEnumerable<DwDenyAttribute> DenialsElsewhere(Type type, PropertyInfo property)
+    internal static IReadOnlyList<DwDenyAttribute> DenialsElsewhere(Type type, PropertyInfo property)
     {
-        if (property.GetGetMethod() is not { } getter)
+        int epoch = KnownSubtypes.Epoch;
+
+        if (Elsewhere.TryGetValue((type, property), out (int Epoch, DwDenyAttribute[] Denials) known) && known.Epoch == epoch)
+        {
+            return known.Denials;
+        }
+
+        DwDenyAttribute[] denials = ReadDenialsElsewhere(type, property).ToArray();
+
+        Elsewhere[(type, property)] = (epoch, denials);
+
+        return denials;
+    }
+
+    /// <summary>The denials of each member's other declarations, read once for each type and member until another assembly loads.</summary>
+    private static readonly ConcurrentDictionary<(Type Type, PropertyInfo Property), (int Epoch, DwDenyAttribute[] Denials)> Elsewhere = new();
+
+    private static IEnumerable<DwDenyAttribute> ReadDenialsElsewhere(Type type, PropertyInfo property)
+    {
+        MethodInfo[] accessors = property.GetAccessors(nonPublic: true);
+
+        if (accessors.Length == 0)
         {
             yield break;
         }
 
-        if (!type.IsInterface)
+        // Many rows reach one declaration, an interface every subtype implements, and it is read once.
+        HashSet<PropertyInfo> read = new() { property };
+
+        foreach (Type row in KnownSubtypes.Of(type).Prepend(type))
         {
-            foreach (Type contract in type.GetInterfaces())
+            if (row.IsInterface)
             {
-                if (Declaration(Implemented(type, contract, getter), contract) is { } declared)
+                continue;
+            }
+
+            // What a row of this type runs for the member: the member, or what the row declares in its
+            // place; read through an interface, the row's implementation of it.
+            List<MethodInfo> runs = new();
+
+            if (type.IsInterface)
+            {
+                foreach (PropertyInfo implementation in Implementations(row, type, accessors))
+                {
+                    runs.AddRange(implementation.GetAccessors(nonPublic: true));
+
+                    if (read.Add(implementation))
+                    {
+                        foreach (DwDenyAttribute attribute in implementation.GetCustomAttributes<DwDenyAttribute>(inherit: true))
+                        {
+                            yield return attribute;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                runs.AddRange(accessors);
+
+                if (row != type)
+                {
+                    foreach (PropertyInfo below in Redeclarations(row, property))
+                    {
+                        runs.AddRange(below.GetAccessors(nonPublic: true));
+
+                        if (read.Add(below))
+                        {
+                            foreach (DwDenyAttribute attribute in below.GetCustomAttributes<DwDenyAttribute>(inherit: false))
+                            {
+                                yield return attribute;
+                            }
+                        }
+                    }
+                }
+            }
+
+            foreach (PropertyInfo declared in Declarations(row, runs, accessors))
+            {
+                if (read.Add(declared))
                 {
                     foreach (DwDenyAttribute attribute in declared.GetCustomAttributes<DwDenyAttribute>(inherit: false))
                     {
@@ -232,100 +308,109 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
                 }
             }
         }
+    }
 
-        foreach (Type subtype in KnownSubtypes.Of(type))
+    /// <summary>
+    /// What a subtype declares in a member's place: an override of either accessor, or a member of the same
+    /// name that hides it. Both carry the member's name.
+    /// </summary>
+    private static IEnumerable<PropertyInfo> Redeclarations(Type subtype, PropertyInfo property) =>
+        subtype
+            .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Where(candidate => candidate.Name == property.Name);
+
+    /// <summary>
+    /// The properties a class implements an interface's member with. A class that is itself open generic
+    /// implements the interface over its own type parameters, which may be any instantiation, so that one
+    /// is read too.
+    /// </summary>
+    private static IEnumerable<PropertyInfo> Implementations(Type row, Type contract, MethodInfo[] accessors)
+    {
+        List<PropertyInfo> found = new();
+
+        foreach (Type implemented in row.GetInterfaces())
         {
-            PropertyInfo? below = type.IsInterface
-                ? Implementation(subtype, type, getter)
-                : Override(subtype, getter);
+            bool same = implemented == contract
+                        || (implemented.IsGenericType && contract.IsGenericType
+                            && (implemented.ContainsGenericParameters || contract.ContainsGenericParameters)
+                            && implemented.GetGenericTypeDefinition() == contract.GetGenericTypeDefinition());
 
-            if (below is null)
+            if (!same || Map(row, implemented) is not { } map)
             {
                 continue;
             }
 
-            foreach (DwDenyAttribute attribute in below.GetCustomAttributes<DwDenyAttribute>(inherit: false))
+            for (int i = 0; i < map.InterfaceMethods.Length; i++)
             {
-                yield return attribute;
-            }
-        }
-    }
-
-    /// <summary>The property a subtype declares that overrides a getter, or null.</summary>
-    private static PropertyInfo? Override(Type subtype, MethodInfo getter)
-    {
-        if (!getter.IsVirtual)
-        {
-            return null;
-        }
-
-        MethodInfo root = getter.GetBaseDefinition();
-
-        foreach (PropertyInfo candidate in subtype.GetProperties(
-                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-        {
-            if (candidate.GetGetMethod(nonPublic: true) is { } overriding
-                && Same(overriding.GetBaseDefinition(), root)
-                && !Same(overriding, getter))
-            {
-                return candidate;
+                if (accessors.Any(accessor => Same(map.InterfaceMethods[i], accessor))
+                    && Declaring(map.TargetMethods[i]) is { } implementation
+                    && !found.Contains(implementation))
+                {
+                    found.Add(implementation);
+                }
             }
         }
 
-        return null;
-    }
-
-    /// <summary>The property a type declares that implements an interface's getter, or null.</summary>
-    private static PropertyInfo? Implementation(Type subtype, Type contract, MethodInfo getter)
-    {
-        if (subtype.IsInterface || Implemented(subtype, contract, getter) is not { } target)
-        {
-            return null;
-        }
-
-        return target.DeclaringType?
-            .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-            .FirstOrDefault(candidate => candidate.GetGetMethod(nonPublic: true) is { } method && Same(method, target));
+        return found;
     }
 
     /// <summary>
-    /// For a class member, the interface getter it implements; for an interface getter, the method a type
-    /// implements it with. Null when there is none, or when the runtime cannot map an open generic type.
+    /// The interface properties a class implements with any of the accessors it runs, other than the member
+    /// walked itself.
     /// </summary>
-    private static MethodInfo? Implemented(Type type, Type contract, MethodInfo getter)
+    private static IEnumerable<PropertyInfo> Declarations(Type row, List<MethodInfo> runs, MethodInfo[] own)
     {
-        InterfaceMapping map;
+        MethodInfo[] roots = runs.Select(accessor => accessor.GetBaseDefinition()).ToArray();
+        List<PropertyInfo> found = new();
 
-        try
+        foreach (Type contract in row.GetInterfaces())
         {
-            map = type.GetInterfaceMap(contract);
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or NotSupportedException)
-        {
-            return null;
-        }
-
-        for (int i = 0; i < map.InterfaceMethods.Length; i++)
-        {
-            if (Same(map.InterfaceMethods[i], getter))
+            if (Map(row, contract) is not { } map)
             {
-                return map.TargetMethods[i];
+                continue;
             }
 
-            if (Same(map.TargetMethods[i], getter))
+            for (int i = 0; i < map.TargetMethods.Length; i++)
             {
-                return map.InterfaceMethods[i];
+                MethodInfo declared = map.InterfaceMethods[i];
+
+                if (roots.Any(root => Same(map.TargetMethods[i].GetBaseDefinition(), root))
+                    && !own.Any(accessor => Same(accessor, declared))
+                    && Declaring(declared) is { } property
+                    && !found.Contains(property))
+                {
+                    found.Add(property);
+                }
             }
         }
 
-        return null;
+        return found;
     }
 
-    /// <summary>The interface property an interface getter belongs to.</summary>
-    private static PropertyInfo? Declaration(MethodInfo? method, Type contract) =>
-        method is null || method.DeclaringType != contract
-            ? null
-            : contract.GetProperties().FirstOrDefault(candidate => candidate.GetGetMethod() is { } getter && Same(getter, method));
+    /// <summary>
+    /// A class's interface map, or null when the runtime cannot map it, as for some open generic types.
+    /// Read once for each class and interface.
+    /// </summary>
+    private static InterfaceMapping? Map(Type type, Type contract) =>
+        Maps.GetOrAdd((type, contract), static key =>
+        {
+            try
+            {
+                return key.Type.GetInterfaceMap(key.Contract);
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or NotSupportedException)
+            {
+                return null;
+            }
+        });
+
+    private static readonly ConcurrentDictionary<(Type Type, Type Contract), InterfaceMapping?> Maps = new();
+
+    /// <summary>The property an accessor belongs to, found on the type that declares the accessor.</summary>
+    private static PropertyInfo? Declaring(MethodInfo accessor) =>
+        accessor.DeclaringType?
+            .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .FirstOrDefault(candidate => candidate.GetAccessors(nonPublic: true).Any(method => Same(method, accessor)));
 
     private static bool Same(MethodInfo left, MethodInfo right) =>
         left.MetadataToken == right.MetadataToken && left.Module == right.Module;

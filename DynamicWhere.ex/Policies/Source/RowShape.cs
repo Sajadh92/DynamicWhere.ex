@@ -289,7 +289,7 @@ internal sealed class RowShape
             // A value read whole: what it holds is its type's to say, and a path inside it names part of it.
             if (entity.FindProperty(member.Name) is not null || ComplexProperties(entity).Contains(member.Name))
             {
-                return i == segments.Length - 1 ? new List<Loaded> { new(prefix, member, true) } : null;
+                return i == segments.Length - 1 ? new List<Loaded> { new(prefix, member, true, Converted(entity, member.Name)) } : null;
             }
 
             INavigationBase? navigation =
@@ -373,7 +373,7 @@ internal sealed class RowShape
 
                 if (type.FindProperty(member.Name) is not null || ComplexProperties(type).Contains(member.Name))
                 {
-                    loaded.Add(new Loaded(path, member, true));
+                    loaded.Add(new Loaded(path, member, true, Converted(type, member.Name)));
 
                     continue;
                 }
@@ -405,6 +405,12 @@ internal sealed class RowShape
 
         return true;
     }
+
+    /// <summary>
+    /// True when a column's value comes from a value converter, which is the application's code and can hand
+    /// back an object of any type its member's type allows.
+    /// </summary>
+    private static bool Converted(IEntityType type, string name) => type.FindProperty(name)?.GetValueConverter() is not null;
 
     /// <summary>True when something loads a navigation of an entity reached along a path.</summary>
     private bool Loads(IEntityType owner, INavigationBase navigation, string path) =>
@@ -782,7 +788,11 @@ internal sealed class RowShape
 /// <param name="Path">The member's path from the root.</param>
 /// <param name="Property">The member.</param>
 /// <param name="Whole">True when EF Core reads it whole: a column or a complex property.</param>
-internal readonly record struct Loaded(string Path, PropertyInfo Property, bool Whole);
+/// <param name="Converted">
+/// True when a value converter hands back its value: the application's code, which can return an object of any
+/// type the member's type allows.
+/// </param>
+internal readonly record struct Loaded(string Path, PropertyInfo Property, bool Whole, bool Converted = false);
 
 /// <summary>Where a guarded query's rows come from.</summary>
 internal enum RowKind

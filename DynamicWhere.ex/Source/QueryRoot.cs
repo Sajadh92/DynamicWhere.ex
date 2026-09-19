@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Reflection;
+using DynamicWhere.ex.Optimization.Cache.Source;
+using DynamicWhere.ex.Policies.Resolution;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace DynamicWhere.ex.Source;
@@ -105,13 +108,28 @@ internal static class QueryRoot
     }
 
     /// <summary>
-    /// True when a call along the chain that <see cref="KeepsRows"/> does not know constructs an object in
-    /// one of its lambdas: a projection, such as the one behind <c>Select(x =&gt; x)</c>, an anonymous row
-    /// or a conditional, assigns what it builds, and loads whatever navigation it assigns.
+    /// True when a call along the chain that <see cref="KeepsRows"/> does not know can hand its rows an
+    /// object the query's own includes do not account for: one a lambda constructs, one an application's
+    /// method returns, and one a lambda captured, another query's rows among them.
     /// </summary>
-    internal static bool Builds(Expression expression)
+    /// <remarks>
+    /// A projection, such as the one behind <c>Select(x =&gt; x)</c>, an anonymous row or a conditional,
+    /// assigns what it builds, and loads whatever navigation it assigns. A method can return anything. A
+    /// query captured in a variable becomes part of the query EF Core runs, with its own includes and
+    /// projections, and an object captured from memory holds whatever it holds. A value, such as a
+    /// predicate's result, a key or a date, carries none of them, so what only feeds one is not read.
+    /// </remarks>
+    internal static bool Builds(Expression expression) => Builds(expression, depth: 0);
+
+    private static bool Builds(Expression expression, int depth)
     {
-        ConstructionFinder finder = new();
+        // A captured query that captures itself would never end; one this deep is counted as building.
+        if (depth > MaxCapturedDepth)
+        {
+            return true;
+        }
+
+        ForeignFinder finder = new(depth);
 
         for (Expression? node = expression; node is MethodCallExpression call;
              node = call.Arguments.Count > 0 ? call.Arguments[0] : null)
@@ -119,7 +137,7 @@ internal static class QueryRoot
             if (call.Arguments.Count > 1
                 && call.Method.Name is nameof(Queryable.Concat) or nameof(Queryable.Union) or "UnionBy"
                     or nameof(Queryable.Intersect) or "IntersectBy" or nameof(Queryable.Except) or "ExceptBy"
-                && Builds(call.Arguments[1]))
+                && Builds(call.Arguments[1], depth))
             {
                 return true;
             }
@@ -143,12 +161,23 @@ internal static class QueryRoot
         return false;
     }
 
-    /// <summary>Finds an object construction anywhere in an expression.</summary>
-    private sealed class ConstructionFinder : ExpressionVisitor
+    /// <summary>How many captured queries deep <see cref="Builds(Expression)"/> reads before it stops.</summary>
+    private const int MaxCapturedDepth = 8;
+
+    /// <summary>
+    /// Finds, anywhere in an expression, what can hand a row an object its query does not load: an object
+    /// constructed, an application's method's result, and an object or a query captured from outside.
+    /// </summary>
+    private sealed class ForeignFinder : ExpressionVisitor
     {
+        private readonly int _depth;
+
+        internal ForeignFinder(int depth) => _depth = depth;
+
         internal bool Found { get; private set; }
 
-        public override Expression? Visit(Expression? node) => Found ? node : base.Visit(node);
+        public override Expression? Visit(Expression? node) =>
+            Found || node is null || IsValue(node.Type) ? node : base.Visit(node);
 
         protected override Expression VisitNew(NewExpression node)
         {
@@ -162,6 +191,167 @@ internal static class QueryRoot
             Found = true;
 
             return node;
+        }
+
+        protected override Expression VisitListInit(ListInitExpression node)
+        {
+            Found = true;
+
+            return node;
+        }
+
+        protected override Expression VisitNewArray(NewArrayExpression node)
+        {
+            Found = true;
+
+            return node;
+        }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (Reads(node.Method))
+            {
+                return base.VisitMethodCall(node);
+            }
+
+            Found = true;
+
+            return node;
+        }
+
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (!IsCaptured(node))
+            {
+                return base.VisitMember(node);
+            }
+
+            Found = !TryEvaluate(node, out object? value) || Holds(value, _depth);
+
+            return node;
+        }
+
+        protected override Expression VisitConstant(ConstantExpression node)
+        {
+            Found = Holds(node.Value, _depth);
+
+            return node;
+        }
+    }
+
+    /// <summary>
+    /// True for a method that hands back what it was given, or reads it: LINQ's operators, EF Core's
+    /// <c>EF.Property</c> and query operators, and a context's <c>Set</c>, which names a query root.
+    /// </summary>
+    private static bool Reads(MethodInfo method)
+    {
+        Type? declaring = method.DeclaringType;
+
+        return declaring == typeof(Queryable)
+               || declaring == typeof(Enumerable)
+               || declaring == typeof(EF)
+               || declaring == typeof(EntityFrameworkQueryableExtensions)
+               || (declaring == typeof(DbContext) && method.Name == nameof(DbContext.Set));
+    }
+
+    /// <summary>True when a value of the type holds only values: a string, a number, a date, or a collection of them.</summary>
+    private static bool IsValue(Type type) => CacheReflection.IsSimpleType(AttributePolicyProvider.Peeled(type));
+
+    /// <summary>True for a member read off something the lambda captured, or off nothing, rather than off its parameters.</summary>
+    private static bool IsCaptured(MemberExpression node)
+    {
+        Expression? target = node.Expression;
+
+        while (target is MemberExpression member)
+        {
+            target = member.Expression;
+        }
+
+        return target is null or ConstantExpression;
+    }
+
+    /// <summary>Reads a captured member's value as EF Core does before it runs the query.</summary>
+    private static bool TryEvaluate(MemberExpression node, out object? value)
+    {
+        value = null;
+
+        object? target = null;
+
+        if (node.Expression is ConstantExpression constant)
+        {
+            target = constant.Value;
+        }
+        else if (node.Expression is MemberExpression member && !TryEvaluate(member, out target))
+        {
+            return false;
+        }
+
+        try
+        {
+            value = node.Member switch
+            {
+                FieldInfo field => field.GetValue(target),
+                PropertyInfo property => property.GetValue(target),
+                _ => null
+            };
+
+            return node.Member is FieldInfo or PropertyInfo;
+        }
+        catch (Exception exception) when (exception is TargetException or TargetInvocationException
+                                              or ArgumentException or InvalidOperationException
+                                              or NotSupportedException or MemberAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// True when a captured value can hand a row an object its query does not load: an object in memory,
+    /// or a query with its own includes or projections, or one over rows in memory.
+    /// </summary>
+    private static bool Holds(object? value, int depth)
+    {
+        if (value is null || value is DbContext || IsValue(value.GetType()))
+        {
+            return false;
+        }
+
+        if (value is not IQueryable query)
+        {
+            return true;
+        }
+
+        if (query.Provider is EnumerableQuery)
+        {
+            return !IsValue(query.ElementType);
+        }
+
+        IncludeFinder includes = new();
+
+        includes.Visit(query.Expression);
+
+        return includes.Found || Builds(query.Expression, depth + 1);
+    }
+
+    /// <summary>Finds an <c>Include</c> or a <c>ThenInclude</c> anywhere in a query.</summary>
+    private sealed class IncludeFinder : ExpressionVisitor
+    {
+        internal bool Found { get; private set; }
+
+        public override Expression? Visit(Expression? node) => Found ? node : base.Visit(node);
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.DeclaringType == typeof(EntityFrameworkQueryableExtensions)
+                && node.Method.Name is nameof(EntityFrameworkQueryableExtensions.Include)
+                    or nameof(EntityFrameworkQueryableExtensions.ThenInclude))
+            {
+                Found = true;
+
+                return node;
+            }
+
+            return base.VisitMethodCall(node);
         }
     }
 

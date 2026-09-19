@@ -95,6 +95,45 @@ public class Employee
     public JsonDocument? WorkSchedule { get; set; }
 }`}</Code>
 
+      <h2 id="handle">The guarded handle</h2>
+      <p>
+        <code>ApplyPolicy</code> returns a <code>PolicyQueryable&lt;T&gt;</code>.
+        Its terminals mirror the core&apos;s: <code>ToList</code>,{" "}
+        <code>ToListAsync</code>, <code>ToListDynamic</code> and{" "}
+        <code>ToListAsyncDynamic</code> with a <code>Filter</code>,{" "}
+        <code>ToList</code> and <code>ToListAsync</code> with a{" "}
+        <code>Summary</code>, and <code>ToListAsync</code> with a{" "}
+        <code>Segment</code>. Each one sanitizes the request, runs it, and
+        transforms the rows.
+      </p>
+      <p>
+        Since 3.2.0 every asynchronous terminal on the handle also has
+        overloads that take a <code>CancellationToken</code>, as the{" "}
+        <Link href="/docs/extensions#materialization">core&apos;s do</Link>. The
+        policy is applied first, so a refusal is thrown whatever the token
+        says. The token then reaches the count and the read. The overloads sit
+        beside the 3.1 signatures, which are unchanged.
+      </p>
+      <Code lang="csharp">{`// PolicyQueryable<T>: new in 3.2.0, beside the overloads without a token
+Task<FilterResult<T>>       ToListAsync(Filter filter, CancellationToken cancellationToken)
+Task<FilterResult<T>>       ToListAsync(Filter filter, bool getQueryString, CancellationToken cancellationToken)
+Task<FilterResult<dynamic>> ToListAsyncDynamic(Filter filter, CancellationToken cancellationToken)
+Task<FilterResult<dynamic>> ToListAsyncDynamic(Filter filter, bool getQueryString, CancellationToken cancellationToken)
+Task<SummaryResult>         ToListAsync(Summary summary, CancellationToken cancellationToken)
+Task<SummaryResult>         ToListAsync(Summary summary, bool getQueryString, CancellationToken cancellationToken)
+Task<SegmentResult<T>>      ToListAsync(Segment segment, CancellationToken cancellationToken)`}</Code>
+      <Code lang="csharp">{`// In a minimal API, a CancellationToken parameter is the request's own:
+// a client that disconnects cancels the count or the read.
+var result = await db.Employees.ApplyPolicy(caller).ToListAsync(filter, cancellationToken);`}</Code>
+      <Callout tone="warn" title="ToListAsync(filter, default) does not compile">
+        <code>default</code> fits both <code>bool getQueryString</code> and{" "}
+        <code>CancellationToken</code>, on the handle as on the core, so the
+        call is ambiguous. The same goes for{" "}
+        <code>ToListAsyncDynamic(filter, default)</code> and{" "}
+        <code>ToListAsync(summary, default)</code>. Write <code>false</code>, a
+        token, or a named argument.
+      </Callout>
+
       <h2 id="features">Six features, per field</h2>
       <p>
         Every decision is made for one field and one feature:{" "}

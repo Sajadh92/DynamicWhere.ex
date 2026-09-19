@@ -103,10 +103,10 @@ $targets = [ordered]@{
         "Version ($semver) . targets net6\.0",
         "DynamicWhere\.ex --version ($semver)"
     )
-    # The page that serves that reference says which version it was generated against, in prose
+    # The page that serves that reference says which version it was written against, in prose
     # none of the patterns above reach.
     'OfficialWebsite/app/docs/ai/page.tsx' = @(
-        "generated against version ($semver)"
+        "written against version ($semver)"
     )
 }
 

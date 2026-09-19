@@ -6,7 +6,7 @@ import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
   title: "Security & k-anonymity — the eight inference channels",
-  description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own: set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, SQL leakage, and schema probing through refusals.",
+  description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own — set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, SQL leakage, and schema probing through refusals — and the denials the gate could not see until 3.2.0.",
   keywords: ["k-anonymity", "MinGroupSize", "inference attack", "data disclosure", "aggregate disclosure", "EF Core security"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/security/" },
 };
@@ -18,8 +18,9 @@ export default function Page() {
       <p>
         Denying a field is easy. The hard part is the set of ways a caller can
         learn a value <em>without</em> reading it. Six such channels follow, then
-        two bypasses that are not channels; each has a test that reproduces the
-        attack and goes red if the control is removed.
+        two bypasses that are not channels, then the requests that, until
+        3.2.0, carried out a denied value the gate could not see; each has a
+        test that reproduces the attack and goes red if the control is removed.
       </p>
 
       <Callout tone="warn" title="MinGroupSize ships on, at 5">
@@ -198,6 +199,172 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         </tbody>
       </table>
 
+      <h2 id="beneath">Denials the gate could not see</h2>
+      <p>
+        A denied field often sits on a type the query reaches through a member:
+        a secret on each line of an order, a code inside a nested object. The
+        denial holds on every path that reaches it, and it has to hold whether
+        or not the caller names the member. Until 3.2.0 each request below
+        carried a denied value out. All are closed.
+      </p>
+      <table>
+        <thead><tr><th>Attack</th><th>Control</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Send no <code>Selects</code>, on a type whose only denied fields sit beneath a member</td>
+            <td>
+              A guarded query synthesizes a projection whenever the denied value
+              can reach the result, and narrows the member around it or leaves
+              the member out. Only a simple field denied at the top of{" "}
+              <code>T</code> used to synthesize one, so the whole row came back
+              with the denied value in it: in a list or nested object of a row
+              projected before <code>ApplyPolicy</code>, in a row held in memory,
+              and in an entity&apos;s included, automatically included, lazily
+              loaded or owned member — in both tiers. A denial beneath a
+              navigation nothing loads never leaves the database, so it asks for
+              nothing. See{" "}
+              <Link href="/docs/policies/configuration#no-selects">A request that sends no Selects</Link>.
+            </td>
+          </tr>
+          <tr>
+            <td>Send no <code>Selects</code>, on a type whose denied field holds no simple value: a blob, a list, an owned object, a JSON column</td>
+            <td>
+              A field denied at the top of <code>T</code> asks for the projection
+              whatever it holds. Such a field used to be passed over, so with
+              nothing else denied the whole row came back with it.
+            </td>
+          </tr>
+          <tr>
+            <td>Name a navigation whose key, <code>Id</code>, is denied</td>
+            <td>
+              Refused with <code>FieldDeniedForSelect</code> in both tiers. The
+              core&apos;s typed projection adds the key of every nested node it
+              builds, so the convenience tier used to narrow the key away and
+              get it back. A navigation named through another,{" "}
+              <code>Main.Lead</code>, now gates the key of <code>Main</code> as
+              well, which the projection adds.
+            </td>
+          </tr>
+          <tr>
+            <td>Name a member typed <code>IReadOnlyList&lt;T&gt;</code>, or another collection the core does not unwrap, with a denied field beneath it</td>
+            <td>
+              Refused with <code>FieldDeniedForSelect</code> in both tiers. The
+              projection gate now reads collections the way the attribute walker
+              does. It used to read them through a narrower list, found nothing
+              beneath such a member, and returned every field, the denied ones
+              included, in both tiers.
+            </td>
+          </tr>
+          <tr>
+            <td>Name a member that carries a denied field no path reaches: deeper than four segments, inside a framework generic such as <code>Dictionary&lt;string, T&gt;</code>, or, on an entity&apos;s navigation, in its owned chain or a converted column</td>
+            <td>
+              Refused under <code>Strict</code>. Under <code>Convenience</code> it
+              is narrowed where the core can narrow it and refused where it
+              cannot. What the member carries is read from the source — from the
+              EF Core model for an entity, so only what loads counts. The gate
+              also reads the rules themselves, so a denied property with no
+              setter and a rule on a path reached through a cycle are found
+              beneath a named member too.
+            </td>
+          </tr>
+          <tr>
+            <td>Include a navigation from the root, then reach the rows through it — <code>{`Select(o => o.Customer)`}</code>, <code>SelectMany</code>, <code>Join</code> — or hide a projection behind another <code>Select</code></td>
+            <td>
+              Every navigation counts as loaded on such a chain, since EF Core
+              still applies includes named from the root to the entities it
+              reaches, and the library cannot read which. The includes used to be
+              read against the wrong root, so the denied value beneath them was
+              returned.
+            </td>
+          </tr>
+          <tr>
+            <td>Let a lazy loader fill a navigation after the query: a loader delegate or <code>ILazyLoader</code> the constructor takes, kept in a field or a property of any name</td>
+            <td>
+              Counts as loading every navigation, as EF Core&apos;s proxies and an
+              injected <code>ILazyLoader</code> property already did. The model
+              keeps no record of such a loader, so the navigation it filled came
+              back with the denied value.
+            </td>
+          </tr>
+          <tr>
+            <td>Declare the denied field on a subtype — a derived entity, a subclass, an interface&apos;s implementation — and read it through the base type: a query over the hierarchy&apos;s root, or a member declared as the base type</td>
+            <td>
+              The subtypes are read too: the types the EF Core model derives for
+              an entity, and for a projected or in-memory row every loaded
+              subtype, an open generic one and an application&apos;s subclass of a
+              framework class such as <code>Exception</code> included. Such rows
+              are projected to <code>T</code> and such members narrowed to the
+              declared type; a named one is refused under <code>Strict</code>. A
+              projection constructing a subtype of <code>T</code> is read as it,
+              and a rule on a subtype&apos;s field through a base-typed member is
+              enforced. The policy used to read the declared type only.
+            </td>
+          </tr>
+          <tr>
+            <td>Put the <code>[DwDenied]</code> on an override, on a public member a subtype hides with <code>new</code>, or on a class&apos;s implementation of an interface member, and read the member through the base type or the interface, a variant instantiation of it included</td>
+            <td>
+              The denial applies to the path for every row, in every clause. The
+              attribute walker read the declaration it walked and the attributes
+              above it, never an override, a hiding member or an implementation
+              below, so the base path filtered, sorted, grouped and returned the
+              value.
+            </td>
+          </tr>
+          <tr>
+            <td>Guard a query through a provider that wraps EF Core&apos;s, as LinqKit&apos;s <code>AsExpandable</code> or DelegateDecompiler&apos;s <code>Decompile</code> do</td>
+            <td>
+              The query runs untracked. EF Core&apos;s <code>AsNoTracking</code>{" "}
+              hands such a query back unchanged, so it tracked: the context filled
+              in navigations it already held, the denied ones included, and a
+              masked value became a pending change the next{" "}
+              <code>SaveChanges</code> would write. The call now goes into the
+              query itself.
+            </td>
+          </tr>
+          <tr>
+            <td>Under a <code>&quot;*&quot;</code> deny with exact allows, reach a path the walk never asks about: past four segments, around a cycle, a property with no setter</td>
+            <td>
+              Such a path is denied, so a member holding one is narrowed, left out
+              or refused. It used to resolve as allowed, so the member was
+              returned whole, named or not.
+            </td>
+          </tr>
+          <tr>
+            <td>Put the policed type in an application namespace that starts with <code>System</code>, such as <code>SystemsCorp.Payroll</code></td>
+            <td>
+              Policed. The walker read any namespace starting with{" "}
+              <code>System</code> as the framework&apos;s and put no policy
+              beneath its types, so a <code>[DwDenied]</code> field there was
+              returned, filterable and sortable. Only <code>System</code> and the
+              namespaces beneath it are the framework&apos;s now.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <Callout tone="warn" title="What the policy cannot see into">
+        A member typed <code>object</code>, a framework interface or a
+        collection that is not generic, such as <code>IEnumerable</code>,{" "}
+        <code>ArrayList</code> or an application&apos;s own, is opaque to the
+        policy: it never asks for a projection, a synthesized projection over a
+        projected row or rows in memory leaves it out, and naming it returns
+        whatever it holds. A framework generic holding a policed type, such as{" "}
+        <code>Dictionary&lt;string, LineDto&gt;</code>, has no paths beneath it:
+        naming it is refused in both tiers where the core cannot narrow it,
+        narrowed away under <code>Convenience</code> beneath a navigation, and a
+        synthesized projection leaves it out. Hold such values in a list of the
+        policed type instead. A member EF Core does not map is read as its type,
+        since its getter can hand out what EF Core loaded; a getter that copies a
+        denied column into a type with no denial is the application&apos;s to
+        withhold.
+      </Callout>
+      <Callout tone="warn" title="A forced scope on a list's element type filters rows, not elements">
+        A forced scope declared on a list&apos;s element type filters the rows
+        that hold the list, never its elements. <code>Selects</code> naming the
+        list returns every element, those the scope excludes included, as in
+        every release; a synthesized projection leaves such a list out. Scope
+        the elements where the row is built.
+      </Callout>
+
       <h2 id="posture">Getting the posture right</h2>
       <ul>
         <li>Use <code>DwTier.Strict</code> unless you need <code>getQueryString</code>.</li>
@@ -208,6 +375,8 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         <li>Run <code>DwPolicy.ValidateModel(...)</code> at startup and treat its warnings as a checklist.</li>
         <li>Put <code>[DwEntity(RequirePolicy = true)]</code> on anything sensitive, so a DynamicWhere call that forgets <code>ApplyPolicy</code> fails loudly.</li>
         <li>Prefer <code>[DwOperators]</code> over allowing free filtering on a protected field.</li>
+        <li>Hold a policed type in a list, never in a dictionary, another framework generic or a member typed <code>object</code>. The policy has no paths into any of them.</li>
+        <li>Scope a list&apos;s elements where the row is built. A forced scope on the element type filters the rows that hold the list, never the elements.</li>
         <li>Set <code>DwCaps.DefaultPageSize</code> if the API does not page for itself. It ships off, and the request <code>MaxPageSize</code> never bounded is the one that sent no page at all.</li>
         <li>Keep <code>DwCaps.MaxConditionSets</code> near the number of sets your clients really send. A set with no conditions passes every other cap, and every set adds a condition or a subquery to the statement a segment becomes.</li>
       </ul>

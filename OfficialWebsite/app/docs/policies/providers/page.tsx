@@ -22,7 +22,7 @@ export default function Page() {
       </p>
 
       <h2 id="redis">Redis</h2>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.Redis --version 3.1.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.Redis --version 3.2.0`}</Code>
       <Code lang="csharp">{`var redis = await ConnectionMultiplexer.ConnectAsync(connectionString);
 var store = new RedisPolicyStore(redis);
 
@@ -37,7 +37,7 @@ DwPolicy.Configure(options, provider);`}</Code>
       </Callout>
 
       <h2 id="ef">Entity Framework Core</h2>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.EntityFrameworkCore --version 3.1.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.EntityFrameworkCore --version 3.2.0`}</Code>
       <Code lang="csharp">{`var policyDbOptions = new DbContextOptionsBuilder<DwPolicyDbContext>()
     .UseNpgsql(connection, sql => sql.MigrationsAssembly("YourProject"))
     .Options;

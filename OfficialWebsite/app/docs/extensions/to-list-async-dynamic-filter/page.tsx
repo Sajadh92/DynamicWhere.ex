@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: ".ToListAsyncDynamic<T>(Filter)",
   description:
-    "Async EF Core entry — materialize a Filter using SelectDynamic and ToDynamicListAsync, returning Task<FilterResult<dynamic>>.",
+    "Async EF Core entry — materialize a Filter using SelectDynamic, EF Core's CountAsync and ToListAsync, returning Task<FilterResult<dynamic>>, with overloads that take a CancellationToken.",
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/to-list-async-dynamic-filter/" },
 };
 
@@ -20,8 +20,9 @@ export default function Page() {
         <Link href="/docs/extensions/to-list-dynamic-filter">
           <code>.ToListDynamic&lt;T&gt;(Filter)</code>
         </Link>
-        . Uses EF Core's <code>CountAsync()</code> and{" "}
-        <code>ToDynamicListAsync()</code> under the hood.
+        . Counts with EF Core's <code>CountAsync()</code> and reads with EF
+        Core's own <code>ToListAsync()</code>. Since 3.2.0 two more overloads
+        take a <code>CancellationToken</code>, which reaches both.
       </p>
 
       <h2 id="signature">Signature</h2>
@@ -29,6 +30,20 @@ export default function Page() {
     this IQueryable<T> query,
     Filter filter,
     bool getQueryString = false)
+    where T : class
+
+// 3.2.0
+public static Task<FilterResult<dynamic>> ToListAsyncDynamic<T>(
+    this IQueryable<T> query,
+    Filter filter,
+    CancellationToken cancellationToken)
+    where T : class
+
+public static Task<FilterResult<dynamic>> ToListAsyncDynamic<T>(
+    this IQueryable<T> query,
+    Filter filter,
+    bool getQueryString,
+    CancellationToken cancellationToken)
     where T : class`}</Code>
 
       <table>
@@ -58,6 +73,15 @@ export default function Page() {
               <code>QueryString</code>
             </td>
           </tr>
+          <tr>
+            <td><code>cancellationToken</code></td>
+            <td><code>CancellationToken</code></td>
+            <td>–</td>
+            <td>
+              Cancels the count and the read. The overload without it passes{" "}
+              <code>CancellationToken.None</code>
+            </td>
+          </tr>
         </tbody>
       </table>
 
@@ -65,13 +89,28 @@ export default function Page() {
       <ul>
         <li><code>Where</code> applied on the typed query.</li>
         <li>
-          <code>CountAsync()</code> on the typed query → <code>TotalCount</code>.
+          <code>CountAsync(cancellationToken)</code> on the typed query →{" "}
+          <code>TotalCount</code>.
         </li>
         <li><code>Order</code> applied on the typed query.</li>
         <li><code>Page</code> applied on the typed query.</li>
         <li><code>SelectDynamic</code> projection applied last.</li>
-        <li><code>ToDynamicListAsync()</code> materializes the result.</li>
+        <li>
+          EF Core&apos;s <code>ToListAsync(cancellationToken)</code> materializes
+          the result, called for the query&apos;s element type: the class the
+          projection generates, or <code>T</code> when <code>Selects</code> is
+          null.
+        </li>
       </ul>
+
+      <Callout tone="warn" title="Changed in 3.2.0: the read goes through EF Core">
+        The read used to run Dynamic LINQ&apos;s{" "}
+        <code>ToDynamicListAsync()</code>, asynchronous as well but with no token
+        to pass on. On an EF Core query it now runs through EF Core&apos;s{" "}
+        <code>ToListAsync()</code>, so a canceled token reaches the database. The
+        rows are the same. Only the count needs an EF Core async provider; on
+        any other provider the read falls back to Dynamic LINQ&apos;s.
+      </Callout>
 
       <Callout tone="warn">
         Ordering and pagination are applied on the strongly-typed{" "}
@@ -88,6 +127,32 @@ export default function Page() {
         rules — see that page for the full set of access patterns through
         nested dynamic objects and collections.
       </Callout>
+
+      <h2 id="cancellation">Cancellation</h2>
+      <p>
+        The two overloads that take a <code>CancellationToken</code> are new in
+        3.2.0. The token reaches the count and the read, so a canceled token
+        stops whichever of the two is running, and the call throws{" "}
+        <code>OperationCanceledException</code>. EF Core&apos;s{" "}
+        <code>TaskCanceledException</code> derives from it. The overload without
+        a token passes <code>CancellationToken.None</code>.
+      </p>
+      <p>
+        They are overloads, not an optional parameter added to the old
+        signature. The 3.1 signature is unchanged, so code compiled against 3.1
+        still binds. The guarded handle that{" "}
+        <Link href="/docs/policies#handle"><code>ApplyPolicy</code></Link>{" "}
+        returns has the same overloads.
+      </p>
+      <Callout tone="warn" title="ToListAsyncDynamic(filter, default) does not compile">
+        <code>default</code> fits both <code>bool getQueryString</code> and{" "}
+        <code>CancellationToken</code>, so the compiler reports the call as
+        ambiguous (CS0121). Write <code>false</code>, a token, or a named
+        argument.
+      </Callout>
+      <Code lang="csharp">{`await db.Products.ToListAsyncDynamic(filter, default);                   // CS0121: ambiguous
+await db.Products.ToListAsyncDynamic(filter, cancellationToken);         // the token overload
+await db.Products.ToListAsyncDynamic(filter, true, cancellationToken);   // the SQL and a token`}</Code>
 
       <h2 id="returns">Returns</h2>
       <p>

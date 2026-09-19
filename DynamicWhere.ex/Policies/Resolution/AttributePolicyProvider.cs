@@ -6,6 +6,7 @@ using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
+using DynamicWhere.ex.Policies.Source;
 
 namespace DynamicWhere.ex.Policies.Resolution;
 
@@ -13,7 +14,8 @@ namespace DynamicWhere.ex.Policies.Resolution;
 /// Produces policy fragments by reflecting over the attributes on a type.
 /// </summary>
 /// <remarks>
-/// The result is identical for every caller, so it is computed once per type and cached. An
+/// The result is identical for every caller, so it is computed once per type and cached, until an
+/// assembly that could declare a subtype loads (see the denials below). An
 /// attribute with <c>Overridable = false</c> lands at <see cref="PolicyLevel.SealedAttribute"/> and
 /// nothing at runtime can replace it; one with <c>Overridable = true</c> lands at
 /// <see cref="PolicyLevel.OverridableAttribute"/>, the least authoritative level, and acts only as
@@ -21,7 +23,7 @@ namespace DynamicWhere.ex.Policies.Resolution;
 /// </remarks>
 public sealed class AttributePolicyProvider : IDwPolicyProvider
 {
-    private static readonly ConcurrentDictionary<Type, IReadOnlyList<PolicyFragment>> Cache = new();
+    private static readonly ConcurrentDictionary<Type, (int Epoch, IReadOnlyList<PolicyFragment> Fragments)> Cache = new();
 
     /// <summary>
     /// How many navigation segments a generated field path may contain. Matches the default
@@ -38,7 +40,19 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             throw new ArgumentNullException(nameof(entityType));
         }
 
-        return Cache.GetOrAdd(entityType, Build);
+        int epoch = KnownSubtypes.Epoch;
+
+        if (Cache.TryGetValue(entityType, out (int Epoch, IReadOnlyList<PolicyFragment> Fragments) known)
+            && known.Epoch == epoch)
+        {
+            return known.Fragments;
+        }
+
+        IReadOnlyList<PolicyFragment> fragments = Build(entityType);
+
+        Cache[entityType] = (epoch, fragments);
+
+        return fragments;
     }
 
     /// <summary>
@@ -103,6 +117,11 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             string path = prefix.Length == 0 ? property.Name : $"{prefix}.{property.Name}";
 
             foreach (DwDenyAttribute attribute in property.GetCustomAttributes<DwDenyAttribute>(inherit: true))
+            {
+                fragments.Add(ToFragment(path, attribute));
+            }
+
+            foreach (DwDenyAttribute attribute in DenialsElsewhere(type, property))
             {
                 fragments.Add(ToFragment(path, attribute));
             }
@@ -181,6 +200,224 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     }
 
     /// <summary>
+    /// The denials a member carries from another declaration of it: an interface member it implements,
+    /// and, in a type loaded below the one walked, the override, the member hidden with <c>new</c>, or the
+    /// implementation that a row of that type runs.
+    /// </summary>
+    /// <remarks>
+    /// Attributes are read from the declaration walked, and inheritance only reaches up the chain. A row
+    /// read through a base type or an interface is still the subtype it is, though, and its member returns
+    /// what the subtype's declaration returns: a <c>[DwDenied]</c> on <c>override Code</c>, or on the
+    /// class's implementation of <c>IAccount.Iban</c>, was never seen through the base path, which filtered,
+    /// sorted, grouped and returned it. Each such denial applies to the path for every row, since a
+    /// projection cannot withhold a field from some rows only.
+    /// <para>
+    /// Every declaration a row can run counts: an override of either accessor, an implementation declared
+    /// explicitly, inherited from a base class or by an open generic class, and an interface a subtype adds
+    /// over a member it inherits. So does a member a subtype hides with <c>new</c>: whether it reads the
+    /// member it hides cannot be told from outside, and a row serialized as its own type writes it under the
+    /// same name.
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlyList<DwDenyAttribute> DenialsElsewhere(Type type, PropertyInfo property)
+    {
+        int epoch = KnownSubtypes.Epoch;
+
+        if (Elsewhere.TryGetValue((type, property), out (int Epoch, DwDenyAttribute[] Denials) known) && known.Epoch == epoch)
+        {
+            return known.Denials;
+        }
+
+        DwDenyAttribute[] denials = ReadDenialsElsewhere(type, property).ToArray();
+
+        Elsewhere[(type, property)] = (epoch, denials);
+
+        return denials;
+    }
+
+    /// <summary>The denials of each member's other declarations, read once for each type and member until another assembly loads.</summary>
+    private static readonly ConcurrentDictionary<(Type Type, PropertyInfo Property), (int Epoch, DwDenyAttribute[] Denials)> Elsewhere = new();
+
+    private static IEnumerable<DwDenyAttribute> ReadDenialsElsewhere(Type type, PropertyInfo property)
+    {
+        MethodInfo[] accessors = property.GetAccessors(nonPublic: true);
+
+        if (accessors.Length == 0)
+        {
+            yield break;
+        }
+
+        // Many rows reach one declaration, an interface every subtype implements, and it is read once.
+        HashSet<PropertyInfo> read = new() { property };
+
+        foreach (Type row in KnownSubtypes.Of(type).Prepend(type))
+        {
+            if (row.IsInterface)
+            {
+                continue;
+            }
+
+            // What a row of this type runs for the member: the member, or what the row declares in its
+            // place; read through an interface, the row's implementation of it.
+            List<MethodInfo> runs = new();
+
+            if (type.IsInterface)
+            {
+                foreach (PropertyInfo implementation in Implementations(row, type, accessors))
+                {
+                    runs.AddRange(implementation.GetAccessors(nonPublic: true));
+
+                    if (read.Add(implementation))
+                    {
+                        foreach (DwDenyAttribute attribute in implementation.GetCustomAttributes<DwDenyAttribute>(inherit: true))
+                        {
+                            yield return attribute;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                runs.AddRange(accessors);
+
+                if (row != type)
+                {
+                    foreach (PropertyInfo below in Redeclarations(row, property))
+                    {
+                        runs.AddRange(below.GetAccessors(nonPublic: true));
+
+                        if (read.Add(below))
+                        {
+                            foreach (DwDenyAttribute attribute in below.GetCustomAttributes<DwDenyAttribute>(inherit: false))
+                            {
+                                yield return attribute;
+                            }
+                        }
+                    }
+                }
+            }
+
+            foreach (PropertyInfo declared in Declarations(row, runs, accessors))
+            {
+                if (read.Add(declared))
+                {
+                    foreach (DwDenyAttribute attribute in declared.GetCustomAttributes<DwDenyAttribute>(inherit: false))
+                    {
+                        yield return attribute;
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// What a subtype declares in a member's place: an override of either accessor, or a public member of the
+    /// same name that hides it. Both carry the member's name. One the subtype keeps to itself hides nothing a
+    /// caller reads, and no serializer writes it.
+    /// </summary>
+    private static IEnumerable<PropertyInfo> Redeclarations(Type subtype, PropertyInfo property) =>
+        subtype
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Where(candidate => candidate.Name == property.Name);
+
+    /// <summary>
+    /// The properties a class implements an interface's member with: through the interface itself, through an
+    /// instantiation variance lets stand for it, IFeed&lt;VisaCard&gt; for IFeed&lt;Card&gt; with <c>out T</c>, and, for
+    /// a class that is itself open generic, through one over its own type parameters, which may be any.
+    /// </summary>
+    private static IEnumerable<PropertyInfo> Implementations(Type row, Type contract, MethodInfo[] accessors)
+    {
+        List<PropertyInfo> found = new();
+
+        foreach (Type implemented in row.GetInterfaces())
+        {
+            bool same = implemented == contract
+                        || (implemented.IsGenericType && contract.IsGenericType
+                            && implemented.GetGenericTypeDefinition() == contract.GetGenericTypeDefinition()
+                            && (implemented.ContainsGenericParameters || contract.ContainsGenericParameters
+                                || contract.IsAssignableFrom(implemented)));
+
+            if (!same || Map(row, implemented) is not { } map)
+            {
+                continue;
+            }
+
+            for (int i = 0; i < map.InterfaceMethods.Length; i++)
+            {
+                if (accessors.Any(accessor => Same(map.InterfaceMethods[i], accessor))
+                    && Declaring(map.TargetMethods[i]) is { } implementation
+                    && !found.Contains(implementation))
+                {
+                    found.Add(implementation);
+                }
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// The interface properties a class implements with any of the accessors it runs, other than the member
+    /// walked itself.
+    /// </summary>
+    private static IEnumerable<PropertyInfo> Declarations(Type row, List<MethodInfo> runs, MethodInfo[] own)
+    {
+        MethodInfo[] roots = runs.Select(accessor => accessor.GetBaseDefinition()).ToArray();
+        List<PropertyInfo> found = new();
+
+        foreach (Type contract in row.GetInterfaces())
+        {
+            if (Map(row, contract) is not { } map)
+            {
+                continue;
+            }
+
+            for (int i = 0; i < map.TargetMethods.Length; i++)
+            {
+                MethodInfo declared = map.InterfaceMethods[i];
+
+                if (roots.Any(root => Same(map.TargetMethods[i].GetBaseDefinition(), root))
+                    && !own.Any(accessor => Same(accessor, declared))
+                    && Declaring(declared) is { } property
+                    && !found.Contains(property))
+                {
+                    found.Add(property);
+                }
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// A class's interface map, or null when the runtime cannot map it, as for some open generic types.
+    /// Read once for each class and interface.
+    /// </summary>
+    private static InterfaceMapping? Map(Type type, Type contract) =>
+        Maps.GetOrAdd((type, contract), static key =>
+        {
+            try
+            {
+                return key.Type.GetInterfaceMap(key.Contract);
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or NotSupportedException)
+            {
+                return null;
+            }
+        });
+
+    private static readonly ConcurrentDictionary<(Type Type, Type Contract), InterfaceMapping?> Maps = new();
+
+    /// <summary>The property an accessor belongs to, found on the type that declares the accessor.</summary>
+    private static PropertyInfo? Declaring(MethodInfo accessor) =>
+        accessor.DeclaringType?
+            .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .FirstOrDefault(candidate => candidate.GetAccessors(nonPublic: true).Any(method => Same(method, accessor)));
+
+    private static bool Same(MethodInfo left, MethodInfo right) =>
+        left.MetadataToken == right.MetadataToken && left.Module == right.Module;
+
+    /// <summary>
     /// How many collection layers <see cref="NavigationTypeOf"/> peels off a single property type
     /// before it stops and walks whatever it has reached.
     /// </summary>
@@ -217,7 +454,20 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// followed as well as classes, because these attributes are supported on DTOs, where an
     /// <c>IContact</c> reference or a record struct is ordinary.
     /// </remarks>
-    internal static Type? NavigationTypeOf(Type propertyType)
+    internal static Type? NavigationTypeOf(Type propertyType) => AsNavigation(Peeled(propertyType));
+
+    /// <summary>
+    /// The type a property holds once every collection layer and <see cref="Nullable{T}"/> is peeled
+    /// off: <c>LineDto</c> for <c>IReadOnlyList&lt;LineDto&gt;</c>, <see cref="string"/> for
+    /// <c>List&lt;string&gt;</c>, and the property's own type when it is not a collection.
+    /// </summary>
+    /// <remarks>
+    /// The one reading of a property's shape that the walker and the projection gate share. The gate
+    /// once read collections through a narrower list of its own, and a member typed
+    /// <c>IReadOnlyList&lt;T&gt;</c> hid every denial beneath it from the projection while the walker
+    /// had put a fragment on each of them.
+    /// </remarks>
+    internal static Type Peeled(Type propertyType)
     {
         Type current = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
 
@@ -233,7 +483,32 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             current = Nullable.GetUnderlyingType(element) ?? element;
         }
 
-        return AsNavigation(current);
+        return current;
+    }
+
+    /// <summary>
+    /// The type a property holds, then each collection layer beneath it, down to the element
+    /// <see cref="Peeled"/> reaches: <c>List&lt;Tags&gt;</c>, then <c>Tags</c>, then <see cref="string"/>.
+    /// </summary>
+    internal static IEnumerable<Type> Layers(Type propertyType)
+    {
+        Type current = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+
+        yield return current;
+
+        for (int layer = 0; layer < MaxCollectionLayers; layer++)
+        {
+            Type? element = ElementTypeOf(current);
+
+            if (element is null)
+            {
+                yield break;
+            }
+
+            current = Nullable.GetUnderlyingType(element) ?? element;
+
+            yield return current;
+        }
     }
 
     /// <summary>
@@ -296,8 +571,21 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             return null;
         }
 
-        return type.Namespace?.StartsWith("System", StringComparison.Ordinal) == true ? null : type;
+        return IsFramework(type) ? null : type;
     }
+
+    /// <summary>
+    /// True for a type the framework declares: one in the <c>System</c> namespace or beneath it.
+    /// </summary>
+    /// <remarks>
+    /// The namespace is compared as a whole segment. A prefix match took an application's own
+    /// <c>SystemsCorp.Payroll</c> or <c>SystemX.Domain</c> for the framework, so nothing beneath one of
+    /// its types got a fragment, and a <c>[DwDenied]</c> field there was returned and filtered on as
+    /// though it carried no policy.
+    /// </remarks>
+    internal static bool IsFramework(Type type) =>
+        type.Namespace is { } name
+        && (name == "System" || name.StartsWith("System.", StringComparison.Ordinal));
 
     /// <summary>
     /// Converts one attribute into a fragment at the level its <c>Overridable</c> flag implies.

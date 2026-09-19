@@ -195,15 +195,18 @@ public static class PolicyModelValidator
     }
 
     /// <summary>
-    /// True when the member a path ends on is denied a feature by its own attributes, and every one of
-    /// those attributes is overridable.
+    /// True when the member a path ends on is denied a feature by its attributes, and every one of those
+    /// attributes is overridable. They include those of the member's other declarations: an interface
+    /// member it implements, and a subtype's override.
     /// </summary>
     private static bool DeniedOnlyOverridably(Type type, string path, PolicyFeature feature)
     {
         PropertyInfo? member = null;
+        Type owner = type;
 
         foreach (string segment in path.Split('.'))
         {
+            owner = type;
             member = CacheReflection.FindProperty(type, segment);
 
             if (member is null)
@@ -216,6 +219,7 @@ public static class PolicyModelValidator
 
         List<DwDenyAttribute> denials = member!
             .GetCustomAttributes<DwDenyAttribute>(inherit: true)
+            .Concat(Resolution.AttributePolicyProvider.DenialsElsewhere(owner, member!))
             .Where(attribute => (attribute.Features & feature) == feature)
             .ToList();
 

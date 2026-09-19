@@ -681,7 +681,36 @@ public static class Extension
     /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
     /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
-    public static async Task<FilterResult<T>> ToListAsync<T>(this IQueryable<T> query, Filter filter, bool getQueryString = false) where T : class
+    public static Task<FilterResult<T>> ToListAsync<T>(this IQueryable<T> query, Filter filter, bool getQueryString = false) where T : class =>
+        query.ToListAsync(filter, getQueryString, CancellationToken.None);
+
+    /// <summary>
+    /// Asynchronously retrieves a list of entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Filter"/>.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public static Task<FilterResult<T>> ToListAsync<T>(this IQueryable<T> query, Filter filter, CancellationToken cancellationToken) where T : class =>
+        query.ToListAsync(filter, false, cancellationToken);
+
+    /// <summary>
+    /// Asynchronously retrieves a list of entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Filter"/>.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <returns>A <see cref="FilterResult{T}"/> containing entities that match the filter conditions in the <see cref="Filter"/> with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public static async Task<FilterResult<T>> ToListAsync<T>(this IQueryable<T> query, Filter filter, bool getQueryString, CancellationToken cancellationToken) where T : class
     {
         // Refuse a type that requires a policy context when the call is not inside one.
         PolicyScope.Require<T>();
@@ -730,7 +759,7 @@ public static class Extension
         }
 
         // Calculate the total count of entities before pagination.
-        int totalCount = await query.CountAsync();
+        int totalCount = await query.CountAsync(cancellationToken);
 
         // Calculate the total page count based on the page size. An unpaged query is one page of
         // everything: dividing by one reported as many pages as there were rows, which read as a
@@ -748,7 +777,7 @@ public static class Extension
             TotalCount = totalCount,
 
             // Execute the query to retrieve the data.
-            Data = await newQuery.ToListAsync(),
+            Data = await newQuery.ToListAsync(cancellationToken),
             QueryString = getQueryString ? newQuery.ToQueryString() : null
         };
     }
@@ -764,7 +793,38 @@ public static class Extension
     /// <returns>A <see cref="FilterResult{T}"/> of <c>dynamic</c> containing dynamic objects that match the filter conditions with pagination information.</returns>
     /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
     /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
-    public static async Task<FilterResult<dynamic>> ToListAsyncDynamic<T>(this IQueryable<T> query, Filter filter, bool getQueryString = false) where T : class
+    public static Task<FilterResult<dynamic>> ToListAsyncDynamic<T>(this IQueryable<T> query, Filter filter, bool getQueryString = false) where T : class =>
+        query.ToListAsyncDynamic(filter, getQueryString, CancellationToken.None);
+
+    /// <summary>
+    /// Asynchronously retrieves a list of dynamic objects from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Filter"/>,
+    /// using <see cref="SelectDynamic{T}"/> for the field projection.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <returns>A <see cref="FilterResult{T}"/> of <c>dynamic</c> containing dynamic objects that match the filter conditions with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public static Task<FilterResult<dynamic>> ToListAsyncDynamic<T>(this IQueryable<T> query, Filter filter, CancellationToken cancellationToken) where T : class =>
+        query.ToListAsyncDynamic(filter, false, cancellationToken);
+
+    /// <summary>
+    /// Asynchronously retrieves a list of dynamic objects from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Filter"/>,
+    /// using <see cref="SelectDynamic{T}"/> for the field projection.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="filter">The <see cref="Filter"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <returns>A <see cref="FilterResult{T}"/> of <c>dynamic</c> containing dynamic objects that match the filter conditions with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="filter"/> contains invalid data.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public static async Task<FilterResult<dynamic>> ToListAsyncDynamic<T>(this IQueryable<T> query, Filter filter, bool getQueryString, CancellationToken cancellationToken) where T : class
     {
         // Refuse a type that requires a policy context when the call is not inside one.
         PolicyScope.Require<T>();
@@ -786,7 +846,7 @@ public static class Extension
         }
 
         // Calculate the total count of entities before pagination.
-        int totalCount = await query.CountAsync();
+        int totalCount = await query.CountAsync(cancellationToken);
 
         // Create a new query to apply ordering and pagination.
         IQueryable<T> newQuery = query;
@@ -830,7 +890,7 @@ public static class Extension
             TotalCount = totalCount,
 
             // Execute the query to retrieve the dynamic data asynchronously.
-            Data = await result.ToDynamicListAsync(),
+            Data = await AsyncReads.ToDynamicListAsync(result, cancellationToken),
             QueryString = getQueryString ? result.ToQueryString() : null
         };
     }
@@ -1038,7 +1098,36 @@ public static class Extension
     /// <returns>A <see cref="SummaryResult"/> containing grouped entities that match the summary criteria with pagination information.</returns>
     /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="summary"/> is null.</exception>
     /// <exception cref="LogicException">Thrown when <paramref name="summary"/> contains invalid data.</exception>
-    public static async Task<SummaryResult> ToListAsync<T>(this IQueryable<T> query, Summary summary, bool getQueryString = false) where T : class
+    public static Task<SummaryResult> ToListAsync<T>(this IQueryable<T> query, Summary summary, bool getQueryString = false) where T : class =>
+        query.ToListAsync(summary, getQueryString, CancellationToken.None);
+
+    /// <summary>
+    /// Asynchronously retrieves a list of dynamic grouped entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Classes.Complex.Summary"/>.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve grouped entities from.</param>
+    /// <param name="summary">The <see cref="Classes.Complex.Summary"/> containing filter conditions, group-by criteria, and optional pagination settings.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <returns>A <see cref="SummaryResult"/> containing grouped entities that match the summary criteria with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="summary"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="summary"/> contains invalid data.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public static Task<SummaryResult> ToListAsync<T>(this IQueryable<T> query, Summary summary, CancellationToken cancellationToken) where T : class =>
+        query.ToListAsync(summary, false, cancellationToken);
+
+    /// <summary>
+    /// Asynchronously retrieves a list of dynamic grouped entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Classes.Complex.Summary"/>.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve grouped entities from.</param>
+    /// <param name="summary">The <see cref="Classes.Complex.Summary"/> containing filter conditions, group-by criteria, and optional pagination settings.</param>
+    /// <param name="getQueryString">If true, includes the generated query string in the result.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <returns>A <see cref="SummaryResult"/> containing grouped entities that match the summary criteria with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="summary"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="summary"/> contains invalid data.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public static async Task<SummaryResult> ToListAsync<T>(this IQueryable<T> query, Summary summary, bool getQueryString, CancellationToken cancellationToken) where T : class
     {
         // Refuse a type that requires a policy context when the call is not inside one.
         PolicyScope.Require<T>();
@@ -1077,7 +1166,7 @@ public static class Extension
         }
 
         // Calculate the total count of grouped entities before pagination.
-        int totalCount = result.Count();
+        int totalCount = await AsyncReads.CountAsync(result, cancellationToken);
 
         // Create a new query to apply ordering and pagination.
         IQueryable newResult = result;
@@ -1126,7 +1215,7 @@ public static class Extension
             TotalCount = totalCount,
 
             // Execute the query to retrieve the data asynchronously.
-            Data = await newResult.ToDynamicListAsync(),
+            Data = await AsyncReads.ToDynamicListAsync(newResult, cancellationToken),
             QueryString = getQueryString ? newResult.ToQueryString() : null
         };
     }
@@ -1147,7 +1236,25 @@ public static class Extension
     /// the total count then run exactly as they do for a <see cref="Filter"/>, so only the requested page
     /// is read.
     /// </remarks>
-    public static async Task<SegmentResult<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment) where T : class
+    public static Task<SegmentResult<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment) where T : class =>
+        query.ToListAsync(segment, CancellationToken.None);
+
+    /// <summary>
+    /// Asynchronously retrieves a list of entities from the <see cref="IQueryable{T}"/> with optional filtering based on a <see cref="Segment"/>.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="query">The <see cref="IQueryable{T}"/> to retrieve entities from.</param>
+    /// <param name="segment">The <see cref="Segment"/> containing filter conditions and optional pagination settings.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <returns>A <see cref="SegmentResult{T}"/> containing entities that match the filter conditions in the <see cref="Segment"/> with pagination information.</returns>
+    /// <exception cref="ArgumentNullException">Thrown if either <paramref name="query"/> or <paramref name="segment"/> is null.</exception>
+    /// <exception cref="LogicException">Thrown when <paramref name="segment"/> contains invalid data.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    /// <remarks>
+    /// The condition sets become one query, which the database answers, exactly as they do for the
+    /// overload without a token.
+    /// </remarks>
+    public static async Task<SegmentResult<T>> ToListAsync<T>(this IQueryable<T> query, Segment segment, CancellationToken cancellationToken) where T : class
     {
         // Refuse a type that requires a policy context when the call is not inside one.
         PolicyScope.Require<T>();
@@ -1178,7 +1285,7 @@ public static class Extension
             Page = segment.Page
         };
 
-        FilterResult<T> fresult = await combined.ToListAsync<T>(filter);
+        FilterResult<T> fresult = await combined.ToListAsync<T>(filter, false, cancellationToken);
 
         // Return the results as a SegmentResult.
         return new()

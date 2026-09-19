@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System.Collections.Concurrent;
+using System.Reflection;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
@@ -58,6 +59,10 @@ internal static class FilterSanitizer
     /// field this caller may not order by. False for a clause composed on its own, which orders
     /// nothing the caller did not ask it to.
     /// </param>
+    /// <param name="rows">
+    /// What the query's source puts in the members of its rows, which decides what a synthesized
+    /// projection keeps. Null for an entity query whose model is unknown.
+    /// </param>
     /// <returns>A sanitized copy, safe to hand to the existing pipeline.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     /// <exception cref="LogicException">
@@ -75,7 +80,8 @@ internal static class FilterSanitizer
         DwPolicyOptions options,
         PolicyTrace trace,
         bool synthesizeProjection = true,
-        bool applyDefaultOrder = true)
+        bool applyDefaultOrder = true,
+        RowShape? rows = null)
         where T : class
     {
         if (filter is null)
@@ -141,7 +147,7 @@ internal static class FilterSanitizer
             working.Orders = defaults;
         }
 
-        GateSelects(working, gate, synthesizeProjection);
+        GateSelects(working, gate, synthesizeProjection, rows ?? RowShape.Entity);
 
         // The strict tier checks the bill once every field has passed its gate. It drops nothing, so a
         // request still here names no field the caller may not use, and a weighted field the caller may
@@ -610,6 +616,10 @@ internal static class FilterSanitizer
     /// When true and the caller sent no orders, the type's declared default order is added, less every
     /// field this caller may not order by.
     /// </param>
+    /// <param name="rows">
+    /// What the query's source puts in the members of its rows, which decides what a synthesized
+    /// projection keeps. Null for an entity query whose model is unknown.
+    /// </param>
     /// <remarks>
     /// Every condition set is gated independently, because each one becomes its own subquery and a
     /// field refused in one must not be reachable through another.
@@ -626,7 +636,8 @@ internal static class FilterSanitizer
         DwPolicyContext context,
         DwPolicyOptions options,
         PolicyTrace trace,
-        bool applyDefaultOrder = true)
+        bool applyDefaultOrder = true,
+        RowShape? rows = null)
         where T : class
     {
         if (segment is null)
@@ -720,7 +731,7 @@ internal static class FilterSanitizer
             working.Orders = defaults;
         }
 
-        GateSegmentSelects(working, gate);
+        GateSegmentSelects(working, gate, rows ?? RowShape.Entity);
 
         // The strict tier checks the bill once every field has passed its gate. It drops nothing, so a
         // request still here names no field the caller may not use, and a weighted field the caller may
@@ -964,11 +975,11 @@ internal static class FilterSanitizer
     /// materializes.
     /// </para>
     /// </remarks>
-    private static void GateSegmentSelects(Segment segment, Gate gate)
+    private static void GateSegmentSelects(Segment segment, Gate gate, RowShape rows)
     {
         if (segment.Selects is null || segment.Selects.Count == 0)
         {
-            if (SynthesizedProjection(gate) is List<string> synthesized)
+            if (SynthesizedProjection(gate, rows) is List<string> synthesized)
             {
                 segment.Selects = synthesized;
             }
@@ -1604,7 +1615,7 @@ internal static class FilterSanitizer
     /// entity — turning the strictest possible policy into the widest possible result.
     /// </para>
     /// </remarks>
-    private static void GateSelects(Filter filter, Gate gate, bool synthesize)
+    private static void GateSelects(Filter filter, Gate gate, bool synthesize, RowShape rows)
     {
         if (filter.Selects is null || filter.Selects.Count == 0)
         {
@@ -1613,7 +1624,7 @@ internal static class FilterSanitizer
             // refuse the call outright on a type whose every field is denied for select.
             if (synthesize)
             {
-                SynthesizeSelects(filter, gate);
+                SynthesizeSelects(filter, gate, rows);
             }
 
             return;
@@ -1644,6 +1655,12 @@ internal static class FilterSanitizer
     /// expansion happens only where there is something to narrow, so a type the policy has no
     /// opinion about still generates the SQL the unguarded path would.
     /// </para>
+    /// <para>
+    /// A narrowing the core cannot build as written is refused rather than handed over. The builder
+    /// adds the key of every node it narrows, so dropping a denied key from the list put it straight
+    /// back; and a path through a collection the core does not unwrap, such as an
+    /// <c>IReadOnlyList&lt;T&gt;</c>, failed validation with an error about the caller's field names.
+    /// </para>
     /// </remarks>
     private static List<string> GateProjection(IEnumerable<string> selects, Gate gate)
     {
@@ -1657,9 +1674,9 @@ internal static class FilterSanitizer
             }
         }
 
-        bool Allowed(string path)
+        bool Allowed(string path, out FieldPolicy policy)
         {
-            FieldPolicy policy = gate.PolicyFor(path, PolicyFeature.Select);
+            policy = gate.PolicyFor(path, PolicyFeature.Select);
 
             return policy.Allows(PolicyFeature.Select)
                 || !gate.Refuse(path, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy);
@@ -1669,7 +1686,7 @@ internal static class FilterSanitizer
         {
             // The field's own decision first. A navigation that is itself denied is refused as it
             // stands; what it carries is only asked about once it has survived on its own account.
-            if (!Allowed(field))
+            if (!Allowed(field, out _))
             {
                 continue;
             }
@@ -1684,23 +1701,41 @@ internal static class FilterSanitizer
 
             IReadOnlyList<string> carried = gate.ProjectionUnder(field);
             List<string> survivors = new(carried.Count);
-            bool narrowed = false;
+            (string Path, FieldPolicy Policy)? cause = null;
 
             foreach (string path in carried)
             {
-                if (Allowed(path))
+                if (Allowed(path, out FieldPolicy policy))
                 {
                     survivors.Add(path);
                 }
                 else
                 {
-                    narrowed = true;
+                    cause ??= (path, policy);
                 }
             }
 
-            if (!narrowed)
+            if (cause is not { } narrowing)
             {
                 Keep(field);
+
+                continue;
+            }
+
+            if (gate.DeniedKey(survivors) is { } key)
+            {
+                gate.RefuseNarrowing(
+                    key.Path, key.Policy,
+                    $"'{field}' was narrowed, and the projection builder adds this key to every node it narrows");
+
+                continue;
+            }
+
+            if (gate.Unprojectable(survivors) is { } unbuilt)
+            {
+                gate.RefuseNarrowing(
+                    narrowing.Path, narrowing.Policy,
+                    $"'{field}' cannot be narrowed around it: the core cannot project '{unbuilt}'");
 
                 continue;
             }
@@ -1760,7 +1795,7 @@ internal static class FilterSanitizer
     /// denied.
     /// </summary>
     /// <remarks>
-    /// A caller who sends no projection gets the whole entity, denied columns included, because
+    /// A caller who sends no projection gets the whole row, denied columns included, because
     /// the pipeline only projects when <c>Selects</c> is non-null. Gating the list alone would
     /// therefore enforce deny-select against precisely the callers who volunteered one, and leave
     /// it bypassable by asking for less.
@@ -1771,19 +1806,14 @@ internal static class FilterSanitizer
     /// one that rewrites every query in the application.
     /// </para>
     /// <para>
-    /// Scalars only. A navigation is not loaded by an unguarded call in the first place, and
-    /// projecting one whole would carry every field beneath it — reopening the same hole one level
-    /// down. Where a caller had eagerly loaded one, narrowing it away fails closed.
-    /// </para>
-    /// <para>
     /// This never throws in the strict tier for a denied field. Strict refuses what a caller asks
     /// for, and here the caller named nothing; throwing would fail every strict query against a
     /// type carrying any denied field at all.
     /// </para>
     /// </remarks>
-    private static void SynthesizeSelects(Filter filter, Gate gate)
+    private static void SynthesizeSelects(Filter filter, Gate gate, RowShape rows)
     {
-        if (SynthesizedProjection(gate) is List<string> allowed)
+        if (SynthesizedProjection(gate, rows) is List<string> allowed)
         {
             filter.Selects = allowed;
         }
@@ -1795,26 +1825,106 @@ internal static class FilterSanitizer
     /// <remarks>
     /// Shared by the filter and the segment paths, because they are closing the same hole and a
     /// second copy of this is a second place to forget.
+    /// <para>
+    /// What an unguarded call would return, less what the policy withholds. A member that holds a
+    /// value is kept when it is allowed. A member that holds an object, or a list of them, is kept
+    /// whole when nothing beneath it is denied, and narrowed the way a caller naming it would have it
+    /// narrowed when something is — but only where the source carries it: every member of a
+    /// projected row or a row in memory, and the owned and complex members of an entity. An entity's
+    /// other navigations are left out, since an unguarded call loads them only when something includes
+    /// them, and projecting one would load it.
+    /// </para>
+    /// <para>
+    /// Everything beneath every object member is asked about, whether or not the source carries it.
+    /// A denial only beneath a member used to synthesize nothing, so the row came back whole, and an
+    /// included navigation, an owned member, a projected list or an object in memory carried the
+    /// denied value out with it. An entity query does not say what it loads: an include, an automatic
+    /// include and a lazy loader all fill a navigation the query text never names.
+    /// </para>
+    /// <para>
+    /// A member that cannot be narrowed as the projection would build it is left out whole: in
+    /// memory, where the core's narrowing of a reference reads it through EF Core; an EF Core complex
+    /// property, which the narrowing compares to null; where the builder would add a denied key back;
+    /// and where the core cannot project a path beneath it.
+    /// </para>
     /// </remarks>
-    private static List<string>? SynthesizedProjection(Gate gate)
+    private static List<string>? SynthesizedProjection(Gate gate, RowShape rows)
     {
         List<string> allowed = new();
         bool anyDenied = false;
 
-        foreach (string field in gate.ProjectableFields())
+        foreach (PropertyInfo member in gate.Members())
         {
-            FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.None);
+            string name = member.Name;
+            FieldPolicy policy = gate.PolicyFor(name, PolicyFeature.None);
 
-            if (policy.Allows(PolicyFeature.Select))
+            if (!policy.Allows(PolicyFeature.Select))
             {
-                allowed.Add(field);
+                anyDenied = true;
+
+                gate.Record(name, PolicyFeature.Select, PolicyAction.Dropped, policy);
 
                 continue;
             }
 
-            anyDenied = true;
+            if (Gate.HoldsValue(member.PropertyType))
+            {
+                allowed.Add(name);
 
-            gate.Record(field, PolicyFeature.Select, PolicyAction.Dropped, policy);
+                continue;
+            }
+
+            List<string> survivors = new();
+            bool narrowed = false;
+
+            foreach (string path in gate.ProjectionUnder(name))
+            {
+                FieldPolicy beneath = gate.PolicyFor(path, PolicyFeature.None);
+
+                if (beneath.Allows(PolicyFeature.Select))
+                {
+                    survivors.Add(path);
+
+                    continue;
+                }
+
+                narrowed = true;
+
+                gate.Record(path, PolicyFeature.Select, PolicyAction.Dropped, beneath);
+            }
+
+            anyDenied |= narrowed;
+
+            if (!rows.Carries(name))
+            {
+                continue;
+            }
+
+            if (!narrowed)
+            {
+                allowed.Add(name);
+
+                continue;
+            }
+
+            string? reason = !rows.Narrows(name)
+                ? rows.Kind == RowKind.InMemory
+                    ? "left out whole: the rows are in memory, and narrowing it needs EF Core"
+                    : "left out whole: it is a complex property, which EF Core cannot narrow"
+                : gate.DeniedKey(survivors) is { } key
+                    ? $"left out whole: the projection would add its key '{key.Path}', which is denied"
+                    : gate.Unprojectable(survivors) is { } unbuilt
+                        ? $"left out whole: the core cannot project '{unbuilt}'"
+                        : null;
+
+            if (reason is not null)
+            {
+                gate.LeaveOut(name, reason);
+
+                continue;
+            }
+
+            allowed.AddRange(survivors);
         }
 
         if (!anyDenied || gate.IsDryRun)
@@ -2347,6 +2457,10 @@ internal static class FilterSanitizer
         // where a denied field is, as a denied field is.
         private readonly HashSet<string> _unknown = new(StringComparer.Ordinal);
 
+        // What a projection of each navigation carries, per root type and path. Reflection only, so it
+        // is the same for every caller and every query.
+        private static readonly ConcurrentDictionary<(Type Root, string Path), IReadOnlyList<string>> Beneath = new();
+
         internal Gate(
             Type entityType,
             PolicyResolver resolver,
@@ -2447,28 +2561,36 @@ internal static class FilterSanitizer
         internal bool IsDryRun => _options.DryRun || _context.DryRun;
 
         /// <summary>
-        /// The scalar properties of the entity that a typed projection can actually assign.
+        /// The members of the entity that a typed projection can actually assign.
         /// </summary>
         /// <remarks>
         /// Read through the same reflection cache the validator uses, so a synthesized projection
         /// cannot name a field the pipeline would then reject. Write-only and indexed members are
         /// excluded because a typed projection assigns into them.
         /// </remarks>
-        internal IEnumerable<string> ProjectableFields()
+        internal IEnumerable<PropertyInfo> Members()
         {
             foreach (KeyValuePair<string, PropertyInfo> entry in CacheReflection.GetTypeProperties(_entityType))
             {
                 PropertyInfo property = entry.Value;
 
-                if (property.CanRead
-                    && property.CanWrite
-                    && property.GetIndexParameters().Length == 0
-                    && CacheReflection.IsSimpleType(property.PropertyType))
+                if (property.CanRead && property.CanWrite && property.GetIndexParameters().Length == 0)
                 {
-                    yield return property.Name;
+                    yield return property;
                 }
             }
         }
+
+        /// <summary>
+        /// True when a member of this type holds a value rather than an object: a scalar, or a
+        /// collection of scalars such as <c>List&lt;string&gt;</c> or <c>byte[]</c>.
+        /// </summary>
+        /// <remarks>
+        /// A collection of scalars is a value the projection assigns whole. Nothing beneath it can
+        /// carry a policy, and on an entity it is a column the unguarded call loads.
+        /// </remarks>
+        internal static bool HoldsValue(Type type) =>
+            CacheReflection.IsSimpleType(AttributePolicyProvider.Peeled(type));
 
         /// <summary>
         /// True when a validated path names a navigation rather than a scalar.
@@ -2499,16 +2621,22 @@ internal static class FilterSanitizer
         /// deny-select against whoever spelled the child out in full and leaves it bypassable by
         /// asking for its parent instead — the same shape as sending no projection at all.
         /// <para>
-        /// The walk stops where <see cref="AttributePolicyProvider"/>'s does, and carries the same
-        /// cycle guard. Nothing below that depth holds a fragment, so there is no decision down
-        /// there to enforce and descending further would only enumerate paths the resolver cannot
-        /// speak about.
+        /// A type is read the way <see cref="AttributePolicyProvider"/> reads it, through
+        /// <see cref="AttributePolicyProvider.NavigationTypeOf"/>, so every path a fragment can sit on
+        /// is a path this walk reaches. It once read collections through a narrower list of its own,
+        /// and a member typed <c>IReadOnlyList&lt;T&gt;</c> hid every denial beneath it. The walk stops
+        /// at the same depth, and does not follow a type back into itself along one path.
         /// </para>
         /// </remarks>
-        internal IReadOnlyList<string> ProjectionUnder(string path)
+        internal IReadOnlyList<string> ProjectionUnder(string path) =>
+            Beneath.GetOrAdd((_entityType, path), key => Enumerate(key.Root, key.Path));
+
+        private static IReadOnlyList<string> Enumerate(Type root, string path)
         {
             List<string> paths = new();
-            Type? type = TypeAt(path);
+            Type? type = TypeAt(root, path) is { } declared
+                ? AttributePolicyProvider.NavigationTypeOf(declared)
+                : null;
 
             if (type is not null)
             {
@@ -2540,20 +2668,9 @@ internal static class FilterSanitizer
 
                 string child = $"{prefix}.{property.Name}";
 
-                if (CacheReflection.IsSimpleType(property.PropertyType))
-                {
-                    paths.Add(child);
-
-                    continue;
-                }
-
-                Type nested = CacheReflection.GetCollectionElementType(property.PropertyType)
-                    ?? property.PropertyType;
-
-                // A collection of a primitive is a value the projection assigns whole, not a
-                // navigation into its element type. Descending into byte would enumerate nothing
-                // and drop the member from an expansion that is supposed to preserve it.
-                if (CacheReflection.IsSimpleType(nested))
+                // A value, a collection of values, or a type the walker does not enter: projected
+                // whole, and nothing beneath it carries a policy.
+                if (AttributePolicyProvider.NavigationTypeOf(property.PropertyType) is not { } nested)
                 {
                     paths.Add(child);
 
@@ -2571,12 +2688,78 @@ internal static class FilterSanitizer
             seen.Remove(type);
         }
 
+        /// <summary>
+        /// The key the projection builder would add to a node that a list of narrowed paths passes
+        /// through, when this caller may not select it; null when every such key is allowed.
+        /// </summary>
+        /// <remarks>
+        /// The builder adds the key of each nested node it builds whether the list names it or not,
+        /// so a narrowing that dropped a denied key would carry it anyway.
+        /// </remarks>
+        internal (string Path, FieldPolicy Policy)? DeniedKey(IEnumerable<string> paths)
+        {
+            HashSet<string> nodes = new(StringComparer.Ordinal);
+
+            foreach (string path in paths)
+            {
+                for (int cut = path.IndexOf(SegmentSeparator); cut >= 0; cut = path.IndexOf(SegmentSeparator, cut + 1))
+                {
+                    string node = path[..cut];
+
+                    if (!nodes.Add(node)
+                        || TypeAt(_entityType, node) is not { } type
+                        || CacheReflection.FindProperty(type, "Id") is not { } key)
+                    {
+                        continue;
+                    }
+
+                    string keyPath = $"{node}.{key.Name}";
+                    FieldPolicy policy = PolicyFor(keyPath, PolicyFeature.None);
+
+                    if (!policy.Allows(PolicyFeature.Select))
+                    {
+                        return (keyPath, policy);
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// The first of a list of narrowed paths that the core's own validation refuses, or null when
+        /// it accepts them all.
+        /// </summary>
+        /// <remarks>
+        /// The walk above reads collections the way the policy does, and the core reads a narrower
+        /// set of them: a path through an <c>IReadOnlyList&lt;T&gt;</c> is one the policy can deny and
+        /// the core cannot project.
+        /// </remarks>
+        internal string? Unprojectable(IEnumerable<string> paths)
+        {
+            foreach (string path in paths)
+            {
+                try
+                {
+                    CacheReflection.ValidatePropertyPath(_entityType, path);
+                }
+                catch (LogicException)
+                {
+                    return path;
+                }
+            }
+
+            return null;
+        }
+
         /// <summary>The type a validated path names, or null when it names nothing.</summary>
-        private Type? TypeAt(string path)
+        private Type? TypeAt(string path) => TypeAt(_entityType, path);
+
+        private static Type? TypeAt(Type root, string path)
         {
             try
             {
-                return CacheReflection.GetFieldType(_entityType, path);
+                return CacheReflection.GetFieldType(root, path);
             }
             catch (LogicException)
             {
@@ -2905,6 +3088,34 @@ internal static class FilterSanitizer
             // Only ever raised under the strict tier, where a field refusal names no field and no
             // source. The origin stays in the trace, where an operator reads it.
             throw Exception(fieldPath, PolicyFeature.Segment, PolicyErrorCode.FieldDeniedForSegment, policy);
+        }
+
+        /// <summary>
+        /// Records that a synthesized projection left a member out whole, and why: something beneath it
+        /// is denied and the member cannot be narrowed.
+        /// </summary>
+        internal void LeaveOut(string fieldPath, string reason) =>
+            _trace.Add(new PolicyDecision(fieldPath, PolicyFeature.Select, PolicyAction.Dropped, reason));
+
+        /// <summary>
+        /// Refuses, in either tier, a projection that would have to be narrowed around a denied field
+        /// and cannot be built that way.
+        /// </summary>
+        /// <remarks>
+        /// Dropping is not an option here, for the reason it is not for a carried key: the projection
+        /// that would be built is not the one that was gated, so the only way to honour the denial is
+        /// to decline to build it.
+        /// </remarks>
+        internal void RefuseNarrowing(string fieldPath, FieldPolicy policy, string reason)
+        {
+            _trace.Add(new PolicyDecision(fieldPath, PolicyFeature.Select, PolicyAction.Denied, reason));
+
+            if (IsDryRun)
+            {
+                return;
+            }
+
+            throw Exception(fieldPath, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy);
         }
 
         /// <summary>Records that a field of the type's default order was left out for this caller.</summary>

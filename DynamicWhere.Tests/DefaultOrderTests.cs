@@ -108,6 +108,20 @@ public class AuditedTicket
     public int Rank { get; set; }
 }
 
+/// <summary>A default reaching through a reference, for the projections that do and do not assign it.</summary>
+[DwEntity(DefaultOrder = "Owner.Name desc, Id")]
+public class OwnedTicket
+{
+    public int Id { get; set; }
+
+    public TicketOwner? Owner { get; set; }
+}
+
+public class TicketOwner
+{
+    public string Name { get; set; } = string.Empty;
+}
+
 /// <summary>A type that declares no default, and so is never ordered by one.</summary>
 public class PlainTicket
 {
@@ -535,6 +549,111 @@ public sealed class DefaultOrderTests : IDisposable
         Assert.Contains(
             "UnsegmentedTicket: DefaultOrder names 'Rank', which its attributes deny for segments, so guarded segments leave it out.",
             unsegmented.Warnings);
+    }
+
+    // ------------------------------------------------------------------- a projected source (3.2.0)
+
+    /// <summary>
+    /// DCMP's A9. A projection that builds the type in an initializer and assigns every field the
+    /// default names hides nothing, so the default applies: EF Core translates the order through the
+    /// members the projection assigned. It used to be left unordered, like every projection.
+    /// </summary>
+    [Fact]
+    public async Task A_projection_that_assigns_every_default_field_takes_the_default()
+    {
+        IQueryable<Ticket> rows = _db.Tickets.Select(t => new Ticket { Id = t.Id, Priority = t.Priority, Title = t.Title });
+
+        PolicyQueryable<Ticket> guarded = rows.ApplyPolicy(Caller(), Options(), Resolver());
+
+        Assert.Equal(ByDefault, Ids(guarded.ToList(new Filter()).Data));
+        Assert.Equal(ByDefault, Ids((await guarded.ToListAsync(new Filter())).Data));
+        Assert.Equal(new[] { 2, 4 }, Ids(guarded.Page(FirstTwo()).AsUnguardedQueryable().ToList()));
+        Assert.Equal(new[] { 2, 4, 3, 5 }, Ids((await guarded.ToListAsync(UrgentOrFive())).Data!));
+    }
+
+    /// <summary>A projection that leaves out a field the default names keeps whatever order it had.</summary>
+    [Fact]
+    public void A_projection_that_leaves_a_default_field_out_keeps_its_own_order()
+    {
+        IQueryable<Ticket> rows = _db.Tickets.Select(t => new Ticket { Id = t.Id, Title = t.Title });
+
+        Assert.Equal(AsWritten, Ids(rows.ApplyPolicy(Caller(), Options(), Resolver()).ToList(new Filter()).Data));
+    }
+
+    /// <summary>DCMP's A10 and A11: a source ordered before its projection keeps that order, and a caller's order wins.</summary>
+    [Fact]
+    public void A_source_ordered_before_its_projection_keeps_that_order_and_the_callers_order_wins()
+    {
+        IQueryable<Ticket> rows = _db.Tickets.OrderBy(t => t.Title)
+            .Select(t => new Ticket { Id = t.Id, Priority = t.Priority, Title = t.Title });
+
+        Assert.Equal(AsWritten, Ids(rows.ApplyPolicy(Caller(), Options(), Resolver()).ToList(new Filter()).Data));
+        Assert.Equal(
+            new[] { 5, 4, 3, 2, 1 },
+            Ids(rows.ApplyPolicy(Caller(), Options(), Resolver())
+                .ToList(new Filter { Orders = new List<OrderBy> { By("Id", Direction.Descending) } }).Data));
+    }
+
+    /// <summary>
+    /// The default is for the rows the caller's source makes. A projection the caller composes on the
+    /// guarded handle afterwards stays in its own order, even when it keeps every field the default names.
+    /// </summary>
+    [Fact]
+    public void A_projection_composed_after_ApplyPolicy_stays_unordered_even_with_every_default_field()
+    {
+        PolicyQueryable<Ticket> projected = Guarded().Select(new List<string> { "Id", "Priority" });
+
+        Assert.Equal(new[] { 1, 2 }, Ids(projected.Page(FirstTwo()).AsUnguardedQueryable().ToList()));
+        Assert.Equal(AsWritten, Ids(projected.ToList(new Filter()).Data));
+    }
+
+    /// <summary>
+    /// A composed Filter whose orders were all dropped sent orders, so nothing later in the chain adds a
+    /// default in their place, exactly as a composed Order whose fields were all dropped does.
+    /// </summary>
+    [Fact]
+    public void A_filter_composed_with_orders_that_were_all_dropped_gets_no_default_later()
+    {
+        PolicyQueryable<Ticket> guarded = Guarded(
+            new FakePolicyProvider().Add("Title", PolicyFeature.Order, PolicyEffect.Deny, PolicyLevel.DynamicGlobal));
+
+        PolicyQueryable<Ticket> filtered = guarded.Filter(new Filter { Orders = new List<OrderBy> { By("Title") } });
+
+        Assert.Equal(new[] { 1, 2 }, Ids(filtered.Page(FirstTwo()).AsUnguardedQueryable().ToList()));
+    }
+
+    /// <summary>
+    /// A nested default is assigned only when every level of its path is an initializer that assigns
+    /// the next member. Any other expression along the way, or a member left out, hides it.
+    /// </summary>
+    [Fact]
+    public void A_nested_default_is_assigned_only_through_initializers()
+    {
+        OwnedTicket[] source =
+        {
+            new() { Id = 1, Owner = new TicketOwner { Name = "b" } },
+            new() { Id = 2, Owner = new TicketOwner { Name = "c" } },
+            new() { Id = 3, Owner = new TicketOwner { Name = "a" } }
+        };
+
+        IQueryable<OwnedTicket> initialized = source.AsQueryable()
+            .Select(t => new OwnedTicket { Id = t.Id, Owner = new TicketOwner { Name = t.Owner!.Name } });
+        IQueryable<OwnedTicket> assignedWhole = source.AsQueryable()
+            .Select(t => new OwnedTicket { Id = t.Id, Owner = t.Owner });
+        IQueryable<OwnedTicket> leftOut = source.AsQueryable()
+            .Select(t => new OwnedTicket { Id = t.Id });
+
+        Assert.False(DefaultOrder.HidesDefault(initialized.Expression, typeof(OwnedTicket)));
+        Assert.True(DefaultOrder.HidesDefault(assignedWhole.Expression, typeof(OwnedTicket)));
+        Assert.True(DefaultOrder.HidesDefault(leftOut.Expression, typeof(OwnedTicket)));
+        Assert.False(DefaultOrder.HidesDefault(source.AsQueryable().Expression, typeof(OwnedTicket)));
+
+        Assert.Equal(
+            new[] { 2, 1, 3 },
+            initialized.ApplyPolicy(Caller(), Options(), Resolver()).ToList(new Filter()).Data.Select(row => row.Id));
+        Assert.Equal(
+            new[] { 1, 2, 3 },
+            assignedWhole.ApplyPolicy(Caller(), Options(), Resolver()).ToList(new Filter()).Data.Select(row => row.Id));
     }
 
     [Fact]

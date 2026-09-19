@@ -217,7 +217,20 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// followed as well as classes, because these attributes are supported on DTOs, where an
     /// <c>IContact</c> reference or a record struct is ordinary.
     /// </remarks>
-    internal static Type? NavigationTypeOf(Type propertyType)
+    internal static Type? NavigationTypeOf(Type propertyType) => AsNavigation(Peeled(propertyType));
+
+    /// <summary>
+    /// The type a property holds once every collection layer and <see cref="Nullable{T}"/> is peeled
+    /// off: <c>LineDto</c> for <c>IReadOnlyList&lt;LineDto&gt;</c>, <see cref="string"/> for
+    /// <c>List&lt;string&gt;</c>, and the property's own type when it is not a collection.
+    /// </summary>
+    /// <remarks>
+    /// The one reading of a property's shape that the walker and the projection gate share. The gate
+    /// once read collections through a narrower list of its own, and a member typed
+    /// <c>IReadOnlyList&lt;T&gt;</c> hid every denial beneath it from the projection while the walker
+    /// had put a fragment on each of them.
+    /// </remarks>
+    internal static Type Peeled(Type propertyType)
     {
         Type current = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
 
@@ -233,7 +246,7 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             current = Nullable.GetUnderlyingType(element) ?? element;
         }
 
-        return AsNavigation(current);
+        return current;
     }
 
     /// <summary>

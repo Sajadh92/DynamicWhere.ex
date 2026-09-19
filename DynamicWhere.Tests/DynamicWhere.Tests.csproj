@@ -79,6 +79,10 @@
          primary key it reads from the EF Core model, both of which differ between 6 and 8. It
          carries its own SQLite model. -->
     <Compile Include="SegmentCompositionTests.cs" />
+    <!-- Kept: a dynamic read and a grouped count reach EF Core's own asynchronous operators by
+         reflection, found by name, which is what differs between 6 and 8. It carries its own SQLite
+         model. -->
+    <Compile Include="CancellationTests.cs" />
     <Compile Remove="Policies/EfPolicyModelTests.cs" />
     <Compile Remove="Policies/EfPolicyStoreTests.cs" />
     <Compile Remove="Policies/EfStoreConformanceTests.cs" />

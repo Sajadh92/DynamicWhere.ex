@@ -6,7 +6,7 @@ import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
   title: "Policy Configuration — options, caps, tiers and defaults",
-  description: "Every DynamicWhere.ex policy option and cap with its default: tiers, dry run, the trace on a result, refusal auditing, hash salt, store failure modes, query cost budget, MinGroupSize, plus startup validation and the twenty-two error codes.",
+  description: "Every DynamicWhere.ex policy option and cap with its default: tiers, what a denied field does to a projection, dry run, the trace on a result, refusal auditing, hash salt, store failure modes, query cost budget, MinGroupSize, plus startup validation and the twenty-two error codes.",
   keywords: ["DwPolicyOptions", "DwCaps", "MaxQueryCost", "MinGroupSize", "policy configuration"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/configuration/" },
 };
@@ -63,6 +63,299 @@ export default function Page() {
         which drops, puts the trace on the result unless{" "}
         <code>IncludeTraceInResult</code> is <code>false</code>.
       </p>
+
+      <h2 id="navigation-selects">A navigation named in Selects</h2>
+      <p>
+        A <code>Selects</code> entry can name a navigation, such as{" "}
+        <code>&quot;Lines&quot;</code>, rather than the fields beneath it. With
+        nothing denied beneath it, the entry is kept as written. With a denied
+        field beneath it, the <code>Convenience</code> tier replaces the entry
+        with the allowed fields beneath it, and the <code>Strict</code> tier
+        refuses it.
+      </p>
+      <table>
+        <thead><tr><th><code>Selects</code> names a navigation</th><th><code>Convenience</code></th><th><code>Strict</code></th></tr></thead>
+        <tbody>
+          <tr><td>with nothing denied beneath it</td><td>Kept whole</td><td>Kept whole</td></tr>
+          <tr><td>with a denied field beneath it</td><td>Replaced by the allowed fields beneath it</td><td><code>FieldDeniedForSelect</code></td></tr>
+          <tr><td>whose key, <code>Lines.Id</code>, is denied (3.2.0)</td><td><code>FieldDeniedForSelect</code></td><td><code>FieldDeniedForSelect</code></td></tr>
+          <tr><td>with a denied field beneath it, where the narrowing cannot be built (3.2.0)</td><td><code>FieldDeniedForSelect</code></td><td><code>FieldDeniedForSelect</code></td></tr>
+          <tr><td>whose type holds a field denied for <code>Select</code> that no path names (3.2.0)</td><td>Narrowed away, where it can be narrowed</td><td><code>FieldDeniedForSelect</code></td></tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>
+          The fields beneath a member are read the way the attribute walker
+          reads them: through any collection type, and no deeper than its four
+          segments. Since 3.2.0 a member typed{" "}
+          <code>IReadOnlyList&lt;T&gt;</code>,{" "}
+          <code>IReadOnlyCollection&lt;T&gt;</code>,{" "}
+          <code>Collection&lt;T&gt;</code> or an application&apos;s own
+          collection no longer hides the denials beneath it. The providers&apos;
+          own rules are asked too, so a denied property with no setter and a
+          rule on a path reached through a cycle count.
+        </li>
+        <li>
+          A narrowing that cannot be built as it was gated is refused in both
+          tiers (3.2.0). The core&apos;s typed projection adds the key,{" "}
+          <code>Id</code>, of every nested node it builds, so a navigation
+          narrowed around its own denied key would get the key back. The core
+          reads a path only through an array, <code>List&lt;T&gt;</code>,{" "}
+          <code>IList&lt;T&gt;</code>, <code>ICollection&lt;T&gt;</code>,{" "}
+          <code>IEnumerable&lt;T&gt;</code>, <code>HashSet&lt;T&gt;</code> or{" "}
+          <code>ISet&lt;T&gt;</code>, so a narrowing through any other
+          collection fails its validation. And some members cannot be narrowed
+          at all: a column, a complex property or a member stored as JSON, which
+          EF Core reads whole; a member of a row in memory; and a member a
+          projection builds some way the core cannot narrow.
+        </li>
+        <li>
+          A member that carries everything its type holds — a member of a
+          projected or in-memory row, or an entity&apos;s column, owned or
+          complex member — can hold a field denied for <code>Select</code> that
+          no path names: one deeper than four segments, or inside a framework
+          generic such as <code>Dictionary&lt;string, T&gt;</code>. The{" "}
+          <code>Strict</code> tier refuses such a member, and the{" "}
+          <code>Convenience</code> tier narrows it away (3.2.0); where it cannot
+          be narrowed, as a member of a row in memory cannot, both tiers refuse
+          it. An entity&apos;s navigation loads only its own entity, so only its
+          paths are asked about.
+        </li>
+        <li>
+          A navigation named through another, <code>Main.Lead</code>, gates the
+          key of every node it passes through, which the core&apos;s projection
+          adds, as a dotted path to a value always did (3.2.0). A denied key
+          refuses the projection. Naming a field beside a denied key,{" "}
+          <code>Lines.Name</code> when <code>Lines.Id</code> is denied, was
+          already refused in both tiers.
+        </li>
+        <li>
+          Under <code>Convenience</code> the refusal names the denied key, the
+          first denied field beneath the member, or, for a denial no path names,
+          the member itself. Under <code>Strict</code> its{" "}
+          <code>FieldPath</code> is <code>&quot;*&quot;</code>, as on every field
+          refusal. The trace records the reason either way.
+        </li>
+      </ul>
+
+      <h2 id="no-selects">A request that sends no Selects</h2>
+      <p>
+        A request that sends no <code>Selects</code> returns whole rows, denied
+        fields included, because the core projects only when{" "}
+        <code>Selects</code> is set. So when a field denied for{" "}
+        <code>Select</code> could reach the result, a guarded query synthesizes
+        the projection itself. It does so in both tiers, typed and dynamic, for
+        a whole <code>Filter</code> and for a <code>Segment</code>. A clause
+        composed on its own, such as <code>Where</code>, <code>Order</code> or{" "}
+        <code>Page</code>, synthesizes nothing.
+      </p>
+      <p>
+        The projection keeps the <strong>allowed members</strong>: what an
+        unguarded call would return, less what the policy withholds. Before
+        3.2.0 it kept the allowed scalars only, and only a simple field denied
+        at the top of the type asked for it — see{" "}
+        <Link href="/docs/breaking-changes#synthesized-projection">breaking changes</Link>.
+      </p>
+
+      <h3 id="no-selects-when">When a projection is needed</h3>
+      <ul>
+        <li>
+          A field denied at the top of <code>T</code> always asks for one,
+          whatever it holds: a scalar, a blob, a list, an owned object or a JSON
+          column.
+        </li>
+        <li>
+          A field denied beneath a member asks for one when its value can reach
+          the result. On an entity, that is beneath a column, an owned or
+          complex member, or a navigation something loads: an{" "}
+          <code>Include</code> or <code>ThenInclude</code> on the query, an
+          automatic include, or a lazy loader — EF Core&apos;s proxies, or an
+          injected <code>ILazyLoader</code> — which fills a navigation after the
+          query. An <code>Include</code> written in a form the library cannot
+          read counts as loading every navigation. On a row a projection builds,
+          it is beneath a member the initializer assigns. On a row in memory, it
+          is beneath any member.
+        </li>
+        <li>
+          A denial beneath a navigation nothing loads never leaves the database,
+          so it asks for no projection. An entity whose only denials sit beneath
+          such navigations is read as it was in 3.1.0.
+        </li>
+        <li>
+          A member whose type can hold a field denied for <code>Select</code>{" "}
+          that no path names — deeper than the walker&apos;s four segments, or
+          inside a framework generic such as{" "}
+          <code>Dictionary&lt;string, T&gt;</code> — asks for one too, and so does
+          a member typed <code>object</code>, when what it holds can reach the
+          result.
+        </li>
+        <li>
+          The denials beneath a member come from the providers&apos; rules as
+          well as from walking the type, so a denied property with no setter, a
+          rule on a path reached through a cycle, and a rule deeper than the
+          walk all count.
+        </li>
+        <li>
+          A forced scope beneath a member asks for no projection on its own. It
+          filters the rows that hold the member, as it always has. When a
+          projection is needed anyway, the member is left out whole.
+        </li>
+      </ul>
+
+      <h3 id="no-selects-kept">What it keeps</h3>
+      <p>
+        A member holding a value — a simple type, or a collection of one such as{" "}
+        <code>byte[]</code>, <code>string[]</code> or{" "}
+        <code>List&lt;string&gt;</code> — is kept when it is allowed and the
+        source carries it. A member holding an object, or a list of them, is
+        kept whole, narrowed or left out whole, as below, and only where the
+        source carries it:
+      </p>
+      <table>
+        <thead><tr><th>Source</th><th>Values kept</th><th>Objects kept</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>A projection that builds its rows before <code>ApplyPolicy</code>: the outermost <code>Select</code> constructs the row, in an object initializer or with a constructor, as in <code>{`db.Roles.Select(r => new RoleRow { … })`}</code></td>
+            <td>Every member the initializer assigns; every member when a constructor builds the row</td>
+            <td>The same</td>
+          </tr>
+          <tr>
+            <td>An entity query, or a <code>Select</code> that hands back an entity, as in <code>{`db.Orders.Select(o => o.Customer)`}</code></td>
+            <td>Every member EF Core maps</td>
+            <td>Its columns, converted and JSON ones included, its owned members and, on EF Core 8 or later, its complex properties, read from the EF Core model</td>
+          </tr>
+          <tr>
+            <td>Rows in memory, as in <code>roles.ApplyPolicy(caller)</code></td>
+            <td>Every member</td>
+            <td>None</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        A value EF Core does not map is left out: computing it would make EF
+        Core read the whole entity, the denied columns included, and it holds
+        only its initial value anyway. A source the library cannot read — no EF
+        Core model, and neither a projection it can see into nor rows in memory
+        — keeps values only, as in 3.1.0, and every denial beneath a member
+        counts.
+      </p>
+
+      <h3 id="no-selects-whole">Whole, narrowed or left out whole</h3>
+      <p>A member holding an object that the source carries is:</p>
+      <ul>
+        <li>
+          <strong>kept whole</strong> when nothing beneath it is denied, nothing
+          in its type is denied or typed <code>object</code>, no forced scope is
+          beneath it, and no transform beneath it lands on a property with no
+          setter;
+        </li>
+        <li>
+          <strong>narrowed</strong> otherwise, to the allowed fields beneath it,
+          four segments deep, as a caller naming it would get it, where the
+          core&apos;s narrowing translates: an object the projection&apos;s
+          initializer builds, a list a subquery reads into a type the core can
+          bind (not an array or a set), a navigation that is neither complex nor
+          stored as JSON, or an entity&apos;s owned member not stored as JSON. A
+          field beneath it that can hold what the policy cannot name is left
+          out;
+        </li>
+        <li>
+          <strong>left out whole</strong> otherwise, and recorded as{" "}
+          <code>Dropped</code> on <code>Select</code> with a reason that starts{" "}
+          <code>left out whole</code>.
+        </li>
+      </ul>
+      <Code lang="text">{`left out whole: a scope forced beneath it cannot be applied to what it holds
+left out whole: it is a column, which EF Core reads whole
+left out whole: it is a complex property, which EF Core cannot narrow
+left out whole: it is stored as JSON, which EF Core cannot narrow
+left out whole: the projection builds it in a way the core cannot narrow
+left out whole: the projection would add its key 'Contents.Id', which is denied
+left out whole: the core cannot project 'Contents.Code'
+left out whole: nothing beneath it may be selected
+left out whole: it can hold what the policy cannot name`}</Code>
+      <p>
+        The last one is recorded on the field beneath the member that the
+        narrowing leaves out.
+      </p>
+
+      <h3 id="no-selects-never">Never kept</h3>
+      <ul>
+        <li>
+          An entity&apos;s navigation, included or not: projecting it would load
+          it. So once a denial needs a projection, an included or automatically
+          included navigation is not returned. Name it in <code>Selects</code>{" "}
+          to get it, narrowed.
+        </li>
+        <li>
+          An object held by a row in memory: a kept object is the caller&apos;s
+          own, and a transform beneath it would change it in place. The
+          projection&apos;s rows are new and hold no member of an object type,
+          so the source objects are left as they were.
+        </li>
+        <li>
+          A member with no setter, and a member named with one of the
+          expression parser&apos;s own words.
+        </li>
+      </ul>
+
+      <h3 id="no-selects-other">Other rules</h3>
+      <ul>
+        <li>
+          A narrowed reference that is null in the source comes back as an empty
+          object, as it does for a caller&apos;s own dotted{" "}
+          <code>Selects</code>.
+        </li>
+        <li>
+          A narrowed member carries every allowed field beneath it. An entity
+          reached beneath it therefore has its own navigations projected, and so
+          loaded, whether or not the source included them, exactly as when{" "}
+          <code>Selects</code> names the member.
+        </li>
+        <li>
+          Each denied field whose value can reach the result, at the top or
+          beneath, is recorded as <code>Dropped</code> on <code>Select</code>.
+        </li>
+        <li>
+          It never throws for a denied field, in either tier. It throws{" "}
+          <code>AllSelectsDenied</code> only when no field is left. When nothing
+          asks for a projection, <code>Selects</code> stays null and the query is
+          the one an unguarded call runs.
+        </li>
+        <li>
+          A typed query projects into <code>T</code>, so <code>T</code> needs a
+          public parameterless constructor, or the query fails with{" "}
+          <code>SelectTypeMustHaveParameterlessConstructor</code>. The dynamic
+          terminals do not need one.
+        </li>
+        <li>
+          A dry run synthesizes nothing. It records the denials and returns the
+          rows whole.
+        </li>
+        <li>
+          A simulation has no source, so it reads <code>T</code> as a source it
+          cannot see into: every denial beneath a member counts, and the
+          projection it shows keeps only members holding a value — see{" "}
+          <Link href="/docs/policies/admin#simulate">Simulate</Link>.
+        </li>
+      </ul>
+      <Callout tone="warn" title="What the policy cannot see into">
+        A member typed <code>object</code> is opaque to the policy: a
+        synthesized projection leaves it out, and naming it returns whatever it
+        holds. A framework generic holding a policed type, such as{" "}
+        <code>Dictionary&lt;string, LineDto&gt;</code>, has no paths beneath it:
+        naming it is refused under <code>Strict</code> and narrowed away under{" "}
+        <code>Convenience</code>, or refused there too where the member cannot
+        be narrowed, and a synthesized projection leaves it out.
+        Hold such values in a list of the policed type instead.
+      </Callout>
+      <Callout tone="warn" title="A forced scope on a list's element type filters rows, not elements">
+        A forced scope declared on a list&apos;s element type filters the rows
+        that hold the list, never its elements. <code>Selects</code> naming the
+        list returns every element, those the scope excludes included, as in
+        every release; a synthesized projection leaves such a list out. Scope
+        the elements where the row is built.
+      </Callout>
 
       <h2 id="trace">The trace on a result</h2>
       <p>

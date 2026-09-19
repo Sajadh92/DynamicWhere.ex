@@ -2283,7 +2283,7 @@ SELECT a navigation that cannot be narrowed around a denied
   the core cannot project (3.2.0)                            throw             throw    FieldDeniedForSelect
 SELECT a.b when the key a.Id is denied                       throw             throw    FieldDeniedForSelect
 every requested SELECT dropped                               throw             -        AllSelectsDenied
-no Selects while a field is denied for Select, at any depth  allowed members   allowed members
+no Selects while a denied field can reach the result (3.2.0) allowed members   allowed members
 GROUP BY a denied field                                      throw             throw    FieldDeniedForGroup
 AGGREGATE a denied field, or a transformed field lacking
   AllowAggregate on a stage                                  throw             throw    FieldDeniedForAggregate
@@ -4898,7 +4898,8 @@ MemoryCalculationInput
   whatever it holds. A framework generic holding a policed type (`Dictionary<string, LineDto>`) has no paths
   beneath it: naming it is refused under Strict and narrowed away under Convenience, and a synthesized projection
   leaves it out.
-- A simulation reads T as an entity query (section 23).
+- A simulation reads T as a source it cannot see into (section 23): every denial beneath a member counts, and a
+  synthesized `Clause.Selects` keeps only members holding a value.
 
 ---
 

@@ -17,10 +17,29 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The twenty-four points below cover constraints, surprises, and corner cases —
+        The twenty-nine points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
+      <Callout tone="danger" title="Behaviour changes in 3.2.0">
+        Points&nbsp;25 to 29 changed in <strong>3.2.0</strong>, and each is
+        visible to code written for 3.1.0. A guarded query that sends no{" "}
+        <code>Selects</code> synthesizes its projection whenever a denied value
+        can reach the result, and the projection keeps what the source carries:
+        the assigned members of a projected row, and an entity&apos;s columns,
+        owned and complex members, while an entity&apos;s navigations and the
+        objects of a row in memory are left out (point&nbsp;25).{" "}
+        <code>Selects</code> naming a member is gated against every denial
+        beneath it, and a narrowing that cannot be built is refused
+        (point&nbsp;26). A declared default order reaches a projection that
+        builds <code>T</code> and assigns every field the default names
+        (point&nbsp;27). Every async terminal gains overloads that take a{" "}
+        <code>CancellationToken</code>, so <code>ToListAsync(filter, default)</code>{" "}
+        no longer compiles, and the async dynamic <code>Filter</code> and the
+        async <code>Summary</code> read through EF Core&apos;s asynchronous
+        operators (point&nbsp;28). And a type in an application namespace that
+        starts with <code>System</code> is policed (point&nbsp;29).
+      </Callout>
       <Callout tone="danger" title="Behaviour changes in 3.1.0">
         Eleven behaviours changed in <strong>3.1.0</strong>. Each one fixes a defect,
         and each one is visible to a caller that depended on the old shape. Date
@@ -594,10 +613,13 @@ export default function Page() {
       </Callout>
       <Callout tone="note" title="Guarded queries reach it too">
         A member carrying <code>[DwNoSelect]</code> makes the policy layer
-        synthesize a projection for a query that sent none, so a typed guarded
-        query on a type with no parameterless constructor raises the same code —
-        even though the caller never asked for a <code>Select</code>. The dynamic
-        terminals project through <code>SelectDynamic</code> and are not affected.
+        synthesize a projection for a query that sent none — since 3.2.0
+        whatever the member holds, and beneath another member when its value
+        can reach the result (point&nbsp;25) — so a typed guarded query on a
+        type with no parameterless constructor raises
+        the same code, even though the caller never asked for a{" "}
+        <code>Select</code>. The dynamic terminals project through{" "}
+        <code>SelectDynamic</code> and are not affected.
       </Callout>
 
       <h2 id="policy-prepared">18. A Guarded Query Requires a Prepared Context</h2>
@@ -1077,6 +1099,293 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
 }`}</Code>
       </Callout>
 
+      <h2 id="synthesized-projection">25. A Guarded Query That Sends No <code>Selects</code> Keeps What the Source Carries</h2>
+      <p>
+        A request with no <code>Selects</code> returns whole rows, denied fields
+        included, so a guarded query synthesizes a projection when a denied
+        field could reach the result. <strong>3.2.0</strong> changed when it
+        does so and what the projection keeps. The rules are on{" "}
+        <Link href="/docs/policies/configuration#no-selects">Policy configuration</Link>.
+      </p>
+      <ul>
+        <li>
+          <strong>When.</strong> A field denied at the top of <code>T</code>{" "}
+          asks for it whatever the field holds. A field denied beneath a member
+          asks for it when its value can reach the result: on an entity, beneath
+          a column, an owned or complex member, or a navigation the query loads
+          through an <code>Include</code>, an automatic include or a lazy
+          loader; on a projected row, beneath a member the initializer assigns;
+          in memory, beneath any member. It does so in both tiers, typed and
+          dynamic, for a <code>Filter</code> and a <code>Segment</code>. Until
+          3.2.0 only a simple field denied at the top of <code>T</code> asked for
+          one. A denial beneath a navigation nothing loads never leaves the
+          database, so an entity whose only denials sit there is read exactly as
+          in 3.1.0.
+        </li>
+        <li>
+          <strong>What.</strong> The allowed members, which replace the allowed
+          scalars. A row a projection builds keeps the members its initializer
+          assigns. An entity keeps its mapped columns, converted and JSON ones
+          included, its owned and complex members, and every collection of
+          simple values such as <code>byte[]</code> or{" "}
+          <code>List&lt;string&gt;</code>. Rows in memory keep their values. A
+          member holding an object is kept whole when nothing it can hold is
+          denied, narrowed to the allowed fields where the core&apos;s narrowing
+          translates, and otherwise left out whole.
+        </li>
+      </ul>
+      <Callout tone="danger" title="Fixed (security): a denial beneath a member was not enforced">
+        With every denied field beneath a member and none at the top of{" "}
+        <code>T</code>, nothing was synthesized, and the whole row came back
+        with the denied value in it: in a list or nested object of a row
+        projected before <code>ApplyPolicy</code>, in a row held in memory, and
+        in an entity&apos;s included, automatically included, lazily loaded or
+        owned member — typed and dynamic, in both tiers, for a{" "}
+        <code>Filter</code> and a <code>Segment</code>.
+      </Callout>
+      <Callout tone="danger" title="Fixed (security): a denied member that holds no simple value came back">
+        A field denied at the top of <code>T</code> whose own type is not a
+        simple value — a byte array, a list, an owned object, a JSON column —
+        synthesized no projection either, so with nothing else denied the whole
+        row came back with it.
+      </Callout>
+      <Callout tone="danger" title="Nested objects and lists come back">
+        In 3.1.0, as soon as any field was denied, every nested object and list
+        of a row projected before <code>ApplyPolicy</code> came back null or
+        empty, and so did an entity&apos;s columns holding an object, its owned
+        and complex members and its collections of simple values. They are
+        returned now, whole or narrowed. A member that cannot be narrowed is
+        left out whole, and the trace records a <code>Dropped</code> decision
+        whose reason starts <code>left out whole</code>.
+      </Callout>
+      <Callout tone="danger" title="What a projection leaves out">
+        Once a projection is needed it leaves out an entity&apos;s navigations,
+        included ones too, since projecting one would load it: name the
+        navigation in <code>Selects</code> to get it, narrowed. It leaves out
+        the objects a row in memory holds, since a kept object is the
+        caller&apos;s own and a transform would change it in place, and a value
+        EF Core does not map, which EF Core could compute only by reading the
+        whole entity, the denied columns included. A member with no setter and
+        a member named with one of the parser&apos;s words are left out too. A
+        typed query projects into <code>T</code>, so <code>T</code> needs a
+        public parameterless constructor for it, as it already did
+        (point&nbsp;1).
+      </Callout>
+      <Callout tone="warn" title="A forced scope on a list's element type filters rows, not elements">
+        A forced scope declared on a list&apos;s element type asks for no
+        projection on its own. It filters the rows that hold the list, never its
+        elements, so <code>Selects</code> naming the list returns every element,
+        those the scope excludes included, as in every release. A projection
+        needed for another reason leaves such a list out whole. Scope the
+        elements where the row is built.
+      </Callout>
+
+      <h2 id="selects-beneath">26. <code>Selects</code> Naming a Member Is Gated Against Every Denial Beneath It</h2>
+      <p>
+        When <code>Selects</code> names a navigation with a denied field beneath
+        it, the <code>Convenience</code> tier replaces the entry with the
+        allowed fields beneath it, and the <code>Strict</code> tier refuses it.
+        Since <strong>3.2.0</strong> the gate finds every denial beneath the
+        member, and refuses, with <code>FieldDeniedForSelect</code>, a narrowing
+        it cannot build as gated. See{" "}
+        <Link href="/docs/policies/configuration#navigation-selects">A navigation named in Selects</Link>.
+      </p>
+      <table>
+        <thead>
+          <tr><th><code>Selects</code> names</th><th>Until 3.1.0</th><th>Since 3.2.0</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>A navigation whose key, <code>Id</code>, is denied</td>
+            <td>
+              The convenience tier narrowed the key away, and the core&apos;s
+              typed projection, which adds the key of every nested node it
+              builds, put it back.
+            </td>
+            <td>
+              Refused in both tiers, as naming a sibling of the key already
+              was.
+            </td>
+          </tr>
+          <tr>
+            <td>A navigation named through another, <code>Main.Lead</code>, when <code>Main.Id</code> is denied</td>
+            <td>Kept, and the projection added <code>Main</code>&apos;s key.</td>
+            <td>Refused: the key of every node the path passes through is gated.</td>
+          </tr>
+          <tr>
+            <td>
+              A member typed as a collection the core does not unwrap —{" "}
+              <code>IReadOnlyList&lt;T&gt;</code>,{" "}
+              <code>IReadOnlyCollection&lt;T&gt;</code>,{" "}
+              <code>Collection&lt;T&gt;</code> or an application&apos;s own —
+              with a denied field beneath it
+            </td>
+            <td>
+              Every field beneath it came back, the denied ones included, in both
+              tiers: the projection gate read collections through a narrower list
+              than the attribute walker, and found nothing beneath the member.
+            </td>
+            <td>
+              The gate reads collections the way the walker does. The strict
+              tier refuses the denied field, and the convenience tier&apos;s
+              narrowing, which the core cannot project, is refused too.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              A member of a projected or in-memory row whose type holds a field
+              denied where no path reaches it: deeper than four segments, or
+              inside a framework generic such as{" "}
+              <code>Dictionary&lt;string, T&gt;</code>
+            </td>
+            <td>Returned, the denied field included.</td>
+            <td>
+              Refused under <code>Strict</code>, narrowed away under{" "}
+              <code>Convenience</code>, and refused in both tiers where it
+              cannot be narrowed.
+            </td>
+          </tr>
+          <tr>
+            <td>A member with a denied property that has no setter beneath it, or a rule on a path reached through a cycle</td>
+            <td>Not found, so the member came back with it.</td>
+            <td>Found: the gate reads the providers&apos; rules as well as the walk.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        A member that cannot be narrowed at all — a column, a complex property
+        or a member stored as JSON, a member of a row in memory, or one a
+        projection builds some way the core cannot narrow — is refused in both
+        tiers when something beneath it is denied.
+      </p>
+      <Callout tone="danger" title="Fixed (security): named members carried denied values out">
+        A request that ran on 3.1.0 can now be refused. Under the{" "}
+        <code>Convenience</code> tier the refusal names the denied key, the
+        first denied field beneath the member, or, for a denial no path names,
+        the member itself; under <code>Strict</code> its <code>FieldPath</code>{" "}
+        is <code>&quot;*&quot;</code>. A request that sends no{" "}
+        <code>Selects</code> is not refused for such a member: its synthesized
+        projection narrows the member or leaves it out whole (point&nbsp;25).
+      </Callout>
+      <Callout tone="warn" title="What the policy cannot see into">
+        A member typed <code>object</code> is opaque to the policy: a
+        synthesized projection leaves it out, and naming it returns whatever it
+        holds. A framework generic holding a policed type, such as{" "}
+        <code>Dictionary&lt;string, LineDto&gt;</code>, has no paths beneath it:
+        naming it is refused under <code>Strict</code> and narrowed away under{" "}
+        <code>Convenience</code>, or refused there too where the member cannot
+        be narrowed, and a synthesized projection leaves it out.
+        Hold such values in a list of the policed type instead.
+      </Callout>
+
+      <h2 id="default-order-projection">27. <code>DefaultOrder</code> Reaches a Projection That Builds <code>T</code></h2>
+      <p>
+        In 3.1.0 a <code>Select</code> anywhere in the chain kept a guarded query
+        in its own order, because a default applied after a projection could
+        name a field the projection left out, which EF Core cannot translate.
+        Since <strong>3.2.0</strong> only the outermost <code>Select</code>{" "}
+        counts, because it makes the rows the default orders. When it builds{" "}
+        <code>T</code> in an object initializer and assigns every field the{" "}
+        <Link href="/docs/policies/attributes#default-order"><code>[DwEntity(DefaultOrder)]</code></Link>{" "}
+        names, at every level of a nested path, with nothing EF Core would
+        compute on the client, the default applies. A constructor with
+        arguments, a default field the initializer does not assign, a nested
+        path through anything but an initializer, or a default field computed
+        by the application&apos;s own method, which EF Core evaluates on the
+        client and cannot order by, still leaves the query in its own order.
+      </p>
+      <Code lang="csharp">{`[DwEntity(DefaultOrder = "CreatedAt desc, Id")]
+public class TicketRow
+{
+    public int Id { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string Title { get; set; } = string.Empty;
+}
+
+// 3.1.0: unordered. 3.2.0: ordered by CreatedAt desc, Id.
+var rows = db.Tickets
+    .Select(t => new TicketRow { Id = t.Id, CreatedAt = t.CreatedAt, Title = t.Title })
+    .ApplyPolicy(caller)
+    .ToList(new Filter());`}</Code>
+      <ul>
+        <li>
+          A projection composed on the guarded handle — the guarded{" "}
+          <code>Select</code>, or a guarded <code>Filter</code> whose{" "}
+          <code>Selects</code> is set — keeps the rest of the chain unordered,
+          even when it keeps every default field. So{" "}
+          <code>{`guarded.Select(["Id", "Title"]).Page(page)`}</code> pages as it
+          did in 3.0.0, unordered.
+        </li>
+        <li>
+          A <code>Filter</code> composed on the handle that sent orders gets no
+          default later in the chain, even when the policy dropped every one of
+          them, as a composed <code>Order</code> already did not.
+        </li>
+      </ul>
+      <Callout tone="danger" title="A projected query that ran unordered can now be ordered">
+        A guarded query over such a projection that sends no orders now comes
+        back in the declared order, where it used to come back in the
+        database&apos;s. Paging through it is stable if the default ends with a
+        unique field.
+      </Callout>
+
+      <h2 id="cancellation-token">28. Every Async Terminal Takes a <code>CancellationToken</code></h2>
+      <p>
+        Since <strong>3.2.0</strong> every asynchronous terminal, guarded and
+        unguarded, has overloads that take a <code>CancellationToken</code>:{" "}
+        <Link href="/docs/extensions/to-list-async-filter"><code>ToListAsync</code></Link>{" "}
+        and{" "}
+        <Link href="/docs/extensions/to-list-async-dynamic-filter"><code>ToListAsyncDynamic</code></Link>{" "}
+        with a <code>Filter</code>,{" "}
+        <Link href="/docs/extensions/to-list-async-summary"><code>ToListAsync</code></Link>{" "}
+        with a <code>Summary</code>, and{" "}
+        <Link href="/docs/extensions/to-list-async-segment"><code>ToListAsync</code></Link>{" "}
+        with a <code>Segment</code>. The token reaches the count and the read. The
+        overloads sit beside the 3.1 signatures, which are unchanged, so code
+        compiled against 3.1 still binds. That brings the extension methods to
+        28. A reflection lookup by name alone now finds several methods where
+        it found one — <code>ToListAsyncDynamic</code>, on the extension class
+        and on the guarded handle — so <code>Type.GetMethod</code> given only
+        the name throws <code>AmbiguousMatchException</code>; pass the
+        parameter types.
+      </p>
+      <Callout tone="danger" title="ToListAsync(filter, default) no longer compiles">
+        <code>default</code> fits both <code>bool getQueryString</code> and the
+        new <code>CancellationToken</code> overload, so the call is ambiguous
+        (CS0121). So are <code>ToListAsyncDynamic(filter, default)</code> and{" "}
+        <code>ToListAsync(summary, default)</code>, on a query and on the guarded
+        handle alike. Write <code>false</code>, a token, or a named argument.
+        <Code lang="csharp">{`await query.ToListAsync(filter, default);              // CS0121 since 3.2.0
+await query.ToListAsync(filter, false);                // as 3.1 read it
+await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Code>
+      </Callout>
+      <Callout tone="warn" title="The dynamic and summary reads are asynchronous on EF Core">
+        <code>ToListAsyncDynamic</code> and the async <code>Summary</code> read
+        through EF Core&apos;s <code>ToListAsync</code>, and the async{" "}
+        <code>Summary</code> counts through <code>CountAsync</code>. They used to
+        read synchronously on a thread-pool thread, and the summary counted
+        synchronously, so on an EF Core query a canceled token now reaches the
+        database. The rows and the counts are the same. A provider that is not
+        EF Core&apos;s keeps the synchronous read.
+      </Callout>
+
+      <h2 id="system-namespace">29. A Type in a Namespace That Starts with <code>System</code> Is Policed</h2>
+      <p>
+        The attribute walker does not descend into the framework&apos;s own
+        types, which carry no policy attributes. Until <strong>3.2.0</strong>{" "}
+        it took any namespace whose name started with <code>System</code> for
+        the framework&apos;s, so an application namespace such as{" "}
+        <code>SystemsCorp.Payroll</code> or <code>SystemX.Domain</code> got no
+        policy beneath its types. A <code>[DwDenied]</code> field on such a type,
+        reached through a member, was returned, filterable and sortable. Only{" "}
+        <code>System</code> and the namespaces beneath it are the
+        framework&apos;s now.
+      </p>
+      <Callout tone="danger" title="Fixed (security): an application namespace was read as the framework's">
+        A guarded request that filtered on, sorted by or selected such a field
+        ran on 3.1.0. It is now refused or dropped, as for any denied field.
+      </Callout>
+
       <h2 id="next">See also</h2>
       <ul>
         <li>
@@ -1110,12 +1419,22 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         </li>
         <li>
           <Link href="/docs/policies/configuration">Policy configuration →</Link>{" "}
-          context for points 21, 22, 23 and 24: the caps, the trace on a result,
-          and what a strict refusal carries.
+          context for points 21 to 26: the caps, the trace on a result, what a
+          strict refusal carries, and what a denied field does to a projection.
         </li>
         <li>
           <Link href="/docs/policies/security#probing">Security &amp; k-anonymity →</Link>{" "}
-          why the strict tier hides which fields exist (point 23).
+          why the strict tier hides which fields exist (point 23), and{" "}
+          <Link href="/docs/policies/security#beneath">the denials the gate could not see</Link>{" "}
+          (points 25, 26 and 29).
+        </li>
+        <li>
+          <Link href="/docs/policies/attributes#default-order">Default order →</Link>{" "}
+          context for point 27.
+        </li>
+        <li>
+          <Link href="/docs/extensions#materialization">Materialization →</Link>{" "}
+          context for point 28: every async terminal and its overloads.
         </li>
       </ul>
     </DocPage>

@@ -340,8 +340,10 @@ export default function Page() {
               <code>T</code> the projection cannot construct — a positional record,
               most often. The type&apos;s name is on{" "}
               <code>Subject</code>, not in the message. Also reached by a typed
-              guarded query whose policy denies a field for <code>Select</code>,
-              since the deny synthesizes a projection
+              guarded query whose policy denies a field for <code>Select</code>{" "}
+              — since 3.2.0 whatever the field holds, and beneath a member where
+              its value can reach the result — because the deny synthesizes a
+              projection
             </td>
           </tr>
         </tbody>

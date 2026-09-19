@@ -84,7 +84,7 @@ DynamicWhere.ex code. It is the complete API surface.`}</Code>
           <code>m</code> spelling of <code>Sumation</code>.
         </li>
         <li>
-          <strong>All twenty-one extension methods</strong> with their real
+          <strong>All twenty-eight extension methods</strong> with their real
           signatures, what each one validates, and which have no synchronous or
           in-memory form. Plus the generated predicate for every operator, value
           coercion per <code>DataType</code>, and how field paths resolve.

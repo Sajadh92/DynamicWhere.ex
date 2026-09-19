@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: ".ToListAsync<T>(Segment)",
   description:
-    "Async-only segment entry — combine the ConditionSets with Union / Intersect / Except into one query, then order, page and project it in the database like a filter.",
+    "Async-only segment entry — combine the ConditionSets with Union / Intersect / Except into one query, then order, page and project it in the database like a filter. An overload takes a CancellationToken.",
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/to-list-async-segment/" },
 };
 
@@ -38,6 +38,13 @@ export default function Page() {
       <Code lang="csharp">{`public static Task<SegmentResult<T>> ToListAsync<T>(
     this IQueryable<T> query,
     Segment segment)
+    where T : class
+
+// 3.2.0
+public static Task<SegmentResult<T>> ToListAsync<T>(
+    this IQueryable<T> query,
+    Segment segment,
+    CancellationToken cancellationToken)
     where T : class`}</Code>
 
       <table>
@@ -57,6 +64,14 @@ export default function Page() {
             <td>
               Composition object — <code>ConditionSets</code>,{" "}
               <code>Selects</code>, <code>Orders</code>, <code>Page</code>
+            </td>
+          </tr>
+          <tr>
+            <td><code>cancellationToken</code></td>
+            <td><code>CancellationToken</code></td>
+            <td>
+              Cancels the count and the read. New in 3.2.0; the overload
+              without it passes <code>CancellationToken.None</code>
             </td>
           </tr>
         </tbody>
@@ -85,7 +100,18 @@ export default function Page() {
           Only the requested page is read, and an order field need not be
           selected.
         </li>
+        <li>
+          The overload that takes a <code>CancellationToken</code> passes it to
+          that count and that read. A canceled token stops whichever of the two
+          is running, and the call throws <code>OperationCanceledException</code>.
+        </li>
       </ul>
+      <p>
+        A segment takes no <code>getQueryString</code>, so{" "}
+        <code>ToListAsync(segment, default)</code> is not ambiguous: it binds
+        the token overload and passes <code>CancellationToken.None</code>. The
+        3.1 signature is unchanged, so code compiled against 3.1 still binds.
+      </p>
       <p>
         Which rows belong is decided in the database, not by object reference, so
         a tracking query, an <code>AsNoTracking()</code> query and a query with{" "}

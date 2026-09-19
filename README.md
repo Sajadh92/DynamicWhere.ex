@@ -35,7 +35,7 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 
 - **JSON in → `IQueryable<T>` out.** No string LINQ. No manual expression trees.
 - **Three composable shapes** — `Filter`, `Segment`, `Summary` — cover where, set operations, and group-by reporting.
-- **Twenty-one extension methods** on `IQueryable<T>` and `IEnumerable<T>`.
+- **Twenty-eight extension methods** on `IQueryable<T>` and `IEnumerable<T>`, every async one with overloads that take a `CancellationToken`.
 - **Nested navigation** through references and collections, with auto-wrapped `.Any()` lambdas where needed.
 - **Heterogeneous `Condition.Values`** — pass raw numbers, booleans, strings; normalized per `DataType`.
 - **Thread-safe reflection cache** with FIFO / LRU / LFU eviction and five tuned presets.
@@ -140,7 +140,7 @@ That's the whole loop. Full walk-through in **[Quick Start](https://doc.dynamicw
 | **[`Segment`](https://doc.dynamicwhere.com/docs/classes/segment)** | set1 ∪/∩/∖ set2 ∪/∩/∖ set3 → order → page | UNION / INTERSECT / EXCEPT across multiple condition sets |
 | **[`Summary`](https://doc.dynamicwhere.com/docs/classes/summary)** | where → group → having → order → page | Aggregate reporting (`GROUP BY` + `SUM` / `AVG` / `COUNT` …) |
 
-### Twenty-one extension methods
+### Twenty-eight extension methods
 
 Projection, filtering, composition, and materialization on `IQueryable<T>` and `IEnumerable<T>`:
 
@@ -150,6 +150,8 @@ Projection, filtering, composition, and materialization on `IQueryable<T>` and `
 | **Filtering** | `.Where<T>(Condition)` · `.Where<T>(ConditionGroup)` |
 | **Composition** | `.Order<T>` · `.Page<T>` · `.Group<T>` · `.Filter<T>` · `.FilterDynamic<T>` · `.Summary<T>` |
 | **Materialization** | `.ToList<T>(Filter)` · `.ToListAsync<T>(Filter)` · `.ToListDynamic<T>(Filter)` · `.ToListAsyncDynamic<T>(Filter)` · `.ToList<T>(Summary)` · `.ToListAsync<T>(Summary)` · `.ToListAsync<T>(Segment)` |
+
+Every async terminal also has overloads that take a `CancellationToken`, which reaches the count and the read. `ToList(Filter)`, `ToListDynamic(Filter)` and `ToList(Summary)` also run on an `IEnumerable<T>`.
 
 Full signatures, validations, and return types → **[Extension Methods Reference](https://doc.dynamicwhere.com/docs/extensions)**.
 
@@ -363,7 +365,7 @@ The complete reference — every enum, class, extension method, validation rule,
 | [Getting Started](https://doc.dynamicwhere.com/docs)              | Introduction, installation, quick start |
 | [Enums](https://doc.dynamicwhere.com/docs/enums)                  | Every DataType, Operator, Connector, Direction, Intersection, Aggregator, Cache enum |
 | [Classes](https://doc.dynamicwhere.com/docs/classes)              | Condition, ConditionGroup, ConditionSet, OrderBy, GroupBy, AggregateBy, PageBy, Filter, Segment, Summary, Result types |
-| [Extension Methods](https://doc.dynamicwhere.com/docs/extensions) | All 17 methods with signatures, validations, examples |
+| [Extension Methods](https://doc.dynamicwhere.com/docs/extensions) | All 28 methods with signatures, validations, examples |
 | [Validation Rules](https://doc.dynamicwhere.com/docs/validation)  | What's checked and what throws |
 | [JSON Cookbook](https://doc.dynamicwhere.com/docs/examples)       | 13 copy-pasteable end-to-end examples |
 | [Field-Level Policies](https://doc.dynamicwhere.com/docs/policies) | Attributes, precedence, masking, dynamic rules, admin API, k-anonymity |
@@ -372,6 +374,21 @@ The complete reference — every enum, class, extension method, validation rule,
 | [Breaking Changes](https://doc.dynamicwhere.com/docs/breaking-changes) | Known limits and migration notes |
 
 ---
+
+## Version 3.2.0 highlights
+
+**Upgrade note — the security fixes and the three changes alter what code written for 3.1.0 does, and the new overloads can stop a call from compiling. Read these before bumping.**
+
+- **Fixed (security): a field denied beneath a member reached a caller who sent no `Selects`.** A guarded query synthesizes a projection for a denied field, and it did so only when a simple field at the top of the type was denied. With every denial beneath a member, the whole row came back with the denied value in it: in a list or nested object of a row projected before `ApplyPolicy`, in a row held in memory, and in an entity's included, automatically included, lazily loaded or owned member — typed and dynamic, in both tiers, for a `Filter` and a `Segment`. Such a denial now synthesizes the projection whenever its value can reach the result. On an entity that means beneath a column, an owned or complex member, or a navigation the query loads through `Include`, an automatic include or a lazy loader. A denial beneath a navigation nothing loads never leaves the database, and the entity is read exactly as before.
+- **Fixed (security): a denied member that holds no simple value came back.** A field denied at the top of the type whose own type is not a simple value — a byte array, a list, an owned object, a JSON column — synthesized no projection either, so with nothing else denied it came back.
+- **Fixed (security): an application namespace starting with `System` got no policy.** The attribute walker read any namespace starting with "System" as the framework's, so an application namespace such as `SystemsCorp.Payroll` got no policy beneath its types, and a `[DwDenied]` field there was returned, filterable and sortable. Only `System` and the namespaces beneath it are the framework's now.
+- **Fixed (security): a navigation narrowed around its own denied key got the key back.** Under the convenience tier, `Selects` naming a navigation whose key (`Id`) is denied was narrowed to the allowed fields beneath it, and the core's typed projection added the key back. Such a narrowing is refused with `FieldDeniedForSelect` in both tiers, as naming a sibling of the key already was. A navigation named through another, such as `Main.Lead`, now gates the key of `Main`, which the projection adds; it did not.
+- **Fixed (security): `Selects` could name a member whose denials the gate did not see.** A member typed as a collection the core does not unwrap — `IReadOnlyList<T>`, `IReadOnlyCollection<T>`, `Collection<T>` or an application's own — returned every field beneath it, denied ones included, in both tiers, because the projection gate read collections through a narrower list than the attribute walker. It reads them the same way now, and a narrowing the core cannot project is refused with `FieldDeniedForSelect`. Denials beneath a named member are also read from the policy's own rules, so a denied property with no setter and a rule on a path reached through a cycle are found. A field denied deeper than the walker reaches, or inside a framework collection such as `Dictionary<string, T>`, is refused under the strict tier and narrowed away under the convenience tier, or refused there too where the member cannot be narrowed.
+- **Changed: the synthesized projection keeps what the source carries.** It kept simple fields only, so every nested object and list of a row projected before `ApplyPolicy` came back null or empty as soon as any field was denied. A row a projection builds — the outermost `Select` constructs it, in an object initializer or with a constructor, as in `db.Roles.Select(r => new RoleRow { … })` — keeps the members its initializer assigns. An entity, or a `Select` that hands back an entity such as `db.Orders.Select(o => o.Customer)`, keeps its mapped columns, converted and JSON ones included, its owned and complex members, and every collection of simple values such as `byte[]` or `List<string>`. A member holding an object is kept whole when nothing it can hold is denied, narrowed to the allowed fields where the core's narrowing translates, and otherwise left out whole, recorded as `Dropped` with a reason starting `left out whole`. An entity's navigations, the objects of a row in memory, and a value EF Core does not map are left out, and the type needs a public parameterless constructor for the projection, as it already did.
+- **Changed: `[DwEntity(DefaultOrder)]` reaches a projection that builds the row.** A guarded query over a projected source takes the default when the outermost `Select` builds the type in an object initializer and assigns every field the default names, at every level of a nested path, with nothing EF Core would compute on the client: `Select(t => new TicketRow { Id = t.Id, CreatedAt = t.CreatedAt })` for `"CreatedAt desc, Id"`. Any other projection still leaves the query in its own order. A `Select`, or a `Filter` with `Selects`, composed on the guarded handle keeps the rest of the chain unordered, and a composed `Filter` that sent orders gets no default later in the chain, as a composed `Order` already did not.
+- **Changed: the async dynamic `Filter` and the async `Summary` read through EF Core.** `ToListAsyncDynamic` and `ToListAsync(Summary)` read with EF Core's `ToListAsync`, and the summary counts with `CountAsync`. They used to read synchronously on a thread-pool thread, so on an EF Core query a canceled token now reaches the database. A provider that is not EF Core's keeps the synchronous read.
+- **New: a `CancellationToken` on every async terminal**, guarded and unguarded: `ToListAsync` and `ToListAsyncDynamic` with a `Filter`, `ToListAsync` with a `Summary`, and `ToListAsync` with a `Segment`. The token reaches the count and the read. The overloads sit beside the 3.1 signatures, which are unchanged, so code compiled against 3.1 still binds. `ToListAsync(filter, default)`, `ToListAsyncDynamic(filter, default)` and `ToListAsync(summary, default)` no longer compile, because `default` fits both `getQueryString` and the token: write `false`, a token, or a named argument. A reflection lookup of `ToListAsyncDynamic` by name alone now finds three methods where it found one.
+- **Known limits.** Once a projection is needed, an entity's navigations are left out, included ones too; name one in `Selects` to get it, narrowed. A forced scope declared on a list's element type filters the rows that hold the list, never its elements, so `Selects` naming the list returns every element and a synthesized projection leaves the list out; scope the elements where the row is built. A member typed `object` is opaque to the policy, and a framework generic holding a policed type, such as `Dictionary<string, LineDto>`, has no paths beneath it: hold such values in a list of the policed type. `/simulate` has no source, so it reads the type as one it cannot see into: every denial beneath a member counts, and the projection it shows keeps only members holding a value.
 
 ## Version 3.1.0 highlights
 

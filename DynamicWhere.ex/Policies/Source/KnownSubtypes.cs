@@ -26,6 +26,8 @@ internal static class KnownSubtypes
 
     private static int _epoch;
 
+    private static Snapshot? _snapshot;
+
     static KnownSubtypes() =>
         AppDomain.CurrentDomain.AssemblyLoad += (_, loaded) =>
         {
@@ -53,32 +55,30 @@ internal static class KnownSubtypes
             return known.Types;
         }
 
-        Type[] types = Search(type);
+        Type[] types = Search(type, Assemblies(epoch));
 
         Found[type] = (epoch, types);
 
         return types;
     }
 
-    private static Type[] Search(Type type)
+    private static Type[] Search(Type type, IEnumerable<Candidate> assemblies)
     {
-        string? home = type.Assembly.GetName().Name;
+        string home = type.Assembly.GetName().Name ?? string.Empty;
         List<Type> found = new();
 
-        foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+        foreach (Candidate candidate in assemblies)
         {
-            if (assembly.IsDynamic
-                || (assembly != type.Assembly
-                    && !assembly.GetReferencedAssemblies().Any(reference => reference.Name == home)))
+            if (candidate.Assembly != type.Assembly && !candidate.References.Contains(home))
             {
                 continue;
             }
 
-            foreach (Type candidate in TypesOf(assembly))
+            foreach (Type declared in candidate.Types.Value)
             {
-                if (candidate != type && !candidate.ContainsGenericParameters && type.IsAssignableFrom(candidate))
+                if (declared != type && !declared.ContainsGenericParameters && type.IsAssignableFrom(declared))
                 {
-                    found.Add(candidate);
+                    found.Add(declared);
                 }
             }
         }
@@ -86,7 +86,33 @@ internal static class KnownSubtypes
         return found.ToArray();
     }
 
-    private static IEnumerable<Type> TypesOf(Assembly assembly)
+    /// <summary>
+    /// The loaded assemblies that could declare a subtype, each with the names it references, read once
+    /// per epoch; an assembly's types are read only when a search reaches it.
+    /// </summary>
+    private static Candidate[] Assemblies(int epoch)
+    {
+        if (Volatile.Read(ref _snapshot) is { } snapshot && snapshot.Epoch == epoch)
+        {
+            return snapshot.Candidates;
+        }
+
+        Candidate[] candidates = AppDomain.CurrentDomain.GetAssemblies()
+            .Where(assembly => !assembly.IsDynamic)
+            .Select(assembly => new Candidate(
+                assembly,
+                new HashSet<string>(
+                    assembly.GetReferencedAssemblies().Select(reference => reference.Name ?? string.Empty),
+                    StringComparer.Ordinal),
+                new Lazy<Type[]>(() => TypesOf(assembly))))
+            .ToArray();
+
+        Volatile.Write(ref _snapshot, new Snapshot(epoch, candidates));
+
+        return candidates;
+    }
+
+    private static Type[] TypesOf(Assembly assembly)
     {
         try
         {
@@ -94,7 +120,11 @@ internal static class KnownSubtypes
         }
         catch (ReflectionTypeLoadException partial)
         {
-            return partial.Types.OfType<Type>();
+            return partial.Types.OfType<Type>().ToArray();
         }
     }
+
+    private sealed record Candidate(Assembly Assembly, HashSet<string> References, Lazy<Type[]> Types);
+
+    private sealed record Snapshot(int Epoch, Candidate[] Candidates);
 }

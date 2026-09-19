@@ -201,9 +201,13 @@ export default function Page() {
           <code>{`Select(o => o.Customer)`}</code>, a <code>SelectMany</code>, a{" "}
           <code>Join</code>, a <code>GroupBy</code> — when it also has an
           include, which EF Core applies from the root to the entities it
-          reaches, or builds an object in one of its lambdas, as a projection
-          behind an identity <code>Select</code>, a member of an anonymous row or
-          a conditional does. Such a chain with neither is read from the model.
+          reaches, or when one of its lambdas hands its rows an object: one it
+          builds, as a projection behind an identity <code>Select</code>, a
+          member of an anonymous row or a conditional does; one an
+          application&apos;s method returns; or one it captured, another query
+          with its own include or projection, or an object in memory. What only
+          feeds a predicate or a key is a value and hands a row nothing. Such a
+          chain with none of these is read from the model.
         </li>
         <li>
           A denial beneath a navigation nothing loads never leaves the database,
@@ -304,8 +308,9 @@ export default function Page() {
         <li>
           <strong>kept whole</strong> when nothing beneath it is denied, nothing
           its value can hold is denied (its subtypes included), it cannot hold an
-          object of any type (asked of a projected row or a row in memory: what
-          an entity read from the database never holds one), under a{" "}
+          object of any type (asked of a projected row, a row in memory, and an
+          entity&apos;s column a value converter hands back: what EF Core
+          materializes itself never holds one), under a{" "}
           <code>&quot;*&quot;</code> deny every path beneath it the walk skips is
           one the policy names, no forced scope is beneath it, and no transform
           beneath it lands on a property with no setter;
@@ -409,8 +414,13 @@ left out whole: it can hold what the policy cannot name`}</Code>
         collection that is not generic, such as <code>IEnumerable</code>,{" "}
         <code>ArrayList</code> or an application&apos;s own, is opaque to the
         policy. It never asks for a projection; when one is needed anyway, a
-        projected row or a row in memory leaves it out and an entity keeps it;
-        and naming it returns whatever it holds. A framework generic holding a
+        projected row, a row in memory, and an entity&apos;s converted column
+        leave it out, and an entity&apos;s other columns keep it;
+        and naming it returns whatever it holds. A converter returning an
+        application type through a column typed <code>object</code> is opaque
+        the same way, so type the member as what it holds. An
+        application&apos;s own collection still has its own members read. A
+        framework generic holding a
         policed type, such as <code>Dictionary&lt;string, LineDto&gt;</code>, has
         no paths beneath it: naming it is refused in both tiers where the core
         cannot narrow it, narrowed away under <code>Convenience</code> beneath a

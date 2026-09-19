@@ -301,12 +301,13 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
             </td>
           </tr>
           <tr>
-            <td>Put the <code>[DwDenied]</code> on an override, or on a class&apos;s implementation of an interface member, and read the member through the base type or the interface</td>
+            <td>Put the <code>[DwDenied]</code> on an override, on a member a subtype hides with <code>new</code>, or on a class&apos;s implementation of an interface member, and read the member through the base type or the interface</td>
             <td>
               The denial applies to the path for every row, in every clause. The
               attribute walker read the declaration it walked and the attributes
-              above it, never an override or an implementation below, so the
-              base path filtered, sorted, grouped and returned the value.
+              above it, never an override, a hiding member or an implementation
+              below, so the base path filtered, sorted, grouped and returned the
+              value.
             </td>
           </tr>
           <tr>

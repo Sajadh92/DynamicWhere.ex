@@ -1156,11 +1156,16 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         initializer after a constructor with arguments, and a lazy loader the
         constructor takes and keeps in a field or a property of any name each
         loaded a denied value the gate read as unloaded, and so did an injected{" "}
-        <code>DbContext</code> or EF Core 7&apos;s asynchronous loader delegate.
-        A field a subtype declares — a derived entity&apos;s, or a
+        <code>DbContext</code> or EF Core 7&apos;s asynchronous loader delegate,
+        and a reshaping lambda that got its row from an application&apos;s
+        method or from a captured query or object. A converted column typed{" "}
+        <code>object</code> was kept whole when a projection was built for
+        another field, and an application&apos;s own non-generic collection hid
+        its own denied members. A field a subtype declares — a derived entity&apos;s, or a
         subclass&apos;s held by a base-typed member — was not read at all, nor
-        was a <code>[DwDenied]</code> on an override or on an interface
-        member&apos;s implementation, and under a{" "}
+        was a <code>[DwDenied]</code> on an override, on a member hidden with{" "}
+        <code>new</code> or on an interface member&apos;s implementation, and
+        under a{" "}
         <code>&quot;*&quot;</code> deny a path the walk never asked about was
         allowed. Each came back.
       </Callout>
@@ -1174,9 +1179,10 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         return its members. Query the derived type,{" "}
         <code>{`OfType<Company>()`}</code>, to keep its fields. Rows in memory
         can be any loaded subtype, so there the rows are projected whenever one
-        declares a denied field. A <code>[DwDenied]</code> on an override or on
-        an interface member&apos;s implementation denies the base path for
-        every row, in every clause.
+        declares a denied field. A <code>[DwDenied]</code> on an override, on a
+        member a subtype hides with <code>new</code>, or on an interface
+        member&apos;s implementation denies the base path for every row, in
+        every clause.
       </Callout>
       <Callout tone="danger" title="Fixed (security): a denied member that holds no simple value came back">
         A field denied at the top of <code>T</code> whose own type is not a

@@ -474,41 +474,6 @@ namespace DynamicWhere.Tests.Policies
 
     // ------------------------------------------------------------ the probes
 
-    /// <summary>Appends a probe's outcome to a file named for the tree and the EF Core version it ran on.</summary>
-    internal static class ZbProbeLog
-    {
-        private static readonly object Gate = new();
-
-        internal static string Tag
-        {
-            get
-            {
-                string where = AppContext.BaseDirectory;
-                string tree = where.Contains("base-8a8d7fd") ? "base-8a8d7fd"
-                    : where.Contains("parent-f7e1cc6") ? "parent-f7e1cc6"
-                    : where.Contains("head-fce9c16") ? "head-fce9c16"
-                    : "6c9e171";
-
-                return $"{tree}-ef{typeof(DbContext).Assembly.GetName().Version!.Major}";
-            }
-        }
-
-        internal static void Write(string line)
-        {
-            string directory = "/private/tmp/claude-501/-Users-sajadh92-Developer-Project-DynamicWhere-ex/8f118b4d-a861-42ce-b1d4-baa9f4b933e3/scratchpad/probes-b3";
-
-            if (!Directory.Exists(directory))
-            {
-                return;
-            }
-
-            lock (Gate)
-            {
-                File.AppendAllText(Path.Combine(directory, $"outcomes-{Tag}.txt"), line + Environment.NewLine);
-            }
-        }
-    }
-
     public sealed class ReviewOverBlockTests : IDisposable
     {
         private readonly ITestOutputHelper _out;
@@ -628,7 +593,6 @@ namespace DynamicWhere.Tests.Policies
             }
 
             _out.WriteLine(line);
-            ZbProbeLog.Write(line);
 
             return line;
         }

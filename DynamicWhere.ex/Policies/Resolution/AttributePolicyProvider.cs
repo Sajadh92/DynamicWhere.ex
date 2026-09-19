@@ -311,18 +311,19 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     }
 
     /// <summary>
-    /// What a subtype declares in a member's place: an override of either accessor, or a member of the same
-    /// name that hides it. Both carry the member's name.
+    /// What a subtype declares in a member's place: an override of either accessor, or a public member of the
+    /// same name that hides it. Both carry the member's name. One the subtype keeps to itself hides nothing a
+    /// caller reads, and no serializer writes it.
     /// </summary>
     private static IEnumerable<PropertyInfo> Redeclarations(Type subtype, PropertyInfo property) =>
         subtype
-            .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Where(candidate => candidate.Name == property.Name);
 
     /// <summary>
-    /// The properties a class implements an interface's member with. A class that is itself open generic
-    /// implements the interface over its own type parameters, which may be any instantiation, so that one
-    /// is read too.
+    /// The properties a class implements an interface's member with: through the interface itself, through an
+    /// instantiation variance lets stand for it, IFeed&lt;VisaCard&gt; for IFeed&lt;Card&gt; with <c>out T</c>, and, for
+    /// a class that is itself open generic, through one over its own type parameters, which may be any.
     /// </summary>
     private static IEnumerable<PropertyInfo> Implementations(Type row, Type contract, MethodInfo[] accessors)
     {
@@ -332,8 +333,9 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
         {
             bool same = implemented == contract
                         || (implemented.IsGenericType && contract.IsGenericType
-                            && (implemented.ContainsGenericParameters || contract.ContainsGenericParameters)
-                            && implemented.GetGenericTypeDefinition() == contract.GetGenericTypeDefinition());
+                            && implemented.GetGenericTypeDefinition() == contract.GetGenericTypeDefinition()
+                            && (implemented.ContainsGenericParameters || contract.ContainsGenericParameters
+                                || contract.IsAssignableFrom(implemented)));
 
             if (!same || Map(row, implemented) is not { } map)
             {

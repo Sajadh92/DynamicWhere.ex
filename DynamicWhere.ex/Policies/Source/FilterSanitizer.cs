@@ -1910,6 +1910,19 @@ internal static class FilterSanitizer
                 continue;
             }
 
+            // Two members share the name, one hidden with new under another type or spelled in another case:
+            // the core reads one of them, and a row carries both. What either can hold is asked about, and a
+            // projection, which cannot tell them apart, leaves the name out.
+            if (gate.SharedName(name) is { Shared: true } shared
+                && (shared.Denies || gate.Beneath(name, PolicyFeature.None).Denied.Any(d => rows.Materializes(d.Path))))
+            {
+                anyDenied = true;
+
+                gate.LeaveOut(name, "left out: the type declares more than one member of this name, which a projection cannot tell apart");
+
+                continue;
+            }
+
             // A projection assigns only a member with a setter, and no path can name a member the
             // expression parser keeps a word for; such a member is still asked about below.
             bool assignable = member.CanWrite && !ReservedNames.Starts(name);
@@ -1978,7 +1991,9 @@ internal static class FilterSanitizer
                 ? "left out whole: a scope forced beneath it cannot be applied to what it holds"
                 : rows.Narrows(name)
                     ? Narrowed(name, survivors, gate, rows, allowed)
-                    : "left out whole: " + rows.WhyNotNarrowed(name);
+                    : reached.Count == 0 && !unnamed.DeniesSelect && unnamed.HoldsObject
+                        ? "left out whole: it can hold what the policy cannot name"
+                        : "left out whole: " + rows.WhyNotNarrowed(name);
 
             if (reason is not null)
             {
@@ -2724,7 +2739,65 @@ internal static class FilterSanitizer
         /// carry a policy, and on an entity it is a column the unguarded call loads.
         /// </remarks>
         internal static bool HoldsValue(Type type) =>
-            CacheReflection.IsSimpleType(AttributePolicyProvider.Peeled(type));
+            CacheReflection.IsSimpleType(AttributePolicyProvider.Peeled(type))
+            && !OwnsMembers(Nullable.GetUnderlyingType(type) ?? type);
+
+        /// <summary>
+        /// True for an application's own collection class, one deriving from <c>List&lt;string&gt;</c> or a
+        /// <c>Dictionary</c> say, that declares members beside the elements it holds.
+        /// </summary>
+        private static bool OwnsMembers(Type type) =>
+            type.IsClass
+            && !type.IsArray
+            && !AttributePolicyProvider.IsFramework(type)
+            && AttributePolicyProvider.Peeled(type) != type
+            && type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Any(property => property.GetIndexParameters().Length == 0
+                                 && property.DeclaringType is { } declaring
+                                 && !AttributePolicyProvider.IsFramework(declaring));
+
+        /// <summary>The names more than one readable member of a type shares, compared as the core compares names.</summary>
+        private static readonly ConcurrentDictionary<Type, HashSet<string>> SharedNames = new();
+
+        private static HashSet<string> ReadSharedNames(Type type) =>
+            new(type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(property => property.CanRead && property.GetIndexParameters().Length == 0)
+                    .GroupBy(property => property.Name, StringComparer.OrdinalIgnoreCase)
+                    .Where(group => group.Count() > 1)
+                    .Select(group => group.Key),
+                StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Whether T declares more than one member of a name, as the core compares names, one of them holding
+        /// more than a value; and if so, whether what one of them holds is denied.
+        /// </summary>
+        /// <remarks>
+        /// A member hidden with <c>new</c> under another type, or two names differing only in case. The core
+        /// reads one of them by name, and a row carries every one, which a serializer writes.
+        /// </remarks>
+        internal (bool Shared, bool Denies) SharedName(string name)
+        {
+            if (!SharedNames.GetOrAdd(_entityType, ReadSharedNames).Contains(name))
+            {
+                return (false, false);
+            }
+
+            List<PropertyInfo> variants = _entityType
+                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(property => property.CanRead
+                                   && property.GetIndexParameters().Length == 0
+                                   && string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (variants.TrueForAll(variant => HoldsValue(variant.PropertyType)))
+            {
+                return (false, false);
+            }
+
+            return (true, variants.Exists(variant => Denies(name, variant)
+                                                    || (!HoldsValue(variant.PropertyType)
+                                                        && Carried(variant.PropertyType, name, exact: false).DeniesSelect)));
+        }
 
         /// <summary>
         /// True when a validated path names a navigation rather than a scalar.
@@ -3326,6 +3399,20 @@ internal static class FilterSanitizer
             void Enqueue(Type candidate, bool root)
             {
                 Type peeled = AttributePolicyProvider.Peeled(candidate);
+                Type unwrapped = Nullable.GetUnderlyingType(candidate) ?? candidate;
+
+                // An application's own collection class declares members beside the elements it holds.
+                if (OwnsMembers(unwrapped))
+                {
+                    holdsMembers = true;
+
+                    Read(unwrapped);
+
+                    if (!(root && exact))
+                    {
+                        Subtypes(unwrapped);
+                    }
+                }
 
                 if (HoldsAnything(peeled))
                 {
@@ -3401,7 +3488,17 @@ internal static class FilterSanitizer
             || peeled.IsGenericParameter
             || (!peeled.IsGenericType
                 && ((AttributePolicyProvider.IsFramework(peeled) && peeled.IsInterface)
-                    || (peeled != typeof(string) && typeof(IEnumerable).IsAssignableFrom(peeled))));
+                    || (peeled != typeof(string) && typeof(IEnumerable).IsAssignableFrom(peeled)
+                                                 && !ValueCollections.Contains(peeled))));
+
+        /// <summary>The framework's collections that are not generic yet hold values only: bits and strings.</summary>
+        private static readonly HashSet<Type> ValueCollections = new()
+        {
+            typeof(BitArray),
+            typeof(System.Collections.Specialized.StringCollection),
+            typeof(System.Collections.Specialized.StringDictionary),
+            typeof(System.Collections.Specialized.NameValueCollection)
+        };
 
         /// <summary>
         /// What a type can hold that the policy cannot name a path to.

@@ -11,6 +11,8 @@ using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Source;
 using Microsoft.EntityFrameworkCore;
 using System.Linq.Dynamic.Core;
+using System.Linq.Expressions;
+using System.Reflection;
 
 namespace DynamicWhere.ex.Policies.Source;
 
@@ -733,10 +735,30 @@ public sealed class PolicyQueryable<T> where T : class
     /// point every guarded query passes through, so no individual method can forget it.
     /// <para>
     /// Harmless on a non-EF source: the EF extension returns the query unchanged when the provider
-    /// is not one of its own.
+    /// is not one of its own. A provider that wraps EF Core's, as LinqKit's <c>AsExpandable</c> and
+    /// DelegateDecompiler's <c>Decompile</c> do, is not one of its own either, and passes the query on to
+    /// EF Core with tracking still on: the tracked entities' navigations were then filled in on the rows,
+    /// and a masked value became a pending change. On such a query the call goes into the query itself,
+    /// where EF Core reads it.
     /// </para>
     /// </remarks>
-    private IQueryable<T> Guarded() => _source.AsNoTracking();
+    private IQueryable<T> Guarded()
+    {
+        IQueryable<T> untracked = _source.AsNoTracking();
+
+        if (!ReferenceEquals(untracked, _source) || QueryRoot.Model(_source.Expression) is null)
+        {
+            return untracked;
+        }
+
+        return _source.Provider.CreateQuery<T>(
+            Expression.Call(null, AsNoTrackingMethod.MakeGenericMethod(typeof(T)), _source.Expression));
+    }
+
+    private static readonly MethodInfo AsNoTrackingMethod = typeof(EntityFrameworkQueryableExtensions)
+        .GetMethods()
+        .Single(method => method.Name == nameof(EntityFrameworkQueryableExtensions.AsNoTracking)
+                          && method.GetParameters().Length == 1);
 
     /// <summary>
     /// Returns the query as a plain <see cref="IQueryable{T}"/>, outside the guard.

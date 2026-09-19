@@ -84,15 +84,17 @@ internal static class KnownSubtypes
     }
 
     /// <summary>
-    /// True when some instantiation of an open generic subtype derives from or implements a closed type:
-    /// its own base or interface of that definition is the type, or is still open. One over another
+    /// True when a type indexed under a generic type's definition can be a value of one instantiation of it.
+    /// A closed type can when the runtime says so, which reads variance: a member typed
+    /// IFeed&lt;Card&gt;, with <c>out T</c>, holds an IFeed&lt;VisaCard&gt;. An open generic one can when its own
+    /// base or interface of that definition is still open, or is one of those. One over another
     /// instantiation, class Fixed&lt;T&gt; : Base&lt;string&gt;, never holds a Base&lt;int&gt;.
     /// </summary>
     private static bool CanBe(Type candidate, Type type)
     {
         if (!candidate.ContainsGenericParameters)
         {
-            return false;
+            return type.IsAssignableFrom(candidate);
         }
 
         Type definition = type.GetGenericTypeDefinition();
@@ -100,7 +102,7 @@ internal static class KnownSubtypes
 
         return ancestors.Any(ancestor => ancestor.IsGenericType
                                          && ancestor.GetGenericTypeDefinition() == definition
-                                         && (ancestor == type || ancestor.ContainsGenericParameters));
+                                         && (ancestor.ContainsGenericParameters || type.IsAssignableFrom(ancestor)));
     }
 
     private static IEnumerable<Type> BaseTypes(Type type)

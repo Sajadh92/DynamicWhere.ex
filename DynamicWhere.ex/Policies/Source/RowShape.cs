@@ -408,9 +408,63 @@ internal sealed class RowShape
 
     /// <summary>
     /// True when a column's value comes from a value converter, which is the application's code and can hand
-    /// back an object of any type its member's type allows.
+    /// back an object of any type its member's type allows; for a complex property, when a member of it does.
     /// </summary>
-    private static bool Converted(IEntityType type, string name) => type.FindProperty(name)?.GetValueConverter() is not null;
+    private static bool Converted(IEntityType type, string name) =>
+        type.FindProperty(name)?.GetValueConverter() is not null || ConvertedComplex(type).Contains(name);
+
+    /// <summary>The complex properties of an entity type with a converted member at any depth.</summary>
+    private static HashSet<string> ConvertedComplex(IEntityType entityType) =>
+        ConvertedComplexByType.GetValue(entityType, ReadConvertedComplex);
+
+    private static readonly ConditionalWeakTable<IEntityType, HashSet<string>> ConvertedComplexByType = new();
+
+    /// <summary>
+    /// Reads, through reflection since EF Core 6 has none, the complex properties whose type holds a converted
+    /// property. One that cannot be read counts as converted.
+    /// </summary>
+    private static HashSet<string> ReadConvertedComplex(IEntityType entityType)
+    {
+        HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (object complex in Items(entityType, "GetComplexProperties"))
+        {
+            if (complex.GetType().GetProperty("Name")?.GetValue(complex) is string name && HoldsConverted(complex, depth: 0))
+            {
+                names.Add(name);
+            }
+        }
+
+        return names;
+    }
+
+    private static bool HoldsConverted(object complex, int depth)
+    {
+        if (depth > MaxComplexDepth || complex.GetType().GetProperty("ComplexType")?.GetValue(complex) is not { } type)
+        {
+            return true;
+        }
+
+        return Items(type, "GetProperties").Any(property => property is not IReadOnlyProperty column || column.GetValueConverter() is not null)
+               || Items(type, "GetComplexProperties").Any(nested => HoldsConverted(nested, depth + 1));
+    }
+
+    /// <summary>How deep complex properties are read inside one another before the rest counts as converted.</summary>
+    private const int MaxComplexDepth = 8;
+
+    /// <summary>What a model object's parameterless method of the name returns, for a method some interface of it declares.</summary>
+    private static IEnumerable<object> Items(object model, string method)
+    {
+        foreach (Type contract in model.GetType().GetInterfaces())
+        {
+            if (contract.GetMethod(method, Type.EmptyTypes) is { } found && found.Invoke(model, null) is IEnumerable items)
+            {
+                return items.Cast<object>().ToList();
+            }
+        }
+
+        return Array.Empty<object>();
+    }
 
     /// <summary>True when something loads a navigation of an entity reached along a path.</summary>
     private bool Loads(IEntityType owner, INavigationBase navigation, string path) =>

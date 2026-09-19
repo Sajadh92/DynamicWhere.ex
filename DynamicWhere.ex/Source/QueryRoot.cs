@@ -181,6 +181,13 @@ internal static class QueryRoot
 
         protected override Expression VisitNew(NewExpression node)
         {
+            // An anonymous object carries what it is given, the range variables of a query-syntax join or
+            // let, or the parts of a composite key, and builds nothing of its own: what it carries is read.
+            if (IsAnonymous(node.Type))
+            {
+                return base.VisitNew(node);
+            }
+
             Found = true;
 
             return node;
@@ -209,11 +216,22 @@ internal static class QueryRoot
 
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
+            // A call that reads nothing of the lambda's and hands back a query or an expression, a
+            // repository's query, a specification or FromSql, is evaluated before the query runs, as EF
+            // Core evaluates it, and what it returns is read.
+            if (Evaluable(node))
+            {
+                Found = !TryEvaluate(node, out object? value) || Holds(value, _depth);
+
+                return node;
+            }
+
             if (Reads(node.Method))
             {
                 return base.VisitMethodCall(node);
             }
 
+            // Any other method's result is its own to say.
             Found = true;
 
             return node;
@@ -241,7 +259,8 @@ internal static class QueryRoot
 
     /// <summary>
     /// True for a method that hands back what it was given, or reads it: LINQ's operators, EF Core's
-    /// <c>EF.Property</c> and query operators, and a context's <c>Set</c>, which names a query root.
+    /// <c>EF.Property</c> and query operators, a context's <c>Set</c>, which names a query root, and a
+    /// context's own method returning a query, which EF Core translates only as a function the model maps.
     /// </summary>
     private static bool Reads(MethodInfo method)
     {
@@ -251,7 +270,76 @@ internal static class QueryRoot
                || declaring == typeof(Enumerable)
                || declaring == typeof(EF)
                || declaring == typeof(EntityFrameworkQueryableExtensions)
-               || (declaring == typeof(DbContext) && method.Name == nameof(DbContext.Set));
+               || (declaring == typeof(DbContext) && method.Name == nameof(DbContext.Set))
+               || (declaring is not null && typeof(DbContext).IsAssignableFrom(declaring)
+                                        && typeof(IQueryable).IsAssignableFrom(method.ReturnType));
+    }
+
+    /// <summary>True for a type the compiler generates for an anonymous object.</summary>
+    private static bool IsAnonymous(Type type) =>
+        type.IsDefined(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), inherit: false)
+        && type.Name.Contains("AnonymousType", StringComparison.Ordinal);
+
+    /// <summary>
+    /// True for a call EF Core evaluates before it translates the query: one that reads no parameter of the
+    /// lambdas around it and hands back a query or an expression, which the query then holds.
+    /// </summary>
+    private static bool Evaluable(MethodCallExpression call)
+    {
+        if (!typeof(IQueryable).IsAssignableFrom(call.Type) && !typeof(Expression).IsAssignableFrom(call.Type))
+        {
+            return false;
+        }
+
+        ParameterFinder parameters = new();
+
+        parameters.Visit(call);
+
+        return !parameters.Found;
+    }
+
+    /// <summary>Finds a parameter of a lambda outside the expression it is given.</summary>
+    private sealed class ParameterFinder : ExpressionVisitor
+    {
+        private readonly HashSet<ParameterExpression> _declared = new();
+
+        internal bool Found { get; private set; }
+
+        public override Expression? Visit(Expression? node) => Found ? node : base.Visit(node);
+
+        protected override Expression VisitLambda<TDelegate>(Expression<TDelegate> node)
+        {
+            _declared.UnionWith(node.Parameters);
+
+            return base.VisitLambda(node);
+        }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            Found |= !_declared.Contains(node);
+
+            return node;
+        }
+    }
+
+    /// <summary>Runs a call EF Core would evaluate itself, and reads what it returns.</summary>
+    private static bool TryEvaluate(MethodCallExpression call, out object? value)
+    {
+        try
+        {
+            value = Expression.Lambda<Func<object?>>(Expression.Convert(call, typeof(object)))
+                .Compile(preferInterpretation: true)();
+
+            return true;
+        }
+        catch (Exception)
+        {
+            // Whatever it throws, EF Core would throw when it ran the query; read here, it only means the
+            // call counts as handing the rows anything.
+            value = null;
+
+            return false;
+        }
     }
 
     /// <summary>True when a value of the type holds only values: a string, a number, a date, or a collection of them.</summary>
@@ -314,6 +402,21 @@ internal static class QueryRoot
         if (value is null || value is DbContext || IsValue(value.GetType()))
         {
             return false;
+        }
+
+        if (depth > MaxCapturedDepth)
+        {
+            return true;
+        }
+
+        // An expression, a specification say, becomes part of the query, and is read as though written there.
+        if (value is Expression expression)
+        {
+            ForeignFinder finder = new(depth + 1);
+
+            finder.Visit(expression);
+
+            return finder.Found;
         }
 
         if (value is not IQueryable query)

@@ -131,7 +131,6 @@ namespace DynamicWhere.Tests.Policies
             string line = $"{label}: {order}";
 
             _out.WriteLine(line);
-            ZbProbeLog.Write(line);
 
             return order;
         }

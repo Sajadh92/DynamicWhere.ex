@@ -112,7 +112,8 @@ public class Ticket
           read directly (<code>t.Code</code>), through reference navigations
           (<code>t.Owner.Name</code>) or through <code>EF.Property</code>, a
           shadow property included; in memory any assigned field is one. EF Core
-          then translates the order.
+          then translates the order. A projection over an anonymous or other
+          intermediate row reads no entity, so it takes no default.
         </li>
         <li>
           Any other projection leaves the query in its own order, as every
@@ -231,6 +232,16 @@ public string EmployeeCode { get; set; }`}</Code>
         beneath a member where its value can reach the result — makes a guarded
         query project the allowed members instead. See{" "}
         <Link href="/docs/policies/configuration#no-selects">A request that sends no Selects</Link>.
+      </Callout>
+      <Callout tone="note" title="A denial on an override or an implementation (3.2.0)">
+        An access-control attribute on another declaration of a member applies
+        to its path too: on the interface member a class implements, on an
+        override a subtype declares, and on the implementation a type gives an
+        interface member. A row read through the base type or the interface is
+        still that subtype, so the denial holds for the path on every row, in
+        every clause. Until 3.2.0 only the declaration walked, and the
+        attributes above it, were read. The other attributes are still read from
+        the declaration walked only.
       </Callout>
 
       <h2 id="injection">Injection</h2>

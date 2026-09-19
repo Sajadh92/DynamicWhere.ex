@@ -117,13 +117,17 @@ export default function Page() {
           subclass, an interface&apos;s implementation. What it can carry is read
           from the source. On an entity it is read from the EF Core model, so
           only what loads counts: the navigation&apos;s columns, a converted one
-          included, its owned chain at any depth, and the navigations beneath it
-          an include, an automatic include or a lazy loader fills, for its type
-          and every type the model derives from it. On a projected or in-memory
-          row it is the member&apos;s type and every loaded subtype of it. Under a
-          policy with a <code>&quot;*&quot;</code> deny, a path the walk never asks
-          about — past four segments, around a cycle, with no setter, or on a
-          subtype — is a denied one as well. The <code>Strict</code> tier refuses
+          included, its owned chain at any depth, the navigations beneath it an
+          include, an automatic include or a lazy loader fills, and each member
+          the model does not map, read as its type, since its getter can hand
+          out what EF Core loaded — for its type and every type the model
+          derives from it. On a projected row it is the type the initializer
+          constructs the member as, when it says, and otherwise the
+          member&apos;s type and every loaded subtype of it, as on a row in
+          memory. Under a policy with a <code>&quot;*&quot;</code> deny, a path the
+          walk never asks about — past four segments, with no setter, or on a
+          subtype — is a denied one unless the policy names it; around a cycle it
+          always is. The <code>Strict</code> tier refuses
           such a member. The <code>Convenience</code> tier narrows it where the
           core can, which builds the declared type and so drops a subtype&apos;s
           fields; a path naming a framework generic itself narrows to nothing and
@@ -179,13 +183,15 @@ export default function Page() {
           complex member, or a navigation something loads: an{" "}
           <code>Include</code> or <code>ThenInclude</code> on the query, an
           automatic include, or a lazy loader — EF Core&apos;s proxies, an
-          injected <code>ILazyLoader</code>, or a loader delegate or{" "}
+          injected <code>ILazyLoader</code>, a loader delegate or{" "}
           <code>ILazyLoader</code> the constructor takes and keeps in a field or
-          any property — which fills a navigation after the query. On a row a
-          projection builds, it is beneath a member the initializer assigns; a
-          constructor with arguments, with or without an initializer after it,
-          counts every member as assigned. On a row in memory, it is beneath any
-          member. A rule may spell the path in any letter case.
+          any property, the asynchronous loader delegate of EF Core 7, or an
+          injected <code>DbContext</code> — which fills a navigation after the
+          query. On a row a projection builds, it is beneath a member the
+          initializer assigns; a constructor with arguments counts every member
+          as assigned, and an initializer after it still says what its own
+          bindings hold. On a row in memory, it is beneath any member. A rule may
+          spell the path in any letter case.
         </li>
         <li>
           Every navigation counts as loaded where the library cannot read which
@@ -193,10 +199,11 @@ export default function Page() {
           off the query&apos;s own chain, and a chain that reaches its rows
           through anything but the root&apos;s own rows —{" "}
           <code>{`Select(o => o.Customer)`}</code>, a <code>SelectMany</code>, a{" "}
-          <code>Join</code>, or a projection behind another <code>Select</code>{" "}
-          (an identity <code>Select</code>, a member of an anonymous row, a
-          conditional). EF Core still applies includes named from the root to
-          the entities such a chain reaches.
+          <code>Join</code>, a <code>GroupBy</code> — when it also has an
+          include, which EF Core applies from the root to the entities it
+          reaches, or builds an object in one of its lambdas, as a projection
+          behind an identity <code>Select</code>, a member of an anonymous row or
+          a conditional does. Such a chain with neither is read from the model.
         </li>
         <li>
           A denial beneath a navigation nothing loads never leaves the database,
@@ -209,25 +216,36 @@ export default function Page() {
           inside a framework generic such as{" "}
           <code>Dictionary&lt;string, T&gt;</code>, or declared by a subtype of
           its type — asks for one too, read as for a named member, so on an
-          entity only what loads counts. So does a member that can hold an object
-          of any type: one typed <code>object</code>, a framework interface such
-          as <code>IComparable</code>, or a collection that is not generic
-          (<code>IEnumerable</code>, <code>ArrayList</code>,{" "}
-          <code>Array</code>). Under a <code>&quot;*&quot;</code> deny, so does a
-          member whose value can hold a path the walk never asks about.
+          entity only what loads counts. Under a{" "}
+          <code>&quot;*&quot;</code> deny, so does a member whose value can hold a
+          path the walk never asks about and the policy does not name.
+        </li>
+        <li>
+          A member that can hold an object of any type — one typed{" "}
+          <code>object</code>, a framework interface such as{" "}
+          <code>IComparable</code>, or a collection that is not generic, such
+          as <code>IEnumerable</code>, <code>ArrayList</code> or an
+          application&apos;s own — asks for nothing on its own: the policy cannot
+          see into it whether or not a projection is built.
         </li>
         <li>
           A row can be a subtype of <code>T</code>. On an entity, a member a type
           the model derives from <code>T</code> declares, and what loads beneath
           it, counts as one of <code>T</code>&apos;s own would; on a row in memory,
-          a member any loaded subtype declares does. The projection builds{" "}
-          <code>T</code> and leaves them out, recorded with a reason starting{" "}
-          <code>left out: a type derived</code>. A row a projection builds is
-          exactly <code>T</code>.
+          a member any loaded subtype declares does; on a row a projection
+          builds, a member the type its initializer constructs declares below{" "}
+          <code>T</code>. The projection builds <code>T</code> and leaves them
+          out, recorded with a reason starting{" "}
+          <code>left out: a type derived</code>. A subtype is any type loaded
+          outside the framework&apos;s assemblies that derives from the type or
+          implements it, an open generic one and an application&apos;s subclass
+          of <code>Exception</code> included; a rule on a path through a
+          subtype&apos;s member counts as a rule on the declared type&apos;s own
+          path does.
         </li>
         <li>
-          A member EF Core does not map holds only what the class puts there,
-          never a value the query read, so it asks for nothing.
+          A member EF Core does not map counts as loaded: its getter can hand out
+          a mapped field or a private navigation, so its type is read whole.
         </li>
         <li>
           The denials beneath a member come from the providers&apos; rules as
@@ -285,10 +303,12 @@ export default function Page() {
       <ul>
         <li>
           <strong>kept whole</strong> when nothing beneath it is denied, nothing
-          its value can hold is denied (its subtypes included) or can hold an
-          object of any type, under a <code>&quot;*&quot;</code> deny the walk asks
-          about every path beneath it, no forced scope is beneath it, and no
-          transform beneath it lands on a property with no setter;
+          its value can hold is denied (its subtypes included), it cannot hold an
+          object of any type (asked of a projected row or a row in memory: what
+          an entity read from the database never holds one), under a{" "}
+          <code>&quot;*&quot;</code> deny every path beneath it the walk skips is
+          one the policy names, no forced scope is beneath it, and no transform
+          beneath it lands on a property with no setter;
         </li>
         <li>
           <strong>narrowed</strong> otherwise, to the allowed fields beneath it,
@@ -314,6 +334,7 @@ left out whole: it is stored as JSON, which EF Core cannot narrow
 left out whole: the projection builds it in a way the core cannot narrow
 left out whole: the projection would add its key 'Contents.Id', which is denied
 left out whole: the core cannot project 'Contents.Code'
+left out whole: the core cannot build 'IContact', which it narrows into
 left out whole: nothing beneath it may be selected
 left out whole: it can hold what the policy cannot name`}</Code>
       <p>
@@ -326,9 +347,10 @@ left out whole: it can hold what the policy cannot name`}</Code>
         <li>
           An entity&apos;s navigation, included or not: projecting it would load
           it. So once a denial needs a projection, an included or automatically
-          included navigation is not returned. Under <code>Convenience</code>,
-          name it in <code>Selects</code> to get it narrowed; under{" "}
-          <code>Strict</code>, name its allowed fields.
+          included navigation is not returned, and the trace records it as{" "}
+          <code>Dropped</code> with a reason starting <code>left out:</code>.
+          Under <code>Convenience</code>, name it in <code>Selects</code> to get
+          it narrowed; under <code>Strict</code>, name its allowed fields.
         </li>
         <li>
           An object held by a row in memory: a kept object is the caller&apos;s
@@ -385,15 +407,15 @@ left out whole: it can hold what the policy cannot name`}</Code>
       <Callout tone="warn" title="What the policy cannot see into">
         A member typed <code>object</code>, a framework interface or a
         collection that is not generic, such as <code>IEnumerable</code>,{" "}
-        <code>ArrayList</code> or <code>Array</code>, is opaque to the policy: a
-        synthesized projection leaves it out, and naming it returns whatever it
-        holds. A framework generic holding a policed type, such as{" "}
-        <code>Dictionary&lt;string, LineDto&gt;</code>, has no paths beneath it:
-        naming it is refused in both tiers where the core cannot narrow it, at
-        the top of <code>T</code> or on a row in memory, narrowed away under{" "}
-        <code>Convenience</code> beneath a navigation, and a synthesized
-        projection leaves it out. Hold such values in a list of the policed type
-        instead.
+        <code>ArrayList</code> or an application&apos;s own, is opaque to the
+        policy. It never asks for a projection; when one is needed anyway, a
+        projected row or a row in memory leaves it out and an entity keeps it;
+        and naming it returns whatever it holds. A framework generic holding a
+        policed type, such as <code>Dictionary&lt;string, LineDto&gt;</code>, has
+        no paths beneath it: naming it is refused in both tiers where the core
+        cannot narrow it, narrowed away under <code>Convenience</code> beneath a
+        navigation, and a synthesized projection leaves it out. Hold such values
+        in a list of the policed type instead.
       </Callout>
       <Callout tone="warn" title="A projection builds the declared type">
         A query over the root of a hierarchy whose derived type declares a
@@ -401,9 +423,12 @@ left out whole: it can hold what the policy cannot name`}</Code>
         allowed fields dropped too. Over an abstract root the typed terminals
         fail with <code>SelectTypeMustHaveParameterlessConstructor</code>, and
         the dynamic ones return the root&apos;s members. Query the derived type,{" "}
-        <code>{`OfType<Company>()`}</code>, to keep its fields. Under a{" "}
-        <code>&quot;*&quot;</code> deny, a member is kept whole only when the walk
-        asks about every path beneath it.
+        <code>{`OfType<Company>()`}</code>, to keep its fields. Rows in memory
+        can be any loaded subtype, and the policy does not look at the rows:
+        when a subtype declares a denied field, they are projected and their
+        objects left out, even if no row is that subtype. Under a{" "}
+        <code>&quot;*&quot;</code> deny, a member is kept whole only when every
+        path beneath it the walk skips is one the policy names.
       </Callout>
       <Callout tone="warn" title="A forced scope on a list's element type filters rows, not elements">
         A forced scope declared on a list&apos;s element type filters the rows

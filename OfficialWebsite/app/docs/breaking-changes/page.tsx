@@ -1116,16 +1116,17 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
           through an <code>Include</code>, an automatic include or a lazy
           loader; on a projected row, beneath a member the initializer assigns;
           in memory, beneath any member. A chain that reaches its rows through
-          a navigation, a <code>SelectMany</code>, a <code>Join</code> or a
-          projection behind another <code>Select</code> counts every navigation
-          as loaded. A field a subtype of <code>T</code> declares, and one a
-          subtype of a member&apos;s type declares, count too. It does so in both
-          tiers, typed and dynamic, for a <code>Filter</code> and a{" "}
-          <code>Segment</code>. Until 3.2.0 only a simple field denied at the top
-          of <code>T</code> asked for one. A denial beneath a navigation nothing
-          loads never leaves the database, and a member EF Core does not map
-          holds nothing it read, so an entity whose only denials sit there is
-          read exactly as in 3.1.0.
+          a navigation, a <code>SelectMany</code>, a <code>Join</code> or a{" "}
+          <code>GroupBy</code> counts every navigation as loaded when it also has
+          an include or builds an object in a lambda. A field a subtype of{" "}
+          <code>T</code> declares, one a subtype of a member&apos;s type
+          declares, and one beneath a member EF Core does not map, count too. A
+          member that can hold an object of any type asks for nothing on its
+          own. It does so in both tiers, typed and dynamic, for a{" "}
+          <code>Filter</code> and a <code>Segment</code>. Until 3.2.0 only a
+          simple field denied at the top of <code>T</code> asked for one. A
+          denial beneath a navigation nothing loads never leaves the database, so
+          an entity whose only denials sit there is read exactly as in 3.1.0.
         </li>
         <li>
           <strong>What.</strong> The allowed members, which replace the allowed
@@ -1154,9 +1155,12 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         <code>Join</code>, a projection behind another <code>Select</code>, an
         initializer after a constructor with arguments, and a lazy loader the
         constructor takes and keeps in a field or a property of any name each
-        loaded a denied value the gate read as unloaded. A field a subtype
-        declares — a derived entity&apos;s, or a subclass&apos;s held by a
-        base-typed member — was not read at all, and under a{" "}
+        loaded a denied value the gate read as unloaded, and so did an injected{" "}
+        <code>DbContext</code> or EF Core 7&apos;s asynchronous loader delegate.
+        A field a subtype declares — a derived entity&apos;s, or a
+        subclass&apos;s held by a base-typed member — was not read at all, nor
+        was a <code>[DwDenied]</code> on an override or on an interface
+        member&apos;s implementation, and under a{" "}
         <code>&quot;*&quot;</code> deny a path the walk never asked about was
         allowed. Each came back.
       </Callout>
@@ -1168,7 +1172,11 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         <code>T</code> the typed terminals fail with{" "}
         <code>SelectTypeMustHaveParameterlessConstructor</code>; the dynamic ones
         return its members. Query the derived type,{" "}
-        <code>{`OfType<Company>()`}</code>, to keep its fields.
+        <code>{`OfType<Company>()`}</code>, to keep its fields. Rows in memory
+        can be any loaded subtype, so there the rows are projected whenever one
+        declares a denied field. A <code>[DwDenied]</code> on an override or on
+        an interface member&apos;s implementation denies the base path for
+        every row, in every clause.
       </Callout>
       <Callout tone="danger" title="Fixed (security): a denied member that holds no simple value came back">
         A field denied at the top of <code>T</code> whose own type is not a
@@ -1301,9 +1309,10 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
       <Callout tone="warn" title="What the policy cannot see into">
         A member typed <code>object</code>, a framework interface or a
         collection that is not generic, such as <code>IEnumerable</code>,{" "}
-        <code>ArrayList</code> or <code>Array</code>, is opaque to the policy: a
-        synthesized projection leaves it out, and naming it returns whatever it
-        holds. A framework generic holding a policed type, such as{" "}
+        <code>ArrayList</code> or an application&apos;s own, is opaque to the
+        policy: it never asks for a projection, a synthesized projection over a
+        projected row or rows in memory leaves it out, and naming it returns
+        whatever it holds. A framework generic holding a policed type, such as{" "}
         <code>Dictionary&lt;string, LineDto&gt;</code>, has no paths beneath it:
         naming it is refused in both tiers where the core cannot narrow it,
         narrowed away under <code>Convenience</code> beneath a navigation, and a

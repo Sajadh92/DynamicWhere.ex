@@ -290,10 +290,23 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
             <td>Declare the denied field on a subtype — a derived entity, a subclass, an interface&apos;s implementation — and read it through the base type: a query over the hierarchy&apos;s root, or a member declared as the base type</td>
             <td>
               The subtypes are read too: the types the EF Core model derives for
-              an entity, every loaded subtype for a projected or in-memory row.
-              Such rows are projected to <code>T</code> and such members narrowed
-              to the declared type; a named one is refused under{" "}
-              <code>Strict</code>. The policy used to read the declared type only.
+              an entity, and for a projected or in-memory row every loaded
+              subtype, an open generic one and an application&apos;s subclass of a
+              framework class such as <code>Exception</code> included. Such rows
+              are projected to <code>T</code> and such members narrowed to the
+              declared type; a named one is refused under <code>Strict</code>. A
+              projection constructing a subtype of <code>T</code> is read as it,
+              and a rule on a subtype&apos;s field through a base-typed member is
+              enforced. The policy used to read the declared type only.
+            </td>
+          </tr>
+          <tr>
+            <td>Put the <code>[DwDenied]</code> on an override, or on a class&apos;s implementation of an interface member, and read the member through the base type or the interface</td>
+            <td>
+              The denial applies to the path for every row, in every clause. The
+              attribute walker read the declaration it walked and the attributes
+              above it, never an override or an implementation below, so the
+              base path filtered, sorted, grouped and returned the value.
             </td>
           </tr>
           <tr>
@@ -319,16 +332,18 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
       <Callout tone="warn" title="What the policy cannot see into">
         A member typed <code>object</code>, a framework interface or a
         collection that is not generic, such as <code>IEnumerable</code>,{" "}
-        <code>ArrayList</code> or <code>Array</code>, is opaque to the policy: a
-        synthesized projection leaves it out, and naming it returns whatever it
-        holds. A framework generic holding a policed type, such as{" "}
+        <code>ArrayList</code> or an application&apos;s own, is opaque to the
+        policy: it never asks for a projection, a synthesized projection over a
+        projected row or rows in memory leaves it out, and naming it returns
+        whatever it holds. A framework generic holding a policed type, such as{" "}
         <code>Dictionary&lt;string, LineDto&gt;</code>, has no paths beneath it:
         naming it is refused in both tiers where the core cannot narrow it,
         narrowed away under <code>Convenience</code> beneath a navigation, and a
         synthesized projection leaves it out. Hold such values in a list of the
-        policed type instead. A member EF Core does not map holds what the class
-        computes, and the policy reads nothing into it: a getter that copies a
-        denied column is the application&apos;s to withhold.
+        policed type instead. A member EF Core does not map is read as its type,
+        since its getter can hand out what EF Core loaded; a getter that copies a
+        denied column into a type with no denial is the application&apos;s to
+        withhold.
       </Callout>
       <Callout tone="warn" title="A forced scope on a list's element type filters rows, not elements">
         A forced scope declared on a list&apos;s element type filters the rows

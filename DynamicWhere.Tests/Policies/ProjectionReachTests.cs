@@ -919,13 +919,24 @@ namespace DynamicWhere.Tests.Policies
             Assert.Contains(guarded.LastTrace!.Decisions, d => d.FieldPath == "TaxSecret" && d.Action == PolicyAction.Dropped);
         }
 
-        /// <summary>An abstract root cannot be built, so a query that needs a projection over one is refused.</summary>
+        /// <summary>
+        /// An abstract root cannot be built, so the typed terminal refuses the projection a derived type's denial
+        /// asks for, as it refuses any type with no public parameterless constructor. The dynamic terminal builds
+        /// its own class and returns the root's allowed members.
+        /// </summary>
         [Theory]
         [InlineData(DwTier.Strict)]
         [InlineData(DwTier.Convenience)]
-        public void An_abstract_root_that_needs_a_projection_is_refused(DwTier tier)
+        public void An_abstract_root_that_needs_a_projection_is_never_returned_whole(DwTier tier)
         {
-            Refused(() => Guard(_db.Assets, tier).ToList(new Filter()));
+            LogicException refusal = Assert.Throws<LogicException>(() => Guard(_db.Assets, tier).ToList(new Filter()));
+
+            Assert.Equal(ErrorCode.SelectTypeMustHaveParameterlessConstructor, refusal.Message);
+
+            List<dynamic> rows = Guard(_db.Assets, tier).ToListDynamic(new Filter()).Data!;
+
+            Assert.Equal("V1", (string)Assert.Single(rows).Label);
+            Assert.False(Holds(rows, "combination-secret"));
 
             // Its concrete type can be queried, and is projected like any other.
             Assert.Null(Guard(_db.Assets.OfType<RcVault>(), tier).ToList(new Filter()).Data.Single().Combination);

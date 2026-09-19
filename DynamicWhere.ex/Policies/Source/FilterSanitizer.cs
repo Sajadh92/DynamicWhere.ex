@@ -1990,16 +1990,6 @@ internal static class FilterSanitizer
             throw gate.Exception(WholeClause, PolicyFeature.Select, PolicyErrorCode.AllSelectsDenied, null);
         }
 
-        // The core builds each row with T's parameterless constructor. Without one there is no projection
-        // to withhold anything with, and the rows are not handed over whole instead.
-        if (gate.EntityType.IsAbstract || gate.EntityType.GetConstructor(Type.EmptyTypes) is null)
-        {
-            gate.RefuseNarrowing(
-                WholeClause, null,
-                $"the rows must be projected to withhold a field, and the core cannot build '{gate.EntityType.Name}': " +
-                "it is abstract or has no public parameterless constructor");
-        }
-
         return allowed;
     }
 
@@ -3037,9 +3027,6 @@ internal static class FilterSanitizer
 
         /// <summary>A path no member can have, so that only the <c>"*"</c> rules match it.</summary>
         private const string UnnamedPath = "<unnamed>";
-
-        /// <summary>The type the rows are.</summary>
-        internal Type EntityType => _entityType;
 
         /// <summary>
         /// What a type can hold that no path of the policy's reaches, read once per type and again once

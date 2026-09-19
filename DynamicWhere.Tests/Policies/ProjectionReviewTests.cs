@@ -568,16 +568,25 @@ namespace DynamicWhere.Tests.Policies
         }
 
         /// <summary>
-        /// A forced scope on a list's elements filters the rows of the query, never the elements, so an
-        /// included list would carry every tenant's children. The entity is projected and the list left out.
+        /// A forced scope on a list's elements filters the rows that hold the list, never the elements,
+        /// so a list kept whole would carry every tenant's children. A projection that is needed anyway
+        /// leaves it out whole; the scope alone asks for none, as it never did.
         /// </summary>
         [Fact]
-        public void A_list_whose_elements_carry_a_forced_scope_is_not_returned_whole()
+        public void A_list_whose_elements_carry_a_forced_scope_is_left_out_of_a_needed_projection()
         {
-            RvFamily family = Guard(_db.Families.Include(f => f.Kids)).ToList(new Filter()).Data.Single();
+            PolicyQueryable<RvFamilyRow> guarded = Guard(_db.Families.Select(f => new RvFamilyRow
+            {
+                Id = f.Id,
+                Tenant = f.Name,
+                Kids = f.Kids.Select(k => new RvKidRow { Name = k.Name, TenantId = k.TenantId }).ToList()
+            }));
 
-            Assert.Equal("F1", family.Name);
-            Assert.Empty(family.Kids);
+            RvFamilyRow row = guarded.ToList(new Filter()).Data.Single();
+
+            Assert.Empty(row.Kids);
+            Assert.Contains(guarded.LastTrace!.Decisions, decision => decision.FieldPath == "Kids"
+                && decision.Reason == "left out whole: a scope forced beneath it cannot be applied to what it holds");
         }
 
         /// <summary>
@@ -797,6 +806,25 @@ namespace DynamicWhere.Tests.Policies
 
             internal string Sql { get; }
         }
+    }
+
+    public sealed class RvKidRow
+    {
+        public string Name { get; set; } = string.Empty;
+
+        [DwForceWhere(Operator.Equal, ContextValue = "TenantId")]
+        public int TenantId { get; set; }
+    }
+
+    [DwEntity(RequirePolicy = true)]
+    public sealed class RvFamilyRow
+    {
+        public int Id { get; set; }
+
+        [DwDenied]
+        public string? Tenant { get; set; }
+
+        public List<RvKidRow> Kids { get; set; } = new();
     }
 
     public sealed class RvNode

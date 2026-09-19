@@ -1929,7 +1929,10 @@ internal static class FilterSanitizer
                 gate.Record(path, PolicyFeature.Select, PolicyAction.Dropped, beneath);
             }
 
-            if (reached.Count > 0 || (opens && (facts.Opaque || forced)))
+            // A forced scope beneath a member does not ask for a projection on its own. It filters the
+            // rows that hold the member, which is what it has always done for a list returned whole,
+            // and asking would leave out every included list of a scoped child type.
+            if (reached.Count > 0 || (opens && facts.Opaque))
             {
                 anyDenied = true;
             }

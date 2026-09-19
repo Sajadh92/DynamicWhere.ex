@@ -12,12 +12,12 @@ namespace DynamicWhere.ex.Source;
 /// </summary>
 /// <remarks>
 /// EF Core's own asynchronous operators are generic in the element type, and a dynamic query's element
-/// type is a class generated for its projection, so they are reached by reflection. Through them the
-/// provider runs the command asynchronously and a cancellation reaches the database. System.Linq.Dynamic.Core's
-/// <c>ToDynamicListAsync</c>, which these replace on an EF Core query, runs the synchronous read on a
-/// thread-pool thread and checks the token only before it starts.
+/// type is only known at run time, so they are reached by reflection. Through them a cancellation reaches
+/// the database. They replace System.Linq.Dynamic.Core's <c>ToDynamicListAsync</c> on an EF Core query, and
+/// <c>Count()</c>, which counted a grouping synchronously.
 /// <para>
-/// Any other provider, rows in memory among them, keeps the synchronous read it had.
+/// Any other provider, rows in memory among them, keeps <c>ToDynamicListAsync</c>, which reads on the
+/// calling thread.
 /// </para>
 /// </remarks>
 internal static class AsyncReads

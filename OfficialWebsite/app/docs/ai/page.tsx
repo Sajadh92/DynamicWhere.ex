@@ -136,8 +136,8 @@ DynamicWhere.ex code. It is the complete API surface.`}</Code>
       <CopyBlock text={text} lines={lines} />
 
       <Callout tone="warn" title="It says what the library does, not what it should do">
-        The reference is generated against version 3.2.0 from the source, and
-        checked by running the library, so it states behaviour — including the
+        The reference is written against version 3.2.0 from the source, by
+        hand, and checked by running the library, so it states behaviour — including the
         parts that are deliberately blunt, such as neither hashing nor
         tokenization hiding equality. Where a page in these docs disagrees with it,
         the file is the one to trust. For the reasoning behind a rule, the human

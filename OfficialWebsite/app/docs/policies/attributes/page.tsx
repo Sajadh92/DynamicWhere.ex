@@ -105,21 +105,27 @@ public class Ticket
           <code>Select</code> of the chain counts, because it makes the rows the
           default orders. Since 3.2.0 it hides nothing when it builds{" "}
           <code>T</code> itself in an object initializer and assigns every field
-          the default names, at every level of a nested path, with nothing EF
-          Core would compute on the client: <code>&quot;Owner.Name&quot;</code>{" "}
-          needs <code>{`Owner = new OwnerRow { Name = … }`}</code>. EF Core then
-          translates the order, because each field is a member the projection
-          assigned.
+          the default names a column, at every level of a nested path:{" "}
+          <code>&quot;Owner.Name&quot;</code> needs{" "}
+          <code>{`Owner = new OwnerRow { Name = … }`}</code>. On EF Core a column
+          is a member the model maps on the entity the <code>Select</code> reads,
+          read directly (<code>t.Code</code>), through reference navigations
+          (<code>t.Owner.Name</code>) or through <code>EF.Property</code>, a
+          shadow property included; in memory any assigned field is one. EF Core
+          then translates the order.
         </li>
         <li>
           Any other projection leaves the query in its own order, as every
           projection did in 3.1.0: a constructor with arguments, a default field
           the initializer does not assign, a nested path through anything but an
-          initializer, or a default field computed by the application&apos;s own
-          method, such as <code>{`Label = Decorate(r.Code)`}</code>. EF Core
-          evaluates such a method on the client, where it can project the value
-          but cannot order by it. A default applied to any of these could name a
-          field EF Core cannot translate.
+          initializer, a member the model does not map, or a default field the
+          projection computes, by the application&apos;s own method{" "}
+          (<code>{`Label = Decorate(r.Code)`}</code>), a framework one such as{" "}
+          <code>Regex.Replace</code> or <code>ToUpper</code>, or an operator. EF
+          Core evaluates some of these on the client, where it can project the
+          value but cannot order by it, and which ones it translates depends on
+          the provider, so none is ordered by: a default must never be the reason
+          a query that ran unguarded fails.
         </li>
         <li>
           A projection composed on the guarded handle takes no default, even when

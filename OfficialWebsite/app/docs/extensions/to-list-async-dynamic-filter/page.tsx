@@ -103,13 +103,13 @@ public static Task<FilterResult<dynamic>> ToListAsyncDynamic<T>(
         </li>
       </ul>
 
-      <Callout tone="warn" title="Changed in 3.2.0: the read is asynchronous">
+      <Callout tone="warn" title="Changed in 3.2.0: the read goes through EF Core">
         The read used to run Dynamic LINQ&apos;s{" "}
-        <code>ToDynamicListAsync()</code>, which reads synchronously on a
-        thread-pool thread. It now runs through EF Core&apos;s{" "}
-        <code>ToListAsync()</code>, so the database command runs
-        asynchronously and a canceled token reaches it. The rows are the same.
-        Like the count, the read needs an EF Core async provider.
+        <code>ToDynamicListAsync()</code>, asynchronous as well but with no token
+        to pass on. On an EF Core query it now runs through EF Core&apos;s{" "}
+        <code>ToListAsync()</code>, so a canceled token reaches the database. The
+        rows are the same. Only the count needs an EF Core async provider; on
+        any other provider the read falls back to Dynamic LINQ&apos;s.
       </Callout>
 
       <Callout tone="warn">

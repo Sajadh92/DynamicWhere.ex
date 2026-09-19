@@ -1115,12 +1115,17 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
           a column, an owned or complex member, or a navigation the query loads
           through an <code>Include</code>, an automatic include or a lazy
           loader; on a projected row, beneath a member the initializer assigns;
-          in memory, beneath any member. It does so in both tiers, typed and
-          dynamic, for a <code>Filter</code> and a <code>Segment</code>. Until
-          3.2.0 only a simple field denied at the top of <code>T</code> asked for
-          one. A denial beneath a navigation nothing loads never leaves the
-          database, so an entity whose only denials sit there is read exactly as
-          in 3.1.0.
+          in memory, beneath any member. A chain that reaches its rows through
+          a navigation, a <code>SelectMany</code>, a <code>Join</code> or a
+          projection behind another <code>Select</code> counts every navigation
+          as loaded. A field a subtype of <code>T</code> declares, and one a
+          subtype of a member&apos;s type declares, count too. It does so in both
+          tiers, typed and dynamic, for a <code>Filter</code> and a{" "}
+          <code>Segment</code>. Until 3.2.0 only a simple field denied at the top
+          of <code>T</code> asked for one. A denial beneath a navigation nothing
+          loads never leaves the database, and a member EF Core does not map
+          holds nothing it read, so an entity whose only denials sit there is
+          read exactly as in 3.1.0.
         </li>
         <li>
           <strong>What.</strong> The allowed members, which replace the allowed
@@ -1143,6 +1148,28 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         owned member — typed and dynamic, in both tiers, for a{" "}
         <code>Filter</code> and a <code>Segment</code>.
       </Callout>
+      <Callout tone="danger" title="Fixed (security): what a query loads was read too narrowly">
+        An include named from the root and reached through{" "}
+        <code>{`Select(o => o.Customer)`}</code>, <code>SelectMany</code> or{" "}
+        <code>Join</code>, a projection behind another <code>Select</code>, an
+        initializer after a constructor with arguments, and a lazy loader the
+        constructor takes and keeps in a field or a property of any name each
+        loaded a denied value the gate read as unloaded. A field a subtype
+        declares — a derived entity&apos;s, or a subclass&apos;s held by a
+        base-typed member — was not read at all, and under a{" "}
+        <code>&quot;*&quot;</code> deny a path the walk never asked about was
+        allowed. Each came back.
+      </Callout>
+      <Callout tone="danger" title="Rows of a derived type come back as T">
+        When a type the model derives from <code>T</code>, or a loaded subclass
+        of a row in memory, declares a denied field, the rows are projected to{" "}
+        <code>T</code>, so a derived type&apos;s allowed fields are dropped too,
+        and a member declared as a base type is narrowed to it. Over an abstract{" "}
+        <code>T</code> the typed terminals fail with{" "}
+        <code>SelectTypeMustHaveParameterlessConstructor</code>; the dynamic ones
+        return its members. Query the derived type,{" "}
+        <code>{`OfType<Company>()`}</code>, to keep its fields.
+      </Callout>
       <Callout tone="danger" title="Fixed (security): a denied member that holds no simple value came back">
         A field denied at the top of <code>T</code> whose own type is not a
         simple value — a byte array, a list, an owned object, a JSON column —
@@ -1160,8 +1187,10 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
       </Callout>
       <Callout tone="danger" title="What a projection leaves out">
         Once a projection is needed it leaves out an entity&apos;s navigations,
-        included ones too, since projecting one would load it: name the
-        navigation in <code>Selects</code> to get it, narrowed. It leaves out
+        included ones too, since projecting one would load it: under{" "}
+        <code>Convenience</code> name the navigation in <code>Selects</code> to
+        get it narrowed, and under <code>Strict</code> name its allowed fields.
+        It leaves out
         the objects a row in memory holds, since a kept object is the
         caller&apos;s own and a transform would change it in place, and a value
         EF Core does not map, which EF Core could compute only by reading the
@@ -1233,16 +1262,18 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
           </tr>
           <tr>
             <td>
-              A member of a projected or in-memory row whose type holds a field
-              denied where no path reaches it: deeper than four segments, or
-              inside a framework generic such as{" "}
-              <code>Dictionary&lt;string, T&gt;</code>
+              A member that carries a field denied where no path reaches it:
+              deeper than four segments, inside a framework generic such as{" "}
+              <code>Dictionary&lt;string, T&gt;</code>, declared by a subtype of
+              its type, in an entity navigation&apos;s owned chain or converted
+              column, or, under a <code>&quot;*&quot;</code> deny, on a path the
+              walk never asks about
             </td>
             <td>Returned, the denied field included.</td>
             <td>
-              Refused under <code>Strict</code>, narrowed away under{" "}
-              <code>Convenience</code>, and refused in both tiers where it
-              cannot be narrowed.
+              Refused under <code>Strict</code>. Under <code>Convenience</code>{" "}
+              narrowed where the core can narrow it, which builds the declared
+              type, and refused where it cannot.
             </td>
           </tr>
           <tr>
@@ -1268,14 +1299,16 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         projection narrows the member or leaves it out whole (point&nbsp;25).
       </Callout>
       <Callout tone="warn" title="What the policy cannot see into">
-        A member typed <code>object</code> is opaque to the policy: a
+        A member typed <code>object</code>, a framework interface or a
+        collection that is not generic, such as <code>IEnumerable</code>,{" "}
+        <code>ArrayList</code> or <code>Array</code>, is opaque to the policy: a
         synthesized projection leaves it out, and naming it returns whatever it
         holds. A framework generic holding a policed type, such as{" "}
         <code>Dictionary&lt;string, LineDto&gt;</code>, has no paths beneath it:
-        naming it is refused under <code>Strict</code> and narrowed away under{" "}
-        <code>Convenience</code>, or refused there too where the member cannot
-        be narrowed, and a synthesized projection leaves it out.
-        Hold such values in a list of the policed type instead.
+        naming it is refused in both tiers where the core cannot narrow it,
+        narrowed away under <code>Convenience</code> beneath a navigation, and a
+        synthesized projection leaves it out. Hold such values in a list of the
+        policed type instead.
       </Callout>
 
       <h2 id="default-order-projection">27. <code>DefaultOrder</code> Reaches a Projection That Builds <code>T</code></h2>
@@ -1287,12 +1320,16 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
         counts, because it makes the rows the default orders. When it builds{" "}
         <code>T</code> in an object initializer and assigns every field the{" "}
         <Link href="/docs/policies/attributes#default-order"><code>[DwEntity(DefaultOrder)]</code></Link>{" "}
-        names, at every level of a nested path, with nothing EF Core would
-        compute on the client, the default applies. A constructor with
-        arguments, a default field the initializer does not assign, a nested
-        path through anything but an initializer, or a default field computed
-        by the application&apos;s own method, which EF Core evaluates on the
-        client and cannot order by, still leaves the query in its own order.
+        names a column, at every level of a nested path, the default applies. A
+        column is a member the EF Core model maps on the entity the{" "}
+        <code>Select</code> reads, read directly, through reference navigations
+        or through <code>EF.Property</code>; in memory any assigned field is
+        one. A value the projection computes, by any method or operator, even
+        one EF Core could translate, a member the model does not map, a
+        constructor with arguments, a default field the initializer does not
+        assign, or a nested path through anything but an initializer still
+        leaves the query in its own order: ordering by it could fail where the
+        unguarded query ran.
       </p>
       <Code lang="csharp">{`[DwEntity(DefaultOrder = "CreatedAt desc, Id")]
 public class TicketRow
@@ -1343,11 +1380,11 @@ var rows = db.Tickets
         with a <code>Segment</code>. The token reaches the count and the read. The
         overloads sit beside the 3.1 signatures, which are unchanged, so code
         compiled against 3.1 still binds. That brings the extension methods to
-        28. A reflection lookup by name alone now finds several methods where
-        it found one — <code>ToListAsyncDynamic</code>, on the extension class
-        and on the guarded handle — so <code>Type.GetMethod</code> given only
-        the name throws <code>AmbiguousMatchException</code>; pass the
-        parameter types.
+        28. A reflection lookup by name alone finds more overloads than it did,
+        and where it found one — <code>ToListAsyncDynamic</code>, on the
+        extension class and on the guarded handle — it now finds several, so{" "}
+        <code>Type.GetMethod</code> given only the name throws{" "}
+        <code>AmbiguousMatchException</code>; pass the parameter types.
       </p>
       <Callout tone="danger" title="ToListAsync(filter, default) no longer compiles">
         <code>default</code> fits both <code>bool getQueryString</code> and the
@@ -1359,14 +1396,15 @@ var rows = db.Tickets
 await query.ToListAsync(filter, false);                // as 3.1 read it
 await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Code>
       </Callout>
-      <Callout tone="warn" title="The dynamic and summary reads are asynchronous on EF Core">
+      <Callout tone="warn" title="The dynamic and summary reads go through EF Core">
         <code>ToListAsyncDynamic</code> and the async <code>Summary</code> read
-        through EF Core&apos;s <code>ToListAsync</code>, and the async{" "}
-        <code>Summary</code> counts through <code>CountAsync</code>. They used to
-        read synchronously on a thread-pool thread, and the summary counted
-        synchronously, so on an EF Core query a canceled token now reaches the
-        database. The rows and the counts are the same. A provider that is not
-        EF Core&apos;s keeps the synchronous read.
+        through EF Core&apos;s <code>ToListAsync</code> instead of Dynamic
+        LINQ&apos;s <code>ToDynamicListAsync</code>, which had no token to pass
+        on, and the async <code>Summary</code> counts through{" "}
+        <code>CountAsync</code> where it counted synchronously. So on an EF Core
+        query a canceled token now reaches the database. The rows and the counts
+        are the same. A provider that is not EF Core&apos;s keeps Dynamic
+        LINQ&apos;s read, on the calling thread.
       </Callout>
 
       <h2 id="system-namespace">29. A Type in a Namespace That Starts with <code>System</code> Is Policed</h2>

@@ -256,13 +256,52 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
             </td>
           </tr>
           <tr>
-            <td>Name a member whose type holds a denied field no path reaches: deeper than four segments, or inside a framework generic such as <code>Dictionary&lt;string, T&gt;</code></td>
+            <td>Name a member that carries a denied field no path reaches: deeper than four segments, inside a framework generic such as <code>Dictionary&lt;string, T&gt;</code>, or, on an entity&apos;s navigation, in its owned chain or a converted column</td>
             <td>
-              Refused under <code>Strict</code>, and narrowed away under{" "}
-              <code>Convenience</code>, or refused there too where the member
-              cannot be narrowed. The gate also reads the rules themselves,
-              so a denied property with no setter and a rule on a path reached
-              through a cycle are found beneath a named member too.
+              Refused under <code>Strict</code>. Under <code>Convenience</code> it
+              is narrowed where the core can narrow it and refused where it
+              cannot. What the member carries is read from the source — from the
+              EF Core model for an entity, so only what loads counts. The gate
+              also reads the rules themselves, so a denied property with no
+              setter and a rule on a path reached through a cycle are found
+              beneath a named member too.
+            </td>
+          </tr>
+          <tr>
+            <td>Include a navigation from the root, then reach the rows through it — <code>{`Select(o => o.Customer)`}</code>, <code>SelectMany</code>, <code>Join</code> — or hide a projection behind another <code>Select</code></td>
+            <td>
+              Every navigation counts as loaded on such a chain, since EF Core
+              still applies includes named from the root to the entities it
+              reaches, and the library cannot read which. The includes used to be
+              read against the wrong root, so the denied value beneath them was
+              returned.
+            </td>
+          </tr>
+          <tr>
+            <td>Let a lazy loader fill a navigation after the query: a loader delegate or <code>ILazyLoader</code> the constructor takes, kept in a field or a property of any name</td>
+            <td>
+              Counts as loading every navigation, as EF Core&apos;s proxies and an
+              injected <code>ILazyLoader</code> property already did. The model
+              keeps no record of such a loader, so the navigation it filled came
+              back with the denied value.
+            </td>
+          </tr>
+          <tr>
+            <td>Declare the denied field on a subtype — a derived entity, a subclass, an interface&apos;s implementation — and read it through the base type: a query over the hierarchy&apos;s root, or a member declared as the base type</td>
+            <td>
+              The subtypes are read too: the types the EF Core model derives for
+              an entity, every loaded subtype for a projected or in-memory row.
+              Such rows are projected to <code>T</code> and such members narrowed
+              to the declared type; a named one is refused under{" "}
+              <code>Strict</code>. The policy used to read the declared type only.
+            </td>
+          </tr>
+          <tr>
+            <td>Under a <code>&quot;*&quot;</code> deny with exact allows, reach a path the walk never asks about: past four segments, around a cycle, a property with no setter</td>
+            <td>
+              Such a path is denied, so a member holding one is narrowed, left out
+              or refused. It used to resolve as allowed, so the member was
+              returned whole, named or not.
             </td>
           </tr>
           <tr>
@@ -278,14 +317,18 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         </tbody>
       </table>
       <Callout tone="warn" title="What the policy cannot see into">
-        A member typed <code>object</code> is opaque to the policy: a
+        A member typed <code>object</code>, a framework interface or a
+        collection that is not generic, such as <code>IEnumerable</code>,{" "}
+        <code>ArrayList</code> or <code>Array</code>, is opaque to the policy: a
         synthesized projection leaves it out, and naming it returns whatever it
         holds. A framework generic holding a policed type, such as{" "}
         <code>Dictionary&lt;string, LineDto&gt;</code>, has no paths beneath it:
-        naming it is refused under <code>Strict</code> and narrowed away under{" "}
-        <code>Convenience</code>, or refused there too where the member cannot
-        be narrowed, and a synthesized projection leaves it out.
-        Hold such values in a list of the policed type instead.
+        naming it is refused in both tiers where the core cannot narrow it,
+        narrowed away under <code>Convenience</code> beneath a navigation, and a
+        synthesized projection leaves it out. Hold such values in a list of the
+        policed type instead. A member EF Core does not map holds what the class
+        computes, and the policy reads nothing into it: a getter that copies a
+        denied column is the application&apos;s to withhold.
       </Callout>
       <Callout tone="warn" title="A forced scope on a list's element type filters rows, not elements">
         A forced scope declared on a list&apos;s element type filters the rows

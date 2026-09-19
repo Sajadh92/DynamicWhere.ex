@@ -107,17 +107,16 @@ public static Task<SummaryResult> ToListAsync<T>(
         A source whose provider is not EF Core&apos;s — rows in memory through{" "}
         <code>AsQueryable()</code>, for one — keeps the reads it had in 3.1: a
         synchronous <code>Count()</code>, then Dynamic LINQ&apos;s{" "}
-        <code>ToDynamicListAsync()</code>, which reads synchronously on a
-        thread-pool thread. A token that is already canceled still stops it
-        before the count.
+        <code>ToDynamicListAsync()</code>, which reads on the calling thread. A
+        token that is already canceled still stops it before the count.
       </p>
 
       <Callout tone="warn" title="Changed in 3.2.0: the count and the read are asynchronous on EF Core">
-        Until 3.2.0 the group count ran synchronously and only the read was
-        awaited, through <code>ToDynamicListAsync()</code>, on every provider. On
-        an EF Core query both now run through EF Core&apos;s asynchronous
-        operators, so a canceled token reaches the database. The count and the
-        rows are the same.
+        Until 3.2.0 the group count ran synchronously, and the read went through
+        Dynamic LINQ&apos;s <code>ToDynamicListAsync()</code>, which had no token
+        to pass on, on every provider. On an EF Core query both now run through
+        EF Core&apos;s asynchronous operators, so a canceled token reaches the
+        database. The count and the rows are the same.
       </Callout>
 
       <Callout tone="note">

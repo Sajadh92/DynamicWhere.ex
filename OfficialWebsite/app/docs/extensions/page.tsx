@@ -169,9 +169,10 @@ export default function Page() {
         Core&apos;s <code>CountAsync</code> and read with EF Core&apos;s{" "}
         <code>ToListAsync</code>. Since 3.2.0 that includes the dynamic{" "}
         <code>Filter</code>&apos;s read and the <code>Summary</code>&apos;s count
-        and read, which used to run synchronously.{" "}
+        and read: the count used to run synchronously, and the reads through
+        Dynamic LINQ, with no token to pass on.{" "}
         <code>ToListAsync(Summary)</code> on a provider that is not EF
-        Core&apos;s keeps its synchronous count and read, and{" "}
+        Core&apos;s keeps its synchronous count and Dynamic LINQ&apos;s read, and{" "}
         <code>ToListAsync(Segment)</code> combines its sets into one query and
         then counts and reads it exactly as a <code>Filter</code> does.
       </p>

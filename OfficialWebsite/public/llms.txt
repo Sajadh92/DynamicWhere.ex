@@ -2321,8 +2321,10 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
     collection of one (`byte[]`, `string[]`, `List<string>`);
   - every allowed member holding an object or a collection of objects, where the source carries it: whole when
     nothing beneath it is denied, and narrowed to the allowed leaves when something is, as a caller naming it would
-    get. The source carries every member of a row projected before `ApplyPolicy` (any `Select` in the chain) and of
-    a row in memory, and an entity's owned and complex members, which are read from the EF Core model;
+    get. The source carries every member of a row a projection builds before `ApplyPolicy` (the outermost `Select`
+    constructs the row, in an initializer or with a constructor) and of a row in memory, and an entity's owned and
+    complex members, which are read from the EF Core model. A `Select` handing back an entity,
+    `Select(o => o.Customer)`, builds no row and is read as an entity query;
   - an entity's other navigations are left out: an unguarded call loads one only when something includes it, and
     projecting it would load it. An included or automatically included navigation is therefore not returned once a
     projection is needed. Name it in `Selects` to get it, narrowed;

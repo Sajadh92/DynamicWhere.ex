@@ -25,7 +25,7 @@ internal sealed class RowShape
     /// <summary>An entity query whose model could not be read: no navigation is known to load.</summary>
     internal static readonly RowShape Entity = new(RowKind.Entity, Empty(), Empty());
 
-    /// <summary>A projection the caller built, whose every member holds a value it computed.</summary>
+    /// <summary>A projection that builds its rows, whose every member holds what the projection gave it.</summary>
     internal static readonly RowShape Projected = new(RowKind.Projected, Empty(), Empty());
 
     /// <summary>Rows held in memory, whose every member holds whatever the object holds.</summary>
@@ -60,11 +60,13 @@ internal sealed class RowShape
 
     /// <summary>Reads the shape of a guarded query's source.</summary>
     /// <remarks>
-    /// Rows in memory first, because a projection over them is still in memory. Then any <c>Select</c>
-    /// along the chain, which is how a caller builds its own row type out of entities. What is left is
-    /// an entity query, whose owned and complex members are read from the EF Core model; a navigation it
-    /// does not own loads only when something includes it, and a guarded query that has to narrow the
-    /// row leaves such a navigation out, as it always has.
+    /// Rows in memory first, because a projection over them is still in memory. Then a projection that
+    /// builds its rows, which is how a caller makes its own row type out of entities. What is left is an
+    /// entity query, or a projection handing back entities, <c>Select(o =&gt; o.Customer)</c>. Their owned
+    /// and complex members are read from the EF Core model; a navigation the entity does not own loads
+    /// only when something includes it, and a guarded query that has to narrow the row leaves such a
+    /// navigation out, as it always has. Projecting one would load it, and return more than the
+    /// unguarded call does.
     /// </remarks>
     internal static RowShape Of<T>(IQueryable<T> source) where T : class
     {
@@ -73,7 +75,7 @@ internal sealed class RowShape
             return InMemory;
         }
 
-        if (DefaultOrder.IsProjected(source.Expression))
+        if (DefaultOrder.BuildsRows(source.Expression))
         {
             return Projected;
         }
@@ -148,7 +150,7 @@ internal enum RowKind
     /// <summary>An entity query: a navigation holds a value only when something loads it.</summary>
     Entity,
 
-    /// <summary>A projection the caller built: every member holds a value the projection computed.</summary>
+    /// <summary>A projection that builds its rows: every member holds what the projection gave it.</summary>
     Projected,
 
     /// <summary>A sequence in memory: every member holds whatever the object holds.</summary>

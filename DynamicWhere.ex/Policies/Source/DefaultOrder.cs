@@ -86,13 +86,20 @@ internal static class DefaultOrder
     }
 
     /// <summary>
-    /// True when a query's rows are a projection made somewhere along the chain that produced it.
+    /// True when a query's rows are built by a projection: the outermost <c>Select</c> of the chain
+    /// constructs each row, in an initializer or with a constructor, so every member holds what the
+    /// projection gave it.
     /// </summary>
     /// <remarks>
-    /// Any <c>Select</c> counts. This answers what the rows are, not whether a default can be applied
-    /// to them, which <see cref="HidesDefault"/> answers.
+    /// A <c>Select</c> that hands back an entity, <c>Select(o =&gt; o.Customer)</c>, builds nothing: its
+    /// rows are entities as EF Core loads them, whose navigations hold a value only when something
+    /// includes them. This answers what the rows are, not whether a default can be applied to them,
+    /// which <see cref="HidesDefault"/> answers.
     /// </remarks>
-    internal static bool IsProjected(Expression expression) => OutermostSelect(expression) is not null;
+    internal static bool BuildsRows(Expression expression) =>
+        OutermostSelect(expression) is { } select
+        && StripQuotes(select.Arguments[1]) is LambdaExpression selector
+        && StripConversions(selector.Body) is MemberInitExpression or NewExpression;
 
     /// <summary>
     /// True when a projection along the chain could have left out a field the type's default names.

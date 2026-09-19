@@ -529,6 +529,20 @@ public sealed class ProjectedRowTests : IDisposable
     }
 
     /// <summary>
+    /// A projection that hands back the entity itself builds no rows: its navigations hold a value only
+    /// when something includes them, so they are left out as an entity query's are. Kept, they would be
+    /// loaded, and the guarded query would return more than the unguarded one.
+    /// </summary>
+    [Fact]
+    public void A_projection_returning_entities_is_read_as_an_entity_query()
+    {
+        PrShelf shelf = Guard(_db.Shelves.Select(s => s), DwTier.Strict).ToList(Everything()).Data.Single();
+
+        Assert.Empty(shelf.Books);
+        Assert.Equal(("A7", (string?)null), (shelf.Location!.Aisle, shelf.Location.Code));
+    }
+
+    /// <summary>
     /// A top-level denial on an entity keeps what EF Core loads with it: the owned member whole and
     /// the blob, which a projection of scalars alone used to empty.
     /// </summary>

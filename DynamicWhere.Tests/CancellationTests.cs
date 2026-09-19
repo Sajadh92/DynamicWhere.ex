@@ -11,7 +11,10 @@ using DynamicWhere.ex.Source;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Query;
+using System.Collections;
 using System.Data.Common;
+using System.Linq.Expressions;
 
 namespace DynamicWhere.Tests;
 
@@ -83,6 +86,33 @@ public sealed class CancelBeforeCommand : DbCommandInterceptor
 
         return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
     }
+}
+
+/// <summary>An async provider that fails as it builds the query, before any task exists.</summary>
+public sealed class UntranslatableQuery<T> : IQueryable<T>, IAsyncQueryProvider
+{
+    public UntranslatableQuery() => Expression = Expression.Constant(this);
+
+    public Type ElementType => typeof(T);
+
+    public Expression Expression { get; }
+
+    public IQueryProvider Provider => this;
+
+    public IEnumerator<T> GetEnumerator() => throw new InvalidOperationException("untranslatable");
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+    public IQueryable CreateQuery(Expression expression) => this;
+
+    public IQueryable<TElement> CreateQuery<TElement>(Expression expression) => throw new InvalidOperationException("untranslatable");
+
+    public object Execute(Expression expression) => throw new InvalidOperationException("untranslatable");
+
+    public TResult Execute<TResult>(Expression expression) => throw new InvalidOperationException("untranslatable");
+
+    public TResult ExecuteAsync<TResult>(Expression expression, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("untranslatable");
 }
 
 /// <summary>
@@ -241,6 +271,19 @@ public sealed class CancellationTests : IDisposable
         await Check((db, token) => db.Rows.ToListAsyncDynamic(PagedDynamic(), token));
         await Check((db, token) => db.Rows.ToListAsync(ByTeam(), token));
         await Check((db, token) => db.Rows.ToListAsync(OddOrFirst(), token));
+    }
+
+    /// <summary>
+    /// A grouped count reaches EF Core's operator by reflection. A query it cannot build fails with its own
+    /// exception, as the synchronous count it replaced did, not one wrapped by the reflection call.
+    /// </summary>
+    [Fact]
+    public async Task A_provider_failure_leaves_the_grouped_count_as_itself()
+    {
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => AsyncReads.CountAsync(new UntranslatableQuery<int>(), CancellationToken.None));
+
+        Assert.Equal("untranslatable", failure.Message);
     }
 
     /// <summary>A token that is never canceled changes nothing: each overload answers as the one without a token does.</summary>

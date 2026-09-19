@@ -43,9 +43,7 @@ internal static class AsyncReads
             return await query.ToDynamicListAsync(cancellationToken);
         }
 
-        Task read = (Task)ToListAsyncMethod
-            .MakeGenericMethod(query.ElementType)
-            .Invoke(null, new object[] { query, cancellationToken })!;
+        Task read = (Task)Call(ToListAsyncMethod, query, cancellationToken);
 
         await read;
 
@@ -70,8 +68,15 @@ internal static class AsyncReads
             return query.Count();
         }
 
-        return await (Task<int>)CountAsyncMethod
-            .MakeGenericMethod(query.ElementType)
-            .Invoke(null, new object[] { query, cancellationToken })!;
+        return await (Task<int>)Call(CountAsyncMethod, query, cancellationToken);
     }
+
+    /// <summary>
+    /// Calls one of EF Core's operators for the query's element type, letting whatever it throws leave as
+    /// itself: a query EF Core cannot translate fails with its own exception, not one wrapped by reflection.
+    /// </summary>
+    private static object Call(MethodInfo operatorMethod, IQueryable query, CancellationToken cancellationToken) =>
+        operatorMethod
+            .MakeGenericMethod(query.ElementType)
+            .Invoke(null, BindingFlags.DoNotWrapExceptions, null, new object[] { query, cancellationToken }, null)!;
 }

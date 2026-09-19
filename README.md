@@ -47,13 +47,13 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 ## Install
 
 ```bash
-dotnet add package DynamicWhere.ex --version 3.1.0
+dotnet add package DynamicWhere.ex --version 3.2.0
 ```
 
 Or via Package Manager:
 
 ```powershell
-Install-Package DynamicWhere.ex -Version 3.1.0
+Install-Package DynamicWhere.ex -Version 3.2.0
 ```
 
 Dependencies (restored automatically):

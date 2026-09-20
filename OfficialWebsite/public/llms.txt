@@ -1667,7 +1667,8 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
   MaxQueryCost         1000     1    sum of cost over every field reference                             QueryCostExceeded (19)
   DefaultFieldCost     1        0    cost of one reference to a field with no [DwCost] or rule weight, and
                                      (3.1.0) of an aggregate with no Field, such as a Count
-  MaxAuditEvents       10000    1    undrained audit events one context may hold                        CapExceeded (9)
+  MaxAuditEvents       10000    1    undrained audit events one context may hold                        CapExceeded (9);
+                                     under Strict outside a dry run, the clause's own field refusal
   MinGroupSize         5        1    k-anonymity floor for guarded grouped summaries; 1 = off           groups suppressed
   SchemaDepth          2        1    default PolicySchemaRequest.Depth
   SchemaCycleLimit     2        1    times one type may appear on one schema path
@@ -1699,7 +1700,8 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
   - `FieldPath` is `"*"`, or, in the Convenience tier, the path for `MaxNavigationDepth`. Under `Strict` every `CapExceeded` refusal carries `"*"` (3.1.0); the trace keeps the path.
   - `Reason` and `SourceOrigin` name the cap, e.g. `"MaxConditions cap (50), request had 51"`, `"MaxConditionValues cap (1000), request had 1001"`, `"MaxAggregates cap (50), request had 51"`.
   - In dry run it is recorded and not thrown.
-- `MaxAuditEvents` throws even in dry run, with `FieldPath` = the audited field (`"*"` under `Strict`).
+- `MaxAuditEvents` throws even in dry run, with `FieldPath` = the audited field. Under `Strict` outside a dry run
+  it throws the clause's own field refusal instead of `CapExceeded`, with `FieldPath` `"*"` (3.3.0).
 - `MinGroupSize`:
   - The effective floor is the largest of `Caps.MinGroupSize` and the `MinGroupSize` of the transform chain on any aggregated field.
   - Above 1, a guarded `Summary` with a `GroupBy` gets a `Count` column `__dwGroupSize` plus `HAVING __dwGroupSize >= floor` in SQL.
@@ -2185,8 +2187,10 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   - a `DefaultOrder` field left out for this caller, outside a dry run
   - forced predicates
   - output transforms
-- If the context already holds `Caps.MaxAuditEvents` (default 10000) events, the query throws
-  `CapExceeded`, in both tiers and in dry run.
+- If the context already holds `Caps.MaxAuditEvents` (default 10000) events, the query is refused, in both tiers
+  and in dry run. `CapExceeded`, except under `Strict` outside a dry run, where it is the clause's own field
+  refusal instead (3.3.0): only a real, audited field can reach the cap, so answering with the cap's own code
+  would set such a field apart from a name that matches nothing.
 - A refusal becomes an event of its own, with an `ErrorCode`, only when `DwPolicyOptions.AuditRefusals` is
   on, and then for every refused guarded query, audited field or not (3.1.0, section 22).
 - It is elected: the top-ranked audit wins outright, and fragments tied with it are unioned. A rule can
@@ -3210,7 +3214,9 @@ DwAuditEvent                                        sealed class
 - Events buffer on the context (`PendingAuditEvents`); the query path never calls a sink.
   - Drain once per request with `DwPolicy.DrainAuditAsync(context, sink)`. Undrained events are lost with the context.
 - `Caps.MaxAuditEvents` bounds the undrained buffer.
-  - The event that does not fit refuses the query with `CapExceeded` (9), `SourceOrigin` containing `"MaxAuditEvents"`, even in dry run.
+  - The event that does not fit refuses the query, even in dry run: `CapExceeded` (9) with `SourceOrigin`
+    containing `"MaxAuditEvents"`, and under `Strict` outside a dry run the clause's own field refusal with no
+    origin at all (3.3.0).
   - Draining makes room again.
 - A sink must throw when it fails to write. It is passed per call and never stored in options, so a scoped sink works.
 - ASP.NET Core package: `app.UseDwPolicyAudit()` drains the context stored on `HttpContext.Features` to the `IDwAuditSink` registered in DI, after each response.
@@ -3225,7 +3231,7 @@ DwAuditEvent                                        sealed class
   - `EntityType` = the queried type's `FullName`; `Effect` = `Deny`; `DryRun` = false; `ErrorCode` = the refusal's code;
   - `Feature` and `Tier` = the refusal's own, so a store provider's refusal reports `All` and `Strict`;
   - `Subjects` and `Purpose` = the context's;
-  - `FieldPath` = the field the refusal was about, as its canonical path, in both tiers. A `FieldDeniedFor*`, `OperatorNotAllowed` or `RequiredFilterMissing` refusal, a `CapExceeded` refusal from `MaxNavigationDepth` or `MaxAuditEvents`, and `MissingContextValue`, which records the scoped field, are all recorded under the path although the refusal itself named the caller's alias or, under `Strict`, said `"*"`. A name that matches nothing (`Strict`) is recorded as the caller sent it, trimmed and with empty segments dropped. Every other refusal records its own `FieldPath` (section 30): `"*"` for a whole-request refusal such as `QueryStringDenied`, `QueryCostExceeded`, a cap on the request's size or `ApplyPolicy`'s `PolicyContextNotPrepared`; the entity's short type name for a store provider's refusal; the name as written for `AmbiguousFieldName`.
+  - `FieldPath` = the field the refusal was about, as its canonical path, in both tiers. A `FieldDeniedFor*`, `OperatorNotAllowed` or `RequiredFilterMissing` refusal, a `CapExceeded` refusal from `MaxNavigationDepth`, the audit buffer's refusal whichever code it carries, and `MissingContextValue`, which records the scoped field, are all recorded under the path although the refusal itself named the caller's alias or, under `Strict`, said `"*"`. A name that matches nothing (`Strict`) is recorded as the caller sent it, trimmed and with empty segments dropped. Every other refusal records its own `FieldPath` (section 30): `"*"` for a whole-request refusal such as `QueryStringDenied`, `QueryCostExceeded`, a cap on the request's size or `ApplyPolicy`'s `PolicyContextNotPrepared`; the entity's short type name for a store provider's refusal; the name as written for `AmbiguousFieldName`.
   - The recorded path is cut to its first 256 characters followed by `…` (3.1.0). Then every character in Unicode category Control (Cc), Format (Cf), Line Separator (Zl) or Paragraph Separator (Zp) is written as `\u` and four lowercase hex digits: a line feed as `\u000a`, U+2028 as `\u2028`, U+202E as `\u202e`. A character outside the Basic Multilingual Plane is judged whole, and both halves of its surrogate pair are escaped. A name that matches nothing is text the caller wrote: a line break in it would forge a second entry in a log written one event per line, a format character such as U+202E would reverse the text after it without showing itself, and a name a megabyte long would be kept whole.
 - Written at most once per refusal, from an exception filter: the refusal is never changed, caught or swallowed.
 - A full buffer (`Caps.MaxAuditEvents`) records nothing, and the original refusal is still thrown.
@@ -3753,7 +3759,7 @@ DwPolicyContext caller = await DwPolicy.PrepareAsync(new DwPolicyContext().WithS
 ## 27. Redis package — DynamicWhere.ex.Policies.Redis
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.1.0, StackExchange.Redis 2.8.24   namespace DynamicWhere.ex.Policies.Redis
+net6.0   dependencies: DynamicWhere.ex 3.3.0, StackExchange.Redis 2.8.24   namespace DynamicWhere.ex.Policies.Redis
 
 new RedisPolicyStore(IConnectionMultiplexer redis, string? prefix = null, Func<string, Type?>? resolveType = null)
     : IDwPolicyWritableStore
@@ -3805,7 +3811,7 @@ DwPolicy.Configure(options, await StorePolicyProvider.CreateAsync(store, options
 ## 28. Entity Framework Core package — DynamicWhere.ex.Policies.EntityFrameworkCore
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.1.0, Microsoft.EntityFrameworkCore.Relational 6.0.22
+net6.0   dependencies: DynamicWhere.ex 3.3.0, Microsoft.EntityFrameworkCore.Relational 6.0.22
 namespace DynamicWhere.ex.Policies.EntityFrameworkCore      no raw SQL; any EF Core relational provider; ships no migrations
 
 new EfPolicyStore(Func<DbContext> contexts, Func<string, Type?>? resolveType = null)    : IDwPolicyWritableStore
@@ -3888,7 +3894,7 @@ EfTokenVault:
 ## 29. ASP.NET Core package — DynamicWhere.ex.Policies.AspNetCore
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.1.0, FrameworkReference Microsoft.AspNetCore.App
+net6.0   dependencies: DynamicWhere.ex 3.3.0, FrameworkReference Microsoft.AspNetCore.App
 namespace DynamicWhere.ex.Policies.AspNetCore
 ```
 
@@ -4149,7 +4155,8 @@ through `PolicySimulator` or in dry run to see the decisions).
 8   OperatorNotAllowed                an operator outside the field's allowed set ([DwOperators], rules)        recorded
 9   CapExceeded                       MaxPageSize, MaxConditions, MaxConditionDepth, MaxConditionSets,          recorded, except the
                                       MaxConditionValues, MaxAggregates, MaxOrderFields or MaxNavigationDepth   audit buffer: throws
-                                      exceeded; or the context already holds MaxAuditEvents undrained events
+                                      exceeded; or the context already holds MaxAuditEvents undrained events,
+                                      which under Strict outside a dry run is refused as a field instead
 10  PolicyRequired                    a DynamicWhere extension method called on a                               throws
                                       [DwEntity(RequirePolicy = true)] type outside ApplyPolicy
 11  RequiredFilterMissing             a [DwRequireWhere] field has no AND-reachable condition using one of      recorded
@@ -4268,7 +4275,7 @@ any policy                  [DwEntity(RequirePolicy = true)]   a DynamicWhere ca
 
 ### Inference channels
 
-There are eight. The first six let a caller learn a value, or what the policy hides, without reading it;
+There are nine. The first seven let a caller learn a value, or what the policy hides, without reading it;
 **Forgotten guard** and **Empty store** are bypasses.
 
 - **Set operations:** `EXCEPT` or `INTERSECT` rebuild a field that is denied for Select but allowed for

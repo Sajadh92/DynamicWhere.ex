@@ -622,7 +622,12 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
         and <code>MaxAuditEvents</code> also put the field&apos;s path on{" "}
         <code>FieldPath</code>; under <code>Strict</code> every{" "}
         <code>CapExceeded</code> has <code>FieldPath</code>{" "}
-        <code>&quot;*&quot;</code>.{" "}
+        <code>&quot;*&quot;</code>. Since <strong>3.3.0</strong> the audit
+        buffer does not answer with <code>CapExceeded</code> under{" "}
+        <code>Strict</code> outside a dry run at all: only a real, audited field
+        can reach it, so it refuses with the clause&apos;s own field refusal and
+        no origin. See{" "}
+        <Link href="/docs/policies/security#audit-cap">the audit cap</Link>.{" "}
         <code>MaxQueryCost</code> is the one with a code of its own,{" "}
         <code>QueryCostExceeded</code>, because an operator reading a log needs
         to know which of the two refused: raising the wrong one changes nothing. The three schema caps never throw at all —

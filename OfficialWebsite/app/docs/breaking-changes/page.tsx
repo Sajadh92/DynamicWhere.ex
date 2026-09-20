@@ -972,7 +972,10 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
           <code>MaxNavigationDepth</code> and <code>MaxAuditEvents</code>, the two
           caps that named a field, used to report its canonical path, which
           confirmed that the path exists. They report <code>&quot;*&quot;</code>,
-          and <code>SourceOrigin</code> still names the cap.
+          and <code>SourceOrigin</code> still names the cap — except the audit
+          buffer, which since <strong>3.3.0</strong> refuses with the
+          clause&apos;s own field refusal under <code>Strict</code> outside a dry
+          run, and names no cap either (point&nbsp;33).
         </li>
         <li>
           <code>MaxQueryCost</code> is checked after every field has passed its
@@ -1508,8 +1511,12 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         </tbody>
       </table>
       <p>
-        A projection is read only as far as its initializer can be read. An
-        entity query names every producible member from the model; a projection
+        A projection that does not build its rows with an object initializer is
+        left alone whole: an anonymous type, and a constructor with arguments,
+        say nothing about which member each value sets, so no member of such a
+        row is refused here and none is claimed. A projection is otherwise read
+        only as far as its initializer can be read. An entity query names every
+        producible member from the model; a projection
         names them only where each assignment is a nested initializer, a member
         copied from the entity, a value built and left empty, or a conditional
         over those — a null branch beside one of them included. A member
@@ -1545,10 +1552,12 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         DelegateDecompiler&apos;s <code>Decompile()</code> exist to rewrite the
         members EF Core cannot translate, so a member they compute is one the
         query produces, over a projection and over an entity alike. The test is
-        EF Core&apos;s own provider type, not a type derived from it: a provider
-        built by deriving rewrites in the same way, and EF Core&apos;s own
-        derives from <code>object</code> in every version, so nothing real is
-        lost by the exact test. A row the
+        EF Core&apos;s own provider type, from EF Core&apos;s own assembly —
+        every other provider is left alone for the same reason turned around: a
+        host&apos;s own, registered through{" "}
+        <code>ReplaceService&lt;IAsyncQueryProvider, …&gt;</code>, may rewrite or
+        may pass straight through, the library cannot tell, and refusing on that
+        guess would take back a query the rewriting host answers today. A row the
         library itself projected is read like any other: the core&apos;s typed{" "}
         <code>Select</code> null-guards every nested node it builds, and both
         branches of that guard are read, so composing <code>Select</code> and

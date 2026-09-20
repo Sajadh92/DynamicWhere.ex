@@ -240,7 +240,10 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         cannot translate it. It is refused only where the whole set of members a
         container can produce is known — an entity&apos;s own EF Core model, and the initializers of a
         projection composed before <code>ApplyPolicy</code>, including a member
-        that projection copies from the entity. Rows in memory, a framework
+        that projection copies from the entity. A projection that builds its
+        rows any other way — an anonymous type, a constructor with arguments —
+        says nothing about which member each value sets, so no member of such a
+        row is refused here. Rows in memory, a framework
         member the provider translates such as <code>Length</code> or{" "}
         <code>Year</code>, anything beneath a column, the convenience tier and a
         dry run are all unchanged: the path is left alone, and behaves exactly
@@ -249,9 +252,11 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         provider decides.
         So is a query a provider in front of EF Core translates — LinqKit&apos;s{" "}
         <code>AsExpandable()</code>, DelegateDecompiler&apos;s{" "}
-        <code>Decompile()</code>, or one built by deriving from EF Core&apos;s
-        own provider — since such a provider exists to rewrite what EF Core
-        cannot, and a member it computes is one the query produces.
+        <code>Decompile()</code>, or a host&apos;s own registered through{" "}
+        <code>ReplaceService&lt;IAsyncQueryProvider, …&gt;</code> — since such a
+        provider may rewrite what EF Core cannot, and the library cannot tell
+        one that does from one that passes straight through. The test is EF
+        Core&apos;s own provider type, from EF Core&apos;s own assembly.
       </p>
       <p>
         The refusal raises no <code>[DwAudit]</code> event, for the reason an

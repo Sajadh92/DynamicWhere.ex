@@ -483,8 +483,9 @@ internal sealed class RowShape
     /// decompiler — so a member it computes is one the query produces, and holding its rows to EF
     /// Core's model would refuse a query that runs. The model is read from the query root in the
     /// expression, which such a wrapper leaves in place, so the provider is what tells the two
-    /// apart. EF Core's own provider is matched by name: no internal type is referenced, and every
-    /// version from EF Core 6 to 10 answers the same.
+    /// apart. EF Core's own provider is matched by name and by the assembly it was declared in: no
+    /// internal type is referenced, every version from EF Core 6 to 10 answers the same, and a type
+    /// declared under that name elsewhere is not taken for EF Core's.
     /// <para>
     /// The type itself, not a type derived from it. EF Core's provider derives from <c>object</c> in
     /// every version, and the queryable a <c>DbSet</c> hands out carries that exact type through

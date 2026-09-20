@@ -115,7 +115,10 @@ internal static class TransformPipeline
                     PolicyErrorCode.MissingHashSalt,
                     Named(context, options),
                     PolicyFeature.Select,
-                    options.Tier);
+                    options.Tier)
+                {
+                    AuditPath = context.FieldPath
+                };
             }
 
             // Tokenization is the one strategy that is not a pure function of its input, so it is
@@ -159,7 +162,10 @@ internal static class TransformPipeline
                 PolicyErrorCode.MissingTokenVault,
                 Named(context, options),
                 PolicyFeature.Select,
-                options.Tier);
+                options.Tier)
+            {
+                AuditPath = context.FieldPath
+            };
         }
 
         // Null has nothing to stand in for, and minting a token for it would invent a value where

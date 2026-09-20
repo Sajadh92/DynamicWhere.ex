@@ -821,6 +821,7 @@ public sealed class PolicyQueryable<T> where T : class
             PolicyFeature.Select,
             _options.Tier)
         {
+            AuditPath = string.Join(", ", TypePolicy.Transforms.Keys),
             SourceOrigin =
                 $"{method} returns a query for the caller to run, and a transformed value only " +
                 $"exists once the library has materialized it. Use {instead}, or " +

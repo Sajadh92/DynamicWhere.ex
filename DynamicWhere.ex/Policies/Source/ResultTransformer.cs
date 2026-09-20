@@ -166,7 +166,12 @@ internal static class ResultTransformer
                 continue;
             }
 
-            string name = byColumn.TryGetValue(property.Key, out string? alias) ? alias : property.Key;
+            // Not onto a name the row already carries: writing there would emit one column under
+            // another's name and drop that other's value outright. The startup scan reports such an
+            // alias as an error; a deployment that runs without scanning keeps both columns.
+            string name = byColumn.TryGetValue(property.Key, out string? alias) && !properties.ContainsKey(alias)
+                ? alias
+                : property.Key;
 
             if (!ReferenceEquals(name, property.Key) && !renamed.Contains(property.Key))
             {
@@ -455,6 +460,7 @@ internal static class ResultTransformer
                     PolicyFeature.Group,
                     options.Tier)
                 {
+                    AuditPath = string.Join(", ", keys.Select(k => k.Path)),
                     SourceOrigin = hides
                         ? null
                         : "two groups share a key once transformed, so their aggregates can no longer " +

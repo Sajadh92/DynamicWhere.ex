@@ -76,7 +76,7 @@ public static class PolicyModelValidator
         {
             string member = $"{type.Name}.{property.Name}";
 
-            CheckAlias(property, member, aliases, errors);
+            CheckAlias(property, member, type, aliases, errors);
             CheckFacts(property, member, errors);
             CheckForced(property, member, errors);
 
@@ -251,10 +251,29 @@ public static class PolicyModelValidator
 
     /// <summary>Refuses two members of one type answering to the same public name.</summary>
     private static void CheckAlias(
-        PropertyInfo property, string member, Dictionary<string, string> aliases, List<string> errors)
+        PropertyInfo property,
+        string member,
+        Type type,
+        Dictionary<string, string> aliases,
+        List<string> errors)
     {
         if (property.GetCustomAttribute<DwAliasAttribute>(inherit: true) is not { } alias)
         {
+            return;
+        }
+
+        // An alias spelled like another member of the same type is the same collision as two members
+        // sharing one alias, and it is worse on the way out: a generated row would carry one name
+        // twice, so one of the two values is the one the caller receives.
+        if (!string.Equals(alias.Name, property.Name, StringComparison.OrdinalIgnoreCase)
+            && type.GetProperty(alias.Name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase)
+                is { } shadowed)
+        {
+            errors.Add(
+                $"{member}: the alias '{alias.Name}' is the name of {type.Name}.{shadowed.Name}. A name " +
+                "that could mean two fields is refused at query time, and a generated row cannot " +
+                "carry the name twice, so rename one of them.");
+
             return;
         }
 

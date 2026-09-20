@@ -315,6 +315,15 @@ internal static class FilterSanitizer
         {
             for (int i = 0; i < groupBy.Fields.Count; i++)
             {
+                // A blank key fails validation, as it does unguarded. Handing it to the resolver
+                // instead reaches Validate<T>'s argument check, and an ArgumentNullException is not
+                // the failure the endpoint turns into a four-hundred — every other clause guards it
+                // here for the same reason.
+                if (string.IsNullOrWhiteSpace(groupBy.Fields[i]))
+                {
+                    throw new LogicException(ErrorCode.InvalidField);
+                }
+
                 groupBy.Fields[i] = ResolveName<T>(groupBy.Fields[i], gate);
             }
         }

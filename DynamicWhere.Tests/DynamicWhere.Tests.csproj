@@ -107,6 +107,8 @@
     <Compile Remove="Policies/ReviewMappingProbes.cs" />
     <!-- Same reason: the complex-type probes map complex properties, which EF Core 6 does not have. -->
     <Compile Remove="Policies/Ob4ComplexProbes.cs" />
+    <!-- Same reason: the mapping probes map ToJson, a complex property and a primitive collection. -->
+    <Compile Remove="Policies/Pr6MappingProbes.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -312,7 +312,7 @@ internal static class ResultTransformer
 
         if (keys.Count > 0)
         {
-            RefuseCollisions(result.Data, keys, options);
+            RefuseCollisions(result.Data, keys, context, options);
         }
     }
 
@@ -423,7 +423,8 @@ internal static class ResultTransformer
     /// rows that look like duplicates and whose aggregates cannot be added together without
     /// inventing a figure the database never computed.
     /// </remarks>
-    private static void RefuseCollisions(List<dynamic> rows, List<Column> keys, DwPolicyOptions options)
+    private static void RefuseCollisions(
+        List<dynamic> rows, List<Column> keys, DwPolicyContext context, DwPolicyOptions options)
     {
         HashSet<string> seen = new(StringComparer.Ordinal);
 
@@ -442,7 +443,7 @@ internal static class ResultTransformer
 
             if (!seen.Add(composite))
             {
-                bool hides = options.Tier == DwTier.Strict && !options.DryRun;
+                bool hides = options.Tier == DwTier.Strict && !options.DryRun && !context.DryRun;
 
                 // Under the strict tier the refusal names the clause rather than the grouping key:
                 // the key's canonical path is the column behind whatever alias the caller wrote, and

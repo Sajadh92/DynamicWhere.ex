@@ -815,7 +815,7 @@ public sealed class PolicyQueryable<T> where T : class
         // on the type, handed to a caller who named none of them.
         throw new PolicyException(
             PolicyErrorCode.TransformRequiresMaterialization,
-            _options.Tier == DwTier.Strict && !_options.DryRun
+            _options.Tier == DwTier.Strict && !_options.DryRun && !_context.DryRun
                 ? "*"
                 : string.Join(", ", TypePolicy.Transforms.Keys),
             PolicyFeature.Select,

@@ -30,6 +30,10 @@
     <!-- Lazy-loading proxies, for the test that a navigation a proxy can fill after the query counts as
          loaded. Same version as EF Core, on both legs. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(DwEfCoreVersion)" />
+    <!-- EF Core's own in-memory provider, for the probe that the refusal fires there too: it is EF
+         Core's provider, so the rows are EF Core's to speak for, and the getter fails there as it
+         fails in SQLite. Same version as EF Core, on both legs. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="$(DwEfCoreVersion)" />
     <!-- ConfigurationBuilder, for the posture-binding tests. In the always-on group rather
          than beside Npgsql, because binding is a core feature and the floor leg has to run
          its tests too. An Extensions package at 6.0.0 pulls no EF Core graph with it. -->

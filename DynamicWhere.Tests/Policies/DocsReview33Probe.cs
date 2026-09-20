@@ -598,11 +598,12 @@ namespace DynamicWhere.Tests.Policies
         private static readonly MethodInfo SamePosture = typeof(DwPolicy)
             .GetMethod("SamePosture", BindingFlags.Static | BindingFlags.NonPublic)!;
 
-        private static readonly MethodInfo SameProviders = typeof(DwPolicy)
-            .GetMethod("SameProviders", BindingFlags.Static | BindingFlags.NonPublic)!;
+        private static readonly MethodInfo ProviderKinds = typeof(DwPolicy)
+            .GetMethod("ProviderTypes", BindingFlags.Static | BindingFlags.NonPublic)!;
 
-        private static readonly FieldInfo ProviderTypes = typeof(DwPolicy)
-            .GetField("_providerTypes", BindingFlags.Static | BindingFlags.NonPublic)!;
+        /// <summary>The comparison key a list of sources reduces to, which is what a second call is compared by.</summary>
+        private static Type[] Kinds(params IDwPolicyProvider[] providers) =>
+            (Type[])ProviderKinds.Invoke(null, new object?[] { providers })!;
 
         private static bool Same(DwPolicyOptions asked, params IDwPolicyProvider[] providers) =>
             (bool)SamePosture.Invoke(null, new object?[] { DwPolicy.Options, asked, providers })!;
@@ -808,41 +809,34 @@ namespace DynamicWhere.Tests.Policies
         [Fact]
         public void The_provider_rules_hold_type_by_type()
         {
-            Type[] saved = (Type[])ProviderTypes.GetValue(null)!;
+            // Read through the comparison key rather than by driving DwPolicy's static list: that
+            // list is process-wide, and a test holding it hostage refuses every suite configuring
+            // the assembly's posture in parallel.
+            Type[] inForce = Kinds(new QpProviderA(), new QpProviderB());
 
-            try
-            {
-                ProviderTypes.SetValue(null, new[] { typeof(QpProviderA), typeof(QpProviderB) });
+            bool Ask(params IDwPolicyProvider[] asked) => inForce.SequenceEqual(Kinds(asked));
 
-                bool Ask(params IDwPolicyProvider[] asked) =>
-                    (bool)SameProviders.Invoke(null, new object?[] { asked })!;
+            bool sameKinds = Ask(new QpProviderA(), new QpProviderB());
+            bool reordered = Ask(new QpProviderB(), new QpProviderA());
+            bool dropped = Ask(new QpProviderA());
+            bool added = Ask(new QpProviderA(), new QpProviderB(), new QpProviderA());
+            bool attributeIgnored = Ask(new AttributePolicyProvider(), new QpProviderA(), new QpProviderB());
+            bool none = Ask();
 
-                bool sameKinds = Ask(new QpProviderA(), new QpProviderB());
-                bool reordered = Ask(new QpProviderB(), new QpProviderA());
-                bool dropped = Ask(new QpProviderA());
-                bool added = Ask(new QpProviderA(), new QpProviderB(), new QpProviderA());
-                bool attributeIgnored = Ask(new AttributePolicyProvider(), new QpProviderA(), new QpProviderB());
-                bool none = Ask();
+            _out.WriteLine($"in force = [QpProviderA, QpProviderB]");
+            _out.WriteLine($"  same kinds, new instances        -> {sameKinds}");
+            _out.WriteLine($"  reordered                        -> {reordered}");
+            _out.WriteLine($"  one dropped                      -> {dropped}");
+            _out.WriteLine($"  one added                        -> {added}");
+            _out.WriteLine($"  AttributePolicyProvider prefixed -> {attributeIgnored}");
+            _out.WriteLine($"  none supplied                    -> {none}");
 
-                _out.WriteLine($"in force = [QpProviderA, QpProviderB]");
-                _out.WriteLine($"  same kinds, new instances        -> {sameKinds}");
-                _out.WriteLine($"  reordered                        -> {reordered}");
-                _out.WriteLine($"  one dropped                      -> {dropped}");
-                _out.WriteLine($"  one added                        -> {added}");
-                _out.WriteLine($"  AttributePolicyProvider prefixed -> {attributeIgnored}");
-                _out.WriteLine($"  none supplied                    -> {none}");
-
-                Assert.True(sameKinds);
-                Assert.False(reordered);
-                Assert.False(dropped);
-                Assert.False(added);
-                Assert.True(attributeIgnored);
-                Assert.False(none);
-            }
-            finally
-            {
-                ProviderTypes.SetValue(null, saved);
-            }
+            Assert.True(sameKinds);
+            Assert.False(reordered);
+            Assert.False(dropped);
+            Assert.False(added);
+            Assert.True(attributeIgnored);
+            Assert.False(none);
         }
 
         [Fact]

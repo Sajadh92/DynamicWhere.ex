@@ -72,6 +72,11 @@ internal sealed class RowShape
     // Name = x.Name records ("Name", the entity, "Name"), so what is beneath it is read from the model.
     private readonly Dictionary<string, (IEntityType Entity, string Member)>? _copied;
 
+    // The paths whose value this shape could not read: a method call, a captured value, a subquery,
+    // two branches building the member two ways. The row carries the member; whether the query can
+    // compute it is not something the initializer says, so the answer for it is "cannot say".
+    private readonly HashSet<string>? _opaque;
+
     // True when EF Core's own provider translates the query. What a query can compute is the
     // translating provider's answer to give; a provider in front of EF Core, or in place of it, has
     // rules of its own, so its rows are left alone.
@@ -94,12 +99,14 @@ internal sealed class RowShape
         IDictionary<string, Type> members,
         Dictionary<string, HashSet<string>>? initialized = null,
         Dictionary<string, (IEntityType Entity, string Member)>? copied = null,
-        bool translated = false)
+        bool translated = false,
+        HashSet<string>? opaque = null)
         : this(kind)
     {
         _assigned = assigned;
         _initialized = initialized;
         _copied = copied;
+        _opaque = opaque;
         _translated = translated;
         _narrowable.UnionWith(narrowable);
         Built = built;
@@ -282,7 +289,8 @@ internal sealed class RowShape
     /// <summary>
     /// Whether the query behind these rows can express a path the caller named: true when every
     /// segment is something the source produces, false when a segment provably is not, and null when
-    /// the shape cannot say.
+    /// the shape cannot say. Only false is acted on: true is the absence of a reason to refuse
+    /// rather than a promise that the provider computes the path.
     /// </summary>
     /// <remarks>
     /// A member exists on the row's type and still has no value the database can compute.
@@ -337,6 +345,13 @@ internal sealed class RowShape
         {
             // Another provider decides what it can compute, and its rules are not EF Core's. A
             // provider that evaluates in memory runs the getter, as rows in memory do.
+            return null;
+        }
+
+        if (_opaque is not null && _opaque.Contains(string.Join(".", segments)))
+        {
+            // The initializer assigns the member from something this shape cannot read, so it says
+            // nothing about whether the query computes it.
             return null;
         }
 
@@ -470,19 +485,16 @@ internal sealed class RowShape
     /// expression, which such a wrapper leaves in place, so the provider is what tells the two
     /// apart. EF Core's own provider is matched by name: no internal type is referenced, and every
     /// version from EF Core 6 to 10 answers the same.
+    /// <para>
+    /// The type itself, not a type derived from it. EF Core's provider derives from <c>object</c> in
+    /// every version, and the queryable a <c>DbSet</c> hands out carries that exact type through
+    /// every operator, so walking base types would match no EF Core query that an exact comparison
+    /// misses — and it would match a wrapper built by deriving from it, which is the very thing this
+    /// leaves alone.
+    /// </para>
     /// </remarks>
-    private static bool EfCoreOwns(IQueryProvider provider)
-    {
-        for (Type? type = provider.GetType(); type is not null; type = type.BaseType)
-        {
-            if (type.FullName == "Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider")
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static bool EfCoreOwns(IQueryProvider provider) =>
+        provider.GetType().FullName == "Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider";
 
     /// <summary>
     /// The column the queried type maps under a name, or null.
@@ -827,7 +839,7 @@ internal sealed class RowShape
 
         return new RowShape(
             RowKind.Projected, assigned, narrowable, initializer.Type, built, initialized, copied,
-            EfCoreOwns(source.Provider));
+            EfCoreOwns(source.Provider), opaque);
     }
 
     /// <summary>

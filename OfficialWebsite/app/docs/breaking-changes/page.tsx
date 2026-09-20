@@ -17,12 +17,12 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The thirty-four points below cover constraints, surprises, and corner cases —
+        The thirty-five points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
       <Callout tone="danger" title="Behaviour changes in 3.3.0">
-        Points&nbsp;30 to 34 changed in <strong>3.3.0</strong>. Under{" "}
+        Points&nbsp;30 to 35 changed in <strong>3.3.0</strong>. Under{" "}
         <code>Strict</code>, a path that exists on the type and names no value
         the query can compute is refused rather than run, where the provider
         used to throw and the caller saw a five-hundred (point&nbsp;30).{" "}
@@ -35,7 +35,9 @@ export default function Page() {
         the clause&apos;s own field refusal rather than with{" "}
         <code>CapExceeded</code> (point&nbsp;33). Four more refusals that named
         a field under <code>Strict</code> name the clause instead
-        (point&nbsp;34).
+        (point&nbsp;34). And <code>[DwAudit]</code> records the audited members
+        a projection the caller never named hands back, which an empty{" "}
+        <code>Selects</code> used to return unrecorded (point&nbsp;35).
       </Callout>
       <Callout tone="danger" title="Behaviour changes in 3.2.0">
         Points&nbsp;25 to 29 changed in <strong>3.2.0</strong>, and each is
@@ -1673,6 +1675,28 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         where the tier names fields anyway. Code switching on{" "}
         <code>AmbiguousFieldName</code> under <code>Strict</code>, or reading{" "}
         <code>FieldPath</code> off any of the four, sees the change.
+      </p>
+
+      <h2 id="audit-unnamed-read">35. <code>[DwAudit]</code> Records a Read the Request Did Not Name</h2>
+      <p>
+        A request that sends no <code>Selects</code> receives the row. Until{" "}
+        <strong>3.3.0</strong> only a field the request spelled out was
+        recorded, so that caller read every audited member of the row with
+        nothing written down — one token past a control whose whole purpose is
+        to answer who read a field.
+      </p>
+      <p>
+        Every audited member a projection the caller did not name hands back is
+        now recorded for <code>Select</code>: the members the synthesized
+        projection keeps where one is built, and every member the caller may
+        select where none is, since the row then comes back whole. One event per
+        query rather than one per row, and only for a field{" "}
+        <code>[DwAudit]</code> names, so a type with nothing audited records
+        nothing. A deployment already running the control sees more events than
+        it did, and <code>DwCaps.MaxAuditEvents</code> — which refuses rather
+        than dropping a record — can now be reached by traffic that did not
+        reach it before. Raise the cap, or drain per request with{" "}
+        <code>app.UseDwPolicyAudit()</code>.
       </p>
 
       <h2 id="next">See also</h2>

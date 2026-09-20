@@ -5,7 +5,7 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Security & k-anonymity — the ten inference channels",
+  title: "Security & k-anonymity — the eleven inference channels",
   description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own — set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, SQL leakage, and schema probing through refusals — and the denials the gate could not see until 3.2.0.",
   keywords: ["k-anonymity", "MinGroupSize", "inference attack", "data disclosure", "aggregate disclosure", "EF Core security"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/security/" },
@@ -18,7 +18,7 @@ export default function Page() {
       <p>
         Denying a field is easy. The hard part is the set of ways a caller can
         learn a value <em>without</em> reading it. Eight such channels follow,
-        then two bypasses that are not channels, then a path the query cannot compute
+        then three bypasses that are not channels, then a path the query cannot compute
         — not a channel either, but the one request the tier used to answer with
         neither an answer nor a refusal — then the requests that, until 3.2.0,
         carried out a denied value the gate could not see; each has a test that
@@ -224,7 +224,7 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         unchanged.
       </p>
 
-      <h2 id="two-more">9 and 10. The two that are not channels</h2>
+      <h2 id="two-more">9, 10 and 11. The three that are not channels</h2>
       <table>
         <thead><tr><th>Attack</th><th>Control</th></tr></thead>
         <tbody>
@@ -235,6 +235,17 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
           <tr>
             <td>An empty policy store</td>
             <td>Attributes still enforce; an empty store never resolves to Allow</td>
+          </tr>
+          <tr>
+            <td>Reading an audited field by sending no <code>Selects</code></td>
+            <td>
+              A use is what the request reads, not only what it spells out. Until
+              3.3.0 only a field the request named was recorded, so a caller who
+              named none received every audited member of the row with nothing
+              written down — one token past <code>[DwAudit]</code>. Every audited
+              member a projection the caller did not name hands back is recorded
+              for <code>Select</code>, one event per query rather than per row.
+            </td>
           </tr>
         </tbody>
       </table>

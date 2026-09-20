@@ -435,22 +435,29 @@ internal static class ResultTransformer
             {
                 PropertyInfo property = CacheReflection.FindProperty(row.GetType(), key.Name)!;
 
-                parts.Add(MutatorCache.Read(property, row)?.ToString() ?? " ");
+                parts.Add(MutatorCache.Read(property, row)?.ToString() ?? "\0");
             }
 
-            string composite = string.Join('', parts);
+            string composite = string.Join('\u001f', parts);
 
             if (!seen.Add(composite))
             {
+                bool hides = options.Tier == DwTier.Strict && !options.DryRun;
+
+                // Under the strict tier the refusal names the clause rather than the grouping key:
+                // the key's canonical path is the column behind whatever alias the caller wrote, and
+                // the origin would say that its values are transformed. Both are answers about a
+                // field the caller never named.
                 throw new PolicyException(
                     PolicyErrorCode.AmbiguousGroupKey,
-                    string.Join(", ", keys.Select(k => k.Path)),
+                    hides ? "*" : string.Join(", ", keys.Select(k => k.Path)),
                     PolicyFeature.Group,
                     options.Tier)
                 {
-                    SourceOrigin =
-                        "two groups share a key once transformed, so their aggregates can no longer " +
-                        "be told apart"
+                    SourceOrigin = hides
+                        ? null
+                        : "two groups share a key once transformed, so their aggregates can no longer " +
+                          "be told apart"
                 };
             }
         }

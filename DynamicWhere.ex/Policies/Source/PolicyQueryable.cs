@@ -811,9 +811,13 @@ public sealed class PolicyQueryable<T> where T : class
             return;
         }
 
+        // Under the strict tier the refusal names the clause. The list is every transformed column
+        // on the type, handed to a caller who named none of them.
         throw new PolicyException(
             PolicyErrorCode.TransformRequiresMaterialization,
-            string.Join(", ", TypePolicy.Transforms.Keys),
+            _options.Tier == DwTier.Strict && !_options.DryRun
+                ? "*"
+                : string.Join(", ", TypePolicy.Transforms.Keys),
             PolicyFeature.Select,
             _options.Tier)
         {

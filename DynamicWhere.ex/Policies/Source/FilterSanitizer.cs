@@ -1916,6 +1916,7 @@ internal static class FilterSanitizer
                 continue;
             }
 
+
             // Two members share the name, one hidden with new under another type or spelled in another case:
             // the core reads one of them, and a row carries both. What either can hold is asked about, and a
             // projection, which cannot tell them apart, leaves the name out.
@@ -2431,6 +2432,16 @@ internal static class FilterSanitizer
 
         if (candidates.Count > 1)
         {
+            if (gate.HidesExistence)
+            {
+                // A name matching two fields matches at least one, and answering that differently
+                // from a name matching none tells a caller their guess named something real. The
+                // trace keeps the ambiguity for the operator who has to fix the aliases.
+                gate.RecordAmbiguous(spoken, candidates);
+
+                return gate.Unknown(spoken);
+            }
+
             throw gate.Exception(spoken, PolicyFeature.None, PolicyErrorCode.AmbiguousFieldName, null);
         }
 
@@ -2792,6 +2803,16 @@ internal static class FilterSanitizer
                 PolicyFeature.None,
                 PolicyAction.Denied,
                 "the member exists on the type and the query cannot compute it, so it is refused as an unknown name is"));
+        }
+
+        /// <summary>Records a name that matches more than one field, before it is refused as an unknown name is.</summary>
+        internal void RecordAmbiguous(string spoken, IReadOnlyList<string> candidates)
+        {
+            _trace.Add(new PolicyDecision(
+                spoken,
+                PolicyFeature.None,
+                PolicyAction.Denied,
+                "the name matches " + string.Join(", ", candidates) + ", so it is refused as an unknown name is"));
         }
 
         /// <summary>Remembers a name that matches nothing, and returns it for the gate to refuse.</summary>

@@ -185,6 +185,20 @@ namespace DynamicWhere.Tests.Policies
         private IQueryable<ZyRoleRow> Copied() =>
             _db.Roles.Select(role => new ZyRoleRow { Id = role.Id, Code = role.Code, Name = role.Name });
 
+        /// <summary>
+        /// The rows the same caller projects with a null guard around the built member, which is the
+        /// shape the library's own typed <c>Select</c> emits for every nested node.
+        /// </summary>
+        private IQueryable<ZyRoleRow> Guarded() =>
+            _db.Roles.Select(role => new ZyRoleRow
+            {
+                Id = role.Id,
+                Code = role.Code,
+                Name = role.Code == null
+                    ? new ZyLocalizedText()
+                    : new ZyLocalizedText { Ar = role.Name.Ar, En = role.Name.En }
+            });
+
         // ---- the entity itself ----------------------------------------------------------------------------
 
         [Fact]
@@ -511,5 +525,93 @@ namespace DynamicWhere.Tests.Policies
                 " | ",
                 trace.Decisions.Select(decision => $"{decision.FieldPath} {decision.Action} {decision.Reason}")));
         }
+
+        // ---- a member built by a conditional ----------------------------------------------------------------
+
+        [Fact]
+        public void A_member_a_null_guard_builds_is_read_through_both_branches()
+        {
+            // Neither branch computes IsEmpty, and the library's own Select builds exactly this
+            // shape, so a caller who composes Select and then filters has to be refused what the
+            // bare handle refuses.
+            PolicyException refusal = Assert.ThrowsAny<PolicyException>(
+                () => Guard(Guarded(), DwTier.Strict).ToList(Where("Name.IsEmpty", "false", DataType.Boolean)));
+
+            _out.WriteLine($"a null-guarded member: {refusal.ErrorCode}");
+
+            Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, refusal.ErrorCode);
+        }
+
+        [Fact]
+        public void A_member_a_null_guard_builds_still_answers_for_what_it_assigns()
+        {
+            // The branch that sets nothing assigns no member; the branch that builds the value
+            // assigns two. Reading only one of them would refuse a column the query computes.
+            IQueryable<ZyRoleRow> rows = _db.Roles.Select(role => new ZyRoleRow
+            {
+                Id = role.Id,
+                Name = role.Code == null
+                    ? new ZyLocalizedText { Ar = role.Name.Ar, En = role.Name.En }
+                    : new ZyLocalizedText()
+            });
+
+            Exception? unguarded = Record.Exception(() => rows.Where(row => row.Name.Ar == "").ToList());
+
+            Exception? guarded = Record.Exception(() => Guard(rows, DwTier.Strict).ToList(Where("Name.Ar", "")));
+
+            _out.WriteLine($"a column one branch assigns: unguarded={unguarded?.GetType().Name ?? "ran"} guarded={guarded?.GetType().Name ?? "ran"}");
+
+            // EF Core cannot translate a column read through a branch that builds an empty value, so
+            // this query fails either way — and it has to fail the same way, because the policy has
+            // nothing to refuse: a member one branch assigns is a member the row carries.
+            Assert.False(guarded is PolicyException, $"refused: {guarded?.Message}");
+            Assert.Equal(unguarded?.GetType(), guarded?.GetType());
+        }
+
+        [Fact]
+        public void A_member_built_and_left_empty_carries_nothing_beneath_it()
+        {
+            // The initializer builds the value and sets nothing on it, which is an answer rather
+            // than a gap: no member beneath it is one the query computes.
+            IQueryable<ZyRoleRow> rows = _db.Roles.Select(role => new ZyRoleRow
+            {
+                Id = role.Id,
+                Name = new ZyLocalizedText()
+            });
+
+            PolicyException refusal = Assert.ThrowsAny<PolicyException>(
+                () => Guard(rows, DwTier.Strict).ToList(Where("Name.IsEmpty", "false", DataType.Boolean)));
+
+            _out.WriteLine($"a member built and left empty: {refusal.ErrorCode}");
+
+            Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, refusal.ErrorCode);
+        }
+
+        [Fact]
+        public void A_member_two_branches_build_two_ways_is_left_alone()
+        {
+            // One branch copies the member from the entity and the other builds it in place, so the
+            // two say different things about what is beneath it. Refusing on either would refuse on
+            // half of what builds the row.
+            IQueryable<ZyRoleRow> rows = _db.Roles.Select(role => new ZyRoleRow
+            {
+                Id = role.Id,
+                Name = role.Code == null
+                    ? role.Name
+                    : new ZyLocalizedText { Ar = role.Name.Ar, En = role.Name.En }
+            });
+
+            Exception? unguarded = Record.Exception(() => rows.Where(row => row.Name.IsEmpty).ToList());
+
+            Exception? guarded = Record.Exception(
+                () => Guard(rows, DwTier.Strict).ToList(Where("Name.IsEmpty", "false", DataType.Boolean)));
+
+            _out.WriteLine($"two branches, two ways: unguarded={unguarded?.GetType().Name ?? "ran"} guarded={guarded?.GetType().Name ?? "ran"}");
+
+            Assert.False(guarded is PolicyException, $"refused: {guarded?.Message}");
+            Assert.Equal(unguarded?.GetType(), guarded?.GetType());
+        }
+
+        // ---- the provider that translates decides -------------------------------------------------------------
     }
 }

@@ -2358,8 +2358,8 @@ a projection another provider ran                    nothing; its rules are its 
 - The rule is EF Core's own provider's — that type, not a type derived from it. A provider that wraps EF Core —
   LinqKit's `AsExpandable()`, DelegateDecompiler's `Decompile()` — rewrites what EF Core cannot translate, so its
   rows are left alone, over a projection and over an entity alike; one deriving from EF Core's provider rewrites the
-  same way and is left alone too. A rewrite inside EF Core's own pipeline — a `[DbFunction]`, a member-translator
-  plugin, a replaced query preprocessor — leaves EF Core's provider in place, so such a member is refused.
+  same way and is left alone too. A rewrite inside EF Core's own pipeline — a member-translator plugin, a
+  replaced query preprocessor — leaves EF Core's provider in place, so such a member is refused.
 - A row the library itself projected reads like any other: the core's typed `Select` null-guards every nested node
   it builds, and both branches of that guard are read, so `Select` composed and then filtered refuses what the bare
   handle refuses.

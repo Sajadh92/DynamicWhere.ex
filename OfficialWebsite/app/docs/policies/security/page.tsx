@@ -224,7 +224,10 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         that projection copies from the entity. Rows in memory, a framework
         member the provider translates such as <code>Length</code> or{" "}
         <code>Year</code>, anything beneath a column, the convenience tier and a
-        dry run are all unchanged, and fail exactly as the unguarded query does.
+        dry run are all unchanged: the path is left alone, and behaves exactly
+        as it does unguarded — which for rows in memory and a framework member
+        means it runs and returns rows, and beneath a converted column means the
+        provider decides.
         So is a query a provider in front of EF Core translates — LinqKit&apos;s{" "}
         <code>AsExpandable()</code>, DelegateDecompiler&apos;s{" "}
         <code>Decompile()</code>, or one built by deriving from EF Core&apos;s

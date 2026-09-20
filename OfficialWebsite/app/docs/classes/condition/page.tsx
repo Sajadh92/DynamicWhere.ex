@@ -197,6 +197,15 @@ export default function Page() {
         </tbody>
       </table>
 
+      <p>
+        A value is read once to validate its format and again to build the
+        predicate, so pass values that do not change: one whose{" "}
+        <code>ToString()</code> answers differently each time is validated as
+        one value and queried as another. Anything decoded from JSON is such a
+        value already. No policy decision reads a value&apos;s content — only
+        how many there are — so nothing a guard decides rests on which read won.
+      </p>
+
       <Callout tone="success" title="Backward compatibility">
         Callers previously sending <code>["abc"]</code> (quoted strings) keep working unchanged —
         strings deserialize into the <code>List&lt;object&gt;</code> as string elements. C# callers

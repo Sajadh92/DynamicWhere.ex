@@ -1530,8 +1530,8 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
       <Callout tone="warn" title="The rule is the model's">
         A member the model maps nowhere is one the database cannot compute, so
         the strict tier refuses it wherever the database has to. A member a
-        translator inside EF Core computes without a mapping — a{" "}
-        <code>[DbFunction]</code>, a translator plugin — is refused with the
+        translator inside EF Core computes without a mapping — a member
+        translator plugin, a replaced query preprocessor — is refused with the
         rest: map it, or filter on the columns beneath it.
       </Callout>
       <p>
@@ -1593,9 +1593,9 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         value, the exposed entity catalogue with every name it answers to and
         the name each type is reported under, and the provider types in the
         order supplied. Writing a value&apos;s own default down is not a
-        difference: a cap&apos;s default, and <code>IncludeTraceInResult</code>{" "}
+        difference: the group floor, and <code>IncludeTraceInResult</code>{" "}
         written as the tier&apos;s own answer, are compared by the value that
-        applies. A type exposed under two names is reported under the last one,
+        applies. Every other cap is compared as written. A type exposed under two names is reported under the last one,
         so two catalogues resolving every name alike are still refused when the
         order differs. Not compared, and not
         replaced: <code>TokenVault</code>, <code>Services</code> and the

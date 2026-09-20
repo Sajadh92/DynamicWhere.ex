@@ -713,19 +713,9 @@ namespace DynamicWhere.Tests.Policies
             Assert.True(lost.Count == 0, "refusal silently lost on: " + string.Join(", ", lost));
         }
 
-        /// <summary>The exact walk <c>RowShape.EfCoreOwns</c> performs.</summary>
-        private static bool WalksToEfCore(IQueryProvider provider)
-        {
-            for (Type? type = provider.GetType(); type is not null; type = type.BaseType)
-            {
-                if (type.FullName == "Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider")
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
+        /// <summary>The comparison <c>RowShape.EfCoreOwns</c> performs: the type itself, not a subclass.</summary>
+        private static bool WalksToEfCore(IQueryProvider provider) =>
+            provider.GetType().FullName == "Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider";
 
         // =========================================================================================
         // R3-J. OPEN FINDING (round 3). The over-block direction of EfCoreOwns.

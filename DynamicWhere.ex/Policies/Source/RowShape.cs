@@ -944,7 +944,7 @@ internal sealed class RowShape
                        & ReadValue(choice.IfFalse, path, row, rowSource, initialized, copied, opaque, depth);
 
             default:
-                if (rowSource is null || MemberChain(assigned, row) is not { } chain)
+                if (rowSource is null || MemberChain(assigned, row, operators: false) is not { } chain)
                 {
                     return false;
                 }
@@ -1172,7 +1172,17 @@ internal sealed class RowShape
     /// The member path a navigation lambda reads, <c>o =&gt; o.Lines</c> or <c>o =&gt; o.Customer.Address</c>,
     /// through casts and a filtered include's operators; null for any other shape.
     /// </summary>
-    private static string? MemberChain(Expression body, ParameterExpression parameter)
+    /// <param name="body">The expression to read.</param>
+    /// <param name="parameter">The lambda's own parameter, which the chain has to start at.</param>
+    /// <param name="operators">
+    /// Whether a sequence operator over the member may be stripped. A filtered include reads its
+    /// navigation through <c>Where</c>, <c>OrderBy</c>, <c>Skip</c>, <c>Take</c> and their kin, and
+    /// the member it reaches is the navigation itself. A projection's assignment is the other way
+    /// round: <c>Lines = o.Lines.Select(l =&gt; new LineRow { … }).ToList()</c> holds <c>LineRow</c>s
+    /// and not <c>Line</c>s, so reading it as the navigation would read every path beneath it out of
+    /// the wrong model — and refuse a member the row carries because the entity does not map it.
+    /// </param>
+    private static string? MemberChain(Expression body, ParameterExpression parameter, bool operators = true)
     {
         Expression node = DefaultOrder.StripConversions(body);
 
@@ -1181,6 +1191,11 @@ internal sealed class RowShape
                && (call.Method.DeclaringType == typeof(Enumerable) || call.Method.DeclaringType == typeof(Queryable))
                && call.Arguments.Count > 0)
         {
+            if (!operators)
+            {
+                return null;
+            }
+
             node = DefaultOrder.StripConversions(call.Arguments[0]);
         }
 

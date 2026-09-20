@@ -2357,11 +2357,15 @@ a projection another provider ran                    nothing; its rules are its 
   exactly as it does unguarded. `Name.IsEmpty` beneath a column mapped through a value converter
   still fails inside the provider.
 - An unmapped getter on the entity itself (`Display => $"{Code}:{Id}"`) is refused for the same reason.
-- The rule is EF Core's own provider's — that type, not a type derived from it. A provider that wraps EF Core —
-  LinqKit's `AsExpandable()`, DelegateDecompiler's `Decompile()` — rewrites what EF Core cannot translate, so its
-  rows are left alone, over a projection and over an entity alike; one deriving from EF Core's provider rewrites the
-  same way and is left alone too. A rewrite inside EF Core's own pipeline — a member-translator plugin, a
-  replaced query preprocessor — leaves EF Core's provider in place, so such a member is refused.
+- The rule is EF Core's own provider's — that exact type, from EF Core's own assembly. A provider that wraps EF
+  Core — LinqKit's `AsExpandable()`, DelegateDecompiler's `Decompile()` — rewrites what EF Core cannot translate, so
+  its rows are left alone, over a projection and over an entity alike. Every other provider is left alone for the
+  same reason turned around, a host's own through `ReplaceService<IAsyncQueryProvider, …>` included: the library
+  cannot tell one that rewrites from one that passes straight through, and refusing on that guess would take back a
+  query the rewriting host answers today. A rewrite inside EF Core's own pipeline — a member-translator plugin, a
+  replaced query preprocessor — leaves EF Core's own provider in place, so such a member is refused.
+- A projection that does not build its rows with an object initializer — an anonymous type, a constructor with
+  arguments — says nothing about which member each value sets, so no member of such a row is refused here.
 - A row the library itself projected reads like any other: the core's typed `Select` null-guards every nested node
   it builds, and both branches of that guard are read, so `Select` composed and then filtered refuses what the bare
   handle refuses.
@@ -4283,6 +4287,10 @@ There are eight. The first six let a caller learn a value, or what the policy hi
   - The trace on a result names the same things: `result.Policy` lists the fields a policy dropped, the
     attribute or rule that sealed each one, and every injected predicate, and an API that serializes the
     result sends it on. Strict leaves it off unless `IncludeTraceInResult = true`; Convenience returns it (3.1.0).
+- **The audit cap:** a buffer at `MaxAuditEvents` refuses the next audited use. Until 3.3.0 that refusal carried
+  `CapExceeded` and an origin naming the cap, while an unknown name — never audited, so never reaching the cap —
+  carried the ordinary field refusal. Under `Strict` outside a dry run the cap now refuses with the clause's own
+  field refusal, so the two cannot be told apart; `Convenience` and a dry run still answer `CapExceeded`.
 - **Which fields exist:** Convenience answers a name that matches nothing with `ConditionMustHasValidFieldName`
   and a denied field with a refusal that names it and its source, so a caller can map the hidden columns one
   guess at a time. Strict answers both alike, with the clause's `FieldDeniedFor*` code, `FieldPath` `"*"` and
@@ -4892,6 +4900,10 @@ MemoryCalculationInput
           trace record it. A simulation has no source, so PolicySimulator and /simulate cannot refuse such a path.
         - Behaviour change. LastTrace is assigned before a request is sanitized, so a refused request leaves its own
           trace readable instead of the previous request's.
+        - Behaviour change and security fix. Under Strict outside a dry run, a query exhausting the audit buffer is
+          refused with the clause's own field refusal rather than with CapExceeded and an origin naming the cap. An
+          unknown name is never audited, so the two answers told a caller which names are real and audited.
+          Convenience and a dry run are unchanged.
         - New. Clone() is public on Filter, Segment and Summary. A deep copy: the condition tree, the projection list,
           each order, the page, and a summary's GroupBy and Having. Every node is new; a condition's values are the
           caller's own objects, in a new list.

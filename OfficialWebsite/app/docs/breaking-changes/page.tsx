@@ -17,12 +17,12 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The thirty-two points below cover constraints, surprises, and corner cases —
+        The thirty-three points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
       <Callout tone="danger" title="Behaviour changes in 3.3.0">
-        Points&nbsp;30 to 32 changed in <strong>3.3.0</strong>. Under{" "}
+        Points&nbsp;30 to 33 changed in <strong>3.3.0</strong>. Under{" "}
         <code>Strict</code>, a path that exists on the type and names no value
         the query can compute is refused rather than run, where the provider
         used to throw and the caller saw a five-hundred (point&nbsp;30).{" "}
@@ -30,7 +30,10 @@ export default function Page() {
         refused request leaves its own trace readable (point&nbsp;31). And{" "}
         <code>DwPolicy.Configure</code> takes a second call asking for the
         posture already in force, which is what lets an integration suite start
-        several hosts over one composition root (point&nbsp;32).
+        several hosts over one composition root (point&nbsp;32). A query that
+        exhausts the audit buffer under <code>Strict</code> is now refused with
+        the clause&apos;s own field refusal rather than with{" "}
+        <code>CapExceeded</code> (point&nbsp;33).
       </Callout>
       <Callout tone="danger" title="Behaviour changes in 3.2.0">
         Points&nbsp;25 to 29 changed in <strong>3.2.0</strong>, and each is
@@ -1612,6 +1615,31 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         registration gets the first one&apos;s. Code that relied on the second
         call throwing no longer sees the exception.
       </Callout>
+
+      <h2 id="audit-cap-refusal">33. The Audit Cap Refuses Like Any Other Field, Under <code>Strict</code></h2>
+      <p>
+        An audited field records one event per use, and the library refuses the
+        query rather than dropping a record when{" "}
+        <code>DwCaps.MaxAuditEvents</code> is reached — fail closed, because an
+        access with nothing written down is the one outcome{" "}
+        <code>[DwAudit]</code> exists to prevent. Until <strong>3.3.0</strong>{" "}
+        that refusal carried <code>CapExceeded</code> and a{" "}
+        <code>SourceOrigin</code> naming the cap, while a name matching nothing
+        carried the ordinary field refusal and no origin.
+      </p>
+      <p>
+        Two answers, and the difference told a caller that the name they had
+        guessed is a real field <em>and</em> an audited one — the inference the
+        strict tier exists to prevent, since an unknown name is never audited
+        and never reaches the cap. Under <code>Strict</code>, outside a dry run,
+        the cap now refuses with the same code, the same{" "}
+        <code>FieldPath</code> <code>&quot;*&quot;</code> and the same absent
+        origin as any other field refusal. The request still fails, the trace
+        still records which refusal it really was, and{" "}
+        <code>Convenience</code> and a dry run still answer{" "}
+        <code>CapExceeded</code>. Code switching on <code>CapExceeded</code>{" "}
+        under <code>Strict</code> sees the change.
+      </p>
 
       <h2 id="next">See also</h2>
       <ul>

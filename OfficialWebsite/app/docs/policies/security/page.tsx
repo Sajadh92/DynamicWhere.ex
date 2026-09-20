@@ -5,7 +5,7 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Security & k-anonymity — the eight inference channels",
+  title: "Security & k-anonymity — the nine inference channels",
   description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own — set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, SQL leakage, and schema probing through refusals — and the denials the gate could not see until 3.2.0.",
   keywords: ["k-anonymity", "MinGroupSize", "inference attack", "data disclosure", "aggregate disclosure", "EF Core security"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/security/" },
@@ -17,8 +17,8 @@ export default function Page() {
       <h1>Security &amp; k-anonymity</h1>
       <p>
         Denying a field is easy. The hard part is the set of ways a caller can
-        learn a value <em>without</em> reading it. Six such channels follow, then
-        two bypasses that are not channels, then a path the query cannot compute
+        learn a value <em>without</em> reading it. Seven such channels follow,
+        then two bypasses that are not channels, then a path the query cannot compute
         — not a channel either, but the one request the tier used to answer with
         neither an answer nor a refusal — then the requests that, until 3.2.0,
         carried out a denied value the gate could not see; each has a test that
@@ -186,7 +186,26 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         together describe how the rows are partitioned.
       </p>
 
-      <h2 id="two-more">7 and 8. The two that are not channels</h2>
+      <h2 id="audit-cap">7. The audit cap answers differently for a real field</h2>
+      <p>
+        An audited field records an event per use, and the query is refused
+        rather than the record dropped when <code>DwCaps.MaxAuditEvents</code>{" "}
+        is reached. Until 3.3.0 that refusal carried <code>CapExceeded</code>{" "}
+        and a <code>SourceOrigin</code> naming the cap, where a name matching
+        nothing carried the ordinary field refusal and no origin. One guess per
+        request therefore told a caller which names are real and audited — which
+        is to say, exactly the fields <code>[DwAudit]</code> is put on, since an
+        unknown name is never audited and never reaches the cap.
+      </p>
+      <p>
+        <strong>Closed by:</strong> under <code>Strict</code>, outside a dry
+        run, the cap refuses with the clause&apos;s own field refusal — same
+        code, <code>FieldPath</code> <code>&quot;*&quot;</code>, no origin. The
+        request still fails, so the buffer still fails closed, and the trace
+        still records which refusal it really was.
+      </p>
+
+      <h2 id="two-more">8 and 9. The two that are not channels</h2>
       <table>
         <thead><tr><th>Attack</th><th>Control</th></tr></thead>
         <tbody>

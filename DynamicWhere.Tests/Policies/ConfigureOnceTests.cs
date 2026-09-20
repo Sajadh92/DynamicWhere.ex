@@ -280,6 +280,60 @@ namespace DynamicWhere.Tests.Policies
             Assert.Same(DwPolicy.Options, provider.GetRequiredService<DwPolicyOptions>());
         }
 
+        [Fact]
+        public void The_posture_in_force_handed_back_with_a_source_beside_it_is_refused()
+        {
+            // The instance carries the same values by definition and says nothing about the sources.
+            // Answering "same posture" here would drop the source: the resolver is never rebuilt, the
+            // source is never consulted, and every rule in it quietly does not apply.
+            PolicyResolver before = DwPolicy.Resolver;
+
+            InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
+                () => DwPolicy.Configure(DwPolicy.Options, new FakePolicyProvider()));
+
+            Assert.Contains("already configured", refusal.Message);
+            Assert.Same(before, DwPolicy.Resolver);
+        }
+
+        [Fact]
+        public void The_posture_in_force_handed_back_with_nothing_beside_it_is_the_same_posture()
+        {
+            DwPolicyOptions inForce = DwPolicy.Options;
+
+            DwPolicy.Configure(inForce);
+
+            Assert.Same(inForce, DwPolicy.Options);
+        }
+
+        [Fact]
+        public void A_catalogue_answering_to_one_more_name_for_the_same_type_is_refused()
+        {
+            // Entities reports the last name a type was exposed under; both stay resolvable. Two
+            // catalogues reporting the same pairs can still answer differently to an admin request.
+            DwPolicyOptions different = Copy();
+
+            if (DwPolicy.Options.Entities.IsEmpty)
+            {
+                different.Entities.Expose<ConfigureOnceOnlyHere>("only-here");
+
+                Refused(different);
+
+                return;
+            }
+
+            KeyValuePair<Type, string> first = DwPolicy.Options.Entities.Entities.First();
+
+            // Exposed again under an extra name, then back under the one in force, so Entities
+            // matches pair for pair and only the name map differs.
+            different.Entities.Expose(first.Key, $"{first.Value}-also");
+            different.Entities.Expose(first.Key, first.Value);
+
+            Assert.Equal(DwPolicy.Options.Entities.Entities.Count, different.Entities.Entities.Count);
+            Assert.Equal(first.Value, different.Entities.NameOf(first.Key));
+
+            Refused(different);
+        }
+
         /// <summary>
         /// Every settable value on the posture and on the caps decides whether a second call is the
         /// same posture, and the two that do not are named here on purpose.

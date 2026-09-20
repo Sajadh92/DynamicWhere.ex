@@ -153,4 +153,50 @@ public sealed class DwEntityCatalog
 
     /// <summary>Prevents any further change.</summary>
     public void Freeze() => _frozen = true;
+
+    /// <summary>True when another catalogue exposes the same types and answers to the same names.</summary>
+    /// <remarks>
+    /// Read when a second call asks whether it is configuring the posture already in force. Every
+    /// name matters, not only the last one each type was exposed under: a type exposed twice answers
+    /// to both, while <see cref="Entities"/> reports one, so comparing that alone would let a second
+    /// host's administrative surface resolve a name this one never declared — or fail to resolve one
+    /// it did.
+    /// </remarks>
+    internal bool SameAs(DwEntityCatalog other)
+    {
+        if (other is null
+            || _names.Count != other._names.Count
+            || _byName.Count != other._byName.Count
+            || _byFullName.Count != other._byFullName.Count)
+        {
+            return false;
+        }
+
+        foreach (KeyValuePair<Type, string> exposed in _names)
+        {
+            if (!other._names.TryGetValue(exposed.Key, out string? name)
+                || !string.Equals(exposed.Value, name, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        foreach (KeyValuePair<string, Type> named in _byName)
+        {
+            if (!other._byName.TryGetValue(named.Key, out Type? type) || type != named.Value)
+            {
+                return false;
+            }
+        }
+
+        foreach (KeyValuePair<string, Type> named in _byFullName)
+        {
+            if (!other._byFullName.TryGetValue(named.Key, out Type? type) || type != named.Value)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }

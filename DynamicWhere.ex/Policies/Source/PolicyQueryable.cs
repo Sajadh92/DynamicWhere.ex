@@ -414,12 +414,14 @@ public sealed class PolicyQueryable<T> where T : class
         {
             PolicyTrace trace = NewTrace();
 
+            // Before the sanitizing, as every other terminal does it, so a refused segment leaves
+            // its own trace readable rather than the request before it.
+            LastTrace = trace;
+
             Segment sanitized = FilterSanitizer.Sanitize<T>(
                 segment, _resolver, _context, _options, trace,
                 applyDefaultOrder: TakesDefaultOrder,
                 rows: RowShape.Of(_source));
-
-            LastTrace = trace;
 
             using (PolicyScope.Enter(_context, LastTrace))
             {

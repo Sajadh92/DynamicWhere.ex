@@ -330,6 +330,53 @@ namespace DynamicWhere.Tests.Policies
         }
 
         [Fact]
+        public async Task A_segment_naming_it_is_refused_and_leaves_its_own_trace()
+        {
+            PolicyQueryable<ZyRoleRow> guarded = Guard(Built(), DwTier.Strict);
+
+            // A first request, so a trace left over from it would be visible if the refusal skipped
+            // the assignment.
+            await guarded.ToListAsync(new Segment
+            {
+                ConditionSets =
+                {
+                    new ConditionSet
+                    {
+                        Sort = 1,
+                        ConditionGroup = new ConditionGroup
+                        {
+                            Conditions = { new Condition { Field = "Code", DataType = DataType.Text, Operator = Operator.Equal, Values = { "admin" } } }
+                        }
+                    }
+                }
+            });
+
+            PolicyTrace? first = guarded.LastTrace;
+
+            PolicyException refusal = await Assert.ThrowsAnyAsync<PolicyException>(
+                () => guarded.ToListAsync(new Segment
+                {
+                    ConditionSets =
+                    {
+                        new ConditionSet
+                        {
+                            Sort = 1,
+                            ConditionGroup = new ConditionGroup
+                            {
+                                Conditions = { new Condition { Field = "Name.IsEmpty", DataType = DataType.Boolean, Operator = Operator.Equal, Values = { "false" } } }
+                            }
+                        }
+                    }
+                }));
+
+            Assert.Equal(PolicyErrorCode.FieldDeniedForSegment, refusal.ErrorCode);
+            Assert.NotSame(first, guarded.LastTrace);
+            Assert.Contains(
+                guarded.LastTrace!.Decisions,
+                decision => decision.Reason is not null && decision.Reason.Contains("cannot compute"));
+        }
+
+        [Fact]
         public void A_summary_grouping_on_it_is_refused()
         {
             PolicyException refusal = Assert.ThrowsAny<PolicyException>(

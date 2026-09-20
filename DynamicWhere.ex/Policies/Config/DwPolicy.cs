@@ -146,7 +146,12 @@ public static class DwPolicy
     {
         if (ReferenceEquals(inForce, asked))
         {
-            return true;
+            // The same instance carries the same values by definition, and says nothing about the
+            // sources. Handing the posture in force back with a store provider beside it is a call
+            // asking for that source, and answering "same posture" would drop it: the resolver is
+            // never rebuilt, the source is never consulted, and every rule in it — a denial
+            // included — quietly does not apply.
+            return SameProviders(providers);
         }
 
         if (inForce.Tier != asked.Tier
@@ -189,25 +194,13 @@ public static class DwPolicy
         && inForce.SchemaCycleLimit == asked.SchemaCycleLimit
         && inForce.MaxSchemaFields == asked.MaxSchemaFields;
 
-    /// <summary>True when both catalogues expose the same types under the same names.</summary>
-    private static bool SameCatalog(DwEntityCatalog inForce, DwEntityCatalog asked)
-    {
-        if (inForce.Entities.Count != asked.Entities.Count)
-        {
-            return false;
-        }
-
-        foreach (KeyValuePair<Type, string> exposed in inForce.Entities)
-        {
-            if (!asked.Entities.TryGetValue(exposed.Key, out string? name)
-                || !string.Equals(exposed.Value, name, StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    /// <summary>True when both catalogues expose the same types and answer to the same names.</summary>
+    /// <remarks>
+    /// Every name, not only the last one each type was exposed under. A type exposed twice keeps
+    /// both names resolvable while <c>Entities</c> reports one, so two catalogues can report the
+    /// same pairs and still answer differently to an administrative request.
+    /// </remarks>
+    private static bool SameCatalog(DwEntityCatalog inForce, DwEntityCatalog asked) => inForce.SameAs(asked);
 
     /// <summary>
     /// True when the second call supplies the same kinds of policy source, in the same order.

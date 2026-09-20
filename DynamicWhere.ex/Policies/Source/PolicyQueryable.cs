@@ -935,7 +935,8 @@ public sealed class PolicyQueryable<T> where T : class
         LastTrace = trace;
 
         Filter sanitized = FilterSanitizer.Sanitize<T>(
-            clause, _resolver, _context, _options, trace, synthesizeProjection: false, applyDefaultOrder);
+            clause, _resolver, _context, _options, trace, synthesizeProjection: false, applyDefaultOrder,
+            rows: RowShape.Of(_source));
 
         return sanitized;
     }

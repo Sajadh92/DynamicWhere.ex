@@ -1,3 +1,4 @@
+using System.Reflection;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Resolution;
@@ -278,6 +279,76 @@ namespace DynamicWhere.Tests.Policies
 
             Assert.Same(DwPolicy.Options, provider.GetRequiredService<DwPolicyOptions>());
         }
+
+        /// <summary>
+        /// Every settable value on the posture and on the caps decides whether a second call is the
+        /// same posture, and the two that do not are named here on purpose.
+        /// </summary>
+        /// <remarks>
+        /// Written by reflection rather than by hand: a value added to <c>DwPolicyOptions</c> or
+        /// <c>DwCaps</c> later and forgotten in the comparison would let a second host run with a
+        /// posture it did not ask for, silently, which is the one failure this feature can cause. A
+        /// new property fails this test until somebody decides which column it belongs in.
+        /// </remarks>
+        [Theory]
+        [InlineData(typeof(DwPolicyOptions))]
+        [InlineData(typeof(DwCaps))]
+        public void Every_value_on_the_posture_is_compared(Type declaring)
+        {
+            // The objects a host builds for itself. A second host builds its own, so comparing them
+            // by reference would refuse every second call; they stay as the first call left them.
+            HashSet<string> notCompared = new() { nameof(DwPolicyOptions.TokenVault), nameof(DwPolicyOptions.Services) };
+
+            List<string> settable = declaring
+                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(property => property.GetSetMethod() is not null)
+                .Select(property => property.Name)
+                .ToList();
+
+            Assert.NotEmpty(settable);
+
+            foreach (string name in settable)
+            {
+                if (notCompared.Remove(name))
+                {
+                    continue;
+                }
+
+                DwPolicyOptions different = Copy();
+                object target = declaring == typeof(DwCaps) ? different.Caps : different;
+                PropertyInfo property = declaring.GetProperty(name)!;
+
+                property.SetValue(target, Other(property.GetValue(target), property.PropertyType));
+
+                DwPolicyOptions inForce = DwPolicy.Options;
+
+                Assert.Throws<InvalidOperationException>(() => DwPolicy.Configure(different));
+                Assert.Same(inForce, DwPolicy.Options);
+            }
+
+            // Both names belong to the posture, so nothing may be left over once it has been walked.
+            // A stale exclusion would otherwise sit here hiding a property nobody compares.
+            if (declaring == typeof(DwPolicyOptions))
+            {
+                Assert.Empty(notCompared);
+            }
+        }
+
+        /// <summary>A value of the same type that is not the one held.</summary>
+        private static object? Other(object? held, Type type) => type switch
+        {
+            _ when type == typeof(bool) => !(bool)held!,
+            _ when type == typeof(bool?) => held is true ? false : true,
+            _ when type == typeof(int) => (int)held! + 1,
+            _ when type == typeof(TimeSpan) => (TimeSpan)held! + TimeSpan.FromMinutes(1),
+            _ when type == typeof(string) => new string('x', DwPolicyOptions.MinimumHashSaltLength + 2),
+            _ when type == typeof(DwTier) => (DwTier)held! == DwTier.Strict ? DwTier.Convenience : DwTier.Strict,
+            _ when type == typeof(StoreFailureMode) => (StoreFailureMode)held! == StoreFailureMode.FailClosed
+                ? StoreFailureMode.LastKnownGood
+                : StoreFailureMode.FailClosed,
+            _ => throw new InvalidOperationException(
+                $"No second value is defined for {type.Name}. Add one, and decide whether the comparison covers it.")
+        };
 
         private static void Refused(DwPolicyOptions different, params IDwPolicyProvider[] providers)
         {

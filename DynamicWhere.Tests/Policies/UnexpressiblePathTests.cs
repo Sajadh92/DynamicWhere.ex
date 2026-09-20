@@ -251,6 +251,26 @@ namespace DynamicWhere.Tests.Policies
         }
 
         [Fact]
+        public void A_clause_composed_on_the_handle_is_refused_too()
+        {
+            // The composed pipeline reads the same source, so it answers as the terminal does.
+            PolicyException refusal = Assert.ThrowsAny<PolicyException>(
+                () => Guard(Built(), DwTier.Strict).Where(new ConditionGroup
+                {
+                    Conditions =
+                    {
+                        new Condition
+                        {
+                            Field = "Name.IsEmpty", DataType = DataType.Boolean,
+                            Operator = Operator.Equal, Values = { "false" }
+                        }
+                    }
+                }));
+
+            Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, refusal.ErrorCode);
+        }
+
+        [Fact]
         public void A_summary_grouping_on_it_is_refused()
         {
             PolicyException refusal = Assert.ThrowsAny<PolicyException>(
@@ -267,6 +287,24 @@ namespace DynamicWhere.Tests.Policies
         }
 
         // ---- what is left alone ---------------------------------------------------------------------------
+
+        [Fact]
+        public void A_member_the_projection_never_assigns_fails_unguarded_and_is_refused_guarded()
+        {
+            // Unguarded first: what the provider does with it decides whether refusing is right.
+            IQueryable<ZyRoleRow> rows = _db.Roles.Select(role => new ZyRoleRow { Id = role.Id, Code = role.Code });
+
+            Exception? unguarded = Record.Exception(() => rows.Where(row => row.Name.Ar == "مدير").ToList());
+
+            _out.WriteLine($"unguarded: {unguarded?.GetType().Name ?? "ran"}");
+
+            Assert.NotNull(unguarded);
+
+            PolicyException refusal = Assert.ThrowsAny<PolicyException>(
+                () => Guard(rows, DwTier.Strict).ToList(Where("Name.Ar", "مدير")));
+
+            Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, refusal.ErrorCode);
+        }
 
         [Fact]
         public void Rows_in_memory_run_the_getter_as_they_always_did()

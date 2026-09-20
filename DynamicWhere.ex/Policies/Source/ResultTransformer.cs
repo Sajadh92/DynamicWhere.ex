@@ -169,7 +169,9 @@ internal static class ResultTransformer
             // Not onto a name the row already carries: writing there would emit one column under
             // another's name and drop that other's value outright. The startup scan reports such an
             // alias as an error; a deployment that runs without scanning keeps both columns.
-            string name = byColumn.TryGetValue(property.Key, out string? alias) && !properties.ContainsKey(alias)
+            string name = byColumn.TryGetValue(property.Key, out string? alias)
+                           && (string.Equals(alias, property.Key, StringComparison.OrdinalIgnoreCase)
+                               || !properties.ContainsKey(alias))
                 ? alias
                 : property.Key;
 

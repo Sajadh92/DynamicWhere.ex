@@ -317,8 +317,8 @@ internal static class FilterSanitizer
             {
                 // A blank key fails validation, as it does unguarded. Handing it to the resolver
                 // instead reaches Validate<T>'s argument check, and an ArgumentNullException is not
-                // the failure the endpoint turns into a four-hundred — every other clause guards it
-                // here for the same reason.
+                // the failure the endpoint turns into a four-hundred. A blank Selects entry reaches
+                // that same check guarded or not, so it is left as it is: the two answers agree.
                 if (string.IsNullOrWhiteSpace(groupBy.Fields[i]))
                 {
                     throw new LogicException(ErrorCode.InvalidField);
@@ -1076,7 +1076,7 @@ internal static class FilterSanitizer
     {
         foreach (string field in SegmentFields(segment))
         {
-            gate.CheckDepth(field);
+            gate.CheckDepth(field, PolicyFeature.Segment);
         }
     }
 
@@ -1145,7 +1145,7 @@ internal static class FilterSanitizer
         {
             foreach (string field in filter.Selects)
             {
-                gate.CheckDepth(field);
+                gate.CheckDepth(field, PolicyFeature.Select);
             }
         }
 
@@ -1153,7 +1153,7 @@ internal static class FilterSanitizer
         {
             foreach (OrderBy order in filter.Orders)
             {
-                gate.CheckDepth(order.Field);
+                gate.CheckDepth(order.Field, PolicyFeature.Order);
             }
         }
     }
@@ -1191,7 +1191,7 @@ internal static class FilterSanitizer
         {
             foreach (string field in summary.GroupBy.Fields)
             {
-                gate.CheckDepth(field);
+                gate.CheckDepth(field, PolicyFeature.Group);
             }
         }
 
@@ -1199,7 +1199,7 @@ internal static class FilterSanitizer
         {
             foreach (AggregateBy aggregate in summary.GroupBy.AggregateBy)
             {
-                gate.CheckDepth(aggregate.Field);
+                gate.CheckDepth(aggregate.Field, PolicyFeature.Aggregate);
             }
         }
     }
@@ -1473,7 +1473,7 @@ internal static class FilterSanitizer
         {
             foreach (Condition condition in group.Conditions)
             {
-                gate.CheckDepth(condition.Field);
+                gate.CheckDepth(condition.Field, PolicyFeature.Where);
             }
         }
 
@@ -1907,7 +1907,17 @@ internal static class FilterSanitizer
     private static List<string>? SynthesizedProjection(Gate gate, RowShape rows)
     {
         List<string> allowed = new();
+
+        // The caller named no projection, so what comes back comes back because they asked for the
+        // row. That is a read, and an audited field has to record it: recording only what a request
+        // spells out would leave an empty Selects as one token past [DwAudit] — the same value,
+        // returned, with nothing written down. Collected as the walk decides what reaches the
+        // caller, and recorded once it knows whether a projection is built at all.
         List<string> readable = new();
+
+        // What comes back inside a member kept whole. An audited column of an owned type is read by
+        // whoever receives the object holding it, named or not.
+        List<string> inside = new();
         List<(string Member, string Reason)> uncarried = new();
         bool anyDenied = false;
         int recorded = gate.TraceCount;
@@ -1923,15 +1933,15 @@ internal static class FilterSanitizer
 
                 gate.Record(name, PolicyFeature.Select, PolicyAction.Dropped, policy);
 
+                // A dry run drops nothing: the member comes back with the row, so an audited one is
+                // read, and the record says so with the effect the policy decided.
+                if (gate.IsDryRun)
+                {
+                    readable.Add(name);
+                }
+
                 continue;
             }
-
-            // The caller named no projection, so what comes back comes back because they asked for
-            // the row. That is a read, and an audited field has to record it: recording only what a
-            // request spells out would leave an empty Selects as one token past [DwAudit] — the same
-            // value, returned, with nothing written down. Which members reach the caller is known
-            // once the walk finishes, so they are collected here and recorded below.
-            readable.Add(name);
 
             // Two members share the name, one hidden with new under another type or spelled in another case:
             // the core reads one of them, and a row carries both. What either can hold is asked about, and a
@@ -1955,6 +1965,14 @@ internal static class FilterSanitizer
                 if (assignable && rows.CarriesValue(name))
                 {
                     allowed.Add(name);
+                }
+
+                // What the caller receives: a value the source carries, and a getter the row
+                // computes from what it carries, which a projection could not have assigned and
+                // which comes back with the row when no projection is built.
+                if (rows.CarriesValue(name) || !assignable)
+                {
+                    readable.Add(name);
                 }
 
                 continue;
@@ -1998,6 +2016,11 @@ internal static class FilterSanitizer
                         : rows.Kind == RowKind.InMemory
                             ? "left out: a projection cannot keep an object a row in memory holds"
                             : "left out: it is a navigation, which projecting would load"));
+
+                    // A projection cannot keep it, and with no projection built the row hands it
+                    // back. A navigation nothing loads reaches nobody and is not a read.
+                    readable.Add(name);
+                    inside.AddRange(survivors);
                 }
 
                 continue;
@@ -2006,6 +2029,8 @@ internal static class FilterSanitizer
             if (reached.Count == 0 && !unnamed.Opaque && !forced && !gate.ReadOnlyTransformBeneath(name))
             {
                 allowed.Add(name);
+                readable.Add(name);
+                inside.AddRange(survivors);
 
                 continue;
             }
@@ -2048,7 +2073,12 @@ internal static class FilterSanitizer
         // What the caller receives: the projection's own list where one is built, and every member
         // they may select where none is, since the row then comes back whole. Both sets are paths
         // whose policy is already resolved, so recording costs no resolution of its own.
-        foreach (string path in anyDenied ? allowed : readable)
+        //
+        // A dry run builds no projection, whatever is denied — it changes what the policy does, not
+        // what it saw — so the row comes back whole there and the whole row is what was read.
+        // Recording the projection's would-be list instead would hand a member back unrecorded,
+        // which is the gap this recording exists to close.
+        foreach (string path in (anyDenied && !gate.IsDryRun ? allowed : readable).Concat(inside))
         {
             gate.AuditUse(path, PolicyFeature.Select, gate.PolicyFor(path, PolicyFeature.None));
         }
@@ -3954,7 +3984,7 @@ internal static class FilterSanitizer
         /// type otherwise lets a caller write a path of any length and make the provider emit one
         /// join per segment.
         /// </remarks>
-        internal void CheckDepth(string? fieldPath)
+        internal void CheckDepth(string? fieldPath, PolicyFeature feature)
         {
             if (string.IsNullOrEmpty(fieldPath))
             {
@@ -3975,7 +4005,23 @@ internal static class FilterSanitizer
 
             if (segments > _options.Caps.MaxNavigationDepth)
             {
-                Raise(Cap("MaxNavigationDepth", _options.Caps.MaxNavigationDepth, segments, fieldPath));
+                PolicyException? refusal =
+                    Cap("MaxNavigationDepth", _options.Caps.MaxNavigationDepth, segments, fieldPath);
+
+                if (refusal is not null
+                    && HidesExistence
+                    && !string.Equals(Spoken(fieldPath), fieldPath, StringComparison.Ordinal))
+                {
+                    // The caller wrote one token and the cap counted the path it stands for, so this
+                    // refusal would tell them their name resolved to something several navigations
+                    // deep — where a name matching nothing gets the clause's own refusal. It gets
+                    // that one too. A caller who wrote the path themselves already knows its depth,
+                    // and is answered by the cap, as every other over-long request is. The trace
+                    // above keeps the cap and the depth for the operator either way.
+                    refusal = Exception(fieldPath, feature, DenialFor(feature), null);
+                }
+
+                Raise(refusal);
             }
         }
 

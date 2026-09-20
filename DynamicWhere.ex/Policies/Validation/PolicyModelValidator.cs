@@ -265,9 +265,12 @@ public static class PolicyModelValidator
         // An alias spelled like another member of the same type is the same collision as two members
         // sharing one alias, and it is worse on the way out: a generated row would carry one name
         // twice, so one of the two values is the one the caller receives.
-        if (!string.Equals(alias.Name, property.Name, StringComparison.OrdinalIgnoreCase)
-            && type.GetProperty(alias.Name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase)
-                is { } shadowed)
+        PropertyInfo? shadowed = !string.Equals(alias.Name, property.Name, StringComparison.OrdinalIgnoreCase)
+            ? type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(other => string.Equals(other.Name, alias.Name, StringComparison.OrdinalIgnoreCase))
+            : null;
+
+        if (shadowed is not null)
         {
             errors.Add(
                 $"{member}: the alias '{alias.Name}' is the name of {type.Name}.{shadowed.Name}. A name " +

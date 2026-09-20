@@ -35,8 +35,14 @@ public sealed class DwEntityAttribute : Attribute
     /// its caller asks. A caller who sends orders gets exactly those; the default is never appended to
     /// them. A query already ordered keeps that order, whether an <c>OrderBy</c> ordered it before
     /// <c>ApplyPolicy</c> or a composed <c>Order</c> did, even one whose every order the policy dropped. A
-    /// projected query, through a <c>Select</c> before <c>ApplyPolicy</c> or the guarded <c>Select</c>,
-    /// takes no default either. An in-memory sequence sorted before
+    /// projected query takes the default when its outermost <c>Select</c> builds the type in an object
+    /// initializer and assigns every field the default names a column — a member the model maps, read
+    /// directly, through reference navigations or through <c>EF.Property</c> — at every level of a
+    /// nested path. That is the shape a caller writes who projects a row type before guarding it. A
+    /// constructor with arguments, a field the initializer leaves unassigned, and a field the projection
+    /// computes each leave the query in its own order, because a default must never be the reason a
+    /// query that ran unguarded fails. A <c>Select</c> composed on the guarded handle, or a
+    /// <c>Filter</c> carrying <c>Selects</c>, stays unordered. An in-memory sequence sorted before
     /// <c>ApplyPolicy</c> is not recognised as ordered, because it reaches the policy as a query with no
     /// <c>OrderBy</c> in it, so send its order with the filter. End the default with a unique field, such
     /// as the key, or rows sharing the leading values can still change places between pages.

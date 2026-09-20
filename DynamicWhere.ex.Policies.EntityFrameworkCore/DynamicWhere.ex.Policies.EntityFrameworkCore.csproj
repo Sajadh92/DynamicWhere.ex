@@ -34,8 +34,10 @@
       <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
       <PackageLicenseExpression>MIT</PackageLicenseExpression>
       <!-- Locked to the core's version; see the note in the Redis package. -->
-      <Version>3.2.0</Version>
-      <PackageReleaseNotes>v3.2.0 — Released in lockstep with DynamicWhere.ex 3.2.0, which it now requires. No API or behaviour change in this package.
+      <Version>3.3.0</Version>
+      <PackageReleaseNotes>v3.3.0 — Released in lockstep with DynamicWhere.ex 3.3.0, which it now requires. No API or behaviour change in this package.
+
+v3.2.0 — Released in lockstep with DynamicWhere.ex 3.2.0, which it now requires. No API or behaviour change in this package.
 
 v3.1.0 — Released in lockstep with DynamicWhere.ex 3.1.0, which it now requires. No API or behaviour change in this package. A stored rule's forced predicate can now carry allowNull, which lets rows with no value through: the core's PolicyRuleDocument writes it into the Detail column's forced object as "allowNull": true, only when it is true, so no migration is needed and a rule without it is stored exactly as before. A row whose forced object pairs IsNull or IsNotNull with "allowNull": true, value or no value, or with a contextValue, is refused when it is read, like any row the core cannot read: a Global, Tenant, Role or Custom rule fails the load, and a User rule fails DwPolicy.PrepareAsync for that user.
 

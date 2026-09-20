@@ -594,7 +594,7 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
           <tr><td><code>SchemaDepth</code></td><td>2</td><td>Levels a schema request walks when it names no depth.</td></tr>
           <tr><td><code>SchemaCycleLimit</code></td><td>2</td><td>Times one type may appear on one path.</td></tr>
           <tr><td><code>MaxSchemaFields</code></td><td>2000</td><td>Fields one schema response may carry before it truncates.</td></tr>
-          <tr><td><code>MinGroupSize</code></td><td><strong>5</strong></td><td>k-anonymity group floor. Set 1 to switch it off. See <Link href="/docs/policies/security">Security</Link>.</td></tr>
+          <tr><td><code>MinGroupSize</code></td><td><strong>5</strong></td><td><strong>On by default.</strong> A guarded summary drops every group with fewer than five rows, and nothing in the answer says so. Set 1 to switch it off. See <Link href="/docs/policies/security">Security</Link>.</td></tr>
         </tbody>
       </table>
       <p>
@@ -902,6 +902,65 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
         rule for the callers it names, so <code>Rank</code> is left out only until
         one does; and <code>Region</code> is left out only of guarded segments,
         which refuse it in any clause, while a filter still orders by it.
+      </p>
+
+      <h2 id="configuring-twice">Configuring twice</h2>
+      <p>
+        The first call decides the posture. Since <strong>3.3.0</strong> a
+        second <code>DwPolicy.Configure</code>, or a second{" "}
+        <code>AddDwPolicies</code>, <strong>asking for the posture already in
+        force does nothing and returns</strong>; one asking for a different
+        posture still throws <code>InvalidOperationException</code>. The
+        comparison happens inside the lock that does the configuring, so a
+        caller needs no lock and no <code>IsConfigured</code> check of its own —
+        which matters, because that check is a check-then-act two hosts starting
+        at once can both pass.
+      </p>
+      <p>
+        This is what an integration suite needs. Several{" "}
+        <code>WebApplicationFactory&lt;Program&gt;</code> hosts run the same
+        composition root, and before 3.3.0 the second one threw, so every such
+        suite wrote the check itself and re-registered{" "}
+        <code>DwPolicy.Options</code> by hand.
+      </p>
+      <table>
+        <thead><tr><th>Compared</th><th>Not compared</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>Tier</code>, <code>DryRun</code>, <code>IncludeTraceInResult</code>, <code>AuditRefusals</code></td>
+            <td><code>TokenVault</code></td>
+          </tr>
+          <tr>
+            <td><code>HashSalt</code>, <code>StoreFailure</code>, <code>MaxSnapshotAge</code>, <code>RefreshInterval</code></td>
+            <td><code>Services</code></td>
+          </tr>
+          <tr>
+            <td>Every value on <code>Caps</code>, the group floor&apos;s opt-out included</td>
+            <td>The provider <em>instances</em></td>
+          </tr>
+          <tr>
+            <td>The exposed entity catalogue: the same types under the same names</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>The provider <em>types</em>, in the order they were supplied</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+      <Callout tone="warn" title="A second host runs with the first host's vault, container and rule stores">
+        The three on the right are objects a host builds for itself, and a
+        second host builds its own, so comparing them by reference would make
+        every second call a refusal. They stay as the first call left them. In
+        one test process that is what you want; start a second host in
+        production only if it is.
+      </Callout>
+      <p>
+        <code>AddDwPolicies</code> registers the posture in force rather than
+        the instance it has just built, so whatever resolves{" "}
+        <code>DwPolicyOptions</code> reads what the query path reads. The
+        options handed to a second call are frozen too, so nothing goes on
+        setting values that decide nothing.
       </p>
 
       <h2 id="from-a-file">Configuration from a file</h2>

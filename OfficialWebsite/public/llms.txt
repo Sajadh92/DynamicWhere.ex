@@ -4,7 +4,7 @@
 > opt-in field-level policy layer that decides what each caller may filter, sort, select, group,
 > aggregate and see, and a reflection cache that needs no setup.
 >
-> Version 3.2.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
+> Version 3.3.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
 > Docs: https://doc.dynamicwhere.com · Source: https://github.com/Sajadh92/DynamicWhere.ex
 
 This file is the whole library in one pass: every public type and member of the four packages, the
@@ -14,7 +14,7 @@ library. No other page is needed; where another page disagrees with this file, t
 Where a name is not in this file, it does not exist — do not invent members.
 
 ```
-dotnet add package DynamicWhere.ex --version 3.2.0
+dotnet add package DynamicWhere.ex --version 3.3.0
 dotnet add package DynamicWhere.ex.Policies.Redis                 # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.EntityFrameworkCore   # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.AspNetCore            # optional, same version as the core
@@ -203,6 +203,15 @@ Summary         ConditionGroup      ConditionGroup?       null        where, bef
                 Having              ConditionGroup?       null        each Condition.Field is an AggregateBy.Alias, not a path
                 Orders              List<OrderBy>?        null        each Field is a GroupBy field or an Alias
                 Page                PageBy?               null        pages the groups
+
+Clone()         on Filter, Segment and Summary                        public since 3.3.0; deep copy, shares no object
+                                                                      with the original: the condition tree with its
+                                                                      groups and conditions, the Selects list, each
+                                                                      OrderBy, the Page, and a Summary's GroupBy with
+                                                                      its AggregateBy list and its Having. A null
+                                                                      branch stays null. Use it to read one request
+                                                                      again with a different page or order without
+                                                                      editing what the caller handed in.
 ```
 
 ```
@@ -675,7 +684,7 @@ against 3.1 still binds.
 - Validation rewrites the caller's objects in place: path strings get the declared casing (`"price"` → `"Price"`)
   in `Condition.Field`, `OrderBy.Field`, `GroupBy.Fields`, `AggregateBy.Field` and `Selects`; null `Values`,
   `Conditions`, `SubConditionGroups`, `ConditionSets`, `Fields` and `AggregateBy` become empty lists; the first
-  `ConditionSet`'s `Intersection` becomes null. Clone a shape before reusing it if that matters.
+  `ConditionSet`'s `Intersection` becomes null. Call `Clone()` on the shape before reusing it if that matters (3.3.0).
 
 ### Select<T>
 
@@ -1320,7 +1329,7 @@ Each of these compiles, passes validation, and returns something other than what
 3. **Negated operators never match null.** `NotEqual`, `NotIn`, `NotContains`, `NotStartsWith`, `NotEndsWith` and
    `NotBetween` all exclude rows whose member is null. Add an `IsNull` condition in an `Or` group to keep them.
 4. **Validation rewrites the request objects you pass.** Paths are re-cased, null lists become empty, the first
-   set's `Intersection` is cleared. Clone a shape before reusing it. (Guarded calls work on a clone.)
+   set's `Intersection` is cleared. Call `Clone()` on the shape before reusing it (3.3.0). (Guarded calls work on a clone.)
 5. **Enum names in JSON need `JsonStringEnumConverter`.** Without it the body fails to bind. An omitted enum
    property silently becomes member 0: `Text`, `Equal`, `And`, `Ascending`, `Count`.
 6. **A `DateTime` member reads a zoned value as server local time.** A value carrying `Z` or an offset is converted
@@ -1446,7 +1455,19 @@ DwPolicy                                                                    stat
 
 - `Configure` refuses only two things:
   - null `options` → `ArgumentNullException`;
-  - a second call, including one made by `AddDwPolicies` → `InvalidOperationException`.
+  - a second call, including one made by `AddDwPolicies`, asking for a **different** posture → `InvalidOperationException`.
+- A second call asking for the posture already in force is a no-op (3.3.0). It returns, `DwPolicy.Options` keeps
+  pointing at the first call's instance, and the options passed to the second call are frozen. The check runs inside
+  the lock that configures, so a caller needs no `IsConfigured` check of its own — that check is a check-then-act two
+  hosts starting at once can both pass. This is what lets an integration suite start several
+  `WebApplicationFactory<Program>` hosts over one composition root.
+  - Compared: `Tier`, `DryRun`, `IncludeTraceInResult`, `AuditRefusals`, `HashSalt`, `StoreFailure`,
+    `MaxSnapshotAge`, `RefreshInterval`, every `DwCaps` value with `IsMinGroupSizeSet`, the exposed catalogue
+    (same types under the same names), and the provider **types**, in the order supplied, with
+    `AttributePolicyProvider` left out of both sides.
+  - Not compared, and not replaced: `TokenVault`, `Services`, and the provider **instances**. A second host builds
+    its own and no two are ever the same reference, so they stay as the first call left them — a second host runs
+    with the first host's vault, container and rule stores.
 - `Configure` freezes `options`, `options.Caps` and `options.Entities`. Any setter or `Expose` after that → `InvalidOperationException`.
 - `Configure` does not validate the model.
   - Invalid values were already refused by the setters.
@@ -1478,14 +1499,19 @@ DwPolicyConfiguration                                                       stat
   Bind(this DwPolicyOptions options, IConfiguration section)                -> DwPolicyOptions   same instance
 ```
 
-`AddDwPolicies` does exactly this: `new DwPolicyOptions().Bind(section)` → `configure?.Invoke(options)` → `DwPolicy.Configure(options, providers)` → `services.AddSingleton(options)`.
+`AddDwPolicies` does exactly this: `new DwPolicyOptions().Bind(section)` → `configure?.Invoke(options)` → `DwPolicy.Configure(options, providers)` → `services.AddSingleton(DwPolicy.Options)`.
+
+Since 3.3.0 the singleton registered is the posture **in force**, not the instance this call built. On the first call
+they are the same object. On a later call asking for the same posture the first one's is registered, so whatever
+resolves `DwPolicyOptions` reads what the query path reads. A later call asking for a different posture still throws.
 
 - There is one overload, and `section` is required (null → `ArgumentNullException`).
   - `"DynamicWhere:Policies"` is a convention; any section works.
   - For configuration from code only, call `DwPolicy.Configure`.
 - Configuration binds first and `configure` runs second, so code wins over the file.
 - It configures the static `DwPolicy` immediately, during service registration. Anything set in `configure` (`Services` included) must already exist at that point.
-- It registers only the frozen `DwPolicyOptions` singleton. No resolver, sink, vault, catalogue or provider is registered.
+- It registers only the frozen `DwPolicyOptions` singleton — the one in force. No resolver, sink, vault, catalogue or provider is registered.
+- Calling it a second time with the same posture is safe (3.3.0), which is what an integration suite starting several hosts needs.
 - A `StorePolicyProvider` reads `StoreFailure`, `MaxSnapshotAge` and `RefreshInterval` from the options instance passed to `StorePolicyProvider.CreateAsync`.
   - `AddDwPolicies` creates its options internally, so a provider cannot share them. With a store, bind by hand:
 
@@ -1811,6 +1837,9 @@ Rules:
   - On a fresh handle it is the original, tracked source with no predicates.
   - Calling a DynamicWhere extension on it for a `RequirePolicy` type → `PolicyRequired`.
 - `LastTrace` is set on the handle the method was called on, not on the handle it returns.
+- `LastTrace` is assigned before the request is sanitized (3.3.0), so a refused request leaves its own trace
+  readable. It used to be assigned after, so a refusal left the previous request's trace, or null. A strict refusal
+  names no field, and the trace is where the real path and reason are.
   - It holds the latest call that got past sanitizing, or a `QueryStringDenied` refusal.
 - Refusals throw `PolicyException` (a `LogicException`) from the handle method.
   - With `DwPolicyOptions.AuditRefusals` on, the terminal and composable methods also write the refusal to the context's audit buffer on its way out, once, without changing or catching it (section 22).
@@ -2282,6 +2311,26 @@ The resolver, fragment and provider types are listed in section 21.
 
 ## 17. Enforcement by tier and dry run
 
+Under `Strict` outside a dry run, a path that exists on the type but names no value the query can compute is refused
+as an unknown name is (3.3.0), with the clause's own code and `FieldPath` `"*"`. What decides:
+
+```
+Source of the rows                                   What the set of producible members is read from   Name.IsEmpty
+entity query                                         EF Core model: columns (shadow included), owned,
+                                                     complex, navigations, and derived types           refused
+Select(...) before ApplyPolicy building the row      that initializer's assignments, at every level    refused
+  ... a member it copies whole: Name = role.Name     the model, beneath the copied member              refused
+rows in memory (EnumerableQuery)                     nothing; the getter runs                          runs
+beneath a column, converted or not                   nothing; the converter decides                    runs
+a framework member: Length, Year, Count, HasValue    nothing; the provider translates it               runs
+a source the library cannot read into                nothing                                           runs
+```
+
+- An unmapped getter on the entity itself (`Display => $"{Code}:{Id}"`) is refused for the same reason.
+- `Convenience` and a dry run are unchanged: the provider throws, as it does unguarded.
+- A member a `[DbFunction]` or an `IMethodCallTranslatorPlugin` computes is not in the model and is refused too.
+- The trace records it: `the member exists on the type and the query cannot compute it, so it is refused as an unknown name is`.
+
 The count caps are checked first, before any name is resolved (3.1.0). Names are then resolved to canonical paths,
 `MaxNavigationDepth` is checked, and the cost budget is checked before field policies — except under `Strict` outside
 dry run, where it is checked after them (3.1.0). Nothing is clamped.
@@ -2714,6 +2763,10 @@ ValueTransform(MutateStage? mutate = null, GeneralizeStage? generalize = null, F
 ---
 
 ## 19. Group floor and transformed summaries
+
+**The floor is on by default.** `Caps.MinGroupSize` ships at 5, so a guarded summary drops every group with fewer
+than five rows, and nothing in the answer says a group was dropped. Right for anonymised reporting, surprising for
+an operational count. `Caps.MinGroupSize = 1` switches it off, deliberately. An unguarded summary is never floored.
 
 ```
 effective floor   = max(Caps.MinGroupSize, MinGroupSize of the chain of each AggregateBy.Field)
@@ -4774,6 +4827,29 @@ MemoryCalculationInput
 ### History
 
 ```
+3.3.0   A second host may configure the same posture, a path the query cannot compute is refused rather than run,
+        and Clone is public on Filter, Segment and Summary.
+        - New. DwPolicy.Configure, and AddDwPolicies with it, take a second call asking for the posture already in
+          force and do nothing. A different posture still throws. The check is inside the lock that configures, so a
+          caller needs no IsConfigured check of its own — that check is a check-then-act two hosts can both pass.
+          Compared: tier, DryRun, IncludeTraceInResult, AuditRefusals, HashSalt, StoreFailure, MaxSnapshotAge,
+          RefreshInterval, every cap with IsMinGroupSizeSet, the exposed catalogue, and the provider types in order.
+          Not compared and not replaced: TokenVault, Services and the provider instances, so a second host runs with
+          the first host's vault, container and rule stores. AddDwPolicies registers the posture in force rather than
+          the instance it built.
+        - Behaviour change. Under Strict outside a dry run, a path that exists on the type and names no value the
+          query can compute — LocalizedText.IsEmpty over two columns, an unmapped getter on the entity — is refused
+          as an unknown name is, in every clause, where the provider used to throw and the caller saw a five-hundred.
+          Refused only where the producible members are known: an entity's model, and the initializers of a
+          projection composed before ApplyPolicy, including a member it copies from the entity. Rows in memory, a
+          framework member such as Length or Year, anything beneath a column, Convenience and a dry run are unchanged.
+        - Behaviour change. LastTrace is assigned before a request is sanitized, so a refused request leaves its own
+          trace readable instead of the previous request's.
+        - New. Clone() is public on Filter, Segment and Summary. A deep copy: the condition tree, the projection list,
+          each order, the page, and a summary's GroupBy and Having.
+        - Docs. DwEntity(DefaultOrder)'s remarks said a projected query takes no default; it has since 3.2.0. The
+          aggregation sections now lead with Caps.MinGroupSize shipping on at 5.
+
 3.2.0   A projected row keeps its members, denials the gate could not see are enforced, a default order that
         reaches projected rows, and a CancellationToken on every async terminal. The security fixes refuse or
         withhold what 3.1.0 returned; the bullets marked "Behaviour change" also change what a correct query
@@ -5019,6 +5095,12 @@ MemoryCalculationInput
   `[Column]`. Reached through a navigation (`Owner.New`) it is an ordinary member.
 - A declared date format may not write text ISO 8601 or a year-first date already reads; `DwDates.Configure`
   refuses one (section 4). ISO 8601 and year-first dates are read on every deployment and cannot be turned off.
+- A member no database can compute — a getter over columns, an unmapped getter on an entity, a member a
+  `[DbFunction]` or a translator plugin computes — cannot be filtered, ordered, selected, grouped or aggregated under
+  `Strict` on a source the library can read (3.3.0, section 17). Map it, or name the columns beneath it. Under
+  `Convenience` it still reaches the provider and still throws there.
+- A second host configuring the same posture runs with the first host's `TokenVault`, `Services` and rule store
+  instances (3.3.0, section 12). They are not compared and not replaced.
 - Summary rows flatten dotted group fields (`CategoryName`); `SelectDynamic` rows nest them (`Category.Name`).
 - `Filter` applies `Orders` and `Page` on T before the projection, so order fields need not be selected.
 - `getQueryString` needs an EF Core provider.

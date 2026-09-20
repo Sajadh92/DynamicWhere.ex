@@ -31,8 +31,10 @@
     <Company>Sajjad H. Al-Khafaji</Company>
     <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <Version>3.2.0</Version>
-    <PackageReleaseNotes>v3.2.0 — Released in lockstep with DynamicWhere.ex 3.2.0, which it now requires. No API change in this package. The core release changes what /simulate reports for a request that sends no Selects. A simulation has no source, so it reads the type as one it cannot see into: every denial beneath a member counts, and the projection it shows keeps only members holding a value, where a guarded query over a projected row, an entity or rows in memory keeps what that source carries.
+    <Version>3.3.0</Version>
+    <PackageReleaseNotes>v3.3.0 — Released in lockstep with DynamicWhere.ex 3.3.0, which it now requires. No API or behaviour change in this package.
+
+v3.2.0 — Released in lockstep with DynamicWhere.ex 3.2.0, which it now requires. No API change in this package. The core release changes what /simulate reports for a request that sends no Selects. A simulation has no source, so it reads the type as one it cannot see into: every denial beneath a member counts, and the projection it shows keeps only members holding a value, where a guarded query over a projected row, an entity or rows in memory keeps what that source carries.
 
 v3.1.0 — Released in lockstep with DynamicWhere.ex 3.1.0, which it now requires. No API change in this package. The core release changes what its endpoints report, as it changes any guarded call: /simulate answers with 3.1.0's pipeline, the new caps, the strict tier's refusals and a type's DefaultOrder included, and /health's loadedAt and ageSeconds advance on a poll that confirms the version served, so an idle healthy store no longer reads as stale. One change needs action: DwClaimsAdapter.FromClaims returns an unprepared context, and ApplyPolicy(context) now refuses one with PolicyContextNotPrepared even when no store is configured. Use CreateContextAsync or ToPolicyContextAsync, or pass the context through DwPolicy.PrepareAsync before querying. In this package, the audit middleware's warning for events recorded with no IDwAuditSink registered now names both ways to stop recording them: remove [DwAudit] from the fields that produced them, or turn off DwPolicyOptions.AuditRefusals, the core's new switch that records refused guarded queries as audit events, which the middleware drains like any other.
 

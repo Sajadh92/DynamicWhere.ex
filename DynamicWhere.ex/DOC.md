@@ -1,6 +1,6 @@
 ﻿# DynamicWhere.ex
 
-**Version:** 3.2.0 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** MIT (Free Forever)
+**Version:** 3.3.0 &nbsp;|&nbsp; **Target Framework:** .NET 6+ &nbsp;|&nbsp; **License:** MIT (Free Forever)
 
 > A powerful and versatile library for dynamically creating complex filter, sort, paginate, group, aggregate, and set-operation expressions in Entity Framework Core applications — all driven by simple JSON objects from any front-end or API consumer.
 
@@ -31,7 +31,7 @@
 ## Installation
 
 ```bash
-dotnet add package DynamicWhere.ex --version 3.2.0
+dotnet add package DynamicWhere.ex --version 3.3.0
 ```
 
 **Dependencies:**
@@ -382,6 +382,8 @@ Combines filtering, selecting, ordering, and pagination in a single object.
 | `Orders` | `List<OrderBy>?` | Optional sort criteria |
 | `Page` | `PageBy?` | Optional pagination |
 
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — the condition tree with its groups and conditions, the projection list, each order and the page — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
+
 ---
 
 #### `Segment`
@@ -394,6 +396,8 @@ Combines multiple condition sets with set operations (Union / Intersect / Except
 | `Selects` | `List<string>?` | Optional field projection |
 | `Orders` | `List<OrderBy>?` | Optional sort criteria |
 | `Page` | `PageBy?` | Optional pagination |
+
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — every condition set with its own condition group, the projection list, each order and the page — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
 
 ---
 
@@ -408,6 +412,8 @@ Combines filtering → grouping → having → ordering → pagination for aggre
 | `Having` | `ConditionGroup?` | Optional post-group filter. Each condition's `Field` must reference an `AggregateBy.Alias` |
 | `Orders` | `List<OrderBy>?` | Sort on grouped result. Fields must be GroupBy fields or aggregate aliases |
 | `Page` | `PageBy?` | Optional pagination on grouped result |
+
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — the condition group, the group-by with its aggregates, the having clause, each order and the page — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
 
 ---
 
@@ -675,7 +681,7 @@ Applies where → group → having → order → page to a query.
 
 ### `.ToList<T>(Summary summary, bool getQueryString = false)`
 
-Materializes a `Summary` and returns a `SummaryResult`.
+Materializes a `Summary` and returns a `SummaryResult`. Under `ApplyPolicy`, groups smaller than `DwCaps.MinGroupSize` — **5 by default** — are dropped from the result; see [k-anonymity](#k-anonymity--the-control-you-would-not-guess).
 
 **Returns:** `SummaryResult`
 
@@ -1046,6 +1052,8 @@ The entire `Brands` collection is bound as-is.
 
 ### 6. `Group<T>` — GroupBy with Aggregations
 
+> Guarded, this is floored as a summary is: `DwCaps.MinGroupSize` defaults to **5**, and a smaller group is dropped rather than refused.
+
 ```json
 {
   "fields": ["Category"],
@@ -1120,6 +1128,8 @@ The entire `Brands` collection is bound as-is.
 ---
 
 ### 8. `Summary<T>` / `ToList<T>(Summary)` / `ToListAsync<T>(Summary)` — Group + Aggregate + Having
+
+> **A guarded summary drops small groups by default.** `DwCaps.MinGroupSize` ships **on, at 5**, so a group with fewer than five rows is removed from the result — not refused, and nothing in the answer says a group was dropped. That is right for anonymised reporting and surprising for an operational count, where five is a real number of orders. Set `Caps.MinGroupSize = 1` to switch the floor off, deliberately. An unguarded summary is never floored. See [k-anonymity](#k-anonymity--the-control-you-would-not-guess).
 
 ```json
 {
@@ -1668,6 +1678,35 @@ A dropped field leaves nothing behind in the data, so the trace is the only way 
 
 The convenience tier is unchanged: an unknown name fails validation with `LogicException` `ConditionMustHasValidFieldName`, a refusal names the field as the caller wrote it, with `RuleId` and `SourceOrigin` where a single source decided, and `MaxQueryCost` is checked before any field is gated. A dry run refuses no field, so an unknown name fails validation there in either tier.
 
+**A member the query cannot compute is refused the same way** *(3.3.0)*. A member of the row's type is not always a value a database can produce. A shared type such as
+
+```csharp
+public sealed class LocalizedText
+{
+    public string Ar { get; set; } = "";
+    public string En { get; set; } = "";
+    public bool IsEmpty => string.IsNullOrWhiteSpace(Ar) && string.IsNullOrWhiteSpace(En);
+}
+```
+
+gives `Name.Ar` and `Name.En`, which translate, and `Name.IsEmpty`, which is a getter over the two. The policy has nothing to say about it — `[DwNoWhere]` on `Name` matches that path and not the ones beneath it — so every check passed and EF Core threw `InvalidOperationException`: a five-hundred where `Strict` promises a refusal. Such a path is now refused as an unknown name is, with the clause's own code and `FieldPath` `"*"`, in every clause.
+
+It is refused only where the whole set of members a container can produce is known:
+
+| Source | Read from | `Name.IsEmpty` |
+|---|---|---|
+| An entity | the EF Core model: columns, shadow properties, owned and complex members, navigations | Refused |
+| A row a `Select` built before `ApplyPolicy` | the initializer's own assignments, at every level | Refused |
+| …where that `Select` copies the member from the entity, `Name = role.Name` | the model, beneath the member it copies | Refused |
+| Rows in memory | nothing — the getter runs | Runs, as it always did |
+| Anything beneath a column, a converted one included | nothing — the converter decides | Runs, as it always did |
+| A framework member such as `Length`, `Year`, `Count`, `HasValue` | nothing — the provider translates it | Runs, as it always did |
+| A source the library cannot read | nothing | Runs, as it always did |
+
+An unmapped getter on the entity itself, `Display => $"{Code}:{Id}"`, is refused for the same reason. The convenience tier and a dry run are unchanged: both fail exactly as the unguarded query does, which is the provider's own error. The trace records the refusal — `the member exists on the type and the query cannot compute it` — and since 3.3.0 `LastTrace` is set before a request is sanitized, so a refusal leaves it readable rather than null.
+
+A member a custom EF Core translator computes, through `[DbFunction]` or an `IMethodCallTranslatorPlugin`, is not in the model and is refused with the rest. Map it, or filter on the columns beneath it.
+
 ### A navigation named in Selects
 
 A `Selects` entry can name a navigation, such as `"Lines"`, rather than the fields beneath it. With nothing denied beneath it, the entry is kept as written. With a denied field beneath it, the `Convenience` tier replaces the entry with the allowed fields beneath it, and the `Strict` tier refuses it with `FieldDeniedForSelect`.
@@ -2032,6 +2071,37 @@ deliberate choice.
 secrets, an environment variable or a vault. A salt committed to `appsettings.json` is not a salt,
 and nothing here can tell the difference.
 
+#### Configuring twice
+
+*(3.3.0)* The first call decides the posture. A second `DwPolicy.Configure`, or a second
+`AddDwPolicies`, **asking for the posture already in force does nothing and returns**; one asking for
+a different posture still throws `InvalidOperationException`. The comparison happens inside the lock
+that does the configuring, so a caller needs no lock and no `IsConfigured` check of its own — which
+matters because that check is a check-then-act two hosts starting at once can both pass.
+
+This is what an integration suite needs. Several `WebApplicationFactory<Program>` hosts run the same
+composition root, and before 3.3.0 the second one threw, so every such suite wrote the check itself
+and re-registered `DwPolicy.Options` by hand.
+
+What counts as the same posture:
+
+| Compared | Not compared |
+|---|---|
+| `Tier`, `DryRun`, `IncludeTraceInResult`, `AuditRefusals` | `TokenVault` |
+| `HashSalt`, `StoreFailure`, `MaxSnapshotAge`, `RefreshInterval` | `Services` |
+| Every value on `Caps`, the group floor's opt-out included | The provider *instances* |
+| The exposed entity catalogue: the same types under the same names | |
+| The provider *types*, in the order they were supplied | |
+
+The three on the right are objects a host builds for itself, and a second host builds its own, so
+comparing them by reference would make every second call a refusal. They stay as the first call left
+them: **a second host runs with the first host's vault, container and rule stores.** In one test
+process that is what you want. Start a second host in production only if it is.
+
+`AddDwPolicies` registers the posture in force rather than the instance it has just built, so
+whatever resolves `DwPolicyOptions` reads what the query path reads. The options handed to a second
+call are frozen too, so nothing goes on setting values that decide nothing.
+
 ### Performance
 
 There are two budgets, because there are two costs. Gating is paid **once per query**;
@@ -2343,6 +2413,15 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 
 24. **A Type in a Namespace That Starts with `System` Is Policed**
     The attribute walker does not descend into the framework's own types, which carry no policy attributes. Until 3.2.0 it took any namespace whose name started with `System` for the framework's, so an application namespace such as `SystemsCorp.Payroll` or `SystemX.Domain` got no policy beneath its types, and a `[DwDenied]` field on such a type, reached through a member, was returned, filterable and sortable. Fixed (security): only `System` and the namespaces beneath it are the framework's now, so a guarded request that filtered on, sorted by or selected such a field is refused or dropped, as for any denied field.
+
+25. **Under `Strict`, a Path the Query Cannot Compute Is Refused**
+    Since 3.3.0 a path whose leaf is a member no database can produce — a getter over columns, such as `LocalizedText.IsEmpty`, or an unmapped getter on the entity — is refused with the clause's own code and `FieldPath` `"*"`, as an unknown name is. Until 3.3.0 the package accepted it and EF Core threw `InvalidOperationException`, which reached a caller as a five-hundred where the tier promises a refusal. It applies where the whole set of members a container can produce is known: an entity's model, and the initializers of a projection composed before `ApplyPolicy`, including a member that projection copies from the entity. Rows in memory, a framework member the provider translates such as `Length` or `Year`, anything beneath a column, the convenience tier and a dry run are all unchanged. A member a custom EF Core translator computes, through `[DbFunction]` or a translator plugin, is refused with the rest: map it, or filter on the columns beneath it. See [Blocked-action semantics](#blocked-action-semantics).
+
+26. **`LastTrace` Is Set Before a Request Is Sanitized**
+    Since 3.3.0 `PolicyQueryable<T>.LastTrace` carries the trace of a request that was refused. It used to be assigned after sanitizing returned, so a refusal left it holding the previous request's trace, or null on the first. A strict refusal names no field on purpose, and the trace is where the real path and reason live, so this is what makes one readable. Code that read `LastTrace` after catching a `PolicyException` and expected the earlier request's trace reads this request's now.
+
+27. **`Configure` Takes the Same Posture Twice**
+    Since 3.3.0 a second `DwPolicy.Configure` or `AddDwPolicies` asking for the posture already in force returns instead of throwing; a different posture still throws. Code that relied on the second call throwing — a test asserting it, or a `try`/`catch` around a second registration — no longer sees the exception. `AddDwPolicies` also registers the posture in force rather than the instance it built, so a container resolving `DwPolicyOptions` after a second registration gets the first one's. The token vault, the service provider and the provider instances are not compared and are not replaced. See [Configuring twice](#configuring-twice).
 
 ---
 

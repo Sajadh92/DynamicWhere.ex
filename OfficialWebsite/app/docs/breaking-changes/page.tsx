@@ -17,10 +17,21 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The twenty-nine points below cover constraints, surprises, and corner cases —
+        The thirty-two points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
+      <Callout tone="danger" title="Behaviour changes in 3.3.0">
+        Points&nbsp;30 to 32 changed in <strong>3.3.0</strong>. Under{" "}
+        <code>Strict</code>, a path that exists on the type and names no value
+        the query can compute is refused rather than run, where the provider
+        used to throw and the caller saw a five-hundred (point&nbsp;30).{" "}
+        <code>LastTrace</code> is assigned before a request is sanitized, so a
+        refused request leaves its own trace readable (point&nbsp;31). And{" "}
+        <code>DwPolicy.Configure</code> takes a second call asking for the
+        posture already in force, which is what lets an integration suite start
+        several hosts over one composition root (point&nbsp;32).
+      </Callout>
       <Callout tone="danger" title="Behaviour changes in 3.2.0">
         Points&nbsp;25 to 29 changed in <strong>3.2.0</strong>, and each is
         visible to code written for 3.1.0. A guarded query that sends no{" "}
@@ -1444,6 +1455,100 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
       <Callout tone="danger" title="Fixed (security): an application namespace was read as the framework's">
         A guarded request that filtered on, sorted by or selected such a field
         ran on 3.1.0. It is now refused or dropped, as for any denied field.
+      </Callout>
+
+      <h2 id="unexpressible-path">30. Under <code>Strict</code>, a Path the Query Cannot Compute Is Refused</h2>
+      <p>
+        A member of a row&apos;s type is not always a value a database can
+        produce. A shared type with two columns and a getter over them —{" "}
+        <code>LocalizedText</code> with <code>Ar</code>, <code>En</code> and{" "}
+        <code>IsEmpty</code> — gives two paths that translate and one that
+        cannot. The policy has nothing to say about the third:{" "}
+        <code>[DwNoWhere]</code> on <code>Name</code> matches that path and not
+        the ones beneath it. So every check passed, and EF Core threw{" "}
+        <code>InvalidOperationException</code> — a five-hundred where the strict
+        tier promises a refusal, and the one place the tier answered a caller
+        with neither an answer nor a refusal.
+      </p>
+      <p>
+        Since <strong>3.3.0</strong> such a path is refused as an unknown name
+        is: the clause&apos;s own code, <code>FieldPath</code>{" "}
+        <code>&quot;*&quot;</code>, in a filter, an order, a projection, a group
+        and an aggregate alike. It is refused only where the whole set of
+        members a container can produce is known.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Source of the rows</th><th>Read from</th><th><code>Name.IsEmpty</code></th></tr>
+        </thead>
+        <tbody>
+          <tr><td>An entity</td><td>the EF Core model: columns, shadow properties, owned and complex members, navigations</td><td>Refused</td></tr>
+          <tr><td>A row a <code>Select</code> built before <code>ApplyPolicy</code></td><td>that initializer&apos;s own assignments, at every level</td><td>Refused</td></tr>
+          <tr><td>…where the <code>Select</code> copies the member, <code>Name = role.Name</code></td><td>the model, beneath the member it copies</td><td>Refused</td></tr>
+          <tr><td>Rows in memory</td><td>nothing — the getter runs</td><td>Runs, as before</td></tr>
+          <tr><td>Anything beneath a column, converted or not</td><td>nothing — the converter decides</td><td>Runs, as before</td></tr>
+          <tr><td>A framework member: <code>Length</code>, <code>Year</code>, <code>Count</code></td><td>nothing — the provider translates it</td><td>Runs, as before</td></tr>
+          <tr><td>A source the library cannot read</td><td>nothing</td><td>Runs, as before</td></tr>
+        </tbody>
+      </table>
+      <p>
+        An unmapped getter on the entity itself,{" "}
+        <code>Display =&gt; $&quot;&#123;Code&#125;:&#123;Id&#125;&quot;</code>,
+        is refused for the same reason. The convenience tier and a dry run are
+        unchanged: both fail exactly as the unguarded query does, which is the
+        provider&apos;s own error.
+      </p>
+      <Callout tone="warn" title="A member a custom translator computes is refused with the rest">
+        A member EF Core computes through <code>[DbFunction]</code> or an{" "}
+        <code>IMethodCallTranslatorPlugin</code> is not in the model, so the
+        strict tier refuses it. Map it, or filter on the columns beneath it.
+      </Callout>
+
+      <h2 id="last-trace-timing">31. <code>LastTrace</code> Is Set Before a Request Is Sanitized</h2>
+      <p>
+        Since <strong>3.3.0</strong>{" "}
+        <code>PolicyQueryable&lt;T&gt;.LastTrace</code> carries the trace of a
+        request that was refused. It used to be assigned after sanitizing
+        returned, so a refusal left it holding the previous request&apos;s
+        trace, or null on the first. A strict refusal names no field on purpose,
+        and the trace is where the real path and the reason live, so this is
+        what makes one readable. Code that read <code>LastTrace</code> after
+        catching a <code>PolicyException</code> and expected the earlier
+        request&apos;s trace reads this request&apos;s now.
+      </p>
+
+      <h2 id="configure-twice">32. <code>Configure</code> Takes the Same Posture Twice</h2>
+      <p>
+        Until <strong>3.3.0</strong> the first{" "}
+        <code>DwPolicy.Configure</code> won and every later call threw, so an
+        integration suite starting several{" "}
+        <code>WebApplicationFactory</code> hosts over one composition root had
+        to read <code>IsConfigured</code> first — a check-then-act two hosts
+        starting at once can both pass. A second call asking for the posture
+        already in force now does nothing and returns; one asking for a
+        different posture still throws{" "}
+        <code>InvalidOperationException</code>. The comparison happens inside
+        the lock that does the configuring, so no caller needs a lock of its
+        own.
+      </p>
+      <p>
+        Compared: the tier, <code>DryRun</code>,{" "}
+        <code>IncludeTraceInResult</code>, <code>AuditRefusals</code>,{" "}
+        <code>HashSalt</code>, <code>StoreFailure</code>,{" "}
+        <code>MaxSnapshotAge</code>, <code>RefreshInterval</code>, every cap
+        including the group floor&apos;s opt-out, the exposed entity catalogue,
+        and the provider types in the order supplied. Not compared, and not
+        replaced: <code>TokenVault</code>, <code>Services</code> and the
+        provider instances — a second host builds its own, and no two are ever
+        the same reference.
+      </p>
+      <Callout tone="warn" title="A second host runs with the first host's vault, container and rule stores">
+        In one test process that is what you want. Elsewhere, start a second
+        host only if it is. <code>AddDwPolicies</code> also registers the
+        posture in force rather than the instance it has just built, so a
+        container resolving <code>DwPolicyOptions</code> after a second
+        registration gets the first one&apos;s. Code that relied on the second
+        call throwing no longer sees the exception.
       </Callout>
 
       <h2 id="next">See also</h2>

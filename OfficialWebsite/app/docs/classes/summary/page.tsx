@@ -168,6 +168,22 @@ SummaryResult result = await dbContext.Orders.ToListAsync(summary);`}</Code>
   "page": { "pageNumber": 1, "pageSize": 20 }
 }`}</Code>
 
+      <h2 id="clone">Clone</h2>
+      <p>
+        <code>Summary.Clone()</code> is public since <strong>3.3.0</strong>. It
+        returns a deep copy — the condition group, the group-by with its aggregates, the having clause, each order and the page — so nothing is shared with the original.
+      </p>
+      <Code lang="csharp">{`Summary page2 = caller.Clone();
+page2.Page!.PageNumber = 2;          // the caller's own summary is untouched`}</Code>
+      <p>
+        Reading one request again with a part changed, the next page or another
+        order, used to mean rebuilding it around the caller&apos;s own clauses,
+        which leaves both requests holding one condition tree: a rewrite of
+        either reaches both. The library has cloned before rewriting anything
+        since 3.0; callers could not until now. A branch the caller left null
+        stays null.
+      </p>
+
       <h2 id="see-also">See also</h2>
       <ul>
         <li>

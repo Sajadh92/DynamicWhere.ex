@@ -184,6 +184,36 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         together describe how the rows are partitioned.
       </p>
 
+      <h2 id="unexpressible">A path the query cannot compute</h2>
+      <p>
+        A member of a row&apos;s type is not always a value a database can
+        produce. A shared kernel type carrying two columns and a getter over
+        them gives <code>Name.Ar</code> and <code>Name.En</code>, which
+        translate, and <code>Name.IsEmpty</code>, which does not. The policy has
+        nothing to say about the third — <code>[DwNoWhere]</code> on{" "}
+        <code>Name</code> matches that path and not the ones beneath it — so
+        until <strong>3.3.0</strong> every check passed and EF Core threw. The
+        caller got a five-hundred where the strict tier promises a refusal.
+      </p>
+      <p>
+        Such a path is now refused as an unknown name is: the clause&apos;s own
+        code, <code>FieldPath</code> <code>&quot;*&quot;</code>, so it cannot be
+        told from a misspelling or from a field the caller may not use. It is
+        refused only where the whole set of members a container can produce is
+        known — an entity&apos;s own EF Core model, and the initializers of a
+        projection composed before <code>ApplyPolicy</code>, including a member
+        that projection copies from the entity. Rows in memory, a framework
+        member the provider translates such as <code>Length</code> or{" "}
+        <code>Year</code>, anything beneath a column, the convenience tier and a
+        dry run are all unchanged, and fail exactly as the unguarded query does.
+      </p>
+      <p>
+        This closes no leak: the query failed, it did not answer. It removes a
+        way of telling one member from another by the shape of the failure, and
+        it keeps the tier&apos;s promise that a guarded request is answered or
+        refused. The trace records the reason.
+      </p>
+
       <h2 id="two-more">7 and 8. The two that are not channels</h2>
       <table>
         <thead><tr><th>Attack</th><th>Control</th></tr></thead>

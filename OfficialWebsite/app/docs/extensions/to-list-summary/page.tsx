@@ -25,6 +25,16 @@ export default function Page() {
         with pagination metadata.
       </p>
 
+      <Callout tone="warn" title="Guarded, small groups are dropped by default">
+        <code>DwCaps.MinGroupSize</code> ships <strong>on, at 5</strong>, so a
+        guarded summary removes every group with fewer than five rows — not
+        refused, and nothing in the answer says a group was dropped. That is
+        right for anonymised reporting and surprising for an operational count.
+        Set <code>Caps.MinGroupSize = 1</code> to switch the floor off,
+        deliberately. An unguarded call is never floored. See{" "}
+        <Link href="/docs/policies/security#aggregates">k-anonymity</Link>.
+      </Callout>
+
       <h2 id="queryable">IQueryable&lt;T&gt; overload</h2>
       <Code lang="csharp">{`public static SummaryResult ToList<T>(
     this IQueryable<T> query,

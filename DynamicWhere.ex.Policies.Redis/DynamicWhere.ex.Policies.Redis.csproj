@@ -34,8 +34,10 @@
       <!-- Locked to the core's version. build/check-version.ps1 fails the build when the three
            disagree, because publish.yml packs all three from one push and a provider shipped at a
            version its core was never built against is a dependency nobody tested. -->
-      <Version>3.2.0</Version>
-      <PackageReleaseNotes>v3.2.0 — Released in lockstep with DynamicWhere.ex 3.2.0, which it now requires. No API or behaviour change in this package.
+      <Version>3.3.0</Version>
+      <PackageReleaseNotes>v3.3.0 — Released in lockstep with DynamicWhere.ex 3.3.0, which it now requires. No API or behaviour change in this package.
+
+v3.2.0 — Released in lockstep with DynamicWhere.ex 3.2.0, which it now requires. No API or behaviour change in this package.
 
 v3.1.0 — Released in lockstep with DynamicWhere.ex 3.1.0, which it now requires. No API or behaviour change in this package. A stored rule's forced predicate can now carry allowNull, which lets rows with no value through: the core's PolicyRuleDocument writes it into the rule document's forced object as "allowNull": true, only when it is true, so a rule without it is stored exactly as before. A document whose forced object pairs IsNull or IsNotNull with "allowNull": true, value or no value, or with a contextValue, is refused when it is read, like any document the core cannot read: a Global, Tenant, Role or Custom rule fails the load, and a User rule fails DwPolicy.PrepareAsync for that user.
 

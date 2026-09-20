@@ -47,13 +47,13 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 ## Install
 
 ```bash
-dotnet add package DynamicWhere.ex --version 3.2.0
+dotnet add package DynamicWhere.ex --version 3.3.0
 ```
 
 Or via Package Manager:
 
 ```powershell
-Install-Package DynamicWhere.ex -Version 3.2.0
+Install-Package DynamicWhere.ex -Version 3.3.0
 ```
 
 Dependencies (restored automatically):
@@ -374,6 +374,16 @@ The complete reference — every enum, class, extension method, validation rule,
 | [Breaking Changes](https://doc.dynamicwhere.com/docs/breaking-changes) | Known limits and migration notes |
 
 ---
+
+## Version 3.3.0 highlights
+
+**Upgrade note — two behaviour changes. Read these before bumping.**
+
+- **New: a second host may configure the same posture.** `DwPolicy.Configure`, and `AddDwPolicies` with it, used to throw on every call after the first, so an integration suite starting several `WebApplicationFactory` hosts over one composition root had to read `IsConfigured` first — a check-then-act two hosts starting at once can both pass. A second call asking for the posture already in force now does nothing and returns, and the comparison happens inside the lock that does the configuring, so no caller needs a lock of its own. A different posture is still refused: the tier, the dry-run, trace and refusal-audit flags, the hash salt, the store-failure mode, both intervals, every cap, the exposed entity catalogue and the kinds of policy source are all compared. The token vault, the service provider and the provider instances are not, because a second host builds its own; they stay as the first call left them, so a second host runs with the first host's vault, container and rule stores. `AddDwPolicies` registers the posture in force rather than the instance it just built.
+- **Changed: under `Strict`, a path the query cannot compute is refused rather than run.** A member of a row's type is not always a value a database can produce: a getter such as `LocalizedText.IsEmpty` reads two columns in memory, so every check the policy made passed and EF Core then threw — a five-hundred where the tier promises a refusal. Such a path is now refused as an unknown name is, in every clause. It is refused only where the whole set of members a container can produce is known: an entity's own model, and the initializers of a projection composed before `ApplyPolicy`, including a member that projection copies from the entity. Rows in memory, a framework member the provider translates such as `Length` or `Year`, anything beneath a column, the convenience tier and a dry run are all unchanged. A member a custom EF Core translator computes, through `[DbFunction]` or a translator plugin, is refused with the rest: map it, or filter on the columns beneath it.
+- **Changed: `LastTrace` is set before a request is sanitized**, so a refused request leaves its trace readable rather than the previous request's. A strict refusal names no field on purpose, and the trace is where the real path and the reason live.
+- **New: `Clone()` is public on `Filter`, `Segment` and `Summary`.** It returns a deep copy — the condition tree, the projection list, each order, the page, and a summary's group-by and having clause — so reading the same request again with another page no longer means rebuilding it around the caller's own clauses, which leaves two requests sharing one condition tree.
+- **Docs:** `[DwEntity(DefaultOrder)]`'s own remarks said a projected query takes no default; it has since 3.2.0. `DwCaps.MinGroupSize` ships **on at 5**, so a guarded summary silently drops groups of fewer than five rows — the aggregation docs now lead with that instead of leaving it to the caps table.
 
 ## Version 3.2.0 highlights
 

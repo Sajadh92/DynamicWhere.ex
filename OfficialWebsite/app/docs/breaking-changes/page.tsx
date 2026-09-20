@@ -17,12 +17,12 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The thirty-three points below cover constraints, surprises, and corner cases —
+        The thirty-four points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
       <Callout tone="danger" title="Behaviour changes in 3.3.0">
-        Points&nbsp;30 to 33 changed in <strong>3.3.0</strong>. Under{" "}
+        Points&nbsp;30 to 34 changed in <strong>3.3.0</strong>. Under{" "}
         <code>Strict</code>, a path that exists on the type and names no value
         the query can compute is refused rather than run, where the provider
         used to throw and the caller saw a five-hundred (point&nbsp;30).{" "}
@@ -33,7 +33,9 @@ export default function Page() {
         several hosts over one composition root (point&nbsp;32). A query that
         exhausts the audit buffer under <code>Strict</code> is now refused with
         the clause&apos;s own field refusal rather than with{" "}
-        <code>CapExceeded</code> (point&nbsp;33).
+        <code>CapExceeded</code> (point&nbsp;33). Four more refusals that named
+        a field under <code>Strict</code> name the clause instead
+        (point&nbsp;34).
       </Callout>
       <Callout tone="danger" title="Behaviour changes in 3.2.0">
         Points&nbsp;25 to 29 changed in <strong>3.2.0</strong>, and each is
@@ -1648,6 +1650,29 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         <code>Convenience</code> and a dry run still answer{" "}
         <code>CapExceeded</code>. Code switching on <code>CapExceeded</code>{" "}
         under <code>Strict</code> sees the change.
+      </p>
+
+      <h2 id="strict-names-the-clause">34. Four More Refusals Name the Clause Under <code>Strict</code></h2>
+      <p>
+        A strict refusal names no field, and four did.{" "}
+        <code>AmbiguousFieldName</code> told a caller that the name they wrote
+        matches more than one field, which is to say at least one; it is refused
+        as an unknown name is since <strong>3.3.0</strong>, with the ambiguity
+        kept in the trace for the operator who has to fix the aliases.{" "}
+        <code>AmbiguousGroupKey</code> reported the grouping key&apos;s
+        canonical path — the column behind whatever alias the caller wrote — and
+        an origin saying its values are transformed; it reports{" "}
+        <code>&quot;*&quot;</code> and no origin.{" "}
+        <code>TransformRequiresMaterialization</code> listed every transformed
+        column on the type to a caller who named none of them.{" "}
+        <code>MissingHashSalt</code> and <code>MissingTokenVault</code> named the
+        masked field a deployment forgot to configure for.
+      </p>
+      <p>
+        All four are unchanged under <code>Convenience</code> and in a dry run,
+        where the tier names fields anyway. Code switching on{" "}
+        <code>AmbiguousFieldName</code> under <code>Strict</code>, or reading{" "}
+        <code>FieldPath</code> off any of the four, sees the change.
       </p>
 
       <h2 id="next">See also</h2>

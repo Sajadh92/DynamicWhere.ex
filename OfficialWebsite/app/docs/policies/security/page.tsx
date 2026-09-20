@@ -5,7 +5,7 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Security & k-anonymity — the nine inference channels",
+  title: "Security & k-anonymity — the ten inference channels",
   description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own — set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, SQL leakage, and schema probing through refusals — and the denials the gate could not see until 3.2.0.",
   keywords: ["k-anonymity", "MinGroupSize", "inference attack", "data disclosure", "aggregate disclosure", "EF Core security"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/security/" },
@@ -17,7 +17,7 @@ export default function Page() {
       <h1>Security &amp; k-anonymity</h1>
       <p>
         Denying a field is easy. The hard part is the set of ways a caller can
-        learn a value <em>without</em> reading it. Seven such channels follow,
+        learn a value <em>without</em> reading it. Eight such channels follow,
         then two bypasses that are not channels, then a path the query cannot compute
         — not a channel either, but the one request the tier used to answer with
         neither an answer nor a refusal — then the requests that, until 3.2.0,
@@ -205,7 +205,26 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         still records which refusal it really was.
       </p>
 
-      <h2 id="two-more">8 and 9. The two that are not channels</h2>
+      <h2 id="names-the-clause">8. Four refusals that named a field</h2>
+      <p>
+        A strict refusal names no field, so that a denied field, a misspelling
+        and a field that does not exist cannot be told apart. Four refusals
+        named one anyway: an ambiguous name said the caller&apos;s guess matched
+        more than one field, and so at least one; an ambiguous grouping key
+        reported the column behind the caller&apos;s alias and said its values
+        are transformed; the refusal for a clause that cannot be transformed
+        listed every masked column on the type; and a deployment with no hash
+        salt or token vault named the masked field it could not write.
+      </p>
+      <p>
+        <strong>Closed by:</strong> under <code>Strict</code>, outside a dry
+        run, an ambiguous name is refused exactly as an unknown name is, and the
+        other three name the clause with no origin. The trace keeps the real
+        reason for the operator. <code>Convenience</code> and a dry run are
+        unchanged.
+      </p>
+
+      <h2 id="two-more">9 and 10. The two that are not channels</h2>
       <table>
         <thead><tr><th>Attack</th><th>Control</th></tr></thead>
         <tbody>

@@ -2191,6 +2191,9 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   and in dry run. `CapExceeded`, except under `Strict` outside a dry run, where it is the clause's own field
   refusal instead (3.3.0): only a real, audited field can reach the cap, so answering with the cap's own code
   would set such a field apart from a name that matches nothing.
+- A use is what the request names, plus a default-order field the query adds. A request sending no `Selects` names
+  nothing, so an audited field the row carries back is returned with no record: name the fields to be recorded, or
+  audit `Where`, which a filtering request cannot leave out.
 - A refusal becomes an event of its own, with an `ErrorCode`, only when `DwPolicyOptions.AuditRefusals` is
   on, and then for every refused guarded query, audited field or not (3.1.0, section 22).
 - It is elected: the top-ranked audit wins outright, and fragments tied with it are unioned. A rule can
@@ -2370,6 +2373,9 @@ a projection another provider ran                    nothing; its rules are its 
   replaced query preprocessor — leaves EF Core's own provider in place, so such a member is refused.
 - A projection that does not build its rows with an object initializer — an anonymous type, a constructor with
   arguments — says nothing about which member each value sets, so no member of such a row is refused here.
+- A member assigned through a sequence operator — `Lines = o.Lines.ToList()`, `o.Lines.Where(…).ToList()`, a
+  subquery building rows of its own — is left alone as well: what the row holds is not what the navigation holds,
+  and reading it as the navigation would refuse a member the row carries.
 - A row the library itself projected reads like any other: the core's typed `Select` null-guards every nested node
   it builds, and both branches of that guard are read, so `Select` composed and then filtered refuses what the bare
   handle refuses.
@@ -4275,7 +4281,7 @@ any policy                  [DwEntity(RequirePolicy = true)]   a DynamicWhere ca
 
 ### Inference channels
 
-There are nine. The first seven let a caller learn a value, or what the policy hides, without reading it;
+There are ten. The first eight let a caller learn a value, or what the policy hides, without reading it;
 **Forgotten guard** and **Empty store** are bypasses.
 
 - **Set operations:** `EXCEPT` or `INTERSECT` rebuild a field that is denied for Select but allowed for
@@ -4298,6 +4304,10 @@ There are nine. The first seven let a caller learn a value, or what the policy h
   `CapExceeded` and an origin naming the cap, while an unknown name — never audited, so never reaching the cap —
   carried the ordinary field refusal. Under `Strict` outside a dry run the cap now refuses with the clause's own
   field refusal, so the two cannot be told apart; `Convenience` and a dry run still answer `CapExceeded`.
+- **A refusal that names a field:** four did under `Strict` until 3.3.0 — an ambiguous name, an ambiguous grouping
+  key, a clause that cannot be transformed, and a deployment with no hash salt or token vault. An ambiguous name is
+  now refused as an unknown name is; the other three name the clause and carry no origin. `Convenience` and a dry
+  run are unchanged.
 - **Which fields exist:** Convenience answers a name that matches nothing with `ConditionMustHasValidFieldName`
   and a denied field with a refusal that names it and its source, so a caller can map the hidden columns one
   guess at a time. Strict answers both alike, with the clause's `FieldDeniedFor*` code, `FieldPath` `"*"` and

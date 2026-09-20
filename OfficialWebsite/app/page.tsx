@@ -219,7 +219,7 @@ export default function HomePage() {
               Everything you need to query dynamically
             </h2>
             <p className="mx-auto mt-3 max-w-[560px] text-[15px] text-[var(--color-fg-2)]">
-              Four packages. Seventeen extension methods. Three composable shapes (Filter, Segment, Summary), and a policy layer deciding who sees what.
+              Four packages. Twenty-eight extension methods. Three composable shapes (Filter, Segment, Summary), and a policy layer deciding who sees what.
             </p>
           </div>
 
@@ -309,7 +309,7 @@ export default function HomePage() {
             {[
               { title: "Installation", desc: "Add to your project in seconds.", href: "/docs/installation" },
               { title: "Quick Start", desc: "A working filter in 30 lines.", href: "/docs/quick-start" },
-              { title: "Extension Methods", desc: "All 17 methods, one place.", href: "/docs/extensions" },
+              { title: "Extension Methods", desc: "All 28 methods, one place.", href: "/docs/extensions" },
               { title: "JSON Cookbook", desc: "13 copy-pasteable examples.", href: "/docs/examples" },
               { title: "Enums Reference", desc: "Every DataType & Operator.", href: "/docs/enums" },
               { title: "Classes Reference", desc: "Condition → Filter → Result.", href: "/docs/classes" },

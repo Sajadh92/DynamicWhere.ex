@@ -30,7 +30,7 @@ export default function Page() {
       </p>
 
       <p>
-        Version <strong>3.1.0</strong>. Target framework <strong>.NET 6+</strong>.
+        Version <strong>3.2.0</strong>. Target framework <strong>.NET 6+</strong>.
         License <strong>MIT</strong> — free forever, for commercial and personal use.
       </p>
 
@@ -83,7 +83,7 @@ export default function Page() {
 
       <h2 id="thirty-second-tour">30-second tour</h2>
       <p>Install the package:</p>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 3.1.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 3.2.0`}</Code>
 
       <p>Build a filter from a JSON body and apply it to a DbSet:</p>
       <Code lang="csharp">{`using DynamicWhere.ex.Source;

@@ -165,13 +165,16 @@ export default function Page() {
       <h2 id="materialization">Materialization</h2>
       <p>
         Execute the composed query and return a paginated result — typed,
-        dynamic, summary, or segment. The two <code>Filter</code> async
-        terminals count with EF Core&apos;s <code>CountAsync</code> and read
-        with <code>ToListAsync</code> / <code>ToDynamicListAsync</code>;{" "}
-        <code>ToListAsync(Summary)</code> counts synchronously and only awaits
-        the read, and <code>ToListAsync(Segment)</code> combines its sets into
-        one query and then counts and reads it exactly as a{" "}
-        <code>Filter</code> does.
+        dynamic, summary, or segment. The async terminals count with EF
+        Core&apos;s <code>CountAsync</code> and read with EF Core&apos;s{" "}
+        <code>ToListAsync</code>. Since 3.2.0 that includes the dynamic{" "}
+        <code>Filter</code>&apos;s read and the <code>Summary</code>&apos;s count
+        and read: the count used to run synchronously, and the reads through
+        Dynamic LINQ, with no token to pass on.{" "}
+        <code>ToListAsync(Summary)</code> on a provider that is not EF
+        Core&apos;s keeps its synchronous count and Dynamic LINQ&apos;s read, and{" "}
+        <code>ToListAsync(Segment)</code> combines its sets into one query and
+        then counts and reads it exactly as a <code>Filter</code> does.
       </p>
       <table>
         <thead>
@@ -199,6 +202,16 @@ export default function Page() {
             <td><Link href="/docs/extensions/to-list-async-filter">Docs</Link></td>
           </tr>
           <tr>
+            <td><code>ToListAsync</code> (Filter, token)</td>
+            <td>
+              <code>.ToListAsync&lt;T&gt;(Filter, CancellationToken)</code> /{" "}
+              <code>.ToListAsync&lt;T&gt;(Filter, bool getQueryString, CancellationToken)</code>
+            </td>
+            <td><code>Task&lt;FilterResult&lt;T&gt;&gt;</code></td>
+            <td>Yes</td>
+            <td><Link href="/docs/extensions/to-list-async-filter#cancellation">Docs</Link></td>
+          </tr>
+          <tr>
             <td><code>ToListDynamic</code> (Filter)</td>
             <td><code>.ToListDynamic&lt;T&gt;(Filter, bool getQueryString = false)</code></td>
             <td><code>FilterResult&lt;dynamic&gt;</code></td>
@@ -211,6 +224,16 @@ export default function Page() {
             <td><code>Task&lt;FilterResult&lt;dynamic&gt;&gt;</code></td>
             <td>Yes</td>
             <td><Link href="/docs/extensions/to-list-async-dynamic-filter">Docs</Link></td>
+          </tr>
+          <tr>
+            <td><code>ToListAsyncDynamic</code> (Filter, token)</td>
+            <td>
+              <code>.ToListAsyncDynamic&lt;T&gt;(Filter, CancellationToken)</code> /{" "}
+              <code>.ToListAsyncDynamic&lt;T&gt;(Filter, bool getQueryString, CancellationToken)</code>
+            </td>
+            <td><code>Task&lt;FilterResult&lt;dynamic&gt;&gt;</code></td>
+            <td>Yes</td>
+            <td><Link href="/docs/extensions/to-list-async-dynamic-filter#cancellation">Docs</Link></td>
           </tr>
           <tr>
             <td><code>ToList</code> (Summary)</td>
@@ -227,14 +250,49 @@ export default function Page() {
             <td><Link href="/docs/extensions/to-list-async-summary">Docs</Link></td>
           </tr>
           <tr>
+            <td><code>ToListAsync</code> (Summary, token)</td>
+            <td>
+              <code>.ToListAsync&lt;T&gt;(Summary, CancellationToken)</code> /{" "}
+              <code>.ToListAsync&lt;T&gt;(Summary, bool getQueryString, CancellationToken)</code>
+            </td>
+            <td><code>Task&lt;SummaryResult&gt;</code></td>
+            <td>Yes</td>
+            <td><Link href="/docs/extensions/to-list-async-summary#cancellation">Docs</Link></td>
+          </tr>
+          <tr>
             <td><code>ToListAsync</code> (Segment)</td>
             <td><code>.ToListAsync&lt;T&gt;(Segment segment)</code></td>
             <td><code>Task&lt;SegmentResult&lt;T&gt;&gt;</code></td>
             <td>Yes (only)</td>
             <td><Link href="/docs/extensions/to-list-async-segment">Docs</Link></td>
           </tr>
+          <tr>
+            <td><code>ToListAsync</code> (Segment, token)</td>
+            <td><code>.ToListAsync&lt;T&gt;(Segment, CancellationToken)</code></td>
+            <td><code>Task&lt;SegmentResult&lt;T&gt;&gt;</code></td>
+            <td>Yes (only)</td>
+            <td><Link href="/docs/extensions/to-list-async-segment">Docs</Link></td>
+          </tr>
         </tbody>
       </table>
+
+      <Callout tone="note" title="A CancellationToken on every async terminal (3.2.0)">
+        <code>ToListAsync</code> and <code>ToListAsyncDynamic</code> with a{" "}
+        <code>Filter</code>, <code>ToListAsync</code> with a{" "}
+        <code>Summary</code> and <code>ToListAsync</code> with a{" "}
+        <code>Segment</code> each have overloads that take a{" "}
+        <code>CancellationToken</code>. The token reaches the count and the
+        read. The overloads sit beside the 3.1 signatures, which are unchanged,
+        so code compiled against 3.1 still binds.{" "}
+        <code>ToListAsync(filter, default)</code> no longer compiles, because{" "}
+        <code>default</code> fits both <code>getQueryString</code> and the
+        token; neither do <code>ToListAsyncDynamic(filter, default)</code> and{" "}
+        <code>ToListAsync(summary, default)</code>. Write <code>false</code>, a
+        token, or a named argument. And a reflection lookup of{" "}
+        <code>ToListAsyncDynamic</code> by name alone now finds three methods
+        where it found one: pass the parameter types to{" "}
+        <code>Type.GetMethod</code>.
+      </Callout>
 
       <Callout tone="warn">
         Segment operations are <strong>async-only</strong>. There is no
@@ -254,7 +312,9 @@ export default function Page() {
         for unit tests and in-process pipelines. Nothing else has one: there is
         no <code>ToListDynamic(Summary)</code>, and no async or composable
         method works on an <code>IEnumerable&lt;T&gt;</code> source. Counting
-        those three, the library ships <strong>21</strong> extension methods.
+        those three and the seven overloads that take a{" "}
+        <code>CancellationToken</code>, the library ships <strong>28</strong>{" "}
+        extension methods.
       </p>
 
       <Callout tone="note">
@@ -268,7 +328,7 @@ export default function Page() {
       </Callout>
 
       <Callout tone="note">
-        Every one of the 21 begins by asking the policy layer whether this type
+        Every one of the 28 begins by asking the policy layer whether this type
         may be queried at all. A type marked{" "}
         <code>[DwEntity(RequirePolicy = true)]</code> throws{" "}
         <code>PolicyException</code> with <code>PolicyRequired</code> when it is

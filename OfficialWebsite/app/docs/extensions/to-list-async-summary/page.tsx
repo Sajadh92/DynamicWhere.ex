@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: ".ToListAsync<T>(Summary)",
   description:
-    "Async EF Core entry — materialize a Summary against an IQueryable<T> and return Task<SummaryResult>.",
+    "Async EF Core entry — materialize a Summary against an IQueryable<T> and return Task<SummaryResult>, with overloads that take a CancellationToken.",
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/extensions/to-list-async-summary/" },
 };
 
@@ -20,8 +20,10 @@ export default function Page() {
         <Link href="/docs/extensions/to-list-summary">
           <code>.ToList&lt;T&gt;(Summary)</code>
         </Link>
-        . The group count runs synchronously; only the data read is async, via
-        Dynamic LINQ's <code>ToDynamicListAsync()</code>.
+        . On an EF Core query it counts the groups with EF Core&apos;s{" "}
+        <code>CountAsync()</code> and reads them with EF Core&apos;s{" "}
+        <code>ToListAsync()</code>. Since 3.2.0 two more overloads take a{" "}
+        <code>CancellationToken</code>, which reaches both.
       </p>
 
       <h2 id="signature">Signature</h2>
@@ -29,6 +31,20 @@ export default function Page() {
     this IQueryable<T> query,
     Summary summary,
     bool getQueryString = false)
+    where T : class
+
+// 3.2.0
+public static Task<SummaryResult> ToListAsync<T>(
+    this IQueryable<T> query,
+    Summary summary,
+    CancellationToken cancellationToken)
+    where T : class
+
+public static Task<SummaryResult> ToListAsync<T>(
+    this IQueryable<T> query,
+    Summary summary,
+    bool getQueryString,
+    CancellationToken cancellationToken)
     where T : class`}</Code>
 
       <table>
@@ -58,6 +74,15 @@ export default function Page() {
               <code>SummaryResult.QueryString</code>
             </td>
           </tr>
+          <tr>
+            <td><code>cancellationToken</code></td>
+            <td><code>CancellationToken</code></td>
+            <td>–</td>
+            <td>
+              Cancels the count and the read. The overload without it passes{" "}
+              <code>CancellationToken.None</code>
+            </td>
+          </tr>
         </tbody>
       </table>
 
@@ -67,13 +92,32 @@ export default function Page() {
         <li><code>Group</code> applied — produces grouped dynamic intermediate.</li>
         <li><code>Having</code> applied — fields must reference aggregate aliases.</li>
         <li>
-          <code>Count()</code> on the grouped query → <code>TotalCount</code>.
-          This count is <strong>synchronous</strong>, not awaited.
+          The grouped query is counted → <code>TotalCount</code>. On an EF Core
+          query this is EF Core&apos;s <code>CountAsync(cancellationToken)</code>.
         </li>
         <li><code>Order</code> applied on the grouped query.</li>
         <li><code>Page</code> applied on the grouped query.</li>
-        <li>Async materialization as <code>List&lt;dynamic&gt;</code>.</li>
+        <li>
+          Async materialization as <code>List&lt;dynamic&gt;</code>. On an EF
+          Core query this is EF Core&apos;s{" "}
+          <code>ToListAsync(cancellationToken)</code>.
+        </li>
       </ul>
+      <p>
+        A source whose provider is not EF Core&apos;s — rows in memory through{" "}
+        <code>AsQueryable()</code>, for one — keeps the reads it had in 3.1: a
+        synchronous <code>Count()</code>, then Dynamic LINQ&apos;s{" "}
+        <code>ToDynamicListAsync()</code>, which reads on the calling thread. A
+        token that is already canceled still stops it before the count.
+      </p>
+
+      <Callout tone="warn" title="Changed in 3.2.0: the count and the read are asynchronous on EF Core">
+        Until 3.2.0 the group count ran synchronously, and the read went through
+        Dynamic LINQ&apos;s <code>ToDynamicListAsync()</code>, which had no token
+        to pass on, on every provider. On an EF Core query both now run through
+        EF Core&apos;s asynchronous operators, so a canceled token reaches the
+        database. The count and the rows are the same.
+      </Callout>
 
       <Callout tone="note">
         Dotted <code>GroupBy</code> fields like <code>Category.Name</code>{" "}
@@ -81,6 +125,32 @@ export default function Page() {
         <code>CategoryName</code>). Order fields in <code>Summary.Orders</code>{" "}
         use the dotted form — the library handles alias mapping internally.
       </Callout>
+
+      <h2 id="cancellation">Cancellation</h2>
+      <p>
+        The two overloads that take a <code>CancellationToken</code> are new in
+        3.2.0. The token reaches the count and the read. On an EF Core query a
+        canceled token stops whichever of the two is running, and the call
+        throws <code>OperationCanceledException</code>. EF Core&apos;s{" "}
+        <code>TaskCanceledException</code> derives from it. The overload without
+        a token passes <code>CancellationToken.None</code>.
+      </p>
+      <p>
+        They are overloads, not an optional parameter added to the old
+        signature. The 3.1 signature is unchanged, so code compiled against 3.1
+        still binds. The guarded handle that{" "}
+        <Link href="/docs/policies#handle"><code>ApplyPolicy</code></Link>{" "}
+        returns has the same overloads.
+      </p>
+      <Callout tone="warn" title="ToListAsync(summary, default) does not compile">
+        <code>default</code> fits both <code>bool getQueryString</code> and{" "}
+        <code>CancellationToken</code>, so the compiler reports the call as
+        ambiguous (CS0121). Write <code>false</code>, a token, or a named
+        argument.
+      </Callout>
+      <Code lang="csharp">{`await db.Products.ToListAsync(summary, default);                   // CS0121: ambiguous
+await db.Products.ToListAsync(summary, cancellationToken);         // the token overload
+await db.Products.ToListAsync(summary, true, cancellationToken);   // the SQL and a token`}</Code>
 
       <h2 id="returns">Returns</h2>
       <p>

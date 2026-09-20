@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Reflection;
 using DynamicWhere.ex.Classes.Core;
@@ -40,9 +39,6 @@ namespace DynamicWhere.ex.Source;
 /// </remarks>
 internal static class SegmentComposer
 {
-    /// <summary>The <c>EntityType</c> property of each query-root expression type, or null for a type with none.</summary>
-    private static readonly ConcurrentDictionary<Type, PropertyInfo?> RootEntityTypeProperties = new();
-
     /// <summary>
     /// Combines validated condition sets, already in <c>Sort</c> order, into one query.
     /// </summary>
@@ -205,50 +201,8 @@ internal static class SegmentComposer
     /// The primary key EF Core maps for <typeparamref name="T"/>, or null when the query is not an EF Core
     /// query or the type has none.
     /// </summary>
-    /// <remarks>
-    /// Read from the model behind the query's root. The root expression's type differs between EF Core
-    /// versions — <c>QueryRootExpression</c> in 6, <c>EntityQueryRootExpression</c> from 7 — and both
-    /// carry the entity type in a property named <c>EntityType</c>, so the property is found by name.
-    /// Any root reaches the model, and the model is asked for <typeparamref name="T"/> itself, which
-    /// also answers for a derived type queried through <c>OfType</c>.
-    /// </remarks>
-    private static IReadOnlyList<IProperty>? PrimaryKey<T>(IQueryable<T> query)
-    {
-        RootFinder finder = new();
-
-        finder.Visit(query.Expression);
-
-        return finder.EntityType?.Model.FindEntityType(typeof(T))?.FindPrimaryKey()?.Properties;
-    }
-
-    /// <summary>Finds the first query root that names an entity type.</summary>
-    private sealed class RootFinder : ExpressionVisitor
-    {
-        public IEntityType? EntityType { get; private set; }
-
-        public override Expression? Visit(Expression? node) => EntityType is null ? base.Visit(node) : node;
-
-        protected override Expression VisitExtension(Expression node)
-        {
-            // Enumerated rather than looked up by name, which throws when a derived root hides the
-            // property with a new one.
-            PropertyInfo? property = RootEntityTypeProperties.GetOrAdd(
-                node.GetType(),
-                type => type
-                    .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .FirstOrDefault(candidate => candidate.Name == "EntityType"
-                                                 && candidate.GetIndexParameters().Length == 0));
-
-            if (property?.GetValue(node) is IEntityType entityType)
-            {
-                EntityType = entityType;
-
-                return node;
-            }
-
-            return base.VisitExtension(node);
-        }
-    }
+    private static IReadOnlyList<IProperty>? PrimaryKey<T>(IQueryable<T> query) =>
+        QueryRoot.EntityType(query.Expression, typeof(T))?.FindPrimaryKey()?.Properties;
 
     /// <summary>Replaces one lambda parameter with another expression.</summary>
     private sealed class ParameterSwap : ExpressionVisitor

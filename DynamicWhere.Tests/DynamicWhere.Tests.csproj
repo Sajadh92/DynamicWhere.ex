@@ -27,6 +27,9 @@
     <!-- Version comes from DwEfCoreVersion above: 8.0.10 by default, because the sales fixture
          needs DateOnly/TimeOnly and primitive-collection mapping; 6.0.22 on the floor leg. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="$(DwEfCoreVersion)" />
+    <!-- Lazy-loading proxies, for the test that a navigation a proxy can fill after the query counts as
+         loaded. Same version as EF Core, on both legs. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(DwEfCoreVersion)" />
     <!-- ConfigurationBuilder, for the posture-binding tests. In the always-on group rather
          than beside Npgsql, because binding is a core feature and the floor leg has to run
          its tests too. An Extensions package at 6.0.0 pulls no EF Core graph with it. -->
@@ -79,6 +82,10 @@
          primary key it reads from the EF Core model, both of which differ between 6 and 8. It
          carries its own SQLite model. -->
     <Compile Include="SegmentCompositionTests.cs" />
+    <!-- Kept: a dynamic read and a grouped count reach EF Core's own asynchronous operators by
+         reflection, found by name, which is what differs between 6 and 8. It carries its own SQLite
+         model. -->
+    <Compile Include="CancellationTests.cs" />
     <Compile Remove="Policies/EfPolicyModelTests.cs" />
     <Compile Remove="Policies/EfPolicyStoreTests.cs" />
     <Compile Remove="Policies/EfStoreConformanceTests.cs" />

@@ -1,9 +1,12 @@
-﻿using System.Reflection;
+﻿using System.Collections;
+using System.Collections.Concurrent;
+using System.Reflection;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Optimization.Cache.Source;
+using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Audit;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
@@ -58,6 +61,10 @@ internal static class FilterSanitizer
     /// field this caller may not order by. False for a clause composed on its own, which orders
     /// nothing the caller did not ask it to.
     /// </param>
+    /// <param name="rows">
+    /// What the query's source puts in the members of its rows, which decides what a synthesized
+    /// projection keeps. Null for an entity query whose model is unknown.
+    /// </param>
     /// <returns>A sanitized copy, safe to hand to the existing pipeline.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     /// <exception cref="LogicException">
@@ -75,7 +82,8 @@ internal static class FilterSanitizer
         DwPolicyOptions options,
         PolicyTrace trace,
         bool synthesizeProjection = true,
-        bool applyDefaultOrder = true)
+        bool applyDefaultOrder = true,
+        RowShape? rows = null)
         where T : class
     {
         if (filter is null)
@@ -141,7 +149,7 @@ internal static class FilterSanitizer
             working.Orders = defaults;
         }
 
-        GateSelects(working, gate, synthesizeProjection);
+        GateSelects(working, gate, synthesizeProjection, rows ?? RowShape.Unknown);
 
         // The strict tier checks the bill once every field has passed its gate. It drops nothing, so a
         // request still here names no field the caller may not use, and a weighted field the caller may
@@ -610,6 +618,10 @@ internal static class FilterSanitizer
     /// When true and the caller sent no orders, the type's declared default order is added, less every
     /// field this caller may not order by.
     /// </param>
+    /// <param name="rows">
+    /// What the query's source puts in the members of its rows, which decides what a synthesized
+    /// projection keeps. Null for an entity query whose model is unknown.
+    /// </param>
     /// <remarks>
     /// Every condition set is gated independently, because each one becomes its own subquery and a
     /// field refused in one must not be reachable through another.
@@ -626,7 +638,8 @@ internal static class FilterSanitizer
         DwPolicyContext context,
         DwPolicyOptions options,
         PolicyTrace trace,
-        bool applyDefaultOrder = true)
+        bool applyDefaultOrder = true,
+        RowShape? rows = null)
         where T : class
     {
         if (segment is null)
@@ -720,7 +733,7 @@ internal static class FilterSanitizer
             working.Orders = defaults;
         }
 
-        GateSegmentSelects(working, gate);
+        GateSegmentSelects(working, gate, rows ?? RowShape.Unknown);
 
         // The strict tier checks the bill once every field has passed its gate. It drops nothing, so a
         // request still here names no field the caller may not use, and a weighted field the caller may
@@ -964,11 +977,11 @@ internal static class FilterSanitizer
     /// materializes.
     /// </para>
     /// </remarks>
-    private static void GateSegmentSelects(Segment segment, Gate gate)
+    private static void GateSegmentSelects(Segment segment, Gate gate, RowShape rows)
     {
         if (segment.Selects is null || segment.Selects.Count == 0)
         {
-            if (SynthesizedProjection(gate) is List<string> synthesized)
+            if (SynthesizedProjection(gate, rows) is List<string> synthesized)
             {
                 segment.Selects = synthesized;
             }
@@ -976,7 +989,7 @@ internal static class FilterSanitizer
             return;
         }
 
-        List<string> kept = GateProjection(segment.Selects, gate);
+        List<string> kept = GateProjection(segment.Selects, gate, rows);
 
         if (kept.Count == 0)
         {
@@ -1604,7 +1617,7 @@ internal static class FilterSanitizer
     /// entity — turning the strictest possible policy into the widest possible result.
     /// </para>
     /// </remarks>
-    private static void GateSelects(Filter filter, Gate gate, bool synthesize)
+    private static void GateSelects(Filter filter, Gate gate, bool synthesize, RowShape rows)
     {
         if (filter.Selects is null || filter.Selects.Count == 0)
         {
@@ -1613,13 +1626,13 @@ internal static class FilterSanitizer
             // refuse the call outright on a type whose every field is denied for select.
             if (synthesize)
             {
-                SynthesizeSelects(filter, gate);
+                SynthesizeSelects(filter, gate, rows);
             }
 
             return;
         }
 
-        List<string> kept = GateProjection(filter.Selects, gate);
+        List<string> kept = GateProjection(filter.Selects, gate, rows);
 
         if (kept.Count == 0)
         {
@@ -1644,8 +1657,14 @@ internal static class FilterSanitizer
     /// expansion happens only where there is something to narrow, so a type the policy has no
     /// opinion about still generates the SQL the unguarded path would.
     /// </para>
+    /// <para>
+    /// A narrowing the core cannot build as written is refused rather than handed over. The builder
+    /// adds the key of every node it narrows, so dropping a denied key from the list put it straight
+    /// back; and a path through a collection the core does not unwrap, such as an
+    /// <c>IReadOnlyList&lt;T&gt;</c>, failed validation with an error about the caller's field names.
+    /// </para>
     /// </remarks>
-    private static List<string> GateProjection(IEnumerable<string> selects, Gate gate)
+    private static List<string> GateProjection(IEnumerable<string> selects, Gate gate, RowShape rows)
     {
         List<string> kept = new();
 
@@ -1657,19 +1676,14 @@ internal static class FilterSanitizer
             }
         }
 
-        bool Allowed(string path)
-        {
-            FieldPolicy policy = gate.PolicyFor(path, PolicyFeature.Select);
-
-            return policy.Allows(PolicyFeature.Select)
-                || !gate.Refuse(path, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy);
-        }
-
         foreach (string field in selects)
         {
             // The field's own decision first. A navigation that is itself denied is refused as it
             // stands; what it carries is only asked about once it has survived on its own account.
-            if (!Allowed(field))
+            FieldPolicy own = gate.PolicyFor(field, PolicyFeature.Select);
+
+            if (!own.Allows(PolicyFeature.Select)
+                && gate.Refuse(field, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, own))
             {
                 continue;
             }
@@ -1682,30 +1696,92 @@ internal static class FilterSanitizer
                 continue;
             }
 
-            IReadOnlyList<string> carried = gate.ProjectionUnder(field);
-            List<string> survivors = new(carried.Count);
-            bool narrowed = false;
+            (List<string> survivors, List<(string Path, FieldPolicy Policy)> denied) =
+                gate.Beneath(field, PolicyFeature.Select);
 
-            foreach (string path in carried)
+            // Each denied path, as a denial beneath a named navigation always was: refused under the
+            // strict tier, dropped from the narrowing otherwise, left in place in a dry run.
+            (string Path, FieldPolicy Policy)? cause = null;
+
+            foreach ((string path, FieldPolicy policy) in denied)
             {
-                if (Allowed(path))
+                if (gate.Refuse(path, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy))
                 {
-                    survivors.Add(path);
-                }
-                else
-                {
-                    narrowed = true;
+                    cause ??= (path, policy);
                 }
             }
 
-            if (!narrowed)
+            // A member can carry a denied field no path names: beyond the walker's depth, inside a
+            // framework collection, declared by a subtype, or, under a policy that denies whatever it
+            // does not name, anywhere the walk does not reach. On an entity, only what loads counts.
+            bool hidden = cause is null
+                          && gate.Unnamed(field, rows).DeniesSelect
+                          && gate.RefuseHidden(field);
+
+            if (cause is null && !hidden && !gate.ReadOnlyTransformBeneath(field))
             {
                 Keep(field);
+
+                // Kept whole, a navigation reached through others still passes through their nodes, and
+                // the builder adds each one's key.
+                KeepCarriedKeys(field, gate, Keep);
 
                 continue;
             }
 
+            (string Path, FieldPolicy? Policy) blame = cause is { } found ? (found.Path, found.Policy) : (field, null);
+
+            if (!rows.Narrows(field.Split(SegmentSeparator)[0]))
+            {
+                // Narrowed only to keep a transform off a property it could not write: nothing is withheld
+                // by keeping it whole, as it always was kept.
+                if (cause is null && !hidden)
+                {
+                    Keep(field);
+                    KeepCarriedKeys(field, gate, Keep);
+
+                    continue;
+                }
+
+                gate.RefuseNarrowing(blame.Path, blame.Policy, $"'{field}' cannot be narrowed: {rows.WhyNotNarrowed(field)}");
+
+                continue;
+            }
+
+            List<string> narrowed = new(survivors.Count);
+
             foreach (string path in survivors)
+            {
+                // Projected whole by the core, a field holding a framework collection of a policed type
+                // carries the denied fields the policy cannot name inside it.
+                if (gate.DeclaredType(path) is { } leaf && !Gate.HoldsValue(leaf) && gate.Unnamed(path, rows).DeniesSelect
+                    && gate.RefuseHidden(path))
+                {
+                    continue;
+                }
+
+                narrowed.Add(path);
+            }
+
+            if (gate.DeniedKey(narrowed) is { } key)
+            {
+                gate.RefuseNarrowing(
+                    key.Path, key.Policy,
+                    $"'{field}' was narrowed, and the projection builder adds this key to every node it narrows");
+
+                continue;
+            }
+
+            if (gate.Unprojectable(narrowed) is { } unbuilt)
+            {
+                gate.RefuseNarrowing(
+                    blame.Path, blame.Policy,
+                    $"'{field}' cannot be narrowed around it: the core cannot project '{unbuilt}'");
+
+                continue;
+            }
+
+            foreach (string path in narrowed)
             {
                 Keep(path);
             }
@@ -1760,7 +1836,7 @@ internal static class FilterSanitizer
     /// denied.
     /// </summary>
     /// <remarks>
-    /// A caller who sends no projection gets the whole entity, denied columns included, because
+    /// A caller who sends no projection gets the whole row, denied columns included, because
     /// the pipeline only projects when <c>Selects</c> is non-null. Gating the list alone would
     /// therefore enforce deny-select against precisely the callers who volunteered one, and leave
     /// it bypassable by asking for less.
@@ -1771,19 +1847,14 @@ internal static class FilterSanitizer
     /// one that rewrites every query in the application.
     /// </para>
     /// <para>
-    /// Scalars only. A navigation is not loaded by an unguarded call in the first place, and
-    /// projecting one whole would carry every field beneath it — reopening the same hole one level
-    /// down. Where a caller had eagerly loaded one, narrowing it away fails closed.
-    /// </para>
-    /// <para>
     /// This never throws in the strict tier for a denied field. Strict refuses what a caller asks
     /// for, and here the caller named nothing; throwing would fail every strict query against a
     /// type carrying any denied field at all.
     /// </para>
     /// </remarks>
-    private static void SynthesizeSelects(Filter filter, Gate gate)
+    private static void SynthesizeSelects(Filter filter, Gate gate, RowShape rows)
     {
-        if (SynthesizedProjection(gate) is List<string> allowed)
+        if (SynthesizedProjection(gate, rows) is List<string> allowed)
         {
             filter.Selects = allowed;
         }
@@ -1795,31 +1866,179 @@ internal static class FilterSanitizer
     /// <remarks>
     /// Shared by the filter and the segment paths, because they are closing the same hole and a
     /// second copy of this is a second place to forget.
+    /// <para>
+    /// What an unguarded call would return, less what the policy withholds. A member that holds a
+    /// value is kept when it is allowed. A member that holds an object, or a list of them, is kept
+    /// whole when nothing beneath it is denied, and narrowed the way a caller naming it would have it
+    /// narrowed when something is — but only where the source carries it: every member of a
+    /// projected row or a row in memory, and the owned and complex members of an entity. An entity's
+    /// other navigations are left out, since an unguarded call loads them only when something includes
+    /// them, and projecting one would load it.
+    /// </para>
+    /// <para>
+    /// Everything beneath every object member is asked about, whether or not the source carries it.
+    /// A denial only beneath a member used to synthesize nothing, so the row came back whole, and an
+    /// included navigation, an owned member, a projected list or an object in memory carried the
+    /// denied value out with it. An entity query does not say what it loads: an include, an automatic
+    /// include and a lazy loader all fill a navigation the query text never names.
+    /// </para>
+    /// <para>
+    /// A member that cannot be narrowed as the projection would build it is left out whole: in
+    /// memory, where the core's narrowing of a reference reads it through EF Core; an EF Core complex
+    /// property, which the narrowing compares to null; where the builder would add a denied key back;
+    /// and where the core cannot project a path beneath it.
+    /// </para>
     /// </remarks>
-    private static List<string>? SynthesizedProjection(Gate gate)
+    private static List<string>? SynthesizedProjection(Gate gate, RowShape rows)
     {
         List<string> allowed = new();
+        List<(string Member, string Reason)> uncarried = new();
         bool anyDenied = false;
+        int recorded = gate.TraceCount;
 
-        foreach (string field in gate.ProjectableFields())
+        foreach (PropertyInfo member in gate.Members())
         {
-            FieldPolicy policy = gate.PolicyFor(field, PolicyFeature.None);
+            string name = member.Name;
+            FieldPolicy policy = gate.PolicyFor(name, PolicyFeature.None);
 
-            if (policy.Allows(PolicyFeature.Select))
+            if (!policy.Allows(PolicyFeature.Select))
             {
-                allowed.Add(field);
+                anyDenied = true;
+
+                gate.Record(name, PolicyFeature.Select, PolicyAction.Dropped, policy);
 
                 continue;
             }
 
-            anyDenied = true;
+            // Two members share the name, one hidden with new under another type or spelled in another case:
+            // the core reads one of them, and a row carries both. What either can hold is asked about, and a
+            // projection, which cannot tell them apart, leaves the name out.
+            if (gate.SharedName(name, rows) is { Shared: true } shared
+                && (shared.Denies || gate.Beneath(name, PolicyFeature.None).Denied.Any(d => rows.Materializes(d.Path))))
+            {
+                anyDenied = true;
 
-            gate.Record(field, PolicyFeature.Select, PolicyAction.Dropped, policy);
+                gate.LeaveOut(name, "left out: the type declares more than one member of this name, which a projection cannot tell apart");
+
+                continue;
+            }
+
+            // A projection assigns only a member with a setter, and no path can name a member the
+            // expression parser keeps a word for; such a member is still asked about below.
+            bool assignable = member.CanWrite && !ReservedNames.Starts(name);
+
+            if (Gate.HoldsValue(member.PropertyType))
+            {
+                if (assignable && rows.CarriesValue(name))
+                {
+                    allowed.Add(name);
+                }
+
+                continue;
+            }
+
+            (List<string> survivors, List<(string Path, FieldPolicy Policy)> denied) =
+                gate.Beneath(name, PolicyFeature.None);
+
+            // Only a denial whose value can reach the result asks for a projection: one beneath a
+            // navigation nothing loads never leaves the database. What no path names is asked about
+            // only where the source carries the member at all, and on an entity only where it loads.
+            List<(string Path, FieldPolicy Policy)> reached = denied.Where(d => rows.Materializes(d.Path)).ToList();
+            Gate.TypeFacts unnamed = rows.Materializes(name + SegmentSeparator + name)
+                ? gate.Unnamed(name, rows)
+                : default;
+            bool forced = gate.ForcedBeneath(name);
+
+            foreach ((string path, FieldPolicy beneath) in reached)
+            {
+                gate.Record(path, PolicyFeature.Select, PolicyAction.Dropped, beneath);
+            }
+
+            // A forced scope beneath a member does not ask for a projection on its own. It filters the
+            // rows that hold the member, which is what it has always done for a list returned whole,
+            // and asking would leave out every included list of a scoped child type. Nor does a member
+            // that can hold an object of any type: the policy cannot see into it whether or not a
+            // projection is built, and asking would drop every such column of every query.
+            if (reached.Count > 0 || unnamed.DeniesSelect)
+            {
+                anyDenied = true;
+            }
+
+            if (!assignable || !rows.Carries(name))
+            {
+                // Left out because a projection cannot keep it. Worth a line in the trace only where the
+                // unguarded call would have returned it: an included navigation, an object in memory.
+                if (rows.Materializes(name + SegmentSeparator + name))
+                {
+                    uncarried.Add((name, !assignable
+                        ? "left out: a projection cannot assign it"
+                        : rows.Kind == RowKind.InMemory
+                            ? "left out: a projection cannot keep an object a row in memory holds"
+                            : "left out: it is a navigation, which projecting would load"));
+                }
+
+                continue;
+            }
+
+            if (reached.Count == 0 && !unnamed.Opaque && !forced && !gate.ReadOnlyTransformBeneath(name))
+            {
+                allowed.Add(name);
+
+                continue;
+            }
+
+            string? reason = forced
+                ? "left out whole: a scope forced beneath it cannot be applied to what it holds"
+                : rows.Narrows(name)
+                    ? Narrowed(name, survivors, gate, rows, allowed)
+                    : reached.Count == 0 && !unnamed.DeniesSelect && unnamed.HoldsObject
+                        ? "left out whole: it can hold what the policy cannot name"
+                        : "left out whole: " + rows.WhyNotNarrowed(name);
+
+            if (reason is not null)
+            {
+                gate.LeaveOut(name, reason);
+            }
         }
 
-        if (!anyDenied || gate.IsDryRun)
+        // A row can be a subtype of T, whose own members T's never name. The projection builds T, so it
+        // leaves them out; one this caller may not have is what asks for it.
+        foreach (string path in gate.DerivedDenials(rows))
+        {
+            anyDenied = true;
+
+            gate.LeaveOut(path, "left out: a type derived from the row's type declares it, and the projection builds the row's type");
+        }
+
+        // A member a base type declares and T hides with new is still held by a row in memory, and read by
+        // anyone reading the row as the base type. A projection builds T and leaves it out.
+        if (rows.Kind == RowKind.InMemory)
+        {
+            foreach (string name in gate.HiddenDenials())
+            {
+                anyDenied = true;
+
+                gate.LeaveOut(name, "left out: a base type's member of this name, which the row's own member hides");
+            }
+        }
+
+        // A member that asks for nothing itself is still left out, or narrowed, as the projection would build
+        // it. With no projection built nothing was, and the trace says what the query did.
+        if (!anyDenied)
+        {
+            gate.WithdrawTrace(recorded);
+
+            return null;
+        }
+
+        if (gate.IsDryRun)
         {
             return null;
+        }
+
+        foreach ((string name, string reason) in uncarried)
+        {
+            gate.LeaveOut(name, reason);
         }
 
         if (allowed.Count == 0)
@@ -1828,6 +2047,57 @@ internal static class FilterSanitizer
         }
 
         return allowed;
+    }
+
+    /// <summary>
+    /// Narrows a member for a synthesized projection, adding what survives to <paramref name="allowed"/>,
+    /// or returns why the member is left out whole instead.
+    /// </summary>
+    /// <remarks>
+    /// A field whose type can hold what the policy cannot name, a framework collection of a policed
+    /// type or a member typed <see cref="object"/>, is left out of the narrowing: the core projects it
+    /// whole. The builder adds the key of every node it narrows, so a denied key leaves the member out,
+    /// and so does a path the core cannot project.
+    /// </remarks>
+    private static string? Narrowed(string member, List<string> survivors, Gate gate, RowShape rows, List<string> allowed)
+    {
+        List<string> kept = new(survivors.Count);
+
+        foreach (string path in survivors)
+        {
+            if (gate.DeclaredType(path) is { } type && !Gate.HoldsValue(type) && gate.Unnamed(path, rows).Opaque)
+            {
+                gate.LeaveOut(path, "left out whole: it can hold what the policy cannot name");
+
+                continue;
+            }
+
+            kept.Add(path);
+        }
+
+        if (gate.DeniedKey(kept) is { } key)
+        {
+            return $"left out whole: the projection would add its key '{key.Path}', which is denied";
+        }
+
+        if (gate.Unprojectable(kept) is { } unbuilt)
+        {
+            return $"left out whole: the core cannot project '{unbuilt}'";
+        }
+
+        if (gate.Unbuildable(member, kept) is { } node)
+        {
+            return $"left out whole: the core cannot build '{node.Name}', which it narrows into";
+        }
+
+        if (kept.Count == 0)
+        {
+            return "left out whole: nothing beneath it may be selected";
+        }
+
+        allowed.AddRange(kept);
+
+        return null;
     }
 
     /// <summary>
@@ -2347,6 +2617,10 @@ internal static class FilterSanitizer
         // where a denied field is, as a denied field is.
         private readonly HashSet<string> _unknown = new(StringComparer.Ordinal);
 
+        // What a projection of each navigation carries, per root type and path. Reflection only, so it
+        // is the same for every caller and every query.
+        private static readonly ConcurrentDictionary<(Type Root, string Path), IReadOnlyList<string>> CarriedPaths = new();
+
         internal Gate(
             Type entityType,
             PolicyResolver resolver,
@@ -2447,27 +2721,141 @@ internal static class FilterSanitizer
         internal bool IsDryRun => _options.DryRun || _context.DryRun;
 
         /// <summary>
-        /// The scalar properties of the entity that a typed projection can actually assign.
+        /// The members of the entity: every readable property that is not an indexer.
         /// </summary>
         /// <remarks>
         /// Read through the same reflection cache the validator uses, so a synthesized projection
-        /// cannot name a field the pipeline would then reject. Write-only and indexed members are
-        /// excluded because a typed projection assigns into them.
+        /// cannot name a field the pipeline would then reject. A projection assigns only the writable
+        /// ones, but a read-only one is still asked about: a denial on it, or beneath it, still needs a
+        /// projection, or the row comes back holding it.
         /// </remarks>
-        internal IEnumerable<string> ProjectableFields()
+        internal IEnumerable<PropertyInfo> Members()
         {
             foreach (KeyValuePair<string, PropertyInfo> entry in CacheReflection.GetTypeProperties(_entityType))
             {
                 PropertyInfo property = entry.Value;
 
-                if (property.CanRead
-                    && property.CanWrite
-                    && property.GetIndexParameters().Length == 0
-                    && CacheReflection.IsSimpleType(property.PropertyType))
+                if (property.CanRead && property.GetIndexParameters().Length == 0)
                 {
-                    yield return property.Name;
+                    yield return property;
                 }
             }
+        }
+
+        /// <summary>
+        /// True when a member of this type holds a value rather than an object: a scalar, or a
+        /// collection of scalars such as <c>List&lt;string&gt;</c> or <c>byte[]</c>.
+        /// </summary>
+        /// <remarks>
+        /// A collection of scalars is a value the projection assigns whole. Nothing beneath it can
+        /// carry a policy, and on an entity it is a column the unguarded call loads.
+        /// </remarks>
+        internal static bool HoldsValue(Type type) =>
+            CacheReflection.IsSimpleType(AttributePolicyProvider.Peeled(type))
+            && !AttributePolicyProvider.Layers(type).Any(layer => OwnsMembers(layer) && Facts(layer).DeniesSelect);
+
+        /// <summary>
+        /// True for an application's own collection class, one deriving from <c>List&lt;string&gt;</c> or a
+        /// <c>Dictionary</c> say, that declares members beside the elements it holds. A collection of values
+        /// stays a value unless a member of its own is denied.
+        /// </summary>
+        private static bool OwnsMembers(Type type) =>
+            type.IsClass
+            && !type.IsArray
+            && !AttributePolicyProvider.IsFramework(type)
+            && AttributePolicyProvider.Peeled(type) != type
+            && type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Any(property => property.GetIndexParameters().Length == 0
+                                 && property.DeclaringType is { } declaring
+                                 && !AttributePolicyProvider.IsFramework(declaring));
+
+        /// <summary>
+        /// The names of members a base type of T declares, T hides with <c>new</c>, and this caller may not have,
+        /// or that hold a denied field no path names.
+        /// </summary>
+        internal List<string> HiddenDenials()
+        {
+            List<string> found = new();
+            PropertyInfo[] shown = _entityType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+            for (Type? declaring = _entityType.BaseType; declaring is not null && declaring != typeof(object); declaring = declaring.BaseType)
+            {
+                foreach (PropertyInfo hidden in declaring.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    if (!hidden.CanRead
+                        || hidden.GetIndexParameters().Length != 0
+                        || found.Contains(hidden.Name, StringComparer.Ordinal)
+                        || shown.Any(member => member.Name == hidden.Name && SameSlot(member, hidden)))
+                    {
+                        continue;
+                    }
+
+                    if (DeclaresDenial(hidden)
+                        || (!HoldsValue(hidden.PropertyType) && Carried(hidden.PropertyType, hidden.Name, exact: false).DeniesSelect))
+                    {
+                        found.Add(hidden.Name);
+                    }
+                }
+            }
+
+            return found;
+        }
+
+        /// <summary>True when two properties' getters are one method, or one overrides the other.</summary>
+        private static bool SameSlot(PropertyInfo left, PropertyInfo right) =>
+            left.GetGetMethod() is { } first
+            && right.GetGetMethod() is { } second
+            && first.GetBaseDefinition() is { } a
+            && second.GetBaseDefinition() is { } b
+            && a.MetadataToken == b.MetadataToken
+            && a.Module == b.Module;
+
+        /// <summary>The names more than one readable member of a type shares, compared as the core compares names.</summary>
+        private static readonly ConcurrentDictionary<Type, HashSet<string>> SharedNames = new();
+
+        private static HashSet<string> ReadSharedNames(Type type) =>
+            new(type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(property => property.CanRead && property.GetIndexParameters().Length == 0)
+                    .GroupBy(property => property.Name, StringComparer.OrdinalIgnoreCase)
+                    .Where(group => group.Count() > 1)
+                    .Select(group => group.Key),
+                StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Whether T declares more than one member of a name, as the core compares names, one of them holding
+        /// more than a value; and if so, whether what one of them holds is denied.
+        /// </summary>
+        /// <remarks>
+        /// A member hidden with <c>new</c> under another type, or two names differing only in case. The core
+        /// reads one of them by name, and a row carries every one, which a serializer writes.
+        /// </remarks>
+        internal (bool Shared, bool Denies) SharedName(string name, RowShape rows)
+        {
+            if (!SharedNames.GetOrAdd(_entityType, ReadSharedNames).Contains(name))
+            {
+                return (false, false);
+            }
+
+            List<PropertyInfo> variants = _entityType
+                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(property => property.CanRead
+                                   && property.GetIndexParameters().Length == 0
+                                   && string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (variants.TrueForAll(variant => HoldsValue(variant.PropertyType)))
+            {
+                return (false, false);
+            }
+
+            // An entity's model says which of them EF Core maps and what loads beneath it; any other row can
+            // hold what either type can.
+            bool beneath = rows.LoadedBeneath(name) is not null
+                ? Unnamed(name, rows).DeniesSelect
+                : variants.Exists(variant => !HoldsValue(variant.PropertyType)
+                                             && Carried(variant.PropertyType, name, exact: false).DeniesSelect);
+
+            return (true, beneath || variants.Exists(variant => Denies(name, variant)));
         }
 
         /// <summary>
@@ -2499,30 +2887,38 @@ internal static class FilterSanitizer
         /// deny-select against whoever spelled the child out in full and leaves it bypassable by
         /// asking for its parent instead — the same shape as sending no projection at all.
         /// <para>
-        /// The walk stops where <see cref="AttributePolicyProvider"/>'s does, and carries the same
-        /// cycle guard. Nothing below that depth holds a fragment, so there is no decision down
-        /// there to enforce and descending further would only enumerate paths the resolver cannot
-        /// speak about.
+        /// A type is read the way <see cref="AttributePolicyProvider"/> reads it, through
+        /// <see cref="AttributePolicyProvider.NavigationTypeOf"/>, and no path is longer than the
+        /// longest the walker puts a fragment on. It once read collections through a narrower list of
+        /// its own, so a member typed <c>IReadOnlyList&lt;T&gt;</c> hid every denial beneath it, and it
+        /// went a level deeper than the walker, so a narrowing projected fields no policy could speak
+        /// about. It does not follow a type back into itself along one path: a narrowing leaves such a
+        /// region out.
         /// </para>
         /// </remarks>
-        internal IReadOnlyList<string> ProjectionUnder(string path)
+        internal IReadOnlyList<string> ProjectionUnder(string path) =>
+            CarriedPaths.GetOrAdd((_entityType, path), key => Enumerate(key.Root, key.Path));
+
+        private static IReadOnlyList<string> Enumerate(Type root, string path)
         {
             List<string> paths = new();
-            Type? type = TypeAt(path);
 
-            if (type is not null)
+            if (DeclaredType(root, path) is { } declared
+                && AttributePolicyProvider.NavigationTypeOf(declared) is { } type)
             {
-                Descend(path, type, 1, paths, new HashSet<Type>());
+                Descend(path, type, path.Split(SegmentSeparator).Length, paths, new HashSet<Type>());
             }
 
             return paths;
         }
 
+        // depth is how many segments prefix has; a child has one more.
         private static void Descend(
             string prefix, Type type, int depth, List<string> paths, HashSet<Type> seen)
         {
-            // A type reachable from itself would otherwise enumerate until the stack ran out.
-            if (!seen.Add(type))
+            // A child would be longer than any path the walker gives a fragment, or the type is one this
+            // path already passed through and would otherwise enumerate until the stack ran out.
+            if (depth >= AttributePolicyProvider.MaxDepth || !seen.Add(type))
             {
                 return;
             }
@@ -2540,28 +2936,12 @@ internal static class FilterSanitizer
 
                 string child = $"{prefix}.{property.Name}";
 
-                if (CacheReflection.IsSimpleType(property.PropertyType))
+                // A value, a collection of values, or a type the walker does not enter: projected
+                // whole, and nothing beneath it has a path of its own.
+                if (AttributePolicyProvider.NavigationTypeOf(property.PropertyType) is not { } nested)
                 {
                     paths.Add(child);
 
-                    continue;
-                }
-
-                Type nested = CacheReflection.GetCollectionElementType(property.PropertyType)
-                    ?? property.PropertyType;
-
-                // A collection of a primitive is a value the projection assigns whole, not a
-                // navigation into its element type. Descending into byte would enumerate nothing
-                // and drop the member from an expansion that is supposed to preserve it.
-                if (CacheReflection.IsSimpleType(nested))
-                {
-                    paths.Add(child);
-
-                    continue;
-                }
-
-                if (depth >= AttributePolicyProvider.MaxDepth)
-                {
                     continue;
                 }
 
@@ -2571,12 +2951,734 @@ internal static class FilterSanitizer
             seen.Remove(type);
         }
 
+        /// <summary>
+        /// What lies beneath a member, as the policy sees it: the fields a narrowing of it could keep,
+        /// and every path beneath it this caller may not select.
+        /// </summary>
+        /// <param name="member">The member's path.</param>
+        /// <param name="use">
+        /// <see cref="PolicyFeature.Select"/> when the caller named the member, so an audited field a
+        /// narrowing would carry is recorded as used; <see cref="PolicyFeature.None"/> otherwise.
+        /// </param>
+        /// <remarks>
+        /// The denials come from two places. The walk above finds every field a projection of the
+        /// member could hold. The fragments the providers hold find the rest: a fragment matches a path
+        /// exactly or matches every path, so a denied path the walk never produced, beneath a property
+        /// with no setter, around a cycle, or deeper than the walk goes, is still one of them.
+        /// </remarks>
+        internal (List<string> Survivors, List<(string Path, FieldPolicy Policy)> Denied) Beneath(
+            string member, PolicyFeature use)
+        {
+            List<string> survivors = new();
+            List<(string Path, FieldPolicy Policy)> denied = new();
+            HashSet<string> asked = new(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string path in ProjectionUnder(member))
+            {
+                asked.Add(path);
+
+                FieldPolicy policy = PolicyFor(path, use);
+
+                if (policy.Allows(PolicyFeature.Select))
+                {
+                    survivors.Add(path);
+                }
+                else
+                {
+                    denied.Add((path, policy));
+                }
+            }
+
+            string prefix = member + SegmentSeparator;
+
+            foreach (PolicyFragment fragment in Fragments)
+            {
+                // A rule on a path the type does not have, one written for a member since removed, holds
+                // nothing a projection could carry.
+                if (fragment.IsWildcard
+                    || !fragment.FieldPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                    || !asked.Add(fragment.FieldPath)
+                    || !Resolves(_entityType, fragment.FieldPath))
+                {
+                    continue;
+                }
+
+                FieldPolicy policy = PolicyFor(fragment.FieldPath, PolicyFeature.None);
+
+                if (!policy.Allows(PolicyFeature.Select))
+                {
+                    denied.Add((fragment.FieldPath, policy));
+                }
+            }
+
+            return (survivors, denied);
+        }
+
+        /// <summary>
+        /// True when a path names a member, in any letter case, of the type or of any subtype a value along
+        /// it can be: a rule on <c>Org.Swift</c> names a field of the bank a member declared as an
+        /// organisation holds, and a type with both <c>Info</c> and <c>INFO</c> has two members the path
+        /// could name.
+        /// </summary>
+        private static bool Resolves(Type root, string path)
+        {
+            List<Type> current = new() { root };
+            string[] segments = path.Split(SegmentSeparator);
+
+            for (int i = 0; i < segments.Length; i++)
+            {
+                List<Type> next = new();
+                bool named = false;
+
+                foreach (Type type in current)
+                {
+                    foreach (Type candidate in KnownSubtypes.Of(type).Prepend(type))
+                    {
+                        foreach (PropertyInfo property in candidate.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                        {
+                            if (!string.Equals(property.Name, segments[i], StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+
+                            named = true;
+
+                            if (AttributePolicyProvider.NavigationTypeOf(property.PropertyType) is { } nested
+                                && !next.Contains(nested))
+                            {
+                                next.Add(nested);
+                            }
+                        }
+                    }
+                }
+
+                if (!named || (i < segments.Length - 1 && next.Count == 0))
+                {
+                    return false;
+                }
+
+                current = next;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The first type a narrowing would build a node as that the core's typed projection cannot
+        /// construct, an interface, an abstract class or one without a public parameterless constructor,
+        /// which it skips; null when it can build them all.
+        /// </summary>
+        internal Type? Unbuildable(string member, IEnumerable<string> paths)
+        {
+            HashSet<string> nodes = new(StringComparer.OrdinalIgnoreCase) { member };
+
+            foreach (string path in paths)
+            {
+                for (int cut = path.IndexOf(SegmentSeparator); cut >= 0; cut = path.IndexOf(SegmentSeparator, cut + 1))
+                {
+                    nodes.Add(path[..cut]);
+                }
+            }
+
+            foreach (string node in nodes)
+            {
+                if (DeclaredType(node) is { } declared
+                    && AttributePolicyProvider.NavigationTypeOf(declared) is { } type
+                    && (type.IsAbstract || type.GetConstructor(Type.EmptyTypes) is null))
+                {
+                    return type;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>Every fragment the providers hold for this type and caller, read once per query.</summary>
+        private IReadOnlyList<PolicyFragment> Fragments => _fragments ??= _resolver.Fragments(_entityType, _context);
+
+        private IReadOnlyList<PolicyFragment>? _fragments;
+
+        /// <summary>
+        /// True when a forced predicate reaches beneath the member. A projection cannot apply it to the
+        /// elements the member holds: the scope filters the rows of the query, and a list kept whole or
+        /// narrowed carries every element, those the scope excludes included.
+        /// </summary>
+        internal bool ForcedBeneath(string member)
+        {
+            string prefix = member + SegmentSeparator;
+
+            return TypePolicy.Forced.Any(
+                forced => forced.FieldPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// True when a transform beneath the member lands on a property with no setter, which the
+        /// outbound walk could not write back: a narrowing leaves such a property out.
+        /// </summary>
+        internal bool ReadOnlyTransformBeneath(string member)
+        {
+            string prefix = member + SegmentSeparator;
+
+            foreach (string path in TypePolicy.Transforms.Keys)
+            {
+                if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                    && Property(_entityType, path) is { CanWrite: false })
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// What the value of a member can carry that the paths the walk asks about do not name: a field
+        /// denied for Select, and a member that can hold an object of any type.
+        /// </summary>
+        /// <remarks>
+        /// On an entity query the model says what loads beneath the member
+        /// (<see cref="RowShape.LoadedBeneath"/>). Each loaded member is asked about by its path, and by
+        /// its own attribute where no fragment reaches it: deeper than the walker goes, or declared by a
+        /// type the model derives. A value EF Core reads whole is read through its type. What EF Core
+        /// materializes from the database holds no object of the application's; what a value converter
+        /// hands back is the application's code, and holds what its type allows. A
+        /// projection's member is read as the type the projection constructs it as, when it says. Any
+        /// other value can carry whatever the member's type can hold, its subtypes included.
+        /// Under a policy that denies every field it does not name, a path the walk never asks about is a
+        /// denied one unless the policy names it.
+        /// </remarks>
+        internal TypeFacts Unnamed(string member, RowShape rows)
+        {
+            if (rows.LoadedBeneath(member) is { } loaded)
+            {
+                bool denies = false;
+                bool holdsObject = false;
+
+                foreach (Loaded entry in loaded)
+                {
+                    TypeFacts carried = entry.Whole && !HoldsValue(entry.Property.PropertyType)
+                        ? Carried(entry.Property.PropertyType, entry.Path, exact: false)
+                        : default;
+
+                    denies |= Denies(entry.Path, entry.Property) || carried.DeniesSelect;
+                    holdsObject |= entry.Converted && carried.HoldsObject;
+                }
+
+                return new TypeFacts(denies, holdsObject, loaded.Count > 0);
+            }
+
+            if (!member.Contains(SegmentSeparator) && rows.BuiltType(member) is { } built)
+            {
+                return Carried(built, member, exact: true);
+            }
+
+            // A path that names nothing is refused long before this; were it not, nothing is shown clean.
+            return DeclaredType(member) is { } type
+                ? Carried(type, member, exact: false)
+                : new TypeFacts(true, true, true);
+        }
+
+        /// <summary>
+        /// What a value of a type, held at a path, can carry that no path names. An exact type is the one
+        /// the value was constructed as, so its own subtypes cannot be it.
+        /// </summary>
+        private TypeFacts Carried(Type type, string path, bool exact)
+        {
+            TypeFacts facts = Facts(type, exact);
+
+            return DeniesByDefault && !Granted(type, path, exact)
+                ? facts with { DeniesSelect = true }
+                : facts;
+        }
+
+        /// <summary>
+        /// True when this caller may not select a member reached along a path: its policy says so, or,
+        /// where no fragment reaches the path, an attribute on the member does.
+        /// </summary>
+        /// <remarks>
+        /// The walker puts a fragment on every path of the declared types up to its depth, a member
+        /// with no setter, a path around a cycle, and a denial an override or an implementation declares
+        /// included. Past its depth, or on a member only a derived type declares, the attributes are all
+        /// there is, read from every declaration a row can run.
+        /// </remarks>
+        private bool Denies(string path, PropertyInfo property)
+        {
+            if (!PolicyFor(path, PolicyFeature.None).Allows(PolicyFeature.Select))
+            {
+                return true;
+            }
+
+            return (path.Split(SegmentSeparator).Length > AttributePolicyProvider.MaxDepth
+                    || Property(_entityType, path) is null)
+                   && DeclaresDenial(property);
+        }
+
+        /// <summary>
+        /// True when a member's attributes deny Select: its own, inherited ones, and those of another
+        /// declaration a row of the type it was read from can run, an interface member or a subtype's
+        /// override among them. Read once for each member, and again once another assembly has loaded.
+        /// </summary>
+        private static bool DeclaresDenial(PropertyInfo property)
+        {
+            int epoch = KnownSubtypes.Epoch;
+
+            if (DenialsByMember.TryGetValue(property, out (int Epoch, bool Denies) known) && known.Epoch == epoch)
+            {
+                return known.Denies;
+            }
+
+            bool denies = property.GetCustomAttributes<DwDenyAttribute>(inherit: true)
+                .Concat(AttributePolicyProvider.DenialsElsewhere(property.ReflectedType ?? property.DeclaringType!, property))
+                .Any(attribute => (attribute.Features & PolicyFeature.Select) != 0);
+
+            DenialsByMember[property] = (epoch, denies);
+
+            return denies;
+        }
+
+        private static readonly ConcurrentDictionary<PropertyInfo, (int Epoch, bool Denies)> DenialsByMember = new();
+
+        /// <summary>
+        /// Every member a type derived from T declares that a row can carry and this caller may not
+        /// have, or that carries a denied field no path names. A projection builds T itself and leaves
+        /// them all out, so each is a reason to project.
+        /// </summary>
+        /// <remarks>
+        /// A projection builds the type its initializer constructs, which may be a subtype of T. An entity
+        /// query materializes each row as the type the database says it is, which the model knows. Any
+        /// other source can hold any subtype loaded.
+        /// </remarks>
+        internal List<string> DerivedDenials(RowShape rows)
+        {
+            List<string> found = new();
+
+            if (rows.Kind == RowKind.Projected)
+            {
+                if (rows.Built is { } built && built != _entityType && _entityType.IsAssignableFrom(built))
+                {
+                    Declared(built, found);
+                }
+
+                return found;
+            }
+
+            if (rows.LoadedByDerived() is { } loaded)
+            {
+                foreach (Loaded entry in loaded)
+                {
+                    if (Denies(entry.Path, entry.Property)
+                        || (entry.Whole && !HoldsValue(entry.Property.PropertyType)
+                                        && Carried(entry.Property.PropertyType, entry.Path, exact: false).DeniesSelect))
+                    {
+                        found.Add(entry.Path);
+                    }
+                }
+
+                return found;
+            }
+
+            foreach (Type subtype in KnownSubtypes.Of(_entityType))
+            {
+                Declared(subtype, found);
+            }
+
+            return found;
+        }
+
+        /// <summary>Adds each member a subtype declares below T that this caller may not have.</summary>
+        private void Declared(Type subtype, List<string> found)
+        {
+            foreach (PropertyInfo property in subtype.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!property.CanRead
+                    || property.GetIndexParameters().Length != 0
+                    || property.DeclaringType!.IsAssignableFrom(_entityType)
+                    || found.Contains(property.Name, StringComparer.Ordinal))
+                {
+                    continue;
+                }
+
+                if (Denies(property.Name, property)
+                    || (!HoldsValue(property.PropertyType)
+                        && Carried(property.PropertyType, property.Name, exact: false).DeniesSelect))
+                {
+                    found.Add(property.Name);
+                }
+            }
+        }
+
+        /// <summary>
+        /// True when a <c>"*"</c> rule denies Select on every field this caller is not granted by name,
+        /// so that a path the walk never asks about is a denied one.
+        /// </summary>
+        internal bool DeniesByDefault =>
+            _deniesByDefault ??= Fragments.Any(fragment => fragment.IsWildcard)
+                                 && !PolicyFor(UnnamedPath, PolicyFeature.None).Allows(PolicyFeature.Select);
+
+        private bool? _deniesByDefault;
+
+        /// <summary>A path no member can have, so that only the <c>"*"</c> rules match it.</summary>
+        private const string UnnamedPath = "<unnamed>";
+
+        /// <summary>
+        /// Under a policy denying every field it does not name, true when every path beneath a member of
+        /// this type that the walk never asks about is one the policy grants by name.
+        /// </summary>
+        /// <remarks>
+        /// The walk skips a property with no setter, stops four segments deep and at a type it already
+        /// passed through, reads declared types only and takes a framework type whole. Each path it skips
+        /// is asked about here, a subtype's members included; one the policy does not name is denied.
+        /// Around a cycle the paths never end, and inside a framework type holding an application type's
+        /// members no path can name them, so neither is ever granted.
+        /// </remarks>
+        private bool Granted(Type type, string path, bool exact)
+        {
+            if (!_granted.TryGetValue((type, path, exact), out bool granted))
+            {
+                granted = Grant(type, path, exact, new HashSet<Type>());
+                _granted[(type, path, exact)] = granted;
+            }
+
+            return granted;
+        }
+
+        private readonly Dictionary<(Type, string, bool), bool> _granted = new();
+
+        private bool Grant(Type type, string path, bool exact, HashSet<Type> onPath)
+        {
+            // A value, a collection of them among values, holds no path to name.
+            if (HoldsValue(type))
+            {
+                return true;
+            }
+
+            if (AttributePolicyProvider.NavigationTypeOf(type) is not { } node)
+            {
+                TypeFacts facts = Facts(type, exact: false);
+
+                return !facts.HoldsObject && !facts.HoldsMembers;
+            }
+
+            if (!onPath.Add(node))
+            {
+                return false;
+            }
+
+            int depth = path.Split(SegmentSeparator).Length;
+            IEnumerable<(PropertyInfo Property, bool Declared)> members = node
+                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Select(property => (property, true));
+
+            if (!exact)
+            {
+                members = members.Concat(KnownSubtypes.Of(node)
+                    .SelectMany(subtype => subtype.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                    .Where(property => !property.DeclaringType!.IsAssignableFrom(node))
+                    .Select(property => (property, false)));
+            }
+
+            foreach ((PropertyInfo property, bool declared) in members)
+            {
+                if (!property.CanRead || property.GetIndexParameters().Length != 0)
+                {
+                    continue;
+                }
+
+                string child = $"{path}{SegmentSeparator}{property.Name}";
+                bool walked = declared && property.CanWrite && depth < AttributePolicyProvider.MaxDepth;
+
+                if ((!walked && Denies(child, property))
+                    || (!HoldsValue(property.PropertyType) && !Grant(property.PropertyType, child, false, onPath)))
+                {
+                    return false;
+                }
+            }
+
+            onPath.Remove(node);
+
+            return true;
+        }
+
+        /// <summary>
+        /// What a type can hold that no path of the policy's reaches, read once per type and again once
+        /// another assembly has loaded, since that can add subtypes. An exact type is the one a value was
+        /// constructed as, so its own subtypes are not read.
+        /// </summary>
+        internal static TypeFacts Facts(Type type, bool exact = false)
+        {
+            int epoch = KnownSubtypes.Epoch;
+
+            if (FactsByType.TryGetValue((type, exact), out (int Epoch, TypeFacts Facts) known) && known.Epoch == epoch)
+            {
+                return known.Facts;
+            }
+
+            TypeFacts facts = Scan(type, exact);
+
+            FactsByType[(type, exact)] = (epoch, facts);
+
+            return facts;
+        }
+
+        private static readonly ConcurrentDictionary<(Type, bool), (int Epoch, TypeFacts Facts)> FactsByType = new();
+
+        /// <summary>
+        /// Reads every type a value of this type can hold, however deep, for a field denied for Select
+        /// and for a member that can hold an object of any type.
+        /// </summary>
+        /// <remarks>
+        /// Wider than the walker on purpose. The walker stops four segments deep, does not enter a
+        /// framework type and reads declared types only, so a field denied beneath any of those has no
+        /// path, and resolves as allowed. This follows every property, a read-only one included, every
+        /// collection, the type arguments of a framework generic such as <c>Dictionary&lt;string, T&gt;</c>,
+        /// and every loaded subtype of a type it reads, a framework class's included, and remembers the
+        /// types it has read rather than counting levels. A member that can hold anything is reported
+        /// rather than read.
+        /// </remarks>
+        private static TypeFacts Scan(Type type, bool exact)
+        {
+            bool denies = false;
+            bool holdsObject = false;
+            bool holdsMembers = false;
+            HashSet<Type> seen = new();
+            Stack<Type> pending = new();
+
+            void Read(Type candidate)
+            {
+                if (seen.Add(candidate))
+                {
+                    pending.Push(candidate);
+                }
+            }
+
+            void Subtypes(Type of)
+            {
+                foreach (Type subtype in KnownSubtypes.Of(of))
+                {
+                    holdsMembers = true;
+
+                    Read(subtype);
+                }
+            }
+
+            void Enqueue(Type candidate, bool root)
+            {
+                Type peeled = AttributePolicyProvider.Peeled(candidate);
+
+                // An application's own collection class declares members beside the elements it holds, at any
+                // layer: the member's own type, or the element of a list or an array of it.
+                foreach (Type layer in AttributePolicyProvider.Layers(candidate))
+                {
+                    if (OwnsMembers(layer))
+                    {
+                        holdsMembers = true;
+
+                        Read(layer);
+
+                        if (!(root && exact))
+                        {
+                            Subtypes(layer);
+                        }
+                    }
+                }
+
+                if (HoldsAnything(peeled))
+                {
+                    holdsObject = true;
+
+                    // An application's own collection that is not generic can hold anything, and it still
+                    // declares members of its own, which are read as any other type's are.
+                    if (peeled.IsGenericParameter || AttributePolicyProvider.IsFramework(peeled))
+                    {
+                        return;
+                    }
+                }
+
+                if (AttributePolicyProvider.NavigationTypeOf(candidate) is { } navigation)
+                {
+                    holdsMembers = true;
+
+                    Read(navigation);
+
+                    if (!(root && exact))
+                    {
+                        Subtypes(navigation);
+                    }
+                }
+                else if (peeled.IsClass && !peeled.IsSealed && !peeled.IsGenericType && !(root && exact))
+                {
+                    // A framework class an application can derive from, an Exception or a Stream: the
+                    // subtype a value holds is read, since the class itself carries no policy.
+                    Subtypes(peeled);
+                }
+
+                if (peeled.IsGenericType && AttributePolicyProvider.IsFramework(peeled))
+                {
+                    foreach (Type argument in peeled.GetGenericArguments())
+                    {
+                        Enqueue(argument, false);
+                    }
+                }
+            }
+
+            Enqueue(type, true);
+
+            while (pending.Count > 0 && !(denies && holdsObject))
+            {
+                foreach (PropertyInfo property in pending.Pop().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (property.GetIndexParameters().Length != 0)
+                    {
+                        continue;
+                    }
+
+                    if (!denies && DeclaresDenial(property))
+                    {
+                        denies = true;
+                    }
+
+                    Enqueue(property.PropertyType, false);
+                }
+            }
+
+            return new TypeFacts(denies, holdsObject, holdsMembers);
+        }
+
+        /// <summary>
+        /// True for a type whose value can be an object of any type: <see cref="object"/> itself, a type
+        /// parameter an open generic subtype leaves unbound, a framework interface such as
+        /// <c>IComparable</c>, and a collection that is not generic, such as <c>ArrayList</c>,
+        /// <c>IEnumerable</c>, <see cref="Array"/> or an application's own.
+        /// </summary>
+        private static bool HoldsAnything(Type peeled) =>
+            peeled == typeof(object)
+            || peeled == typeof(ValueType)
+            || peeled.IsGenericParameter
+            || (!peeled.IsGenericType
+                && ((AttributePolicyProvider.IsFramework(peeled) && peeled.IsInterface)
+                    || (peeled != typeof(string) && typeof(IEnumerable).IsAssignableFrom(peeled)
+                                                 && !ValueCollections.Contains(peeled))));
+
+        /// <summary>The framework's collections that are not generic yet hold values only: bits and strings.</summary>
+        private static readonly HashSet<Type> ValueCollections = new()
+        {
+            typeof(BitArray),
+            typeof(System.Collections.Specialized.StringCollection),
+            typeof(System.Collections.Specialized.StringDictionary),
+            typeof(System.Collections.Specialized.NameValueCollection)
+        };
+
+        /// <summary>
+        /// What a type can hold that the policy cannot name a path to.
+        /// </summary>
+        /// <param name="DeniesSelect">A field denied for Select somewhere in what it can hold.</param>
+        /// <param name="HoldsObject">A member that can hold an object of any type somewhere in what it can hold.</param>
+        /// <param name="HoldsMembers">An application type's members somewhere in what it can hold.</param>
+        internal readonly record struct TypeFacts(bool DeniesSelect, bool HoldsObject, bool HoldsMembers)
+        {
+            /// <summary>True when either fact holds, so the type cannot be shown to be free of policy.</summary>
+            internal bool Opaque => DeniesSelect || HoldsObject;
+        }
+
+        /// <summary>
+        /// The declared type at a path, read the way the walker reads it: through any collection, one
+        /// segment at a time. Null when a segment names nothing.
+        /// </summary>
+        internal Type? DeclaredType(string path) => DeclaredType(_entityType, path);
+
+        private static Type? DeclaredType(Type root, string path) => Property(root, path)?.PropertyType;
+
+        private static PropertyInfo? Property(Type root, string path)
+        {
+            Type? current = root;
+            PropertyInfo? property = null;
+
+            foreach (string segment in path.Split(SegmentSeparator))
+            {
+                if (current is null || CacheReflection.FindProperty(current, segment) is not { } next)
+                {
+                    return null;
+                }
+
+                property = next;
+                current = AttributePolicyProvider.NavigationTypeOf(next.PropertyType);
+            }
+
+            return property;
+        }
+
+        /// <summary>
+        /// The key the projection builder would add to a node that a list of narrowed paths passes
+        /// through, when this caller may not select it; null when every such key is allowed.
+        /// </summary>
+        /// <remarks>
+        /// The builder adds the key of each nested node it builds whether the list names it or not,
+        /// so a narrowing that dropped a denied key would carry it anyway.
+        /// </remarks>
+        internal (string Path, FieldPolicy Policy)? DeniedKey(IEnumerable<string> paths)
+        {
+            HashSet<string> nodes = new(StringComparer.Ordinal);
+
+            foreach (string path in paths)
+            {
+                for (int cut = path.IndexOf(SegmentSeparator); cut >= 0; cut = path.IndexOf(SegmentSeparator, cut + 1))
+                {
+                    string node = path[..cut];
+
+                    if (!nodes.Add(node)
+                        || TypeAt(_entityType, node) is not { } type
+                        || CacheReflection.FindProperty(type, "Id") is not { } key)
+                    {
+                        continue;
+                    }
+
+                    string keyPath = $"{node}.{key.Name}";
+                    FieldPolicy policy = PolicyFor(keyPath, PolicyFeature.None);
+
+                    if (!policy.Allows(PolicyFeature.Select))
+                    {
+                        return (keyPath, policy);
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// The first of a list of narrowed paths that the core's own validation refuses, or null when
+        /// it accepts them all.
+        /// </summary>
+        /// <remarks>
+        /// The walk above reads collections the way the policy does, and the core reads a narrower
+        /// set of them: a path through an <c>IReadOnlyList&lt;T&gt;</c> is one the policy can deny and
+        /// the core cannot project.
+        /// </remarks>
+        internal string? Unprojectable(IEnumerable<string> paths)
+        {
+            foreach (string path in paths)
+            {
+                try
+                {
+                    CacheReflection.ValidatePropertyPath(_entityType, path);
+                }
+                catch (LogicException)
+                {
+                    return path;
+                }
+            }
+
+            return null;
+        }
+
         /// <summary>The type a validated path names, or null when it names nothing.</summary>
-        private Type? TypeAt(string path)
+        private Type? TypeAt(string path) => TypeAt(_entityType, path);
+
+        private static Type? TypeAt(Type root, string path)
         {
             try
             {
-                return CacheReflection.GetFieldType(_entityType, path);
+                return CacheReflection.GetFieldType(root, path);
             }
             catch (LogicException)
             {
@@ -2905,6 +4007,66 @@ internal static class FilterSanitizer
             // Only ever raised under the strict tier, where a field refusal names no field and no
             // source. The origin stays in the trace, where an operator reads it.
             throw Exception(fieldPath, PolicyFeature.Segment, PolicyErrorCode.FieldDeniedForSegment, policy);
+        }
+
+        /// <summary>How many decisions the query's trace holds.</summary>
+        internal int TraceCount => _trace.Count;
+
+        /// <summary>Withdraws the decisions recorded after the first <paramref name="count"/>.</summary>
+        internal void WithdrawTrace(int count) => _trace.Withdraw(count);
+
+        /// <summary>
+        /// Records that a synthesized projection left a member out whole, and why: something beneath it
+        /// is denied and the member cannot be narrowed.
+        /// </summary>
+        internal void LeaveOut(string fieldPath, string reason) =>
+            _trace.Add(new PolicyDecision(fieldPath, PolicyFeature.Select, PolicyAction.Dropped, reason));
+
+        /// <summary>
+        /// Refuses, in either tier, a projection that would have to be narrowed around a denied field
+        /// and cannot be built that way.
+        /// </summary>
+        /// <remarks>
+        /// Dropping is not an option here, for the reason it is not for a carried key: the projection
+        /// that would be built is not the one that was gated, so the only way to honour the denial is
+        /// to decline to build it.
+        /// </remarks>
+        internal void RefuseNarrowing(string fieldPath, FieldPolicy? policy, string reason)
+        {
+            _trace.Add(new PolicyDecision(fieldPath, PolicyFeature.Select, PolicyAction.Denied, reason));
+
+            if (IsDryRun)
+            {
+                return;
+            }
+
+            throw Exception(fieldPath, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, policy);
+        }
+
+        /// <summary>
+        /// Applies a denial the policy cannot name a path to: a field denied for Select that a named
+        /// member holds beyond the walker's depth or inside a framework collection. Throws in the strict
+        /// tier, as a denied field beneath a named navigation does, and otherwise records the drop.
+        /// </summary>
+        /// <returns>True when the caller must narrow it away. False in a dry run.</returns>
+        internal bool RefuseHidden(string fieldPath)
+        {
+            const string origin = "it holds a field denied for Select where no path can name it";
+
+            _trace.Add(new PolicyDecision(
+                fieldPath, PolicyFeature.Select, IsStrict ? PolicyAction.Denied : PolicyAction.Dropped, origin));
+
+            if (IsDryRun)
+            {
+                return false;
+            }
+
+            if (IsStrict)
+            {
+                throw Exception(fieldPath, PolicyFeature.Select, PolicyErrorCode.FieldDeniedForSelect, null);
+            }
+
+            return true;
         }
 
         /// <summary>Records that a field of the type's default order was left out for this caller.</summary>

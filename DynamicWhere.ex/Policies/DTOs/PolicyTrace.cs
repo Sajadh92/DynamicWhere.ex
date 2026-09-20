@@ -64,6 +64,15 @@ public sealed class PolicyTrace
         _decisions.Add(decision);
     }
 
+    /// <summary>How many decisions have been recorded.</summary>
+    internal int Count => _decisions.Count;
+
+    /// <summary>
+    /// Withdraws every decision recorded after the first <paramref name="count"/>: the steps of an action
+    /// that was then not taken, such as members left out of a projection that is not built.
+    /// </summary>
+    internal void Withdraw(int count) => _decisions.RemoveRange(count, _decisions.Count - count);
+
     /// <summary>Remembers that the caller reached a canonical path by writing another name.</summary>
     internal void RecordSpelling(string canonicalPath, string spoken) => _spoken[canonicalPath] = spoken;
 

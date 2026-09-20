@@ -72,7 +72,8 @@ public class Ticket
           and <code>ToListAsyncDynamic</code> with a <code>Filter</code>, to{" "}
           <code>ToListAsync</code> with a <code>Segment</code>, to the composable{" "}
           <code>Filter</code> and <code>FilterDynamic</code>, and to the composable{" "}
-          <code>Page</code> on a source nothing has ordered or projected.
+          <code>Page</code> on a source nothing has ordered and whose projection
+          hides no field the default names.
         </li>
         <li>
           It never applies outside the guarded handle. A core method on a plain{" "}
@@ -89,7 +90,8 @@ public class Ticket
           <code>{`db.Tickets.OrderBy(t => t.Title).ApplyPolicy(caller)`}</code> — or
           an <code>Order</code> was composed on the guarded handle first, as in{" "}
           <code>{`guarded.Order(order).Page(page)`}</code> — even when the policy
-          dropped every order that call sent. An in-memory
+          dropped every order that call sent. Since 3.2.0 a <code>Filter</code>{" "}
+          composed on the handle with orders counts the same way. An in-memory
           sequence sorted before <code>ApplyPolicy</code> is not recognised as
           ordered, because it reaches the policy as a query with no{" "}
           <code>OrderBy</code> in it, so it takes the default; send that order with
@@ -98,14 +100,62 @@ public class Ticket
           <code>Order</code>.
         </li>
         <li>
-          A projected query takes no default. A <code>Select</code> anywhere in the
-          chain — the guarded <code>Select</code>, as in{" "}
-          <code>{`guarded.Select(fields).Page(page)`}</code>, or a projection made
-          before <code>ApplyPolicy</code> — leaves the query in its own order: a
-          default applied after a projection can name a field the projection left
-          out, which EF Core cannot translate.
+          A projection made before <code>ApplyPolicy</code> takes the default only
+          when it cannot hide a field the default names. Only the outermost{" "}
+          <code>Select</code> of the chain counts, because it makes the rows the
+          default orders. Since 3.2.0 it hides nothing when it builds{" "}
+          <code>T</code> itself in an object initializer and assigns every field
+          the default names a column, at every level of a nested path:{" "}
+          <code>&quot;Owner.Name&quot;</code> needs{" "}
+          <code>{`Owner = new OwnerRow { Name = … }`}</code>. On EF Core a column
+          is a member the model maps on the entity the <code>Select</code> reads,
+          read directly (<code>t.Code</code>), through reference navigations
+          (<code>t.Owner.Name</code>) or through <code>EF.Property</code>, a
+          shadow property included; in memory any assigned field is one. EF Core
+          then translates the order. A projection over an anonymous or other
+          intermediate row reads no entity, so it takes no default.
+        </li>
+        <li>
+          Any other projection leaves the query in its own order, as every
+          projection did in 3.1.0: a constructor with arguments, a default field
+          the initializer does not assign, a nested path through anything but an
+          initializer, a member the model does not map, or a default field the
+          projection computes, by the application&apos;s own method{" "}
+          (<code>{`Label = Decorate(r.Code)`}</code>), a framework one such as{" "}
+          <code>Regex.Replace</code> or <code>ToUpper</code>, or an operator. EF
+          Core evaluates some of these on the client, where it can project the
+          value but cannot order by it, and which ones it translates depends on
+          the provider, so none is ordered by: a default must never be the reason
+          a query that ran unguarded fails.
+        </li>
+        <li>
+          A projection composed on the guarded handle takes no default, even when
+          it keeps every field the default names. The guarded{" "}
+          <code>Select</code>, as in{" "}
+          <code>{`guarded.Select(fields).Page(page)`}</code>, and a guarded{" "}
+          <code>Filter</code> whose <code>Selects</code> is set leave the rest of
+          the chain unordered. The default is for the rows the caller&apos;s
+          source makes.
         </li>
       </ul>
+      <Code lang="csharp">{`[DwEntity(RequirePolicy = true, DefaultOrder = "CreatedAt desc, Id")]
+public class TicketRow
+{
+    public int Id { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string Title { get; set; } = string.Empty;
+}
+
+// Takes the default: the initializer builds TicketRow and assigns CreatedAt and Id.
+var ordered = db.Tickets
+    .Select(t => new TicketRow { Id = t.Id, CreatedAt = t.CreatedAt, Title = t.Title })
+    .ApplyPolicy(caller);
+
+// Keeps its own order: CreatedAt is not assigned, so the default could name
+// a member these rows do not carry.
+var unordered = db.Tickets
+    .Select(t => new TicketRow { Id = t.Id, Title = t.Title })
+    .ApplyPolicy(caller);`}</Code>
       <p>
         The default is gated like any order. A field in it that this caller may not
         order by is left out — never refused, because the caller did not send it —
@@ -176,6 +226,26 @@ public class Ticket
 // and cannot sweep for one it does not.
 [DwOperators(Allow = new[] { Operator.Equal, Operator.In })]
 public string EmployeeCode { get; set; }`}</Code>
+      <Callout tone="note" title="A denial for Select reaches a request that names nothing">
+        A request that sends no <code>Selects</code> would return the whole row.
+        So a field denied for <code>Select</code> — at the top of the type, or
+        beneath a member where its value can reach the result — makes a guarded
+        query project the allowed members instead. See{" "}
+        <Link href="/docs/policies/configuration#no-selects">A request that sends no Selects</Link>.
+      </Callout>
+      <Callout tone="note" title="A denial on an override or an implementation (3.2.0)">
+        An access-control attribute on another declaration of a member applies
+        to its path too: on the interface member a class or its subtype
+        implements with it, on an override of either accessor a subtype
+        declares, on a public member a subtype hides with <code>new</code>, and
+        on the implementation a type gives an interface member, explicit,
+        inherited or declared by an open generic class, through a variant
+        instantiation too. A row read through the base type or
+        the interface is still that subtype, so the denial holds for the path on
+        every row, in every clause. Until 3.2.0 only the declaration walked, and
+        the attributes above it, were read. The other attributes are still read
+        from the declaration walked only.
+      </Callout>
 
       <h2 id="injection">Injection</h2>
       <table>

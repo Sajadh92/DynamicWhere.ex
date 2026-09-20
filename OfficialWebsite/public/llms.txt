@@ -4,7 +4,7 @@
 > opt-in field-level policy layer that decides what each caller may filter, sort, select, group,
 > aggregate and see, and a reflection cache that needs no setup.
 >
-> Version 3.1.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
+> Version 3.2.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
 > Docs: https://doc.dynamicwhere.com · Source: https://github.com/Sajadh92/DynamicWhere.ex
 
 This file is the whole library in one pass: every public type and member of the four packages, the
@@ -14,7 +14,7 @@ library. No other page is needed; where another page disagrees with this file, t
 Where a name is not in this file, it does not exist — do not invent members.
 
 ```
-dotnet add package DynamicWhere.ex --version 3.1.0
+dotnet add package DynamicWhere.ex --version 3.2.0
 dotnet add package DynamicWhere.ex.Policies.Redis                 # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.EntityFrameworkCore   # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.AspNetCore            # optional, same version as the core
@@ -619,7 +619,8 @@ Path                              Where predicate generated
 ## 6. Extension methods
 
 `public static class Extension`, namespace `DynamicWhere.ex.Source` (the source file is spelled `Extention.cs`;
-the class is `Extension`). 21 public methods, all generic with `where T : class`. None takes a `CancellationToken`.
+the class is `Extension`). 28 public methods, all generic with `where T : class`. Every asynchronous one also has
+overloads taking a `CancellationToken` (3.2.0).
 
 ```
 On IQueryable<T> query — composable (validates and builds, executes nothing)
@@ -644,6 +645,15 @@ On IQueryable<T> query — terminal
   ToListAsync<T>(Summary summary, bool getQueryString = false)       -> Task<SummaryResult>
   ToListAsync<T>(Segment segment)                                    -> Task<SegmentResult<T>>
 
+On IQueryable<T> query — terminal, cancellable (3.2.0)
+  ToListAsync<T>(Filter filter, CancellationToken cancellationToken)                             -> Task<FilterResult<T>>
+  ToListAsync<T>(Filter filter, bool getQueryString, CancellationToken cancellationToken)        -> Task<FilterResult<T>>
+  ToListAsyncDynamic<T>(Filter filter, CancellationToken cancellationToken)                      -> Task<FilterResult<dynamic>>
+  ToListAsyncDynamic<T>(Filter filter, bool getQueryString, CancellationToken cancellationToken) -> Task<FilterResult<dynamic>>
+  ToListAsync<T>(Summary summary, CancellationToken cancellationToken)                           -> Task<SummaryResult>
+  ToListAsync<T>(Summary summary, bool getQueryString, CancellationToken cancellationToken)      -> Task<SummaryResult>
+  ToListAsync<T>(Segment segment, CancellationToken cancellationToken)                           -> Task<SegmentResult<T>>
+
 On IEnumerable<T> query — terminal, in memory
   ToList<T>(Filter filter, bool getQueryString = false)              -> FilterResult<T>
   ToListDynamic<T>(Filter filter, bool getQueryString = false)       -> FilterResult<dynamic>
@@ -651,7 +661,9 @@ On IEnumerable<T> query — terminal, in memory
 ```
 
 These do not exist: a synchronous `ToList<T>(Segment)`, `getQueryString` on Segment, any async or composable
-method on `IEnumerable<T>`, names such as `ToListFilter` / `ToListAsyncSegment`, and a `new()` constraint.
+method on `IEnumerable<T>`, names such as `ToListFilter` / `ToListAsyncSegment`, a `new()` constraint, and a
+`CancellationToken` parameter on the 3.1 signatures: the token overloads are separate methods, so code compiled
+against 3.1 still binds.
 
 ### Rules for every method
 
@@ -791,10 +803,17 @@ ToListDynamic, ToListAsyncDynamic   Where -> COUNT(where-only query) -> build Or
 
 - Every call runs two queries: a count of the filtered set (ignoring Page) and the data query.
 - In the dynamic pair an invalid `Orders`, `Page` or `Selects` throws after the count has already run.
-- `ToListAsync` uses EF Core `CountAsync` / `ToListAsync`; `ToListAsyncDynamic` uses EF Core `CountAsync` and
-  Dynamic LINQ `ToDynamicListAsync`. Both need an EF Core async provider: on a plain `list.AsQueryable()` they throw
-  `InvalidOperationException` ("The provider for the source 'IQueryable' doesn't implement 'IAsyncQueryProvider'…").
-  Use the synchronous methods in memory.
+- `ToListAsync` uses EF Core `CountAsync` / `ToListAsync`. `ToListAsyncDynamic` uses EF Core `CountAsync`, then
+  EF Core's `ToListAsync` over the query's element type: `T` when `Selects` is null, the projection's generated
+  class otherwise (3.2.0). It used to read through Dynamic LINQ's `ToDynamicListAsync`, asynchronous as well but
+  with no token to pass on. Both need an EF Core async provider for the count: on a plain
+  `list.AsQueryable()` they throw `InvalidOperationException` ("The provider for the source 'IQueryable' doesn't
+  implement 'IAsyncQueryProvider'…"). Use the synchronous methods in memory.
+- The overloads taking a `CancellationToken` (3.2.0) pass it to the count and to the read, so a canceled token stops
+  whichever is running and the call throws `OperationCanceledException` (EF Core's `TaskCanceledException` derives
+  from it). The overloads without a token pass `CancellationToken.None`.
+  - `ToListAsync(filter, default)` does not compile: `default` fits both `bool getQueryString` and
+    `CancellationToken`. Write `false`, `CancellationToken.None` or a named argument.
 - `ToListDynamic` rows are `DynamicClass` objects when `Selects` is set, and T instances when it is null.
 
 ### ToListAsync<T>(Segment)
@@ -828,7 +847,8 @@ then exactly as ToListAsync(Filter): Order(Orders) -> Page(Page) -> Select(Selec
   a set with a null `ConditionGroup` → `ArgumentNullException`. Every clause is validated before the database is
   queried.
 - Empty or null `ConditionSets` runs `ToListAsync(new Filter { Selects, Orders, Page })`: there is nothing to combine.
-- No synchronous version, no `getQueryString`; needs an EF Core async provider. Only `Except` on a type with a
+- No synchronous version, no `getQueryString`; needs an EF Core async provider. An overload takes a
+  `CancellationToken` (3.2.0) and passes it to the count and the read. Only `Except` on a type with a
   primary key needs the provider to translate a correlated `EXISTS`; `Union` and `Intersect` there are plain `OR` and
   `AND`.
 
@@ -865,7 +885,8 @@ GroupBy.Fields                  emitted                                         
   key's own type (an enum key stays an enum), then one property per `AggregateBy.Alias`, in list order. Rows are
   `DynamicClass` objects; `SummaryResult.Data` is `List<dynamic>`.
 - A null group key is its own group (`{ "categoryName": null, … }`).
-- `ToListAsync(Summary)` counts synchronously; only the data read is async.
+- `ToListAsync(Summary)` counts and reads through EF Core's `CountAsync` and `ToListAsync` (3.2.0; it used to count
+  synchronously). On a provider that is not EF Core's, rows in memory among them, it counts and reads synchronously.
 
 ```
 Aggregator      Emitted per group                                  Field accepted                       Result type
@@ -1316,10 +1337,11 @@ Each of these compiles, passes validation, and returns something other than what
 10. **Summary column names collide silently.** Two group fields ending in the same segment (`Name`, `Category.Name`)
     throw `InvalidOperationException` at run time, and an alias equal to a dot-stripped group field (`CategoryName`
     beside `Category.Name`) silently drops a column.
-11. **In-memory sources behave differently from EF Core.** The async terminals throw; typed `Select` through a
+11. **In-memory sources behave differently from EF Core.** The async Filter and Segment terminals throw; typed `Select` through a
     reference navigation throws; a null navigation inside a path throws `NullReferenceException`; ordering by a
     navigation throws; `getQueryString` returns a placeholder sentence instead of SQL.
-12. **No method takes a `CancellationToken`.** `ToListAsync(filter, ct)` does not compile, and nothing can cancel a query.
+12. **`ToListAsync(filter, default)` is ambiguous (3.2.0).** `default` fits both `getQueryString` and the new
+    `CancellationToken` overload, and the call does not compile. Write `false`, a token, or a named argument.
 13. **`Selects: []` throws `MustHasFields`.** Omit the property (null) to return whole entities.
 14. **A null inside `Values` is the empty string, not NULL.** Test for NULL with `IsNull` / `IsNotNull` and no values.
 15. **`Page` does not order.** Paging without `Orders` returns whatever order the database chooses; always send an
@@ -1728,6 +1750,15 @@ Terminal: sanitize, run, transform, set result.Policy (null under Strict unless 
   ToListAsync(Summary summary, bool getQueryString = false)       -> Task<SummaryResult>
   ToListAsync(Segment segment)                                    -> Task<SegmentResult<T>>
 
+Terminal, cancellable (3.2.0): the same, with the token passed to the count and the read
+  ToListAsync(Filter filter, CancellationToken cancellationToken)                             -> Task<FilterResult<T>>
+  ToListAsync(Filter filter, bool getQueryString, CancellationToken cancellationToken)        -> Task<FilterResult<T>>
+  ToListAsyncDynamic(Filter filter, CancellationToken cancellationToken)                      -> Task<FilterResult<dynamic>>
+  ToListAsyncDynamic(Filter filter, bool getQueryString, CancellationToken cancellationToken) -> Task<FilterResult<dynamic>>
+  ToListAsync(Summary summary, CancellationToken cancellationToken)                           -> Task<SummaryResult>
+  ToListAsync(Summary summary, bool getQueryString, CancellationToken cancellationToken)      -> Task<SummaryResult>
+  ToListAsync(Segment segment, CancellationToken cancellationToken)                           -> Task<SegmentResult<T>>
+
 Composable: sanitize one clause, apply the type's forced predicates, return a new handle
   Select(List<string> fields)         -> PolicyQueryable<T>
   Where(Condition condition)          -> PolicyQueryable<T>
@@ -1756,8 +1787,11 @@ How this differs from the unguarded surface:
 
 Rules:
 - Every guarded query runs over `AsNoTracking()`. Returned EF Core entities are detached, so a masked value is never
-  saved back. An in-memory source has no such copy: without `Selects`, the rows returned are the source objects
-  themselves, transformed in place.
+  saved back. Through a provider that wraps EF Core's, as LinqKit's `AsExpandable` and DelegateDecompiler's
+  `Decompile` do, EF Core's extension would hand the query back still tracking, so the call is put into the query
+  itself (3.2.0). An in-memory source has no such copy: without `Selects` and with nothing denied, the rows returned are
+  the source objects themselves, transformed in place. When a projection is synthesized the rows are new, and they
+  hold no member of an object type, so the source objects are left as they were.
 - Chaining keeps decisions: each composable returns a new handle, and the terminal's trace includes the earlier links' decisions.
 - The terminal's trace is on `result.Policy` only when `DwPolicyOptions.IncludeTraceInResult` allows it: null follows the tier (off under `Strict`, on under `Convenience`), and `true` or `false` overrides it (3.1.0). `LastTrace` holds it whatever the setting.
 - `getQueryString: true` under `Strict` → `QueryStringDenied` (14). This is checked before sanitizing; dry run records it instead.
@@ -1793,7 +1827,7 @@ public class Ticket { … }
   entry, such as the one a trailing comma leaves, is ignored, and a field named twice is used once.
 - Applied only under `ApplyPolicy`, when `Orders` is null or empty: `ToList`, `ToListAsync`, `ToListDynamic` and
   `ToListAsyncDynamic` with a `Filter`; `ToListAsync(Segment)`; the composable `Filter` and `FilterDynamic`; and the
-  composable `Page` on a source nothing has ordered or projected.
+  composable `Page` on a source nothing has ordered and whose projection hides no default field.
 - Never applied:
   - by an unguarded call. The core methods of section 6 on a plain `IQueryable<T>` or `IEnumerable<T>`, `Page`
     included, never read the attribute and order only as their caller asks, exactly as in 3.0; so does a DynamicWhere
@@ -1801,12 +1835,24 @@ public class Ticket { … }
   - when the caller sends orders: the default is not appended as a tiebreak;
   - to a source already ordered, before it was guarded (`db.Tickets.OrderBy(t => t.Title).ApplyPolicy(ctx)`) or by
     a composed `Order` earlier in the chain — even one whose every order the policy dropped, because the caller
-    still sent orders. Only the query's expression is read, so a sequence sorted in memory before
-    `ApplyPolicy(IEnumerable<T>)` does not count as ordered: send `Orders` for it;
-  - to a projected source: a `Select` anywhere in the query's chain, whether the guarded composable `Select`
-    or a projection before `ApplyPolicy`, leaves the query in its own order. A default applied after a projection could
-    name a field the projection left out, which EF Core cannot translate, so `guarded.Select(["Id", "Title"]).Page(page)`
-    pages as it did in 3.0.0, unordered;
+    still sent orders. A composed `Filter` that sent orders counts the same way (3.2.0). Only the query's expression
+    is read, so a sequence sorted in memory before `ApplyPolicy(IEnumerable<T>)` does not count as ordered: send
+    `Orders` for it;
+  - to a source whose projection could hide a default field. Only the outermost `Select` of the chain counts, because
+    it makes the rows the default orders. Since 3.2.0 it hides nothing when it builds T itself in an object
+    initializer, `Select(t => new Row { Code = t.Code, … })`, and assigns every field the default names, at every
+    level of a nested path (`"Owner.Name"` needs `Owner = new OwnerRow { Name = … }`), a column. On EF Core a column
+    is a member the model maps on the entity the `Select` reads, read directly, through reference navigations
+    (`t.Owner.Name`) or through `EF.Property` (a shadow property included); the default then applies, because EF
+    Core translates an order by a column the projection assigned. In memory any assigned field is ordered by. A
+    value the projection computes, by a method (`Regex.Replace`, `ToUpper`, the application's own) or an operator
+    (`t.First + " " + t.Last`), a member the model does not map, a constructor with arguments, a default field the
+    initializer does not assign, or a nested path through anything but an initializer leaves the query in its own
+    order, as every projection did in 3.1.0: ordering by it could fail where the unguarded query ran;
+  - after a projection composed on the handle: the guarded `Select`, or a guarded `Filter` whose `Selects` is set,
+    leaves the rest of the chain unordered even when it keeps every default field, so
+    `guarded.Select(["Id", "Title"]).Page(page)` pages as it did in 3.0.0, unordered. The default is for the rows the
+    caller's source makes;
   - to a `Summary`, or by the composable `Where`, `Select` and `Order`.
 - A type that declares no `DefaultOrder` is never ordered by the library, guarded or not; only a caller's own
   orders apply. End a default with a unique field, such as the key, or rows sharing the leading values can still
@@ -1836,7 +1882,7 @@ public class Ticket { … }
 
 ### [DwEntity(RequirePolicy = true)] enforcement
 
-- All 21 public methods of `DynamicWhere.ex.Source.Extension` (the `IQueryable<T>` and `IEnumerable<T>` overloads) run the guard first.
+- All 28 public methods of `DynamicWhere.ex.Source.Extension` (the `IQueryable<T>` and `IEnumerable<T>` overloads) run the guard first.
   - They throw `PolicyException` with `ErrorCode = PolicyRequired` (10) when `T` requires a policy and the call is not running inside a `PolicyQueryable<T>` method.
 - Composables such as `Select` and `Where` throw when called, not when enumerated.
 - The exception carries:
@@ -1932,6 +1978,16 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - `[DwDeny(PolicyFeature.None)]` refuses nothing, and nothing reports it.
 - `[DwNoSelect]` leaves the field filterable, sortable, groupable and aggregatable, so it can still be
   counted.
+- One on another declaration of the member applies to the path too (3.2.0): on the interface member a class, or a
+  loaded subtype of it, implements with the member; on an override of either accessor a loaded subtype declares; on
+  a public member a loaded subtype hides with `new`; and on the implementation a loaded type gives an interface
+  member, explicit, inherited from a base class or declared by an open generic class, through that interface or an
+  instantiation variance lets stand for it (`IFeed<VisaCard>` for a member typed `IFeed<Card>`, with `out T`). A row read through the base type or
+  the interface is still that subtype, and its member returns what the subtype's declaration returns, so the denial
+  holds for the path on every row, Where, Order, Group and Select alike. A member hidden with `new` counts because
+  whether it reads the member it hides cannot be told from outside, and a row serialized as its own type writes it
+  under the same name. Only the deny family is read this way; aliases, transforms and the other attributes are read
+  from the declaration walked.
 
 ### DwOperators
 
@@ -2238,9 +2294,17 @@ HAVING through a key or alias of such a field or operator    throw             t
 ORDER BY a field denied for Order (also a summary key/alias) drop              throw    FieldDeniedForOrder
 SELECT a field denied for Select                             drop              throw    FieldDeniedForSelect
 SELECT a navigation with a denied field beneath it           allowed leaves    throw    FieldDeniedForSelect
+SELECT a navigation that cannot be narrowed around a denied
+  field: its key a.Id is denied, or a path through it is one
+  the core cannot project (3.2.0)                            throw             throw    FieldDeniedForSelect
 SELECT a.b when the key a.Id is denied                       throw             throw    FieldDeniedForSelect
+SELECT a member that can carry a denied field no path names:
+  past four segments, in a framework generic, on a subtype,
+  or unasked under a "*" deny (3.2.0)                        allowed leaves,   throw    FieldDeniedForSelect
+                                                             or throw where it
+                                                             cannot be narrowed
 every requested SELECT dropped                               throw             -        AllSelectsDenied
-no Selects while some field is denied for Select             allowed scalars   allowed scalars
+no Selects while a denied field can reach the result (3.2.0) allowed members   allowed members
 GROUP BY a denied field                                      throw             throw    FieldDeniedForGroup
 AGGREGATE a denied field, or a transformed field lacking
   AllowAggregate on a stage                                  throw             throw    FieldDeniedForAggregate
@@ -2263,14 +2327,128 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
 
 - "drop" removes the entry and records `Dropped`. A Strict throw records `Denied`.
 - The guarded composable `Order(...)` and `Select(...)` drop and throw the same way.
-- "allowed leaves": when `Selects` names a navigation, it is replaced by the allowed leaf paths beneath it.
-- "allowed scalars" applies when `Selects` is null or empty and some field is denied for Select. It runs
-  for a whole-`Filter` terminal and for a Segment, not for a single-clause composable call.
-  - The projection becomes every allowed property that is readable, writable and not an indexer, and whose
-    type is simple: primitive, enum, `string`, `decimal`, `DateTime`, `DateOnly`, `TimeOnly`,
-    `DateTimeOffset`, `TimeSpan` or `Guid`. Navigations are left out.
-  - It never throws for the denied field. It throws `AllSelectsDenied` only when no field is left.
-  - With nothing denied, `Selects` stays null.
+- "allowed leaves": when `Selects` names a navigation with a denied field beneath it, it is replaced by the allowed
+  leaf paths beneath it. A navigation with nothing denied beneath it is kept as written, unless a transform beneath it
+  lands on a property with no setter, which the outbound walk could not write back: it is then narrowed around that
+  property (3.2.0).
+  - The fields beneath are read the way the attribute walker reads them (3.2.0): through any collection type, so a
+    member typed `IReadOnlyList<T>` or an application's own collection no longer hides its denied fields, and no
+    deeper than the walker's four segments. The providers' fragments are asked too, so a denied property with no
+    setter and a rule on a path reached through a cycle count (3.2.0).
+  - A named member can also carry a field denied for Select that no path names (3.2.0): deeper than four segments,
+    inside a framework generic such as `Dictionary<string, T>`, or declared by a subtype of the member's type (a
+    derived entity, a subclass, an interface's implementation). What it can carry is read from the source. On an
+    entity it is read from the EF Core model, so only what loads counts: the navigation's columns, a converted one
+    included, its owned chain at any depth, the navigations beneath it that an include, an automatic include or a
+    lazy loader fills, and each member the model does not map, read as its type, since its getter can hand out what
+    EF Core loaded; for its type and every type the model derives from it. On a projected row it is the type the
+    initializer constructs the member as, when it says (`Contact = new ContactRow { … }`), and otherwise the
+    member's type and every loaded subtype of it, as on a row in memory. Under a policy with a `"*"` deny, a path
+    the walk never asks about (past four segments, with no setter, or on a subtype) is a denied one unless the
+    policy names it; around a cycle, where the paths never end, it always is.
+  - Such a member is refused with `FieldDeniedForSelect` under Strict. Under Convenience it is narrowed to the
+    allowed leaves where the core can narrow the path's first member, which builds the declared type and so drops a
+    subtype's fields; a path that names a framework generic itself narrows to nothing and is dropped. Where the core
+    cannot narrow it (a column, complex or JSON member at the top of T, or a member of a row in memory) it is
+    refused in both tiers.
+  - A narrowing that cannot be built as gated is refused with `FieldDeniedForSelect`, in both tiers (3.2.0). The
+    core's typed projection adds the key (`Id`) of every nested node it builds, so a narrowing whose nodes carry a
+    denied key would return it; a path through a collection the core does not unwrap fails its validation; and a
+    column, complex property or JSON-stored member, a member of a row in memory, or one a projection builds some way
+    the core cannot narrow, cannot be narrowed at all.
+  - A navigation named through another, `Main.Lead`, gates the key of every node it passes through, which the
+    builder adds, as a dotted path to a value always did (3.2.0). A denied one refuses the projection.
+- "allowed members" (3.2.0; "allowed scalars" before) applies when `Selects` is null or empty and a field is denied
+  for Select where its value can reach the result. It runs for a whole-`Filter` terminal and for a Segment, not for a
+  single-clause composable call.
+  - A denial at the top of T always counts, whatever the member holds: a scalar, a blob, a list, an owned object, a
+    JSON column (3.2.0; 3.1.0 asked only about simple members, so a denied `byte[]` or owned member came back).
+  - A denial beneath a member counts when its value can reach the result. A rule may spell its path in any letter
+    case.
+    - On an entity: beneath a column, an owned or complex member, or a navigation something loads. That is an
+      `Include` or `ThenInclude` on the query, an automatic include, or a lazy loader: proxies, an injected
+      `ILazyLoader`, a loader delegate or `ILazyLoader` the constructor takes, kept in a field or any property, the
+      asynchronous loader delegate EF Core 7 added, or an injected `DbContext`, any of which fills a navigation
+      after the query. Every navigation counts as loaded when the library cannot read which the query loads: an
+      include in a form it cannot read, an include off the query's own chain (on a join's inner source, say), and a
+      chain that reaches its rows through anything but the root's own rows (`Select(o => o.Customer)`, a
+      `SelectMany`, a `Join`, a `GroupBy`) when it also has an include, which EF Core applies from the root to the
+      entities it reaches, or when one of its lambdas hands its rows an object: one it builds (a projection behind an
+      identity `Select`, or an object built inside an anonymous row or a conditional), which loads whatever it
+      assigns; one an application's method returns from what the lambda gives it; or one it captured, another query
+      with its own include or projection, or an object in memory. A call that reads nothing of the lambda's and returns
+      a query or an expression (a specification, a repository's query, `FromSql`, a context's `Set` through an
+      interface) is evaluated as EF Core evaluates it, and what it returns is read; a context's own query function is a
+      query root; an anonymous object that only carries what the rows hold (query-syntax range variables, a
+      composite key) builds nothing; and what only feeds a predicate or a key is a value and hands a row nothing. Such
+      a chain with none of these is read from the model. A denial beneath a navigation nothing loads never leaves the database
+      and needs no projection,
+      so a connected model is read as it was in 3.1.0. A member EF Core does not map counts as loaded: its getter can
+      hand out a mapped field or a private navigation, so its type is read whole.
+    - On a row a projection builds: beneath a member its initializer assigns. A constructor with arguments counts
+      every member as assigned; an initializer after it still says what its own bindings hold.
+    - On a row in memory: beneath any member.
+  - So does a member whose value can hold a field denied for Select that no path names (deeper than the walker's
+    four segments, inside a framework generic such as `Dictionary<string, T>`, or declared by a subtype of its
+    type), read as for a named member above, so on an entity only what loads counts. Under a policy with a `"*"`
+    deny, so does a member whose value can hold a path the walk never asks about and the policy does not name.
+  - A member that can hold an object of any type, one typed `object`, a framework interface such as `IComparable`,
+    an unbound type parameter, or a collection that is not generic (`IEnumerable`, `ArrayList`, `Array`, an
+    application's own), asks for nothing on its own: the policy cannot see into it whether or not a projection is
+    built. An application's own such collection still has its own members read, as any type's are.
+  - A row can be a subtype of T. On an entity, each member a type the model derives from T declares, and what loads
+    beneath it, counts as one of T's own would; on a row in memory, each member any loaded subtype declares; on a
+    row a projection builds, each member the type its initializer constructs declares below T. The projection builds
+    T, so it leaves them all out, recorded as `Dropped` with a reason starting `left out: a type derived`.
+  - A subtype is any type loaded outside the framework's own assemblies that derives from the type or implements it:
+    an open generic one, `Tagged<T> : Creature`, and an application's subclass of a framework class, an `Exception`
+    or a `Stream`, included. A rule on a path through a subtype's member (`Org.Swift`, where `Swift` is the bank's),
+    or through one of two members whose names differ only in letter case, counts beneath a member as a rule on the
+    declared type's own path does.
+  - The denials beneath a member come from the providers' fragments as well as from walking the type, so a denied
+    property with no setter, a rule on a path reached through a cycle, and a rule deeper than the walk all count.
+  - A forced scope beneath a member asks for no projection on its own: it filters the rows that hold the member, as it
+    always has. When a projection is needed anyway, the member is left out whole (below).
+  - The projection is what an unguarded call would return, less what the policy withholds:
+    - every allowed member holding a value, a simple type (primitive, enum, `string`, `decimal`, `DateTime`,
+      `DateOnly`, `TimeOnly`, `DateTimeOffset`, `TimeSpan`, `Guid`) or a collection of one (`byte[]`, `string[]`,
+      `List<string>`), that the source carries: every one a projection assigns, every one of a row in memory, and
+      every one EF Core maps on an entity. A value EF Core does not map is left out: computing it would make EF Core
+      read the whole entity, the denied columns included, and it holds only its initial value anyway;
+    - every allowed member holding an object or a list of them that the source carries: a member a projection's
+      initializer assigns, and an entity's columns (converted or JSON), owned and complex members. It is kept whole
+      when nothing beneath it is denied, nothing its value can hold is denied, it cannot hold an object of any type
+      (asked of a projected row, a row in memory, and an entity's column a value converter hands back, directly or
+      inside a complex property: what EF Core materializes itself never holds one), under a
+      `"*"` deny every path beneath it the walk skips is one the policy names, no forced scope is beneath it, and no
+      transform beneath it lands on a property with no setter;
+    - otherwise it is narrowed to the allowed leaves beneath it, to four segments, as a caller naming it would get,
+      when the core's narrowing translates: an object the projection's initializer builds, a list a subquery reads
+      into a type the core can bind (not an array or a set), a navigation that is neither complex nor stored as JSON,
+      or an entity's owned member not stored as JSON. The narrowing builds the member's declared type, so a
+      subtype's fields are dropped. A leaf that can hold what the policy cannot name is left out;
+    - otherwise it is left out whole, recorded as `Dropped` on `Select` with a reason starting `left out whole`: a
+      scope forced beneath it; a column, complex property or JSON-stored member, which EF Core reads whole; one the
+      projection builds some other way, by a constructor with arguments, a conditional or an unassigned member; a
+      denied key the core's projection would add back; a path the core cannot project; a node type the core cannot
+      construct (an interface, an abstract class, one with no public parameterless constructor); nothing beneath it
+      left to select;
+  - Never kept: an entity's navigation, included or not, since projecting it would load it (under Convenience, name
+    it in `Selects` to get it narrowed; under Strict, name its allowed fields); an object held by a row in memory,
+    since a kept object is the caller's own and a transform would change it in place; a member with no setter; a
+    member named with one of the parser's words. Each one the unguarded call would have returned, an included
+    navigation or an object in memory, is recorded as `Dropped` with a reason starting `left out:` (3.2.0).
+  - A `Select` handing back an entity, `Select(o => o.Customer)`, builds no row and is read as an entity query, with
+    every navigation counted as loaded when the query has an include (above).
+  - A narrowed reference that is null in the source comes back as an empty object, as it does for a caller's own
+    dotted `Selects`.
+  - A narrowed member carries every allowed leaf beneath it. An entity reached beneath it has its own navigations
+    projected and so loaded, which the source may not have included, exactly as `Selects` naming the member does.
+  - Each denied field whose value can reach the result, at the top or beneath, is recorded as `Dropped` on `Select`.
+  - It never throws for the denied field. It throws `AllSelectsDenied` only when no field is left. A typed terminal
+    projects into T, so a T with no public parameterless constructor, an abstract one among them, fails there with
+    `SelectTypeMustHaveParameterlessConstructor`; the dynamic terminals build their own class.
+  - With nothing counted, `Selects` stays null and the query is the one an unguarded call runs.
 - A path that matches nothing on `T` (3.1.0):
   - Convenience, and dry run in either tier: validation throws `LogicException`
     `ConditionMustHasValidFieldName` before any policy decision, as it does unguarded.
@@ -2619,7 +2797,8 @@ Errors:
   - a field no query can order by, a path ending on a collection of entities:
     `"{Type}: DefaultOrder names '{field}', which no query can order by, so guarded queries skip it."`
   - a field the type's own attributes deny for ordering, unless every one of those denials is `Overridable` (then a
-    warning, below):
+    warning, below). The attributes include those of the member's other declarations, an interface member it
+    implements, a subtype's override and a public member a subtype hides with `new` (3.2.0):
     `"{Type}: DefaultOrder names '{field}', which its attributes deny for ordering, so every guarded query leaves it out."`
 - a stage that cannot be built:
   - `Round` or `Bucket` with `Step <= 0`, or `Truncate` with `Decimals < 0`
@@ -2695,6 +2874,15 @@ What is recorded
   Dropped      a field removed from a Convenience request (Select, Order); one per field
   Dropped      a DefaultOrder field left out for this caller (Order), both tiers, and in a Segment a field
                denied for Segment too; Reason starts "left out of the default order" (3.1.0)
+  Dropped      a denied field a synthesized projection leaves out (Select), at the top or beneath a member;
+               Reason names the policy's sources, such as "DwDeniedAttribute (sealed)" (3.2.0)
+  Dropped      a member a synthesized projection leaves out whole (Select); Reason starts "left out whole" (3.2.0)
+  Dropped      a member a type derived from T declares, which a synthesized projection building T leaves out
+               (Select); Reason starts "left out: a type derived" (3.2.0)
+  Dropped      a member a synthesized projection cannot keep that the unguarded call would have returned, an
+               included navigation or an object of a row in memory (Select); Reason starts "left out:" (3.2.0)
+  Dropped      a member a Convenience caller named that can hold a denied field no path names (Select); Reason
+               "it holds a field denied for Select where no path can name it" (3.2.0)
   Denied       a refusal: Strict denial, cap, cost, query string ("*"), required filter, segment inference,
                MaxAuditEvents; the throw follows unless dry run. Under Strict a name that matches nothing
                is Denied under that name, Reason "names nothing on <TypeName>" (3.1.0)
@@ -3081,6 +3269,10 @@ if (!sim.WouldRun) logger.LogInformation("{Code}", sim.Refusal!.ErrorCode);
 - A `PolicyException` becomes `Refusal`. Any other exception propagates, unwrapped even from the runtime overload.
   - Under `Strict`, outside dry run, a path that matches nothing is therefore a `Refusal` with the clause's `FieldDeniedFor*` code and `FieldPath` `"*"`, not a `LogicException` (3.1.0). The `Trace` names it.
 - A simulated `Filter` or `Segment` that sends no orders gets the type's `DefaultOrder` in `Clause.Orders`, less the fields the caller may not order by (3.1.0).
+- A simulation has no source, so it reads T as a source it cannot see into (3.2.0): every denial beneath a member
+  counts, and with no `Selects` a synthesized `Clause.Selects` keeps only members holding a value. The guarded query
+  over a projected row keeps its assigned objects, one over an entity keeps its columns, owned and complex members
+  and asks only about denials whose value it loads, and one in memory keeps values only.
 - Runtime overload errors:
   - a value-type `entityType`, or a `TClause` other than `Filter`, `Summary` or `Segment` → `ArgumentException`;
   - null entity, context or options → `ArgumentNullException`.
@@ -4131,8 +4323,10 @@ Read before generating policy attributes.
     ignore it. A caller who sends any `Orders` gets exactly those, so rows tied on them can still move between
     pages, and an `IQueryable` ordered before `ApplyPolicy`, or by a composed `Order` before `Page`, keeps its own
     order; a list sorted in memory before `ApplyPolicy` is not seen as ordered and gets the default, so send the
-    order with the filter. A projected query — a `Select` before `ApplyPolicy` or the guarded `Select` — takes no
-    default at all. A default field the caller may not order by is left out without an error. End every
+    order with the filter. A projected query takes the default only when its outermost `Select` builds T in an
+    object initializer assigning every default field a column (3.2.0); a computed value, even one EF Core could
+    translate, leaves it unordered, and the guarded `Select` composed afterwards never takes it.
+    A default field the caller may not order by is left out without an error. End every
     order meant for paging with a unique field, such as the key.
 38. **A `[DwEntity]` on a derived type replaces its base type's.** The attribute allows one per type, and .NET
     inheritance hands a derived type its own when it declares one, so the base type's `RequirePolicy` and
@@ -4580,6 +4774,104 @@ MemoryCalculationInput
 ### History
 
 ```
+3.2.0   A projected row keeps its members, denials the gate could not see are enforced, a default order that
+        reaches projected rows, and a CancellationToken on every async terminal. The security fixes refuse or
+        withhold what 3.1.0 returned; the bullets marked "Behaviour change" also change what a correct query
+        returns; and one call form stops compiling (the token bullet).
+        - Security fix and behaviour change. With no Selects, a field denied for Select only beneath a member, none at
+          the top of T, synthesized no projection, so the whole row came back with the denied value in it: in a list or
+          nested object of a row projected before ApplyPolicy, in a row in memory, and in an entity's included,
+          automatically included, lazily loaded or owned member. Such a denial now synthesizes the projection when its
+          value can reach the result, in both tiers, typed and dynamic, for a Filter and a Segment. On an entity that
+          means beneath a column, an owned or complex member, or a navigation the query loads; a denial beneath a
+          navigation nothing loads never leaves the database, and the entity is read as in 3.1.0.
+        - Security fix. Where the query hides what loads, every navigation now counts as loaded: an include named from
+          the root and re-rooted by Select(o => o.Customer), SelectMany or Join, which EF Core still applies, and a
+          projection behind another Select (an identity Select, a member of an anonymous row, a conditional). So does
+          a lazy loader the constructor takes, delegate or ILazyLoader, kept in a field or a property of any name, and
+          an initializer after a constructor with arguments counts every member as assigned. So do an injected
+          DbContext and EF Core 7's asynchronous loader delegate. So does a reshaped chain whose lambda hands its rows
+          an object an application's method returns from the row, or one it captured: another query with its own
+          include or projection, or an object in memory. Each returned the denied value. A reshaped chain with none of
+          these is still read from the model, so it is not projected for a denial beneath a navigation it does not
+          load. A specification, a repository's query, FromSql and a context's Set through an interface are evaluated
+          as EF Core evaluates them, a context's query function is a query root, and an anonymous object carrying
+          range variables or a composite key, or a value that only feeds a predicate or a key, builds nothing.
+        - Security fix. A guarded query through a provider that wraps EF Core's, LinqKit's AsExpandable or
+          DelegateDecompiler's Decompile, ran tracking: EF Core's AsNoTracking hands such a query back unchanged. The
+          rows' navigations were then filled from entities the context already tracked, the denied ones included,
+          and a masked value became a pending change the next SaveChanges would write. AsNoTracking now goes into the
+          query itself.
+        - Security fix and behaviour change. A member declared as a base type or an interface holds its subtypes,
+          whose denied fields the declared type never names. They are read now: the types the EF Core model derives,
+          for an entity, and every loaded subtype for a projected or in-memory row, an open generic one and an
+          application's subclass of a framework class included. A query over the root of a hierarchy whose derived
+          type declares a denied field, an included or named base-typed navigation, a base-typed member of a row, and
+          a projection constructing a subtype of T, all returned it. Such rows are projected to T and such members
+          narrowed to the declared type, which drops the subtype's fields, allowed ones too. Over an abstract T the
+          typed terminals then fail with SelectTypeMustHaveParameterlessConstructor, as for any T they cannot build;
+          the dynamic terminals return the root's allowed members. A rule on a subtype's field through a base-typed
+          member was dropped as naming nothing; it is enforced.
+        - Security fix. A deny-family attribute on an override, on a public member a subtype hides with new, on the
+          implementation of an interface member (through a variant instantiation too), or on the interface member a
+          class implements, was read only from its own declaration, so the base type's or the interface's path
+          filtered, sorted, grouped and returned the value. It applies to the path now.
+        - Security fix. Under a "*" deny with exact allows, a path the walk never asked about (past four segments,
+          around a cycle, with no setter, on a subtype) resolved as allowed, so a member holding one was returned
+          whole, named or not. Each such path is asked of the policy now; one it does not name is denied, and a
+          member holding one is refused, narrowed or projected as one with a denial beneath it is.
+        - Security fix. A field denied at the top of T whose type is not a simple value (a blob, a list, an owned
+          object or a JSON column, say) synthesized no projection either, so with nothing else denied it came back.
+        - Security fix. The attribute walker read any namespace starting with "System" as the framework's, so an
+          application's SystemsCorp.Payroll got no fragment beneath its types, and a [DwDenied] field there was
+          returned, filterable and sortable. Only System and the namespaces beneath it are the framework's now.
+        - Security fix. Under Convenience, Selects naming a navigation whose element key (Id) is denied narrowed the
+          key away, and the core's typed projection added it back. Such a narrowing is refused with
+          FieldDeniedForSelect in both tiers, as naming a sibling of the key already was. A navigation named through
+          another, Main.Lead, now gates Main's key, which the builder adds; it did not.
+        - Security fix. Selects naming a member typed as a collection the core does not unwrap (IReadOnlyList<T>,
+          IReadOnlyCollection<T>, Collection<T> or an application's own) returned every field beneath it, denied ones
+          included, in both tiers: the projection gate read collections through a narrower list than the attribute
+          walker. It reads them as the walker does, and a narrowing the core cannot project is refused.
+        - Security fix. Selects naming a member that carries a field denied for Select no path names returned it:
+          deeper than four segments, inside a framework generic such as Dictionary<string, T>, or, on a named entity
+          navigation, in its owned chain or a converted column. What a member carries is read from the source, from
+          the EF Core model for an entity. Strict refuses it; Convenience narrows it where the core can, and refuses it
+          where it cannot. A denied property with no setter, and a rule on a path reached through a cycle, are found
+          beneath a named member too.
+        - Behaviour change. The synthesized projection keeps what the source carries. A row a projection builds keeps
+          its assigned nested objects and lists; an entity keeps its columns, converted and JSON ones included, and its
+          owned and complex members, and every member holding a collection of simple values (byte[], List<string>). In
+          3.1.0 all of these came back null or empty whenever a field was denied. A member is kept whole when nothing
+          it can hold is denied, narrowed around a denial where the core's narrowing translates, and otherwise left out
+          whole with a "left out whole" Dropped decision. An entity's navigations and the objects of a row in memory
+          are left out, as before, and each one the unguarded call would have returned is recorded as Dropped; a
+          value EF Core does not map is left out too. A member that can hold an object of any type, a geometry or a
+          JSON bag say, asks for no projection on its own, and an entity keeps it whole, unless a value converter
+          hands back its value, directly or inside a complex property: a converter is the application's code, so
+          such a column is left out. BitArray and the framework's string collections hold values. An application's
+          own collection class, generic or not, has its own members read; a collection of values stays a value unless
+          one of them is denied. Two members sharing a name, one hidden with new under another type or spelled in
+          another case, are left out when either holds a denial, since the core reads one and a row carries both.
+          Rows in memory are projected when a member a base type declares, and the row type hides with new, is
+          denied. A projected member is read as the type its initializer constructs, and an
+          initializer after a constructor with arguments narrows its own bindings. The trace records a member left
+          out only when a projection is built, or, in a dry run, would be.
+        - Behaviour change. [DwEntity(DefaultOrder)] applies to a projected source whose outermost Select builds T
+          in an object initializer assigning every field the default names a column: a mapped member, read directly,
+          through reference navigations or through EF.Property. A computed value or any other projection still leaves
+          the query in its own order. A Select, or a Filter with Selects, composed on the guarded handle keeps the rest
+          of the chain unordered. A composed Filter that sent orders gets no default later in the chain, as a composed
+          Order already did not.
+        - Every async terminal has overloads taking a CancellationToken, guarded and unguarded: ToListAsync and
+          ToListAsyncDynamic with a Filter, ToListAsync with a Summary, and ToListAsync with a Segment. The 3.1
+          signatures are unchanged, so code compiled against 3.1 still binds. The token reaches the count and the
+          read. ToListAsync(filter, default) no longer compiles, since default fits both bool and CancellationToken,
+          and a reflection lookup of one of these methods by name alone finds more overloads than it did.
+        - Behaviour change. The async Summary counts through EF Core's CountAsync, where it counted synchronously, and
+          it and ToListAsyncDynamic read through EF Core's ToListAsync instead of Dynamic LINQ's ToDynamicListAsync,
+          so on an EF Core query a canceled token reaches the database. A provider that is not EF Core's keeps Dynamic
+          LINQ's read, on the calling thread.
 3.1.0   Dates rebuilt, segments combined in the database, five new caps, two new error codes, preparation enforced,
         a strict tier that discloses less, declared default orders, forced predicates that admit null, audited
         refusals, and long In lists that no longer end the process. The eleven bullets marked "Behaviour change"
@@ -4733,7 +5025,59 @@ MemoryCalculationInput
 - Enum filtering works whether the column stores names or numbers: the parser converts the name to the enum value
   before EF Core translates it. `Contains` / `StartsWith` / `EndsWith` work only on string members.
 - Cache configuration changes are eventually consistent: calls already running finish with the options they read.
-- Nothing accepts a `CancellationToken`.
+- With no `Selects`, a guarded query over an entity leaves out every navigation EF Core does not own once a denial
+  needs a projection (section 17), an included one too. Under Convenience, name the navigation in `Selects` to get
+  it narrowed; under Strict, name its allowed fields.
+- A forced scope declared on a list's element type filters the rows that hold the list, never its elements. Selects
+  naming the list returns every element, those the scope excludes included, as in every release; a synthesized
+  projection leaves such a list out. Scope the elements where the row is built.
+- A member typed `object`, a framework interface or a collection that is not generic (`IEnumerable`, `ArrayList`,
+  `Array`, an application's own) is opaque to the policy. It never asks for a projection; when one is needed anyway,
+  a projected row, a row in memory, and an entity's converted column leave it out, and an entity's other columns
+  keep it (what EF Core materializes itself holds no application object); and naming it
+  returns whatever it holds. A converted column counts as able to hold anything when its type can: `object`, a
+  `Dictionary<string, object>`, or a type with such a member. `BitArray`, `StringCollection`, `StringDictionary` and
+  `NameValueCollection` hold values. A value converter that returns an application type through a column typed
+  `object`, and an unmapped getter typed `object` over a private navigation, are opaque the same way: with nothing
+  else denied the row comes back as loaded. Type the member as what it holds.
+  A framework generic holding a policed type (`Dictionary<string, LineDto>`) has no paths beneath it: naming it is
+  refused in both tiers where the core cannot narrow it (at the top of T, or on a row in memory), narrowed away
+  under Convenience beneath a navigation, and a synthesized projection leaves it out.
+- A projection builds the declared type. A query over the root of a hierarchy whose derived type declares a denied
+  field comes back as root-type rows, the derived types' allowed fields dropped too; over an abstract root the typed
+  terminals fail with `SelectTypeMustHaveParameterlessConstructor` and the dynamic ones return the root's members.
+  Query the derived type (`OfType<T>()`) to keep its fields. Subtypes are read from the assemblies loaded
+  when the query runs, which hold every type a row can have.
+- Under a `"*"` deny, a member is kept whole only when every path beneath it the walk skips, one with no setter,
+  on a subtype or past four segments, is one the policy names; around a cycle it never is. Otherwise it is
+  narrowed, left out or refused.
+- A member EF Core does not map counts as loaded and is read as its type, since its getter can hand out what EF
+  Core loaded: a denied field in its type asks for a projection, which leaves the member out, since the projection
+  cannot assign it. A getter that copies a denied column into a type with no denial is the application's to
+  withhold.
+- Rows in memory can be any loaded subtype, and the policy does not look at the rows. When a subtype of T declares
+  a denied field, or a subtype or implementation of a member's type does, the rows are projected and their objects
+  left out, even if no row is that subtype.
+- A deny-family attribute on an override, or on a member a subtype hides with `new`, denies the base path for every
+  subtype loaded, not only those the EF Core model maps: a view model deriving from an entity and overriding one of
+  its members decides the entity's own path. Declare such a class apart from the entity to keep the path open.
+- Types from an unloadable `AssemblyLoadContext` stay referenced by the policy's caches, so the context is not
+  collected while the process runs.
+- A method or property in a reshaping lambda that builds a query from captured values (a repository's query, a
+  specification) runs once more per guarded read, when the guard reads what it returns; one that returns a different
+  query on each call is enforced as it answered the guard.
+- A provider that wraps EF Core's gets `AsNoTracking` only when its query's expression shows the EF Core root, as
+  LinqKit's and DelegateDecompiler's do; one that hides it behind its own expression runs tracking.
+- A member declared as a framework collection (`IEnumerable<string>`, `List<string>`) that holds an application's own
+  collection class at run time is read as the framework type, so that class's own members are not read. Serializers
+  write only the elements.
+- On EF Core 6, a reshaped query whose projection EF Core 6 cannot translate (a count over `GroupBy`/`First`, a
+  `SelectMany` over a captured query that builds its rows) fails guarded, where it ran unguarded; EF Core 7 and later
+  translate it.
+- A default order reaches a projected row only through columns of the entity its `Select` reads: a projection over
+  an anonymous or other intermediate row takes no default.
+- A simulation reads T as a source it cannot see into (section 23): every denial beneath a member counts, and a
+  synthesized `Clause.Selects` keeps only members holding a value.
 
 ---
 

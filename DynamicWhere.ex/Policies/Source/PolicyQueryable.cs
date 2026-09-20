@@ -11,6 +11,8 @@ using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Source;
 using Microsoft.EntityFrameworkCore;
 using System.Linq.Dynamic.Core;
+using System.Linq.Expressions;
+using System.Reflection;
 
 namespace DynamicWhere.ex.Policies.Source;
 
@@ -42,6 +44,11 @@ public sealed class PolicyQueryable<T> where T : class
     // gate. A caller whose orders were all dropped still sent orders, and gets no default in their place.
     private readonly bool _ordered;
 
+    // True once a composed Select, or a composed Filter carrying a projection, has run on this chain.
+    // Such a chain stays in whatever order it had: the default is for the rows the caller's source
+    // makes, and a projection the caller composes afterwards is theirs to order.
+    private readonly bool _projected;
+
     private TypePolicy? _typePolicy;
 
     /// <summary>
@@ -53,7 +60,8 @@ public sealed class PolicyQueryable<T> where T : class
         PolicyResolver resolver,
         DwPolicyOptions options,
         PolicyTrace? carried = null,
-        bool ordered = false)
+        bool ordered = false,
+        bool projected = false)
     {
         _source = source;
         _context = context;
@@ -61,6 +69,7 @@ public sealed class PolicyQueryable<T> where T : class
         _options = options;
         _carried = carried;
         _ordered = ordered;
+        _projected = projected;
     }
 
     /// <summary>
@@ -123,7 +132,27 @@ public sealed class PolicyQueryable<T> where T : class
     /// <param name="getQueryString">When true, includes the generated SQL in the result.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="filter"/> is null.</exception>
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
-    public async Task<FilterResult<T>> ToListAsync(Filter filter, bool getQueryString = false)
+    public Task<FilterResult<T>> ToListAsync(Filter filter, bool getQueryString = false) =>
+        ToListAsync(filter, getQueryString, CancellationToken.None);
+
+    /// <summary>Applies a filter asynchronously and returns the matching page.</summary>
+    /// <param name="filter">The caller's filter. Never modified.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="filter"/> is null.</exception>
+    /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public Task<FilterResult<T>> ToListAsync(Filter filter, CancellationToken cancellationToken) =>
+        ToListAsync(filter, false, cancellationToken);
+
+    /// <summary>Applies a filter asynchronously and returns the matching page.</summary>
+    /// <param name="filter">The caller's filter. Never modified.</param>
+    /// <param name="getQueryString">When true, includes the generated SQL in the result.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="filter"/> is null.</exception>
+    /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public async Task<FilterResult<T>> ToListAsync(
+        Filter filter, bool getQueryString, CancellationToken cancellationToken)
     {
         try
         {
@@ -134,7 +163,7 @@ public sealed class PolicyQueryable<T> where T : class
 
             using (PolicyScope.Enter(_context, LastTrace))
             {
-                FilterResult<T> result = await Guarded().ToListAsync(sanitized, getQueryString);
+                FilterResult<T> result = await Guarded().ToListAsync(sanitized, getQueryString, cancellationToken);
 
                 ResultTransformer.Rows(
                     result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
@@ -192,7 +221,27 @@ public sealed class PolicyQueryable<T> where T : class
     /// <param name="getQueryString">When true, includes the generated SQL in the result.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="filter"/> is null.</exception>
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
-    public async Task<FilterResult<dynamic>> ToListAsyncDynamic(Filter filter, bool getQueryString = false)
+    public Task<FilterResult<dynamic>> ToListAsyncDynamic(Filter filter, bool getQueryString = false) =>
+        ToListAsyncDynamic(filter, getQueryString, CancellationToken.None);
+
+    /// <summary>Applies a filter asynchronously and returns the matching page as dynamic objects.</summary>
+    /// <param name="filter">The caller's filter. Never modified.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="filter"/> is null.</exception>
+    /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public Task<FilterResult<dynamic>> ToListAsyncDynamic(Filter filter, CancellationToken cancellationToken) =>
+        ToListAsyncDynamic(filter, false, cancellationToken);
+
+    /// <summary>Applies a filter asynchronously and returns the matching page as dynamic objects.</summary>
+    /// <param name="filter">The caller's filter. Never modified.</param>
+    /// <param name="getQueryString">When true, includes the generated SQL in the result.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="filter"/> is null.</exception>
+    /// <exception cref="PolicyException">Thrown when the policy refuses part of the filter.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public async Task<FilterResult<dynamic>> ToListAsyncDynamic(
+        Filter filter, bool getQueryString, CancellationToken cancellationToken)
     {
         try
         {
@@ -203,7 +252,7 @@ public sealed class PolicyQueryable<T> where T : class
 
             using (PolicyScope.Enter(_context, LastTrace))
             {
-                FilterResult<dynamic> result = await Guarded().ToListAsyncDynamic(sanitized, getQueryString);
+                FilterResult<dynamic> result = await Guarded().ToListAsyncDynamic(sanitized, getQueryString, cancellationToken);
 
                 ResultTransformer.Rows(
                     result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
@@ -280,7 +329,27 @@ public sealed class PolicyQueryable<T> where T : class
     /// <param name="getQueryString">When true, includes the generated SQL in the result.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="summary"/> is null.</exception>
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the summary.</exception>
-    public async Task<SummaryResult> ToListAsync(Summary summary, bool getQueryString = false)
+    public Task<SummaryResult> ToListAsync(Summary summary, bool getQueryString = false) =>
+        ToListAsync(summary, getQueryString, CancellationToken.None);
+
+    /// <summary>Applies a summary asynchronously and returns the grouped page.</summary>
+    /// <param name="summary">The caller's summary. Never modified.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="summary"/> is null.</exception>
+    /// <exception cref="PolicyException">Thrown when the policy refuses part of the summary.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public Task<SummaryResult> ToListAsync(Summary summary, CancellationToken cancellationToken) =>
+        ToListAsync(summary, false, cancellationToken);
+
+    /// <summary>Applies a summary asynchronously and returns the grouped page.</summary>
+    /// <param name="summary">The caller's summary. Never modified.</param>
+    /// <param name="getQueryString">When true, includes the generated SQL in the result.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="summary"/> is null.</exception>
+    /// <exception cref="PolicyException">Thrown when the policy refuses part of the summary.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public async Task<SummaryResult> ToListAsync(
+        Summary summary, bool getQueryString, CancellationToken cancellationToken)
     {
         try
         {
@@ -291,7 +360,7 @@ public sealed class PolicyQueryable<T> where T : class
 
             using (PolicyScope.Enter(_context, LastTrace))
             {
-                SummaryResult result = await Guarded().ToListAsync(sanitized, getQueryString);
+                SummaryResult result = await Guarded().ToListAsync(sanitized, getQueryString, cancellationToken);
 
                 // First of the three, and the order matters. A group below the floor is one the caller
                 // may not see at all, so nothing downstream should form an opinion about it: transformed
@@ -330,7 +399,16 @@ public sealed class PolicyQueryable<T> where T : class
     /// <param name="segment">The caller's segment. Never modified.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="segment"/> is null.</exception>
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the segment.</exception>
-    public async Task<SegmentResult<T>> ToListAsync(Segment segment)
+    public Task<SegmentResult<T>> ToListAsync(Segment segment) =>
+        ToListAsync(segment, CancellationToken.None);
+
+    /// <summary>Applies a set operation asynchronously and returns the combined page.</summary>
+    /// <param name="segment">The caller's segment. Never modified.</param>
+    /// <param name="cancellationToken">Cancels the count and the read.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="segment"/> is null.</exception>
+    /// <exception cref="PolicyException">Thrown when the policy refuses part of the segment.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when <paramref name="cancellationToken"/> is canceled.</exception>
+    public async Task<SegmentResult<T>> ToListAsync(Segment segment, CancellationToken cancellationToken)
     {
         try
         {
@@ -338,13 +416,14 @@ public sealed class PolicyQueryable<T> where T : class
 
             Segment sanitized = FilterSanitizer.Sanitize<T>(
                 segment, _resolver, _context, _options, trace,
-                applyDefaultOrder: TakesDefaultOrder);
+                applyDefaultOrder: TakesDefaultOrder,
+                rows: RowShape.Of(_source));
 
             LastTrace = trace;
 
             using (PolicyScope.Enter(_context, LastTrace))
             {
-                SegmentResult<T> result = await Guarded().ToListAsync(sanitized);
+                SegmentResult<T> result = await Guarded().ToListAsync(sanitized, cancellationToken);
 
                 ResultTransformer.Rows(
                     result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
@@ -373,7 +452,7 @@ public sealed class PolicyQueryable<T> where T : class
 
             using (PolicyScope.Enter(_context, LastTrace))
             {
-                return Chain(Scoped(sanitized).Select(sanitized.Selects!));
+                return Chain(Scoped(sanitized).Select(sanitized.Selects!), projected: true);
             }
         }
         catch (PolicyException refusal) when (Refused(refusal))
@@ -551,7 +630,12 @@ public sealed class PolicyQueryable<T> where T : class
 
             using (PolicyScope.Enter(_context, LastTrace))
             {
-                return Chain(Guarded().Filter(sanitized));
+                // A caller who sent orders gets no default later in the chain, whether or not any of
+                // them survived, exactly as a composed Order does.
+                return Chain(
+                    Guarded().Filter(sanitized),
+                    ordered: filter.Orders is { Count: > 0 },
+                    projected: sanitized.Selects is not null);
             }
         }
         catch (PolicyException refusal) when (Refused(refusal))
@@ -651,10 +735,30 @@ public sealed class PolicyQueryable<T> where T : class
     /// point every guarded query passes through, so no individual method can forget it.
     /// <para>
     /// Harmless on a non-EF source: the EF extension returns the query unchanged when the provider
-    /// is not one of its own.
+    /// is not one of its own. A provider that wraps EF Core's, as LinqKit's <c>AsExpandable</c> and
+    /// DelegateDecompiler's <c>Decompile</c> do, is not one of its own either, and passes the query on to
+    /// EF Core with tracking still on: the tracked entities' navigations were then filled in on the rows,
+    /// and a masked value became a pending change. On such a query the call goes into the query itself,
+    /// where EF Core reads it.
     /// </para>
     /// </remarks>
-    private IQueryable<T> Guarded() => _source.AsNoTracking();
+    private IQueryable<T> Guarded()
+    {
+        IQueryable<T> untracked = _source.AsNoTracking();
+
+        if (!ReferenceEquals(untracked, _source) || QueryRoot.Model(_source.Expression) is null)
+        {
+            return untracked;
+        }
+
+        return _source.Provider.CreateQuery<T>(
+            Expression.Call(null, AsNoTrackingMethod.MakeGenericMethod(typeof(T)), _source.Expression));
+    }
+
+    private static readonly MethodInfo AsNoTrackingMethod = typeof(EntityFrameworkQueryableExtensions)
+        .GetMethods()
+        .Single(method => method.Name == nameof(EntityFrameworkQueryableExtensions.AsNoTracking)
+                          && method.GetParameters().Length == 1);
 
     /// <summary>
     /// Returns the query as a plain <see cref="IQueryable{T}"/>, outside the guard.
@@ -674,15 +778,18 @@ public sealed class PolicyQueryable<T> where T : class
 
     /// <summary>Wraps a composed query back into a handle, carrying the trace so far.</summary>
     /// <param name="composed">The composed query.</param>
-    /// <param name="ordered">True when the composing call was an <c>Order</c>.</param>
-    private PolicyQueryable<T> Chain(IQueryable<T> composed, bool ordered = false) =>
-        new(composed, _context, _resolver, _options, LastTrace, _ordered || ordered);
+    /// <param name="ordered">True when the composing call sent orders.</param>
+    /// <param name="projected">True when the composing call projected the rows.</param>
+    private PolicyQueryable<T> Chain(IQueryable<T> composed, bool ordered = false, bool projected = false) =>
+        new(composed, _context, _resolver, _options, LastTrace, _ordered || ordered, _projected || projected);
 
     /// <summary>
     /// True when a query over this handle takes the type's default order: the caller composed no
-    /// <c>Order</c>, and nothing ordered or projected the source.
+    /// <c>Order</c> and no projection, nothing ordered the source, and no projection in the source hides
+    /// a field the default names.
     /// </summary>
-    private bool TakesDefaultOrder => !_ordered && DefaultOrder.Applies(_source.Expression);
+    private bool TakesDefaultOrder =>
+        !_ordered && !_projected && DefaultOrder.Applies(_source.Expression, typeof(T));
 
     /// <summary>
     /// Refuses a method that hands back a query the caller materializes, when this type's values
@@ -789,7 +896,9 @@ public sealed class PolicyQueryable<T> where T : class
     {
         // A source the caller ordered before guarding it keeps that order: a default would replace it.
         Filter sanitized = FilterSanitizer.Sanitize<T>(
-            filter, _resolver, _context, _options, trace, applyDefaultOrder: TakesDefaultOrder);
+            filter, _resolver, _context, _options, trace,
+            applyDefaultOrder: TakesDefaultOrder,
+            rows: RowShape.Of(_source));
 
         LastTrace = trace;
 

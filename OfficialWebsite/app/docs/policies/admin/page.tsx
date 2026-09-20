@@ -15,7 +15,7 @@ export default function Page() {
   return (
     <DocPage pathname="/docs/policies/admin">
       <h1>Admin API</h1>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.AspNetCore --version 3.1.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.AspNetCore --version 3.2.0`}</Code>
       <Code lang="csharp">{`app.MapDwPolicyAdmin(options =>
 {
     options.RoutePrefix  = "/dw-policies";    // the default; mount it anywhere
@@ -168,6 +168,20 @@ export default function Page() {
         Send a clause, get back what it would become. Nothing executes and{" "}
         <strong>nothing is audited</strong>, so an operator checking a rule does
         not fill the audit trail with reads that never happened.
+      </p>
+      <p>
+        A simulation has no source, so it reads the type as a source it cannot
+        see into. That shows in a clause that sends no <code>Selects</code>:
+        every denial beneath a member counts, and the projection it shows keeps
+        only the members that hold a value, a collection of values included. A
+        guarded query keeps what its own source carries — over a projected row,
+        the objects its initializer assigns; over an entity, its columns, owned
+        and complex members, asking only about the denials whose value it
+        loads; over rows in memory, values only. So the simulated clause can
+        list fewer members than the query returns, and can show a projection
+        an entity query does not need. <code>PolicySimulator</code> reads a
+        type the same way. See{" "}
+        <Link href="/docs/policies/configuration#no-selects">A request that sends no Selects</Link>.
       </p>
 
       <h2 id="claims">From a ClaimsPrincipal</h2>

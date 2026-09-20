@@ -2,6 +2,7 @@ using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
+using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Audit;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
@@ -64,9 +65,18 @@ public class PolicyAuditTests
                 options ?? Options(),
                 new PolicyResolver(new[] { new AttributePolicyProvider() }));
 
+    /// <summary>
+    /// A filter naming one condition, and a projection naming one unaudited field.
+    /// </summary>
+    /// <remarks>
+    /// The projection is deliberate. A request that names none has one synthesized, and since 3.3.0
+    /// the members it returns are recorded as read — so a bare filter here would record the fields
+    /// the row carries back as well as the one the test is about.
+    /// </remarks>
     private static Filter Where(string field, DataType type = DataType.Text) =>
         new()
         {
+            Selects = new List<string> { "Name" },
             ConditionGroup = new ConditionGroup
             {
                 Sort = 1,
@@ -199,18 +209,83 @@ public class PolicyAuditTests
     }
 
     /// <summary>
-    /// The library resolving a policy on its own behalf is not an access by the caller. Charging a
-    /// synthesized projection to the audit log would record every field of the type as read on
-    /// every query that named none.
+    /// A projection the caller never named still hands them the members it keeps, and an audited
+    /// field among them is a field they read.
     /// </summary>
+    /// <remarks>
+    /// Until 3.3.0 only a field the request spelled out was recorded, which left an empty
+    /// <c>Selects</c> as one token past the control: the same value, returned, with nothing written
+    /// down. Only an audited field produces an event, and one per query rather than one per row, so
+    /// a type with nothing audited still records nothing here.
+    /// </remarks>
     [Fact]
-    public void A_synthesized_projection_records_nothing()
+    public void A_synthesized_projection_records_what_it_returns()
     {
         DwPolicyContext context = new();
 
         Query(context).ToList(new Filter());
 
-        Assert.Empty(context.PendingAuditEvents);
+        // Both audited columns come back in the row, so both are read: Salary is audited for every
+        // feature and Email for Select alone.
+        Assert.Equal(2, context.PendingAuditEvents.Count);
+        Assert.All(context.PendingAuditEvents, e => Assert.Equal(PolicyFeature.Select, e.Feature));
+        Assert.All(context.PendingAuditEvents, e => Assert.Equal(PolicyEffect.Allow, e.Effect));
+        Assert.Contains(context.PendingAuditEvents, e => e.FieldPath == "Salary");
+        Assert.Contains(context.PendingAuditEvents, e => e.FieldPath == "Email");
+    }
+
+    /// <summary>
+    /// A member a projection could not have kept is still read when the row comes back whole.
+    /// </summary>
+    /// <remarks>
+    /// Nothing is denied on this type, so no projection is built and the caller receives the row as
+    /// it is — a getter with no setter included, which a projection would have had to leave out.
+    /// Recording only what a projection would have kept would lose exactly those members.
+    /// </remarks>
+    [Fact]
+    public void A_whole_row_read_records_an_audited_member_no_projection_could_keep()
+    {
+        DwPolicyContext context = new();
+
+        Array.Empty<AuditedGetter>()
+            .AsQueryable()
+            .ApplyPolicy(context, Options(), new PolicyResolver(new[] { new AttributePolicyProvider() }))
+            .ToList(new Filter());
+
+        Assert.Contains(
+            context.PendingAuditEvents,
+            e => e.FieldPath == "Reference" && e.Feature == PolicyFeature.Select);
+    }
+
+    /// <summary>A type whose audited member a projection cannot assign.</summary>
+    private class AuditedGetter
+    {
+        public int Id { get; set; }
+
+        [DwAudit]
+        public string Reference => "r-" + Id;
+    }
+
+    /// <summary>The same read, spelled out by the caller, is the same one record.</summary>
+    [Fact]
+    public void Naming_the_field_records_the_same_read_once()
+    {
+        DwPolicyContext named = new();
+
+        Query(named).ToList(new Filter { Selects = new List<string> { "Email" } });
+
+        DwPolicyContext silent = new();
+
+        Query(silent).ToList(new Filter());
+
+        DwAuditEvent spelled = Assert.Single(named.PendingAuditEvents);
+
+        Assert.Equal("Email", spelled.FieldPath);
+
+        // The same read, reached the other way, is recorded the same way.
+        Assert.Contains(
+            silent.PendingAuditEvents,
+            e => e.FieldPath == spelled.FieldPath && e.Feature == spelled.Feature && e.Effect == spelled.Effect);
     }
 
     // ---- the drain -----------------------------------------------------------------------------

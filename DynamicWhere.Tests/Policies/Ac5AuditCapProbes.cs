@@ -433,7 +433,7 @@ namespace DynamicWhere.Tests.Policies
         /// projection at all receives <c>Tag</c> in every row and is recorded nowhere.
         /// </summary>
         [Fact]
-        public void Synthesized_projection_returns_an_audited_field_without_recording_it()
+        public void Synthesized_projection_records_the_audited_field_it_returns()
         {
             DwPolicyOptions options = Options(audits: 1000);
 
@@ -466,11 +466,10 @@ namespace DynamicWhere.Tests.Policies
                 named.PendingAuditEvents,
                 e => e.FieldPath == Audited && e.Feature == PolicyFeature.Select);
 
-            // A documented limit, not a defect fixed here: [DwAudit] records a field the request
-            // names, and a field of the type's default order that the query adds. A request naming
-            // no projection reads the row without naming anything, and records nothing. Closing that
-            // redefines what a use is, which is a decision for its own release.
-            Assert.DoesNotContain(
+            // The caller receives the value, so the log says so: since 3.3.0 the members a
+            // synthesized projection returns are recorded as read, which closes an empty Selects as
+            // a way past the control.
+            Assert.Contains(
                 silent.PendingAuditEvents,
                 e => e.FieldPath == Audited && e.Feature == PolicyFeature.Select);
         }
@@ -480,7 +479,7 @@ namespace DynamicWhere.Tests.Policies
         /// comes back — audited field included — and the buffer is empty.
         /// </summary>
         [Fact]
-        public void Whole_entity_read_returns_an_audited_field_without_recording_it()
+        public void Whole_entity_read_records_the_audited_field_it_returns()
         {
             DwPolicyOptions options = Options(audits: 1000);
             DwPolicyContext context = Caller();
@@ -494,11 +493,12 @@ namespace DynamicWhere.Tests.Policies
             // Nothing is denied, so the row comes back whole and carries Tag.
             Assert.Null(sanitized.Selects);
 
-            // A documented limit, not a defect fixed here: [DwAudit] records a field the request
-            // names, and a field of the type's default order that the query adds. A request naming
-            // no projection reads the row without naming anything, and records nothing. Closing that
-            // redefines what a use is, which is a decision for its own release.
-            Assert.Empty(context.PendingAuditEvents);
+            // The caller receives the value, so the log says so: since 3.3.0 the members a
+            // synthesized projection returns are recorded as read, which closes an empty Selects as
+            // a way past the control.
+            Assert.Contains(
+                context.PendingAuditEvents,
+                e => e.FieldPath == Audited && e.Feature == PolicyFeature.Select);
         }
 
         /// <summary>

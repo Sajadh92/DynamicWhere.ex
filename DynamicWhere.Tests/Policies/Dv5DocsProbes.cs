@@ -447,9 +447,14 @@ namespace DynamicWhere.Tests.Policies
                 .ApplyPolicy(allowed, options, Resolver())
                 .ToList(Where(On("Code")));
 
-            _out.WriteLine($"an audited field named        -> {allowed.PendingAuditEvents.Count} event(s)");
+            _out.WriteLine($"an audited field named        -> {allowed.PendingAuditEvents.Count} event(s):"
+                + $" {string.Join(",", allowed.PendingAuditEvents.Select(e => $"{e.FieldPath}:{e.Feature}"))}");
 
-            Assert.Single(allowed.PendingAuditEvents);
+            // Two uses of the one field: the caller filtered on it, and the row the request named no
+            // projection for carries it back, which since 3.3.0 is recorded as the read it is.
+            Assert.Equal(2, allowed.PendingAuditEvents.Count);
+            Assert.Contains(allowed.PendingAuditEvents, e => e.Feature == PolicyFeature.Where);
+            Assert.Contains(allowed.PendingAuditEvents, e => e.Feature == PolicyFeature.Select);
 
             // The refusal of a path the query cannot compute records none.
             DwPolicyContext refused = Caller();
@@ -459,9 +464,13 @@ namespace DynamicWhere.Tests.Policies
                     .ApplyPolicy(refused, options, Resolver())
                     .ToList(Where(On("Slug"))));
 
-            _out.WriteLine($"a path the query cannot compute -> {refused.PendingAuditEvents.Count} event(s)");
+            _out.WriteLine($"a path the query cannot compute -> {refused.PendingAuditEvents.Count} event(s):"
+                + $" {string.Join(",", refused.PendingAuditEvents.Select(e => $"{e.FieldPath}:{e.Feature}"))}");
 
-            Assert.Empty(refused.PendingAuditEvents);
+            // No event names the refused path. The request's own projection is recorded as it is for
+            // any other request — a use is what the request would have read — but the refusal itself
+            // raises none, as an unknown name raises none.
+            Assert.DoesNotContain(refused.PendingAuditEvents, e => e.FieldPath.Contains("IsZero"));
 
             // And a name matching nothing records none either, which is the comparison the text draws.
             DwPolicyContext unknown = Caller();
@@ -473,7 +482,7 @@ namespace DynamicWhere.Tests.Policies
 
             _out.WriteLine($"a name matching nothing         -> {unknown.PendingAuditEvents.Count} event(s)");
 
-            Assert.Empty(unknown.PendingAuditEvents);
+            Assert.DoesNotContain(unknown.PendingAuditEvents, e => e.FieldPath.Contains("Zzzzz"));
         }
 
         // =========================================================================================

@@ -162,7 +162,7 @@ namespace DynamicWhere.Tests.Policies
         /// audited field in it, and hands back its real value — with nothing written to the audit.
         /// </summary>
         [Fact]
-        public void An_audited_field_a_request_does_not_name_is_returned_and_not_recorded()
+        public void An_audited_field_is_recorded_whether_or_not_the_request_names_it()
         {
             DwPolicyOptions options = Options();
 
@@ -196,11 +196,12 @@ namespace DynamicWhere.Tests.Policies
                 named.PendingAuditEvents,
                 e => e.FieldPath == "NationalId" && e.Feature == PolicyFeature.Select);
 
-            // A documented limit, not a defect fixed here: [DwAudit] records a field the request
-            // names, and a field of the type's default order that the query adds. A request naming
-            // no projection reads the row without naming anything, and records nothing. Closing that
-            // redefines what a use is, which is a decision for its own release.
-            Assert.Empty(silent.PendingAuditEvents);
+            // The caller receives the value, so the log says so: since 3.3.0 the members a
+            // synthesized projection returns are recorded as read, which closes an empty Selects as
+            // a way past the control.
+            Assert.Contains(
+                silent.PendingAuditEvents,
+                e => e.FieldPath == "NationalId" && e.Feature == PolicyFeature.Select);
         }
 
         /// <summary>
@@ -208,7 +209,7 @@ namespace DynamicWhere.Tests.Policies
         /// the table and the buffer is still empty.
         /// </summary>
         [Fact]
-        public void An_audited_field_a_whole_entity_read_returns_is_not_recorded()
+        public void An_audited_field_a_whole_entity_read_returns_is_recorded()
         {
             DwPolicyContext context = Caller();
 
@@ -218,12 +219,14 @@ namespace DynamicWhere.Tests.Policies
             _out.WriteLine($"value={rows.Data[0].NationalId} events={context.PendingAuditEvents.Count}");
 
             Assert.Equal("AAA-111", rows.Data[0].NationalId);
-            Assert.Empty(context.PendingAuditEvents);
+            Assert.Contains(
+                context.PendingAuditEvents,
+                e => e.FieldPath == "NationalId" && e.Feature == PolicyFeature.Select);
         }
 
         /// <summary>The convenience tier reads the same way, so the gap is not tier-specific.</summary>
         [Fact]
-        public void The_unrecorded_read_is_not_tier_specific()
+        public void The_record_is_written_in_both_tiers()
         {
             DwPolicyContext context = Caller();
 
@@ -231,7 +234,9 @@ namespace DynamicWhere.Tests.Policies
                 .ToList(new Filter());
 
             Assert.Equal("AAA-111", rows.Data[0].NationalId);
-            Assert.Empty(context.PendingAuditEvents);
+            Assert.Contains(
+                context.PendingAuditEvents,
+                e => e.FieldPath == "NationalId" && e.Feature == PolicyFeature.Select);
         }
 
         // =========================================================================================

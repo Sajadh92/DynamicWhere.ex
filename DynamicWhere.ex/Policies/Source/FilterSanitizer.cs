@@ -1898,6 +1898,7 @@ internal static class FilterSanitizer
     private static List<string>? SynthesizedProjection(Gate gate, RowShape rows)
     {
         List<string> allowed = new();
+        List<string> readable = new();
         List<(string Member, string Reason)> uncarried = new();
         bool anyDenied = false;
         int recorded = gate.TraceCount;
@@ -1916,6 +1917,12 @@ internal static class FilterSanitizer
                 continue;
             }
 
+            // The caller named no projection, so what comes back comes back because they asked for
+            // the row. That is a read, and an audited field has to record it: recording only what a
+            // request spells out would leave an empty Selects as one token past [DwAudit] — the same
+            // value, returned, with nothing written down. Which members reach the caller is known
+            // once the walk finishes, so they are collected here and recorded below.
+            readable.Add(name);
 
             // Two members share the name, one hidden with new under another type or spelled in another case:
             // the core reads one of them, and a row carries both. What either can hold is asked about, and a
@@ -2027,6 +2034,14 @@ internal static class FilterSanitizer
 
                 gate.LeaveOut(name, "left out: a base type's member of this name, which the row's own member hides");
             }
+        }
+
+        // What the caller receives: the projection's own list where one is built, and every member
+        // they may select where none is, since the row then comes back whole. Both sets are paths
+        // whose policy is already resolved, so recording costs no resolution of its own.
+        foreach (string path in anyDenied ? allowed : readable)
+        {
+            gate.AuditUse(path, PolicyFeature.Select, gate.PolicyFor(path, PolicyFeature.None));
         }
 
         // A member that asks for nothing itself is still left out, or narrowed, as the projection would build
@@ -4213,6 +4228,24 @@ internal static class FilterSanitizer
                 PolicyFeature.Where,
                 PolicyAction.Injected,
                 orNull ? $"forced predicate ({op}, or null)" : $"forced predicate ({op})"));
+
+        /// <summary>
+        /// Records one use of a field whose policy is already resolved, when the field is audited
+        /// for that feature.
+        /// </summary>
+        /// <remarks>
+        /// For a use the library works out rather than one a request names: the members a projection
+        /// synthesized for a caller who named none returns to them. <see cref="PolicyFor"/> records
+        /// the use itself for the feature it resolves; this is that recording, reached from a
+        /// decision that holds the policy already.
+        /// </remarks>
+        internal void AuditUse(string fieldPath, PolicyFeature feature, FieldPolicy policy)
+        {
+            if (feature != PolicyFeature.None && policy.IsAudited(feature))
+            {
+                Audit(fieldPath, feature, policy);
+            }
+        }
 
         /// <summary>Resolves one field's policy, once per query.</summary>
         internal FieldPolicy PolicyFor(string fieldPath, PolicyFeature feature)

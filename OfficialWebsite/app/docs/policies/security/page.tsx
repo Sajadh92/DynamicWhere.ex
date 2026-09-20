@@ -18,9 +18,11 @@ export default function Page() {
       <p>
         Denying a field is easy. The hard part is the set of ways a caller can
         learn a value <em>without</em> reading it. Six such channels follow, then
-        two bypasses that are not channels, then the requests that, until
-        3.2.0, carried out a denied value the gate could not see; each has a
-        test that reproduces the attack and goes red if the control is removed.
+        two bypasses that are not channels, then a path the query cannot compute
+        — not a channel either, but the one request the tier used to answer with
+        neither an answer nor a refusal — then the requests that, until 3.2.0,
+        carried out a denied value the gate could not see; each has a test that
+        reproduces the attack and goes red if the control is removed.
       </p>
 
       <Callout tone="warn" title="MinGroupSize ships on, at 5">
@@ -184,6 +186,21 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         together describe how the rows are partitioned.
       </p>
 
+      <h2 id="two-more">7 and 8. The two that are not channels</h2>
+      <table>
+        <thead><tr><th>Attack</th><th>Control</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>An unguarded DynamicWhere call on a type that requires a policy</td>
+            <td><code>[DwEntity(RequirePolicy = true)]</code> throws <code>PolicyRequired</code> rather than returning rows. Only this library&apos;s own extension methods run the check, so plain EF Core or LINQ against the <code>DbSet</code> is not intercepted — the flag closes the hole in <em>this</em> API, not every route to the table.</td>
+          </tr>
+          <tr>
+            <td>An empty policy store</td>
+            <td>Attributes still enforce; an empty store never resolves to Allow</td>
+          </tr>
+        </tbody>
+      </table>
+
       <h2 id="unexpressible">A path the query cannot compute</h2>
       <p>
         A member of a row&apos;s type is not always a value a database can
@@ -208,6 +225,17 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         member the provider translates such as <code>Length</code> or{" "}
         <code>Year</code>, anything beneath a column, the convenience tier and a
         dry run are all unchanged, and fail exactly as the unguarded query does.
+        So is a query a provider in front of EF Core translates — LinqKit&apos;s{" "}
+        <code>AsExpandable()</code>, DelegateDecompiler&apos;s{" "}
+        <code>Decompile()</code> — since such a provider exists to rewrite what
+        EF Core cannot, and a member it computes is one the query produces.
+      </p>
+      <p>
+        The refusal raises no <code>[DwAudit]</code> event, for the reason an
+        unknown name raises none: no field was read, and the refusal names none.{" "}
+        <code>AuditRefusals</code> records it, and the trace carries the real
+        path. A simulation is handed no source, so it cannot refuse such a path
+        at all.
       </p>
       <p>
         This closes no leak: the query failed, it did not answer. It removes a
@@ -215,21 +243,6 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         it keeps the tier&apos;s promise that a guarded request is answered or
         refused. The trace records the reason.
       </p>
-
-      <h2 id="two-more">7 and 8. The two that are not channels</h2>
-      <table>
-        <thead><tr><th>Attack</th><th>Control</th></tr></thead>
-        <tbody>
-          <tr>
-            <td>An unguarded DynamicWhere call on a type that requires a policy</td>
-            <td><code>[DwEntity(RequirePolicy = true)]</code> throws <code>PolicyRequired</code> rather than returning rows. Only this library&apos;s own extension methods run the check, so plain EF Core or LINQ against the <code>DbSet</code> is not intercepted — the flag closes the hole in <em>this</em> API, not every route to the table.</td>
-          </tr>
-          <tr>
-            <td>An empty policy store</td>
-            <td>Attributes still enforce; an empty store never resolves to Allow</td>
-          </tr>
-        </tbody>
-      </table>
 
       <h2 id="beneath">Denials the gate could not see</h2>
       <p>

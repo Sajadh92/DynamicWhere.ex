@@ -124,7 +124,12 @@ FilterResult<Customer> result = await dbContext.Customers.ToListAsync(filter);`}
       <h2 id="clone">Clone</h2>
       <p>
         <code>Filter.Clone()</code> is public since <strong>3.3.0</strong>. It
-        returns a deep copy — the condition tree with its groups and conditions, the <code>Selects</code> list, each order and the page — so nothing is shared with the original.
+        returns a deep copy — the condition tree with its groups and conditions, the <code>Selects</code> list, each order and the page — so nothing either request is given afterwards reaches the other.
+      </p>
+      <p>
+        Every node is new. The values a condition carries stay the caller&apos;s
+        own objects, in a new list: they are scalars decoded from JSON and
+        nothing in the pipeline writes to them.
       </p>
       <Code lang="csharp">{`Filter page2 = caller.Clone();
 page2.Page!.PageNumber = 2;          // the caller's own filter is untouched`}</Code>

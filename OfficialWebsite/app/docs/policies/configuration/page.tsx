@@ -932,7 +932,7 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
         <thead><tr><th>Compared</th><th>Not compared</th></tr></thead>
         <tbody>
           <tr>
-            <td><code>Tier</code>, <code>DryRun</code>, <code>IncludeTraceInResult</code>, <code>AuditRefusals</code></td>
+            <td><code>Tier</code>, <code>DryRun</code>, <code>AuditRefusals</code>, and <code>IncludeTraceInResult</code> by the value that applies</td>
             <td><code>TokenVault</code></td>
           </tr>
           <tr>
@@ -944,7 +944,7 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
             <td>The provider <em>instances</em></td>
           </tr>
           <tr>
-            <td>The exposed entity catalogue: the same types under the same names</td>
+            <td>The exposed entity catalogue: the same types, every name each answers to, and the name each is reported under</td>
             <td></td>
           </tr>
           <tr>
@@ -953,6 +953,15 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
           </tr>
         </tbody>
       </table>
+      <p>
+        <code>IncludeTraceInResult</code> is compared the way a cap is: it
+        defaults to the tier&apos;s own answer, and the tiers are equal by then,
+        so a host writing that answer out and a host leaving it null hand a
+        caller the same result. The catalogue is stricter — a type exposed under
+        two names is reported under the last one it was given, so two catalogues
+        that resolve every name alike still answer a schema request differently,
+        and the second posture is refused.
+      </p>
       <Callout tone="warn" title="A second host runs with the first host's vault, container and rule stores">
         The three on the right are objects a host builds for itself, and a
         second host builds its own, so comparing them by reference would make

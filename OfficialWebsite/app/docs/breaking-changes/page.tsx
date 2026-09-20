@@ -1474,9 +1474,9 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         Since <strong>3.3.0</strong> such a path is refused as an unknown name
         is: the clause&apos;s own code, <code>FieldPath</code>{" "}
         <code>&quot;*&quot;</code>, in every clause the database has to compute
-        — a filter, an order, a grouping key, an aggregated field, and each of
-        those inside a <code>Segment</code>. It is refused only where the whole
-        set of members a container can produce is known.
+        — a filter, an order, a grouping key, an aggregated field, and a filter
+        or an order inside a <code>Segment</code>. It is refused only where the
+        whole set of members a container can produce is known.
       </p>
       <p>
         <strong><code>Selects</code> is not one of them.</strong> A projection
@@ -1492,16 +1492,23 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         </thead>
         <tbody>
           <tr><td>An entity</td><td>the EF Core model: columns, shadow properties, owned and complex members, navigations</td><td>Refused</td></tr>
-          <tr><td>A row a <code>Select</code> built before <code>ApplyPolicy</code></td><td>that initializer&apos;s own assignments, at every level</td><td>Refused</td></tr>
+          <tr><td>A row a <code>Select</code> built before <code>ApplyPolicy</code></td><td>that initializer&apos;s own assignments, at every level, both branches of a conditional included</td><td>Refused</td></tr>
           <tr><td>…where the <code>Select</code> copies the member, <code>Name = role.Name</code></td><td>the model, beneath the member it copies</td><td>Refused</td></tr>
           <tr><td>Rows in memory</td><td>nothing — the getter runs</td><td>Runs, as before</td></tr>
-          <tr><td>Anything beneath a column, converted or not</td><td>nothing — the converter decides</td><td>Runs, as before</td></tr>
+          <tr><td>Anything beneath a column, converted or not</td><td>nothing — the converter decides</td><td>Left alone, as before</td></tr>
           <tr><td>A framework member: <code>Length</code>, <code>Year</code>, <code>HasValue</code></td><td>nothing — the provider translates it</td><td>Runs, as before</td></tr>
-          <tr><td>A source the library cannot read</td><td>nothing</td><td>Runs, as before</td></tr>
+          <tr><td>A source the library cannot read</td><td>nothing</td><td>Left alone, as before</td></tr>
+          <tr><td>A provider in front of EF Core: an expression expander, a decompiler</td><td>nothing — it rewrites what EF Core cannot translate</td><td>Left alone, as before</td></tr>
           <tr><td>A column only a subtype maps, queried through the base</td><td>the queried type&apos;s model, which is what EF Core translates against</td><td>Refused</td></tr>
-          <tr><td>A projection a provider that is not EF Core&apos;s ran</td><td>nothing — its rules are its own</td><td>Runs, as before</td></tr>
+          <tr><td>A projection a provider that is not EF Core&apos;s ran</td><td>nothing — its rules are its own</td><td>Left alone, as before</td></tr>
         </tbody>
       </table>
+      <p>
+        <strong>Left alone</strong> is not a promise that the path runs. The
+        policy does not refuse it, so it behaves exactly as it does unguarded:{" "}
+        <code>Name.IsEmpty</code> beneath a column mapped through a value
+        converter still fails inside the provider, as it always has.
+      </p>
       <p>
         An unmapped getter on the entity itself,{" "}
         <code>Display =&gt; $&quot;&#123;Code&#125;:&#123;Id&#125;&quot;</code>,
@@ -1511,10 +1518,30 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
       </p>
       <Callout tone="warn" title="The rule is the model's">
         A member the model maps nowhere is one the database cannot compute, so
-        the strict tier refuses it wherever the database has to. A member some
-        provider extension computes without a mapping is refused with the rest:
-        map it, or filter on the columns beneath it.
+        the strict tier refuses it wherever the database has to. A member a
+        translator inside EF Core computes without a mapping — a{" "}
+        <code>[DbFunction]</code>, a translator plugin — is refused with the
+        rest: map it, or filter on the columns beneath it.
       </Callout>
+      <p>
+        A provider <em>in front of</em> EF Core is a different case, and is left
+        alone. LinqKit&apos;s <code>AsExpandable()</code> and
+        DelegateDecompiler&apos;s <code>Decompile()</code> exist to rewrite the
+        members EF Core cannot translate, so a member they compute is one the
+        query produces, over a projection and over an entity alike. A row the
+        library itself projected is read like any other: the core&apos;s typed{" "}
+        <code>Select</code> null-guards every nested node it builds, and both
+        branches of that guard are read, so composing <code>Select</code> and
+        then filtering refuses what the bare handle refuses.
+      </p>
+      <p>
+        The refusal raises no <code>[DwAudit]</code> event, for the reason an
+        unknown name raises none: no field was read, and the refusal names none.{" "}
+        <code>AuditRefusals</code> records it, and so does the trace. A
+        simulation has no source, so <code>PolicySimulator</code> and{" "}
+        <code>/simulate</code> cannot refuse such a path — they show the request
+        running where the strict query refuses it.
+      </p>
 
       <h2 id="last-trace-timing">31. <code>LastTrace</code> Is Set Before a Request Is Sanitized</h2>
       <p>
@@ -1548,9 +1575,14 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         <code>IncludeTraceInResult</code>, <code>AuditRefusals</code>,{" "}
         <code>HashSalt</code>, <code>StoreFailure</code>,{" "}
         <code>MaxSnapshotAge</code>, <code>RefreshInterval</code>, every cap
-        value, the exposed entity catalogue with every name it answers to, and
-        the provider types in the order supplied. Writing a cap&apos;s own
-        default down is not a difference. Not compared, and not
+        value, the exposed entity catalogue with every name it answers to and
+        the name each type is reported under, and the provider types in the
+        order supplied. Writing a value&apos;s own default down is not a
+        difference: a cap&apos;s default, and <code>IncludeTraceInResult</code>{" "}
+        written as the tier&apos;s own answer, are compared by the value that
+        applies. A type exposed under two names is reported under the last one,
+        so two catalogues resolving every name alike are still refused when the
+        order differs. Not compared, and not
         replaced: <code>TokenVault</code>, <code>Services</code> and the
         provider instances — a second host builds its own, and no two are ever
         the same reference.

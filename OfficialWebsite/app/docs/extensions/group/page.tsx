@@ -21,6 +21,16 @@ export default function Page() {
         group-by fields and aggregate aliases as properties.
       </p>
 
+      <Callout tone="warn" title="Guarded, small groups are dropped by default">
+        <code>DwCaps.MinGroupSize</code> ships <strong>on, at 5</strong>, so a
+        guarded call removes every group with fewer than five rows — not
+        refused, and nothing in the answer says a group was dropped. That is
+        right for anonymised reporting and surprising for an operational count.
+        Set <code>Caps.MinGroupSize = 1</code> to switch the floor off,
+        deliberately. An unguarded call is never floored. See{" "}
+        <Link href="/docs/policies/security#aggregates">k-anonymity</Link>.
+      </Callout>
+
       <h2 id="signature">Signature</h2>
       <Code lang="csharp">{`public static IQueryable Group<T>(this IQueryable<T> query, GroupBy groupBy)
     where T : class`}</Code>

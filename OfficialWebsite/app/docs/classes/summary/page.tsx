@@ -171,7 +171,12 @@ SummaryResult result = await dbContext.Orders.ToListAsync(summary);`}</Code>
       <h2 id="clone">Clone</h2>
       <p>
         <code>Summary.Clone()</code> is public since <strong>3.3.0</strong>. It
-        returns a deep copy — the condition group, the group-by with its aggregates, the having clause, each order and the page — so nothing is shared with the original.
+        returns a deep copy — the condition group, the group-by with its aggregates, the having clause, each order and the page — so nothing either request is given afterwards reaches the other.
+      </p>
+      <p>
+        Every node is new. The values a condition carries stay the caller&apos;s
+        own objects, in a new list: they are scalars decoded from JSON and
+        nothing in the pipeline writes to them.
       </p>
       <Code lang="csharp">{`Summary page2 = caller.Clone();
 page2.Page!.PageNumber = 2;          // the caller's own summary is untouched`}</Code>

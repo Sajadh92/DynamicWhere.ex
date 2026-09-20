@@ -180,7 +180,10 @@ export default function Page() {
         loads; over rows in memory, values only. So the simulated clause can
         list fewer members than the query returns, and can show a projection
         an entity query does not need. <code>PolicySimulator</code> reads a
-        type the same way. See{" "}
+        type the same way. For the same reason neither can refuse a path no
+        database can compute: that refusal is read from the model behind the
+        source, so a simulation shows such a request running where the strict
+        query refuses it. See{" "}
         <Link href="/docs/policies/configuration#no-selects">A request that sends no Selects</Link>.
       </p>
 

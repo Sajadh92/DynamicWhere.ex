@@ -264,6 +264,7 @@ A single filter predicate.
 
 `Values` is `List<object>` so the front-end can send heterogeneous JSON shapes without quoting every primitive:
 
+
 ```json
 {
   "Field": "Price",
@@ -295,6 +296,8 @@ The library normalizes every element before validation/build:
 | `null` | `string.Empty` |
 
 **Backward compatibility:** callers previously sending `["abc"]` (quoted strings) keep working unchanged — strings deserialize into the `List<object>` as string elements. C# callers that previously used `Values = new List<string> {...}` must switch to `new List<object> {...}` (or `.Cast<object>().ToList()`).
+
+A value is read once to validate its format and again to build the predicate, so pass values that do not change: one whose `ToString()` answers differently each time is validated as one value and queried as another. Anything decoded from JSON is such a value already. No policy decision reads a value's content — only how many there are — so nothing a guard decides rests on which read won.
 
 ---
 
@@ -382,7 +385,7 @@ Combines filtering, selecting, ordering, and pagination in a single object.
 | `Orders` | `List<OrderBy>?` | Optional sort criteria |
 | `Page` | `PageBy?` | Optional pagination |
 
-**`Clone()`** *(public since 3.3.0)* returns a deep copy — the condition tree with its groups and conditions, the projection list, each order and the page — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — every node new, though the values a condition carries stay the caller's own objects in a new list — the condition tree with its groups and conditions, the projection list, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
 
 ---
 
@@ -397,7 +400,7 @@ Combines multiple condition sets with set operations (Union / Intersect / Except
 | `Orders` | `List<OrderBy>?` | Optional sort criteria |
 | `Page` | `PageBy?` | Optional pagination |
 
-**`Clone()`** *(public since 3.3.0)* returns a deep copy — every condition set with its own condition group, the projection list, each order and the page — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — every node new, though the values a condition carries stay the caller's own objects in a new list — every condition set with its own condition group, the projection list, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
 
 ---
 
@@ -413,7 +416,7 @@ Combines filtering → grouping → having → ordering → pagination for aggre
 | `Orders` | `List<OrderBy>?` | Sort on grouped result. Fields must be GroupBy fields or aggregate aliases |
 | `Page` | `PageBy?` | Optional pagination on grouped result |
 
-**`Clone()`** *(public since 3.3.0)* returns a deep copy — the condition group, the group-by with its aggregates, the having clause, each order and the page — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — every node new, though the values a condition carries stay the caller's own objects in a new list — the condition group, the group-by with its aggregates, the having clause, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
 
 ---
 
@@ -554,7 +557,7 @@ Applies a group of conditions joined by `And` / `Or`, with optional nested sub-g
 
 ### `.Group<T>(GroupBy groupBy)`
 
-Groups the query by the specified fields and applies aggregations.
+Groups the query by the specified fields and applies aggregations. Under `ApplyPolicy`, groups smaller than `DwCaps.MinGroupSize` — **5 by default** — are dropped; see [k-anonymity](#k-anonymity--the-control-you-would-not-guess).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -673,7 +676,7 @@ Since 3.2.0 two overloads take a `CancellationToken`, which reaches the count an
 
 ### `.Summary<T>(Summary summary)`
 
-Applies where → group → having → order → page to a query.
+Applies where → group → having → order → page to a query. Under `ApplyPolicy`, groups smaller than `DwCaps.MinGroupSize` — **5 by default** — are dropped; see [k-anonymity](#k-anonymity--the-control-you-would-not-guess).
 
 **Returns:** `IQueryable` — dynamic grouped query.
 
@@ -697,7 +700,7 @@ In-memory variant for summary operations.
 
 ### `.ToListAsync<T>(Summary summary, bool getQueryString = false)`
 
-Async version of `ToList<T>(Summary)`. On an EF Core query it counts the groups with EF Core's `CountAsync()` and reads them with EF Core's `ToListAsync()`. Until 3.2.0 the count ran synchronously and the read went through Dynamic LINQ's `ToDynamicListAsync()`, which had no token to pass on; on an EF Core query a canceled token now reaches the database. The count and the rows are the same. A source whose provider is not EF Core's, such as rows in memory through `AsQueryable()`, keeps the synchronous count and Dynamic LINQ's read, on the calling thread.
+Async version of `ToList<T>(Summary)`, and floored the same way: under `ApplyPolicy`, groups smaller than `DwCaps.MinGroupSize` — **5 by default** — are dropped; see [k-anonymity](#k-anonymity--the-control-you-would-not-guess). On an EF Core query it counts the groups with EF Core's `CountAsync()` and reads them with EF Core's `ToListAsync()`. Until 3.2.0 the count ran synchronously and the read went through Dynamic LINQ's `ToDynamicListAsync()`, which had no token to pass on; on an EF Core query a canceled token now reaches the database. The count and the rows are the same. A source whose provider is not EF Core's, such as rows in memory through `AsQueryable()`, keeps the synchronous count and Dynamic LINQ's read, on the calling thread.
 
 Since 3.2.0 two overloads take a `CancellationToken`, which reaches the count and the read: `.ToListAsync<T>(Summary summary, CancellationToken cancellationToken)` and `.ToListAsync<T>(Summary summary, bool getQueryString, CancellationToken cancellationToken)`. See [Cancellation](#cancellation).
 
@@ -1690,7 +1693,7 @@ public sealed class LocalizedText
 }
 ```
 
-gives `Name.Ar` and `Name.En`, which translate, and `Name.IsEmpty`, which is a getter over the two. The policy has nothing to say about it — `[DwNoWhere]` on `Name` matches that path and not the ones beneath it — so every check passed and EF Core threw `InvalidOperationException`: a five-hundred where `Strict` promises a refusal. Such a path is now refused as an unknown name is, with the clause's own code and `FieldPath` `"*"`, in every clause the database has to compute: a filter, an order, a grouping key, an aggregated field, and each of those inside a `Segment`.
+gives `Name.Ar` and `Name.En`, which translate, and `Name.IsEmpty`, which is a getter over the two. The policy has nothing to say about it — `[DwNoWhere]` on `Name` matches that path and not the ones beneath it — so every check passed and EF Core threw `InvalidOperationException`: a five-hundred where `Strict` promises a refusal. Such a path is now refused as an unknown name is, with the clause's own code and `FieldPath` `"*"`, in every clause the database has to compute: a filter, an order, a grouping key, an aggregated field, and a filter or an order inside a `Segment`.
 
 **`Selects` is not one of them.** A projection is the last thing the provider builds, and EF Core evaluates that one on the client when it cannot translate it, so `Selects = ["Id", "Name.IsEmpty"]` returns the computed value exactly as it did before. Refusing it would take back a projection that has always worked.
 
@@ -1699,16 +1702,23 @@ It is refused only where the whole set of members a container can produce is kno
 | Source | Read from | `Name.IsEmpty` |
 |---|---|---|
 | An entity | the EF Core model: columns, shadow properties, owned and complex members, navigations | Refused |
-| A row a `Select` built before `ApplyPolicy` | the initializer's own assignments, at every level | Refused |
+| A row a `Select` built before `ApplyPolicy` | the initializer's own assignments, at every level, both branches of a conditional included | Refused |
 | …where that `Select` copies the member from the entity, `Name = role.Name` | the model, beneath the member it copies | Refused |
 | Rows in memory | nothing — the getter runs | Runs, as it always did |
-| Anything beneath a column, a converted one included | nothing — the converter decides | Runs, as it always did |
+| Anything beneath a column, a converted one included | nothing — the converter decides | Left alone, as it always did |
 | A framework member such as `Length`, `Year` or `HasValue` | nothing — the provider translates it | Runs, as it always did |
-| A source the library cannot read | nothing | Runs, as it always did |
+| A source the library cannot read | nothing | Left alone, as it always did |
+| A provider in front of EF Core: an expression expander, a decompiler | nothing — it rewrites what EF Core cannot translate | Left alone, as it always did |
 | A column only a subtype maps, queried through the base | the queried type's model, which is what EF Core translates against | Refused |
-| A projection a provider that is not EF Core's ran | nothing — its rules are its own | Runs, as it always did |
+| A projection a provider that is not EF Core's ran | nothing — its rules are its own | Left alone, as it always did |
+
+**Left alone** is not a promise that the path runs. The policy does not refuse it, so it behaves exactly as it does unguarded: `Name.IsEmpty` beneath a column mapped through a value converter still fails inside the provider, as it always has.
 
 An unmapped getter on the entity itself, `Display => $"{Code}:{Id}"`, is refused for the same reason. The convenience tier and a dry run are unchanged: both fail exactly as the unguarded query does, which is the provider's own error. The trace records the refusal — `the member exists on the type and the query cannot compute it` — and since 3.3.0 `LastTrace` is set before a request is sanitized, so a refusal leaves it readable rather than null.
+
+The rule is EF Core's own provider's. A provider that wraps EF Core — LinqKit's `AsExpandable()`, DelegateDecompiler's `Decompile()` — exists to rewrite the members EF Core cannot translate, so a member it computes is one the query produces and it is left alone, over a projection and over an entity alike. A row the library itself projected is read like any other: the core's typed `Select` null-guards every nested node it builds, and both branches of that guard are read, so composing `Select` and then filtering refuses exactly what the bare handle refuses.
+
+A refusal here raises no `[DwAudit]` event, for the same reason an unknown name raises none: no field was read, and the refusal names none. `AuditRefusals` records it, and so does the trace.
 
 The rule is the model's: a member it maps nowhere is one the database cannot compute. A member some provider extension computes without a mapping is refused with the rest, so map it, or filter on the columns beneath it.
 
@@ -1980,7 +1990,7 @@ Options are frozen at startup. Every cap refuses a value below one, except two t
 | `POST` | `/simulate` | The sanitized clause, without executing or auditing |
 | `GET` | `/health` | Snapshot version, age, degraded state, last error |
 
-A simulation, through `/simulate` or `PolicySimulator`, has no source, so it reads the type as a source it cannot see into. That shows in a clause that sends no `Selects`: every denial beneath a member counts, and the projection it shows keeps only the members that hold a value, a collection of values included. A guarded query keeps what its own source carries — over a projected row, the objects its initializer assigns; over an entity, its columns, owned and complex members, asking only about the denials whose value it loads; over rows in memory, values only. So the simulated clause can list fewer members than the query returns, and can show a projection an entity query does not need. See [A request that sends no Selects](#a-request-that-sends-no-selects).
+A simulation, through `/simulate` or `PolicySimulator`, has no source, so it reads the type as a source it cannot see into. That shows in a clause that sends no `Selects`: every denial beneath a member counts, and the projection it shows keeps only the members that hold a value, a collection of values included. A guarded query keeps what its own source carries — over a projected row, the objects its initializer assigns; over an entity, its columns, owned and complex members, asking only about the denials whose value it loads; over rows in memory, values only. So the simulated clause can list fewer members than the query returns, and can show a projection an entity query does not need. For the same reason it cannot refuse a path no database can compute: that refusal is read from the model behind the source, which a simulation does not have, so a simulation shows such a request running where the strict query refuses it. See [A request that sends no Selects](#a-request-that-sends-no-selects).
 
 ### Schema discovery
 
@@ -2093,11 +2103,17 @@ What counts as the same posture:
 
 | Compared | Not compared |
 |---|---|
-| `Tier`, `DryRun`, `IncludeTraceInResult`, `AuditRefusals` | `TokenVault` |
+| `Tier`, `DryRun`, `AuditRefusals`, and `IncludeTraceInResult` by the value that applies | `TokenVault` |
 | `HashSalt`, `StoreFailure`, `MaxSnapshotAge`, `RefreshInterval` | `Services` |
 | Every value on `Caps`, the floor that applies rather than whether it was written down | The provider *instances* |
-| The exposed entity catalogue: the same types under the same names | |
+| The exposed entity catalogue: the same types, every name each answers to, and the name each is reported under | |
 | The provider *types*, in the order they were supplied | |
+
+`IncludeTraceInResult` is compared the way a cap is: it defaults to the tier's own answer, and the
+tiers are equal by then, so a host writing that answer out and a host leaving it null hand a caller
+the same result. A type exposed under two names is a different matter — it is reported under the last
+name it was given, so two catalogues that resolve every name alike still answer a schema request
+differently, and the second posture is refused.
 
 The three on the right are objects a host builds for itself, and a second host builds its own, so
 comparing them by reference would make every second call a refusal. They stay as the first call left
@@ -2421,7 +2437,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
     The attribute walker does not descend into the framework's own types, which carry no policy attributes. Until 3.2.0 it took any namespace whose name started with `System` for the framework's, so an application namespace such as `SystemsCorp.Payroll` or `SystemX.Domain` got no policy beneath its types, and a `[DwDenied]` field on such a type, reached through a member, was returned, filterable and sortable. Fixed (security): only `System` and the namespaces beneath it are the framework's now, so a guarded request that filtered on, sorted by or selected such a field is refused or dropped, as for any denied field.
 
 25. **Under `Strict`, a Path the Query Cannot Compute Is Refused**
-    Since 3.3.0 a path whose leaf is a member no database can produce — a getter over columns, such as `LocalizedText.IsEmpty`, or an unmapped getter on the entity — is refused with the clause's own code and `FieldPath` `"*"`, as an unknown name is. Until 3.3.0 the package accepted it and EF Core threw `InvalidOperationException`, which reached a caller as a five-hundred where the tier promises a refusal. It applies where the whole set of members a container can produce is known: an entity's model, and the initializers of a projection composed before `ApplyPolicy`, including a member that projection copies from the entity. Rows in memory, a framework member the provider translates such as `Length` or `Year`, anything beneath a column, the convenience tier and a dry run are all unchanged. A member a custom EF Core translator computes, through `[DbFunction]` or a translator plugin, is refused with the rest: map it, or filter on the columns beneath it. See [Blocked-action semantics](#blocked-action-semantics).
+    Since 3.3.0 a path whose leaf is a member no database can produce — a getter over columns, such as `LocalizedText.IsEmpty`, or an unmapped getter on the entity — is refused with the clause's own code and `FieldPath` `"*"`, as an unknown name is. Until 3.3.0 the package accepted it and EF Core threw `InvalidOperationException`, which reached a caller as a five-hundred where the tier promises a refusal. It applies where the whole set of members a container can produce is known: an entity's model, and the initializers of a projection composed before `ApplyPolicy`, including a member that projection copies from the entity. Rows in memory, a framework member the provider translates such as `Length` or `Year`, anything beneath a column, a query a provider in front of EF Core translates — an expression expander, a decompiler — the convenience tier and a dry run are all unchanged. A member a custom EF Core translator computes, through `[DbFunction]` or a translator plugin, is refused with the rest: map it, or filter on the columns beneath it. See [Blocked-action semantics](#blocked-action-semantics).
 
 26. **`LastTrace` Is Set Before a Request Is Sanitized**
     Since 3.3.0 `PolicyQueryable<T>.LastTrace` carries the trace of a request that was refused. It used to be assigned after sanitizing returned, so a refusal left it holding the previous request's trace, or null on the first. A strict refusal names no field on purpose, and the trace is where the real path and reason live, so this is what makes one readable. Code that read `LastTrace` after catching a `PolicyException` and expected the earlier request's trace reads this request's now.

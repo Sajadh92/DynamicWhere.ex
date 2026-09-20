@@ -204,7 +204,8 @@ Summary         ConditionGroup      ConditionGroup?       null        where, bef
                 Orders              List<OrderBy>?        null        each Field is a GroupBy field or an Alias
                 Page                PageBy?               null        pages the groups
 
-Clone()         on Filter, Segment and Summary                        public since 3.3.0; deep copy, shares no object
+Clone()         on Filter, Segment and Summary                        public since 3.3.0; deep copy, every node new,
+                                                                      a condition's values shared in a new list
                                                                       with the original: the condition tree with its
                                                                       groups and conditions, the Selects list, each
                                                                       OrderBy, the Page, and a Summary's GroupBy with
@@ -1463,9 +1464,13 @@ DwPolicy                                                                    stat
   `WebApplicationFactory<Program>` hosts over one composition root.
   - Compared: `Tier`, `DryRun`, `IncludeTraceInResult`, `AuditRefusals`, `HashSalt`, `StoreFailure`,
     `MaxSnapshotAge`, `RefreshInterval`, every `DwCaps` value, the exposed catalogue — the same types under the same
-    names, and every name each type answers to — and the provider **types**, in the order supplied, with
-    `AttributePolicyProvider` left out of both sides. `IsMinGroupSizeSet` is not compared: nothing in enforcement
-    reads it, so writing `MinGroupSize = 5` and leaving it unset are the same posture.
+    names, every name each type answers to, and the name each type is reported under — and the provider **types**,
+    in the order supplied, with `AttributePolicyProvider` left out of both sides. `IsMinGroupSizeSet` is not
+    compared: nothing in enforcement reads it, so writing `MinGroupSize = 5` and leaving it unset are the same
+    posture. `IncludeTraceInResult` is compared by the value that applies, not by whether it was written down: it
+    defaults to the tier's own answer, so writing that answer out is the same posture. A type exposed under two
+    names is reported under the last one, so two catalogues resolving every name alike are still refused when the
+    order differs.
   - Not compared, and not replaced: `TokenVault`, `Services`, and the provider **instances**. A second host builds
     its own and no two are ever the same reference, so they stay as the first call left them — a second host runs
     with the first host's vault, container and rule stores.
@@ -2315,7 +2320,7 @@ The resolver, fragment and provider types are listed in section 21.
 
 Under `Strict` outside a dry run, a path that exists on the type but names no value the query can compute is refused
 as an unknown name is (3.3.0), with the clause's own code and `FieldPath` `"*"`, in every clause the database has to
-compute: a filter, an order, a grouping key, an aggregated field, and each of those inside a `Segment`.
+compute: a filter, an order, a grouping key, an aggregated field, and a filter or an order inside a `Segment`.
 
 `Selects` is not one of them. A projection is the last thing the provider builds, and EF Core evaluates that one on
 the client when it cannot translate it, so `Selects` naming such a member returns its value exactly as before.
@@ -2324,20 +2329,34 @@ What decides:
 
 ```
 Source of the rows                                   What the set of producible members is read from   Name.IsEmpty
-entity query                                         EF Core model: columns (shadow included), owned,
-                                                     complex, navigations, and derived types           refused
-Select(...) before ApplyPolicy building the row      that initializer's assignments, at every level    refused
+entity query                                         EF Core model of the queried type: columns
+                                                     (shadow included), owned, complex, navigations    refused
+Select(...) before ApplyPolicy building the row      that initializer's assignments, at every level,
+                                                     both branches of a conditional included           refused
   ... a member it copies whole: Name = role.Name     the model, beneath the copied member              refused
 rows in memory (EnumerableQuery)                     nothing; the getter runs                          runs
-beneath a column, converted or not                   nothing; the converter decides                    runs
+beneath a column, converted or not                   nothing; the converter decides                    left alone
 a framework member: Length, Year, HasValue           nothing; the provider translates it               runs
-a source the library cannot read into                nothing                                           runs
+a source the library cannot read into                nothing                                           left alone
+a provider in front of EF Core                       nothing; it rewrites what EF Core cannot
+                                                     translate                                         left alone
 a column only a subtype maps, through the base       the queried type's model, which EF Core
                                                      translates against                                refused
-a projection another provider ran                    nothing; its rules are its own                    runs
+a projection another provider ran                    nothing; its rules are its own                    left alone
 ```
 
+- `left alone` is not a promise that the path runs: the policy does not refuse it, so it behaves
+  exactly as it does unguarded. `Name.IsEmpty` beneath a column mapped through a value converter
+  still fails inside the provider.
 - An unmapped getter on the entity itself (`Display => $"{Code}:{Id}"`) is refused for the same reason.
+- The rule is EF Core's own provider's. A provider that wraps EF Core — LinqKit's `AsExpandable()`,
+  DelegateDecompiler's `Decompile()` — rewrites what EF Core cannot translate, so its rows are left alone, over a
+  projection and over an entity alike.
+- A row the library itself projected reads like any other: the core's typed `Select` null-guards every nested node
+  it builds, and both branches of that guard are read, so `Select` composed and then filtered refuses what the bare
+  handle refuses.
+- The refusal raises no `[DwAudit]` event, as an unknown name raises none: no field was read and the refusal names
+  none. `AuditRefusals` records it, and so does the trace.
 - `Convenience` and a dry run are unchanged: the provider throws, as it does unguarded.
 - The rule is the model's: a member it maps nowhere is refused, whatever a provider extension could compute.
 - The trace records it: `the member exists on the type and the query cannot compute it, so it is refused as an unknown name is`.
@@ -3704,7 +3723,7 @@ options.Entities.Expose<Employee>("Employee");
 
 var store    = new InMemoryPolicyStore(options.Entities.Resolve);
 var provider = await StorePolicyProvider.CreateAsync(store, options);
-DwPolicy.Configure(options, provider);                         // once; freezes options
+DwPolicy.Configure(options, provider);                         // freezes options; a second call must ask for this posture
 
 builder.Services.AddSingleton<IDwPolicyStore>(store);          // admin API reads
 builder.Services.AddSingleton<IDwPolicyWritableStore>(store);  // admin API writes
@@ -4844,8 +4863,9 @@ MemoryCalculationInput
           force and do nothing. A different posture still throws. The check is inside the lock that configures, so a
           caller needs no IsConfigured check of its own — that check is a check-then-act two hosts can both pass.
           Compared: tier, DryRun, IncludeTraceInResult, AuditRefusals, HashSalt, StoreFailure, MaxSnapshotAge,
-          RefreshInterval, every cap value, the exposed catalogue with every name it answers to, and the provider
-          types in order.
+          RefreshInterval, every cap value, the exposed catalogue with every name it answers to and the name each
+          type is reported under, and the provider types in order. A cap's own default and the tier's own answer for
+          IncludeTraceInResult are compared by the value that applies, not by whether somebody wrote them down.
           Not compared and not replaced: TokenVault, Services and the provider instances, so a second host runs with
           the first host's vault, container and rule stores. AddDwPolicies registers the posture in force rather than
           the instance it built.
@@ -4855,12 +4875,15 @@ MemoryCalculationInput
           the caller saw a five-hundred. Selects is not one of them: EF Core evaluates the last projection on the
           client. Refused only where the producible members are known: the queried type's own model, and the
           initializers of a projection EF Core ran before ApplyPolicy, including a member it copies from the entity.
-          Rows in memory, a framework member such as Length or Year, anything beneath a column, another provider's
-          rows, Convenience and a dry run are unchanged.
+          Rows in memory, a framework member such as Length or Year, anything beneath a column, a query a provider
+          in front of EF Core translates — an expression expander, a decompiler — Convenience and a dry run are
+          unchanged. The refusal raises no [DwAudit] event, as an unknown name raises none; AuditRefusals and the
+          trace record it. A simulation has no source, so PolicySimulator and /simulate cannot refuse such a path.
         - Behaviour change. LastTrace is assigned before a request is sanitized, so a refused request leaves its own
           trace readable instead of the previous request's.
         - New. Clone() is public on Filter, Segment and Summary. A deep copy: the condition tree, the projection list,
-          each order, the page, and a summary's GroupBy and Having.
+          each order, the page, and a summary's GroupBy and Having. Every node is new; a condition's values are the
+          caller's own objects, in a new list.
         - Docs. DwEntity(DefaultOrder)'s remarks said a projected query takes no default; it has since 3.2.0. The
           aggregation sections now lead with Caps.MinGroupSize shipping on at 5.
 
@@ -5118,6 +5141,11 @@ MemoryCalculationInput
   the derived type, `Set<Merchant>()`.
 - A second host configuring the same posture runs with the first host's `TokenVault`, `Services` and rule store
   instances (3.3.0, section 12). They are not compared and not replaced.
+- A simulation has no source, so `PolicySimulator` and `/simulate` cannot refuse a path no database can compute;
+  they show such a request running where the strict query refuses it (3.3.0, section 17).
+- A condition's values are read once to validate their format and again to build the predicate. A value whose
+  `ToString()` answers differently each time is validated as one value and queried as another; pass values that do
+  not change. No policy decision reads a value's content — only how many there are.
 - Summary rows flatten dotted group fields (`CategoryName`); `SelectDynamic` rows nest them (`Category.Name`).
 - `Filter` applies `Orders` and `Page` on T before the projection, so order fields need not be selected.
 - `getQueryString` needs an EF Core provider.

@@ -171,7 +171,12 @@ SegmentResult<Customer> result = await dbContext.Customers.ToListAsync(segment);
       <h2 id="clone">Clone</h2>
       <p>
         <code>Segment.Clone()</code> is public since <strong>3.3.0</strong>. It
-        returns a deep copy — every condition set with its own condition group, the <code>Selects</code> list, each order and the page — so nothing is shared with the original.
+        returns a deep copy — every condition set with its own condition group, the <code>Selects</code> list, each order and the page — so nothing either request is given afterwards reaches the other.
+      </p>
+      <p>
+        Every node is new. The values a condition carries stay the caller&apos;s
+        own objects, in a new list: they are scalars decoded from JSON and
+        nothing in the pipeline writes to them.
       </p>
       <Code lang="csharp">{`Segment page2 = caller.Clone();
 page2.Page!.PageNumber = 2;          // the caller's own segment is untouched`}</Code>

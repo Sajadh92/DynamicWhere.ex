@@ -2196,6 +2196,9 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - A use is what the request reads: a field it names, a default-order field the query adds, and — since 3.3.0 —
   every audited member a projection the caller did not name hands back, recorded for `Select`. One event per query,
   not per row. Until 3.3.0 an empty `Selects` returned the value with nothing written down.
+- What is handed back is read strictly: a member kept whole records the audited paths inside it; a navigation
+  nothing loads records nothing, since the caller receives null for it; a value the source does not carry records
+  nothing. A dry run applies no projection, so everything the row carries is recorded, a denied member included.
 - A refusal becomes an event of its own, with an `ErrorCode`, only when `DwPolicyOptions.AuditRefusals` is
   on, and then for every refused guarded query, audited field or not (3.1.0, section 22).
 - It is elected: the top-ranked audit wins outright, and fragments tied with it are unioned. A rule can
@@ -4321,6 +4324,10 @@ There are eleven. The first eight let a caller learn a value, or what the policy
   `CapExceeded` and an origin naming the cap, while an unknown name — never audited, so never reaching the cap —
   carried the ordinary field refusal. Under `Strict` outside a dry run the cap now refuses with the clause's own
   field refusal, so the two cannot be told apart; `Convenience` and a dry run still answer `CapExceeded`.
+- **The navigation cap on an aliased name:** `MaxNavigationDepth` counts the canonical path, so an alias the caller
+  wrote as one token was refused with the cap's own code and an origin stating that path's depth, where a name
+  matching nothing got the clause's refusal. Under `Strict` outside a dry run such a name is refused as an unknown
+  name is (3.3.0); a caller who wrote the path themselves still meets the cap.
 - **A refusal that names a field:** four did under `Strict` until 3.3.0 — an ambiguous name, an ambiguous grouping
   key, a clause that cannot be transformed, and a deployment with no hash salt or token vault. An ambiguous name is
   now refused as an unknown name is; the grouping key, the hash salt and the token vault name the clause and carry

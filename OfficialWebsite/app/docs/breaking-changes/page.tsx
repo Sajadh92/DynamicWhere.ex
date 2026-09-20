@@ -17,12 +17,12 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The thirty-five points below cover constraints, surprises, and corner cases —
+        The thirty-six points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
       <Callout tone="danger" title="Behaviour changes in 3.3.0">
-        Points&nbsp;30 to 35 changed in <strong>3.3.0</strong>. Under{" "}
+        Points&nbsp;30 to 36 changed in <strong>3.3.0</strong>. Under{" "}
         <code>Strict</code>, a path that exists on the type and names no value
         the query can compute is refused rather than run, where the provider
         used to throw and the caller saw a five-hundred (point&nbsp;30).{" "}
@@ -37,7 +37,9 @@ export default function Page() {
         a field under <code>Strict</code> name the clause instead
         (point&nbsp;34). And <code>[DwAudit]</code> records the audited members
         a projection the caller never named hands back, which an empty{" "}
-        <code>Selects</code> used to return unrecorded (point&nbsp;35).
+        <code>Selects</code> used to return unrecorded (point&nbsp;36), and{" "}
+        <code>MaxNavigationDepth</code> answers an alias the way it answers a
+        name that matches nothing (point&nbsp;35).
       </Callout>
       <Callout tone="danger" title="Behaviour changes in 3.2.0">
         Points&nbsp;25 to 29 changed in <strong>3.2.0</strong>, and each is
@@ -1684,7 +1686,19 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         <code>FieldPath</code> off any of the four, sees the change.
       </p>
 
-      <h2 id="audit-unnamed-read">35. <code>[DwAudit]</code> Records a Read the Request Did Not Name</h2>
+      <h2 id="nav-cap-alias">35. <code>MaxNavigationDepth</code> on a Name the Caller Wrote as One Token</h2>
+      <p>
+        The cap counts the canonical path, so an alias standing for a deep path
+        was refused with <code>CapExceeded</code> and an origin stating that
+        path&apos;s depth — where a name matching nothing got the clause&apos;s
+        own refusal and no origin. Under <code>Strict</code> outside a dry run
+        such a name is refused as an unknown name is since{" "}
+        <strong>3.3.0</strong>. A caller who wrote the path themselves already
+        knows its depth and still meets the cap, as every over-long request
+        does, and the trace keeps the cap and the depth for the operator.
+      </p>
+
+      <h2 id="audit-unnamed-read">36. <code>[DwAudit]</code> Records a Read the Request Did Not Name</h2>
       <p>
         A request that sends no <code>Selects</code> receives the row. Until{" "}
         <strong>3.3.0</strong> only a field the request spelled out was

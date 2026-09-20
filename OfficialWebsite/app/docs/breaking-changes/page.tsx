@@ -1677,7 +1677,9 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
       <p>
         All four are unchanged under <code>Convenience</code> and in a dry run —
         the posture&apos;s switch or the caller&apos;s — where the tier names
-        fields anyway. Code switching on{" "}
+        fields anyway, and the refusal audit still records the real field, as it
+        does for every refusal whose caller-facing path is{" "}
+        <code>&quot;*&quot;</code>. Code switching on{" "}
         <code>AmbiguousFieldName</code> under <code>Strict</code>, or reading{" "}
         <code>FieldPath</code> off any of the four, sees the change.
       </p>

@@ -4325,7 +4325,8 @@ There are eleven. The first eight let a caller learn a value, or what the policy
   key, a clause that cannot be transformed, and a deployment with no hash salt or token vault. An ambiguous name is
   now refused as an unknown name is; the grouping key, the hash salt and the token vault name the clause and carry
   no origin, and the clause that cannot be transformed names the clause and keeps an origin naming the method and
-  what to call instead, never a field. `Convenience` and a dry run, either switch, are unchanged.
+  what to call instead, never a field. `Convenience` and a dry run, either switch, are unchanged, and
+  `AuditRefusals` still records the real field for all four.
 - **An unrecorded read:** until 3.3.0 `[DwAudit]` recorded only a field the request named, so a caller sending no
   `Selects` received every audited member of the row with nothing written down. Every audited member a projection
   the caller did not name hands back is recorded for `Select` now, one event per query.
@@ -5204,6 +5205,8 @@ MemoryCalculationInput
 - A shadow property cannot be named by any clause, guarded or not: a field path names CLR members, and a shadow
   property has none, so the name matches nothing and is refused as an unknown name. Map it to a property, or reach
   it through a projection that assigns it with `EF.Property`.
+- An alias spelled like another member of the same type is reported by `ValidateModel` (3.3.0). A generated row
+  cannot carry one name twice, so the rename is not applied there and both columns keep their own names.
 - A member no database can compute — a getter over columns, or an unmapped getter on an entity — cannot be
   filtered, ordered, grouped or aggregated under `Strict` on a source the library can read (3.3.0, section 17). Map
   it, or name the columns beneath it. A projection may still name it, because EF Core evaluates the last projection

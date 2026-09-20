@@ -2333,6 +2333,9 @@ entity query                                         EF Core model of the querie
                                                      (shadow included), owned, complex, navigations    refused
 Select(...) before ApplyPolicy building the row      that initializer's assignments, at every level,
                                                      both branches of a conditional included           refused
+  ... a member assigned from something else: a       nothing; the assignment is not one this shape
+      method call, a captured value, a subquery,     reads
+      two branches building it two ways                                                                left alone
   ... a member it copies whole: Name = role.Name     the model, beneath the copied member              refused
 rows in memory (EnumerableQuery)                     nothing; the getter runs                          runs
 beneath a column, converted or not                   nothing; the converter decides                    left alone
@@ -2345,13 +2348,18 @@ a column only a subtype maps, through the base       the queried type's model, w
 a projection another provider ran                    nothing; its rules are its own                    left alone
 ```
 
+- A projection is read only as far as its initializer can be read: a nested initializer, a member copied from the
+  entity, a value built and left empty, a null, and a conditional over those. Past `MaxComplexDepth` (eight levels)
+  it stops reading and stops speaking. Such a path reaches the provider and fails there, as before 3.3.0.
 - `left alone` is not a promise that the path runs: the policy does not refuse it, so it behaves
   exactly as it does unguarded. `Name.IsEmpty` beneath a column mapped through a value converter
   still fails inside the provider.
 - An unmapped getter on the entity itself (`Display => $"{Code}:{Id}"`) is refused for the same reason.
-- The rule is EF Core's own provider's. A provider that wraps EF Core — LinqKit's `AsExpandable()`,
-  DelegateDecompiler's `Decompile()` — rewrites what EF Core cannot translate, so its rows are left alone, over a
-  projection and over an entity alike.
+- The rule is EF Core's own provider's — that type, not a type derived from it. A provider that wraps EF Core —
+  LinqKit's `AsExpandable()`, DelegateDecompiler's `Decompile()` — rewrites what EF Core cannot translate, so its
+  rows are left alone, over a projection and over an entity alike; one deriving from EF Core's provider rewrites the
+  same way and is left alone too. A rewrite inside EF Core's own pipeline — a `[DbFunction]`, a member-translator
+  plugin, a replaced query preprocessor — leaves EF Core's provider in place, so such a member is refused.
 - A row the library itself projected reads like any other: the core's typed `Select` null-guards every nested node
   it builds, and both branches of that guard are read, so `Select` composed and then filtered refuses what the bare
   handle refuses.

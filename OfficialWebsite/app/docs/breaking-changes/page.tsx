@@ -1493,6 +1493,7 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         <tbody>
           <tr><td>An entity</td><td>the EF Core model: columns, shadow properties, owned and complex members, navigations</td><td>Refused</td></tr>
           <tr><td>A row a <code>Select</code> built before <code>ApplyPolicy</code></td><td>that initializer&apos;s own assignments, at every level, both branches of a conditional included</td><td>Refused</td></tr>
+          <tr><td>…where the initializer assigns the member from something else: a method call, a captured value, a subquery, two branches building it two ways</td><td>nothing — the assignment is not one this shape reads</td><td>Left alone, as before</td></tr>
           <tr><td>…where the <code>Select</code> copies the member, <code>Name = role.Name</code></td><td>the model, beneath the member it copies</td><td>Refused</td></tr>
           <tr><td>Rows in memory</td><td>nothing — the getter runs</td><td>Runs, as before</td></tr>
           <tr><td>Anything beneath a column, converted or not</td><td>nothing — the converter decides</td><td>Left alone, as before</td></tr>
@@ -1503,6 +1504,16 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
           <tr><td>A projection a provider that is not EF Core&apos;s ran</td><td>nothing — its rules are its own</td><td>Left alone, as before</td></tr>
         </tbody>
       </table>
+      <p>
+        A projection is read only as far as its initializer can be read. An
+        entity query names every producible member from the model; a projection
+        names them only where each assignment is a nested initializer, a member
+        copied from the entity, a value built and left empty, a null, or a
+        conditional over those. Past <code>MaxComplexDepth</code> — eight levels
+        — it stops reading and stops speaking, and under <code>Strict</code>
+        such a path still reaches the provider and still fails there, exactly as
+        it did before 3.3.0.
+      </p>
       <p>
         <strong>Left alone</strong> is not a promise that the path runs. The
         policy does not refuse it, so it behaves exactly as it does unguarded:{" "}
@@ -1528,7 +1539,11 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         alone. LinqKit&apos;s <code>AsExpandable()</code> and
         DelegateDecompiler&apos;s <code>Decompile()</code> exist to rewrite the
         members EF Core cannot translate, so a member they compute is one the
-        query produces, over a projection and over an entity alike. A row the
+        query produces, over a projection and over an entity alike. The test is
+        EF Core&apos;s own provider type, not a type derived from it: a provider
+        built by deriving rewrites in the same way, and EF Core&apos;s own
+        derives from <code>object</code> in every version, so nothing real is
+        lost by the exact test. A row the
         library itself projected is read like any other: the core&apos;s typed{" "}
         <code>Select</code> null-guards every nested node it builds, and both
         branches of that guard are read, so composing <code>Select</code> and

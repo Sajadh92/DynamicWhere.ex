@@ -227,8 +227,9 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         dry run are all unchanged, and fail exactly as the unguarded query does.
         So is a query a provider in front of EF Core translates — LinqKit&apos;s{" "}
         <code>AsExpandable()</code>, DelegateDecompiler&apos;s{" "}
-        <code>Decompile()</code> — since such a provider exists to rewrite what
-        EF Core cannot, and a member it computes is one the query produces.
+        <code>Decompile()</code>, or one built by deriving from EF Core&apos;s
+        own provider — since such a provider exists to rewrite what EF Core
+        cannot, and a member it computes is one the query produces.
       </p>
       <p>
         The refusal raises no <code>[DwAudit]</code> event, for the reason an

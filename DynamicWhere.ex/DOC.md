@@ -385,7 +385,7 @@ Combines filtering, selecting, ordering, and pagination in a single object.
 | `Orders` | `List<OrderBy>?` | Optional sort criteria |
 | `Page` | `PageBy?` | Optional pagination |
 
-**`Clone()`** *(public since 3.3.0)* returns a deep copy — every node new, though the values a condition carries stay the caller's own objects in a new list — the condition tree with its groups and conditions, the projection list, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — the condition tree with its groups and conditions, the projection list, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
 
 ---
 
@@ -400,7 +400,7 @@ Combines multiple condition sets with set operations (Union / Intersect / Except
 | `Orders` | `List<OrderBy>?` | Optional sort criteria |
 | `Page` | `PageBy?` | Optional pagination |
 
-**`Clone()`** *(public since 3.3.0)* returns a deep copy — every node new, though the values a condition carries stay the caller's own objects in a new list — every condition set with its own condition group, the projection list, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — every condition set with its own condition group, the projection list, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
 
 ---
 
@@ -416,7 +416,7 @@ Combines filtering → grouping → having → ordering → pagination for aggre
 | `Orders` | `List<OrderBy>?` | Sort on grouped result. Fields must be GroupBy fields or aggregate aliases |
 | `Page` | `PageBy?` | Optional pagination on grouped result |
 
-**`Clone()`** *(public since 3.3.0)* returns a deep copy — every node new, though the values a condition carries stay the caller's own objects in a new list — the condition group, the group-by with its aggregates, the having clause, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — the condition group, the group-by with its aggregates, the having clause, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
 
 ---
 
@@ -1703,6 +1703,7 @@ It is refused only where the whole set of members a container can produce is kno
 |---|---|---|
 | An entity | the EF Core model: columns, shadow properties, owned and complex members, navigations | Refused |
 | A row a `Select` built before `ApplyPolicy` | the initializer's own assignments, at every level, both branches of a conditional included | Refused |
+| …where the initializer assigns the member from something else: a method call, a captured value, a subquery, or two branches building it two ways | nothing — the assignment is not one this shape reads | Left alone, as it always did |
 | …where that `Select` copies the member from the entity, `Name = role.Name` | the model, beneath the member it copies | Refused |
 | Rows in memory | nothing — the getter runs | Runs, as it always did |
 | Anything beneath a column, a converted one included | nothing — the converter decides | Left alone, as it always did |
@@ -1712,11 +1713,13 @@ It is refused only where the whole set of members a container can produce is kno
 | A column only a subtype maps, queried through the base | the queried type's model, which is what EF Core translates against | Refused |
 | A projection a provider that is not EF Core's ran | nothing — its rules are its own | Left alone, as it always did |
 
+A projection is therefore read only as far as its initializer can be read. An entity query names every producible member from the model; a projection names them only where each assignment is a nested initializer, a member copied from the entity, a value built and left empty, a null, or a conditional over those. Past `MaxComplexDepth` — eight levels — it stops reading and stops speaking. Under `Strict` such a path still reaches the provider and still fails there, exactly as it did before 3.3.0.
+
 **Left alone** is not a promise that the path runs. The policy does not refuse it, so it behaves exactly as it does unguarded: `Name.IsEmpty` beneath a column mapped through a value converter still fails inside the provider, as it always has.
 
 An unmapped getter on the entity itself, `Display => $"{Code}:{Id}"`, is refused for the same reason. The convenience tier and a dry run are unchanged: both fail exactly as the unguarded query does, which is the provider's own error. The trace records the refusal — `the member exists on the type and the query cannot compute it` — and since 3.3.0 `LastTrace` is set before a request is sanitized, so a refusal leaves it readable rather than null.
 
-The rule is EF Core's own provider's. A provider that wraps EF Core — LinqKit's `AsExpandable()`, DelegateDecompiler's `Decompile()` — exists to rewrite the members EF Core cannot translate, so a member it computes is one the query produces and it is left alone, over a projection and over an entity alike. A row the library itself projected is read like any other: the core's typed `Select` null-guards every nested node it builds, and both branches of that guard are read, so composing `Select` and then filtering refuses exactly what the bare handle refuses.
+The rule is EF Core's own provider's — that type, not a type derived from it. A provider that wraps EF Core — LinqKit's `AsExpandable()`, DelegateDecompiler's `Decompile()` — exists to rewrite the members EF Core cannot translate, so a member it computes is one the query produces and it is left alone, over a projection and over an entity alike; one built by deriving from EF Core's provider rewrites in the same way and is left alone too. A rewrite *inside* EF Core's own pipeline is a different matter: a `[DbFunction]`, a member-translator plugin or a replaced query preprocessor leaves EF Core's own provider in place, so a member it computes without a mapping is refused with the rest. A row the library itself projected is read like any other: the core's typed `Select` null-guards every nested node it builds, and both branches of that guard are read, so composing `Select` and then filtering refuses exactly what the bare handle refuses.
 
 A refusal here raises no `[DwAudit]` event, for the same reason an unknown name raises none: no field was read, and the refusal names none. `AuditRefusals` records it, and so does the trace.
 

@@ -32,7 +32,7 @@
     <Copyright>Free Forever — Copyright © Sajjad H. Al-Khafaji</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Version>3.3.0</Version>
-    <PackageReleaseNotes>v3.3.0 — Released in lockstep with DynamicWhere.ex 3.3.0, which it now requires. No API or behaviour change in this package.
+    <PackageReleaseNotes>v3.3.0 — Released in lockstep with DynamicWhere.ex 3.3.0, which it now requires. No API or behaviour change in this package, and two the core's changes are visible through it. The audit middleware drains more events: [DwAudit] now records the audited members a projection the caller never named hands back, one event per query, and MaxAuditEvents refuses rather than dropping a record. And a blank grouping key reaches the endpoints as a malformed clause rather than as an exception from inside the sanitizer, so it is answered with a four-hundred like every other malformed clause.
 
 v3.2.0 — Released in lockstep with DynamicWhere.ex 3.2.0, which it now requires. No API change in this package. The core release changes what /simulate reports for a request that sends no Selects. A simulation has no source, so it reads the type as one it cannot see into: every denial beneath a member counts, and the projection it shows keeps only members holding a value, where a guarded query over a projected row, an entity or rows in memory keeps what that source carries.
 

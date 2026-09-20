@@ -97,6 +97,10 @@
     <Compile Remove="Policies/PolicyEndpointTests.cs" />
     <Compile Remove="Policies/PolicyEndpointHardeningTests.cs" />
     <Compile Remove="Policies/PolicyAdminControllerTests.cs" />
+    <!-- Kept off the floor leg: the mapping probes map an owned type with ToJson and a primitive
+         collection, neither of which EF Core 6 has. What they rule out — that the refusal reads no
+         mapping shape wrongly — is an EF Core 8 question in the first place. -->
+    <Compile Remove="Policies/ReviewMappingProbes.cs" />
   </ItemGroup>
 
   <ItemGroup>

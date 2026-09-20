@@ -446,62 +446,26 @@ internal sealed class RowShape
         && string.Equals(held, name, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// The column a type or any type derived from it maps under a name, or null.
+    /// The column the queried type maps under a name, or null.
     /// </summary>
     /// <remarks>
-    /// Derived types are read because a hierarchy's rows come back as the queried type: a column
-    /// declared by one subtype is still a column the provider can compute for the rows that have it.
+    /// The queried type's own model, not a derived type's. EF Core translates a member against the
+    /// type the query is over: a member the model maps one level down, on a subtype, fails with
+    /// "Translation of member '…' failed. This commonly occurs when the specified member is
+    /// unmapped", which is the failure this whole walk exists to turn into a refusal. Query the
+    /// derived type to filter on it.
     /// </remarks>
     private static IProperty? MappedProperty(IEntityType entity, string name) =>
-        entity.GetProperties().FirstOrDefault(property => Same(property.Name, name))
-        ?? entity.GetDerivedTypes()
-            .SelectMany(derived => derived.GetProperties())
-            .FirstOrDefault(property => Same(property.Name, name));
+        entity.GetProperties().FirstOrDefault(property => Same(property.Name, name));
 
-    /// <summary>The navigation a type or any type derived from it maps under a name, or null.</summary>
-    private static INavigationBase? MappedNavigation(IEntityType entity, string name)
-    {
-        INavigationBase? found =
-            entity.GetNavigations().FirstOrDefault(navigation => Same(navigation.Name, name))
-            ?? (INavigationBase?)entity.GetSkipNavigations().FirstOrDefault(navigation => Same(navigation.Name, name));
+    /// <summary>The navigation the queried type maps under a name, or null.</summary>
+    private static INavigationBase? MappedNavigation(IEntityType entity, string name) =>
+        entity.GetNavigations().FirstOrDefault(navigation => Same(navigation.Name, name))
+        ?? (INavigationBase?)entity.GetSkipNavigations().FirstOrDefault(navigation => Same(navigation.Name, name));
 
-        if (found is not null)
-        {
-            return found;
-        }
-
-        foreach (IEntityType derived in entity.GetDerivedTypes())
-        {
-            found = derived.GetNavigations().FirstOrDefault(navigation => Same(navigation.Name, name))
-                    ?? (INavigationBase?)derived.GetSkipNavigations().FirstOrDefault(navigation => Same(navigation.Name, name));
-
-            if (found is not null)
-            {
-                return found;
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>The complex property a type or any type derived from it declares under a name, or null.</summary>
-    private static object? ComplexMember(IEntityType entity, string name)
-    {
-        if (Items(entity, "GetComplexProperties").FirstOrDefault(complex => Named(complex, name)) is { } found)
-        {
-            return found;
-        }
-
-        foreach (IEntityType derived in entity.GetDerivedTypes())
-        {
-            if (Items(derived, "GetComplexProperties").FirstOrDefault(complex => Named(complex, name)) is { } beneath)
-            {
-                return beneath;
-            }
-        }
-
-        return null;
-    }
+    /// <summary>The complex property the queried type declares under a name, or null.</summary>
+    private static object? ComplexMember(IEntityType entity, string name) =>
+        Items(entity, "GetComplexProperties").FirstOrDefault(complex => Named(complex, name));
 
     /// <summary>Compares two model names the way a caller's spelling is compared everywhere else.</summary>
     private static bool Same(string left, string right) =>

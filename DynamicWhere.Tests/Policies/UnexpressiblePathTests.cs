@@ -47,11 +47,14 @@ namespace DynamicWhere.Tests.Policies
         public int Id { get; set; }
 
         public string Kind { get; set; } = string.Empty;
+
+        /// <summary>Declared on the base, mapped only on the subtype, which is where the rows carry it.</summary>
+        public string? Licence { get; set; }
     }
 
     public class ZyMerchant : ZyParty
     {
-        public string? Licence { get; set; }
+        public string? Rating { get; set; }
     }
 
     /// <summary>The row a caller projects before the guard sees it, which is DCMP's shape.</summary>
@@ -84,6 +87,11 @@ namespace DynamicWhere.Tests.Policies
             model.Entity<ZyParty>().HasDiscriminator<string>("Discriminator")
                 .HasValue<ZyParty>("party")
                 .HasValue<ZyMerchant>("merchant");
+
+            // Ignored where it is declared and mapped where the rows have it, so the model maps the
+            // member on the derived type alone while the queried type still carries the CLR property.
+            model.Entity<ZyParty>().Ignore(party => party.Licence);
+            model.Entity<ZyMerchant>().Property(merchant => merchant.Licence);
         }
     }
 
@@ -106,7 +114,7 @@ namespace DynamicWhere.Tests.Policies
             _db = new ZyContext(_connection);
             _db.Database.EnsureCreated();
             _db.Roles.Add(new ZyRole { Code = "admin", Name = new ZyLocalizedText { Ar = "مدير", En = "Admin" } });
-            _db.Parties.Add(new ZyMerchant { Kind = "merchant", Licence = "L-1" });
+            _db.Parties.Add(new ZyMerchant { Kind = "merchant", Licence = "L-1", Rating = "A" });
             _db.SaveChanges();
             _db.ChangeTracker.Clear();
         }
@@ -182,6 +190,25 @@ namespace DynamicWhere.Tests.Policies
                 .ToList(Where("Licence", "L-1"));
 
             Assert.Single(result.Data);
+        }
+
+        [Fact]
+        public void A_column_only_the_subtype_maps_is_refused_through_the_base_type()
+        {
+            // The queried type declares the member and the model maps it one level down. EF Core
+            // translates against the type the query is over, so this is the failure the refusal is
+            // for: "Translation of member 'Licence' on entity type 'ZyParty' failed."
+            Assert.NotNull(_db.Model.FindEntityType(typeof(ZyMerchant))!.FindProperty("Licence"));
+            Assert.Null(_db.Model.FindEntityType(typeof(ZyParty))!.FindProperty("Licence"));
+
+            Exception? unguarded = Record.Exception(() => _db.Parties.Where(party => party.Licence == "L-1").ToList());
+
+            Assert.IsType<InvalidOperationException>(unguarded);
+
+            PolicyException refusal = Assert.ThrowsAny<PolicyException>(
+                () => Guard(_db.Parties, DwTier.Strict).ToList(Where("Licence", "L-1")));
+
+            Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, refusal.ErrorCode);
         }
 
         [Fact]

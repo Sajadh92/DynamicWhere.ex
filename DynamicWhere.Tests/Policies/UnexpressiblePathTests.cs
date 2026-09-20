@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Classes.Result;
@@ -93,6 +94,37 @@ namespace DynamicWhere.Tests.Policies
             model.Entity<ZyParty>().Ignore(party => party.Licence);
             model.Entity<ZyMerchant>().Property(merchant => merchant.Licence);
         }
+    }
+
+    /// <summary>A provider of its own: not EF Core's, and not the one rows in memory carry.</summary>
+    public sealed class ZyOwnProvider<T> : IQueryable<T>, IQueryProvider
+    {
+        private readonly IQueryable<T> _inner;
+
+        public ZyOwnProvider(IQueryable<T> inner)
+        {
+            _inner = inner;
+            Expression = inner.Expression;
+        }
+
+        public Type ElementType => typeof(T);
+
+        public Expression Expression { get; }
+
+        public IQueryProvider Provider => this;
+
+        public IEnumerator<T> GetEnumerator() => _inner.Provider.CreateQuery<T>(Expression).GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+        public IQueryable CreateQuery(Expression expression) => _inner.Provider.CreateQuery(expression);
+
+        public IQueryable<TElement> CreateQuery<TElement>(Expression expression) =>
+            _inner.Provider.CreateQuery<TElement>(expression);
+
+        public object? Execute(Expression expression) => _inner.Provider.Execute(expression);
+
+        public TResult Execute<TResult>(Expression expression) => _inner.Provider.Execute<TResult>(expression);
     }
 
     /// <summary>
@@ -331,6 +363,26 @@ namespace DynamicWhere.Tests.Policies
                 () => Guard(rows, DwTier.Strict).ToList(Where("Name.Ar", "مدير")));
 
             Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, refusal.ErrorCode);
+        }
+
+        [Fact]
+        public void A_provider_that_is_not_EF_Core_s_decides_for_itself()
+        {
+            // Its rules are its own: it may evaluate the getter in memory, as rows in memory do, so
+            // nothing here is refused on EF Core's behalf.
+            ZyRole[] rows = { new() { Id = 1, Code = "admin", Name = new ZyLocalizedText { Ar = "مدير", En = "Admin" } } };
+
+            IQueryable<ZyRoleRow> built = new ZyOwnProvider<ZyRoleRow>(rows.AsQueryable().Select(role => new ZyRoleRow
+            {
+                Id = role.Id,
+                Code = role.Code,
+                Name = new ZyLocalizedText { Ar = role.Name.Ar, En = role.Name.En }
+            }));
+
+            FilterResult<ZyRoleRow> result = Guard(built, DwTier.Strict)
+                .ToList(Where("Name.IsEmpty", "false", DataType.Boolean));
+
+            Assert.Single(result.Data);
         }
 
         [Fact]

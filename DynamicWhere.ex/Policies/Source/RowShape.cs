@@ -71,6 +71,10 @@ internal sealed class RowShape
     // A member a projection copies from the query's own entity, by the member's path from the row:
     // Name = x.Name records ("Name", the entity, "Name"), so what is beneath it is read from the model.
     private readonly Dictionary<string, (IEntityType Entity, string Member)>? _copied;
+
+    // True when the projection reads through EF Core. What a provider can compute is EF Core's
+    // answer to give; another provider's rules are its own, so its rows are left alone.
+    private readonly bool _translated;
     private readonly Dictionary<string, Type> _built = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _narrowable = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _kept = new(StringComparer.OrdinalIgnoreCase);
@@ -88,12 +92,14 @@ internal sealed class RowShape
         Type? built,
         IDictionary<string, Type> members,
         Dictionary<string, HashSet<string>>? initialized = null,
-        Dictionary<string, (IEntityType Entity, string Member)>? copied = null)
+        Dictionary<string, (IEntityType Entity, string Member)>? copied = null,
+        bool translated = false)
         : this(kind)
     {
         _assigned = assigned;
         _initialized = initialized;
         _copied = copied;
+        _translated = translated;
         _narrowable.UnionWith(narrowable);
         Built = built;
 
@@ -324,6 +330,13 @@ internal sealed class RowShape
     /// </summary>
     private bool? ExpressesInProjection(string[] segments)
     {
+        if (!_translated)
+        {
+            // Another provider decides what it can compute, and its rules are not EF Core's. A
+            // provider that evaluates in memory runs the getter, as rows in memory do.
+            return null;
+        }
+
         if (_assigned is not null && !_assigned.Contains(segments[0]))
         {
             // Nothing assigns it, so the projection carries no value for it at all.
@@ -742,7 +755,9 @@ internal sealed class RowShape
         {
             // A constructor with arguments says nothing about which member each argument sets: every
             // member counts as assigned, and none can be narrowed.
-            return new RowShape(RowKind.Projected, null, Array.Empty<string>(), body.Type, built);
+            return new RowShape(
+                RowKind.Projected, null, Array.Empty<string>(), body.Type, built,
+                translated: source.Provider is IAsyncQueryProvider);
         }
 
         List<string> narrowable = new();
@@ -782,7 +797,8 @@ internal sealed class RowShape
             }
         }
 
-        return new RowShape(RowKind.Projected, assigned, narrowable, initializer.Type, built, initialized, copied);
+        return new RowShape(
+            RowKind.Projected, assigned, narrowable, initializer.Type, built, initialized, copied, efCore);
     }
 
     /// <summary>

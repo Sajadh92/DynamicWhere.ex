@@ -1032,35 +1032,11 @@ namespace DynamicWhere.Tests.Policies
         // R3-M. SamePosture: every public knob, and the effective-value comparison.
         // =========================================================================================
 
-        [Fact]
-        public void R3_M_Every_posture_value_is_compared()
-        {
-            MethodInfo? same = typeof(DwPolicy).GetMethod(
-                "SamePosture", BindingFlags.Static | BindingFlags.NonPublic);
+        // R3-M walked every settable posture value and printed what it found, and asserted nothing
+        // on what it printed. The comparison is guarded for real by
+        // ConfigureOnceTests.Every_value_on_the_posture_is_compared, which requires each value to be
+        // refused when it changes and fails when a value is added and left out, and by S4_N, which
+        // drives Configure itself one knob at a time.
 
-            if (same is null)
-            {
-                _out.WriteLine("SamePosture not present on this version; nothing to compare.");
-
-                return;
-            }
-
-            // Every public settable property of DwPolicyOptions, and of DwCaps, reported with
-            // whether SamePosture notices a change to it.
-            List<string> uncompared = new();
-
-            foreach (PropertyInfo property in typeof(DwPolicyOptions)
-                         .GetProperties(BindingFlags.Public | BindingFlags.Instance))
-            {
-                _out.WriteLine($"DwPolicyOptions.{property.Name,-24} settable={property.CanWrite}");
-            }
-
-            foreach (PropertyInfo property in typeof(DwCaps).GetProperties(BindingFlags.Public | BindingFlags.Instance))
-            {
-                _out.WriteLine($"DwCaps.{property.Name,-31} settable={property.CanWrite}");
-            }
-
-            _out.WriteLine($"uncompared: {uncompared.Count}");
-        }
     }
 }

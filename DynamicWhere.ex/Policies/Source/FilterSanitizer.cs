@@ -4230,6 +4230,14 @@ internal static class FilterSanitizer
         /// A dry run still records. It changes what the policy does, not what it saw, and a canary
         /// rollout with no evidence of what it was about to refuse is one nobody can evaluate.
         /// </para>
+        /// <para>
+        /// Where the tier hides existence the refusal is raised as the field refusal the caller
+        /// would have been given anyway. Answering with the cap's own code, and an origin naming the
+        /// cap, would tell a caller that the name they guessed is a real field and an audited one,
+        /// which is the inference the tier exists to prevent: a name matching nothing is never
+        /// audited and never reaches this. The request is refused either way, and the trace above
+        /// records which refusal it really was.
+        /// </para>
         /// </remarks>
         private void Audit(string fieldPath, PolicyFeature feature, FieldPolicy policy)
         {
@@ -4255,6 +4263,11 @@ internal static class FilterSanitizer
 
             _trace.Add(new PolicyDecision(fieldPath, feature, PolicyAction.Denied, origin));
 
+            if (HidesExistence)
+            {
+                throw Exception(fieldPath, feature, DenialFor(feature), null);
+            }
+
             throw new PolicyException(
                 PolicyErrorCode.CapExceeded, IsStrict ? WholeClause : fieldPath, feature, _options.Tier)
             {
@@ -4262,6 +4275,17 @@ internal static class FilterSanitizer
                 AuditPath = fieldPath
             };
         }
+
+        /// <summary>The code a field refused for one feature carries.</summary>
+        private static PolicyErrorCode DenialFor(PolicyFeature feature) => feature switch
+        {
+            PolicyFeature.Select => PolicyErrorCode.FieldDeniedForSelect,
+            PolicyFeature.Order => PolicyErrorCode.FieldDeniedForOrder,
+            PolicyFeature.Group => PolicyErrorCode.FieldDeniedForGroup,
+            PolicyFeature.Aggregate => PolicyErrorCode.FieldDeniedForAggregate,
+            PolicyFeature.Segment => PolicyErrorCode.FieldDeniedForSegment,
+            _ => PolicyErrorCode.FieldDeniedForWhere
+        };
 
         /// <summary>
         /// Applies a refusal for a feature that may be dropped: throws in the strict tier, records

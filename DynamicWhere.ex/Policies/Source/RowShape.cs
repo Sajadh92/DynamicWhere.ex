@@ -493,8 +493,13 @@ internal sealed class RowShape
     /// leaves alone.
     /// </para>
     /// </remarks>
-    private static bool EfCoreOwns(IQueryProvider provider) =>
-        provider.GetType().FullName == "Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider";
+    private static bool EfCoreOwns(IQueryProvider provider)
+    {
+        Type type = provider.GetType();
+
+        return type.FullName == "Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider"
+               && type.Assembly.GetName().Name == "Microsoft.EntityFrameworkCore";
+    }
 
     /// <summary>
     /// The column the queried type maps under a name, or null.

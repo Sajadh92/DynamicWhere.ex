@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "Install DynamicWhere.ex — NuGet, dotnet CLI, PackageReference",
   description:
-    "How to install DynamicWhere.ex from NuGet into a .NET 6, 7, 8, or 9 project — dotnet CLI, Visual Studio Package Manager, or csproj PackageReference. Works with EF Core on SQL Server, PostgreSQL, MySQL, and SQLite.",
+    "How to install DynamicWhere.ex from NuGet into a .NET 6, 7, 8, 9 or 10 project — dotnet CLI, Visual Studio Package Manager, or csproj PackageReference. Works with EF Core on SQL Server, PostgreSQL, MySQL, and SQLite.",
   keywords: [
     "DynamicWhere.ex install",
     "DynamicWhere.ex NuGet",

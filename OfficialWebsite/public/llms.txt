@@ -865,7 +865,8 @@ then exactly as ToListAsync(Filter): Order(Orders) -> Page(Page) -> Select(Selec
 ### In memory: the IEnumerable<T> overloads
 
 - `ToList(Filter)`, `ToListDynamic(Filter)` and `ToList(Summary)` on `IEnumerable<T>` call `AsQueryable()` and
-  run the same pipeline with LINQ to Objects. For any other method call `list.AsQueryable()` yourself; the async
+  run the same pipeline with LINQ to Objects. `ApplyPolicy` takes an `IEnumerable<T>` too, and a summary read
+  through it is floored like any other: groups smaller than `DwCaps.MinGroupSize`, 5 by default, are dropped. For any other method call `list.AsQueryable()` yourself; the async
   methods do not work on such a source.
 - Differences from EF Core: text operators follow .NET string semantics; a null reference navigation in a path
   throws `NullReferenceException`; typed `Select` through a reference navigation throws (EF.Property);
@@ -2349,8 +2350,9 @@ a projection another provider ran                    nothing; its rules are its 
 ```
 
 - A projection is read only as far as its initializer can be read: a nested initializer, a member copied from the
-  entity, a value built and left empty, a null, and a conditional over those. Past `MaxComplexDepth` (eight levels)
-  it stops reading and stops speaking. Such a path reaches the provider and fails there, as before 3.3.0.
+  entity, a value built and left empty, and a conditional over those, a null branch included. A member assigned
+  nothing but a null is left alone. Past `MaxComplexDepth` (eight levels) it stops reading and stops speaking. Such
+  a path reaches the provider and fails there, as before 3.3.0.
 - `left alone` is not a promise that the path runs: the policy does not refuse it, so it behaves
   exactly as it does unguarded. `Name.IsEmpty` beneath a column mapped through a value converter
   still fails inside the provider.
@@ -4872,8 +4874,9 @@ MemoryCalculationInput
           caller needs no IsConfigured check of its own — that check is a check-then-act two hosts can both pass.
           Compared: tier, DryRun, IncludeTraceInResult, AuditRefusals, HashSalt, StoreFailure, MaxSnapshotAge,
           RefreshInterval, every cap value, the exposed catalogue with every name it answers to and the name each
-          type is reported under, and the provider types in order. A cap's own default and the tier's own answer for
-          IncludeTraceInResult are compared by the value that applies, not by whether somebody wrote them down.
+          type is reported under, and the provider types in order. The group floor and the tier's own answer for
+          IncludeTraceInResult are compared by the value that applies, not by whether somebody wrote them down;
+          every other cap is compared as written.
           Not compared and not replaced: TokenVault, Services and the provider instances, so a second host runs with
           the first host's vault, container and rule stores. AddDwPolicies registers the posture in force rather than
           the instance it built.
@@ -5140,6 +5143,9 @@ MemoryCalculationInput
   `[Column]`. Reached through a navigation (`Owner.New`) it is an ordinary member.
 - A declared date format may not write text ISO 8601 or a year-first date already reads; `DwDates.Configure`
   refuses one (section 4). ISO 8601 and year-first dates are read on every deployment and cannot be turned off.
+- A shadow property cannot be named by any clause, guarded or not: a field path names CLR members, and a shadow
+  property has none, so the name matches nothing and is refused as an unknown name. Map it to a property, or reach
+  it through a projection that assigns it with `EF.Property`.
 - A member no database can compute — a getter over columns, or an unmapped getter on an entity — cannot be
   filtered, ordered, grouped or aggregated under `Strict` on a source the library can read (3.3.0, section 17). Map
   it, or name the columns beneath it. A projection may still name it, because EF Core evaluates the last projection

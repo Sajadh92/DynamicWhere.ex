@@ -27,7 +27,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 const BASE = `https://${SITE.domain}`;
 
-const homeTitle = `${SITE.name} — JSON Dynamic LINQ Filter for Entity Framework Core (.NET 6/7/8/9)`;
+const homeTitle = `${SITE.name} — JSON Dynamic LINQ Filter for Entity Framework Core (.NET 6/7/8/9/10)`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE),

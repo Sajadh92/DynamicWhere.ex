@@ -581,7 +581,7 @@ Sorts the query by one or multiple criteria.
 - `Field` must be non-empty and valid on `T`.
 - `Field` may not end on a collection of entities/complex types (there is no single value to compare).
 
-**Collection paths:** when `Field` crosses a collection navigation, the collection is reduced to one comparable value — the **smallest** element ascending, the **largest** descending. See [Ordering Across Collections](#14-ordering-across-collections).
+**Collection paths:** when `Field` crosses a collection navigation, the collection is reduced to one comparable value — the **smallest** element ascending, the **largest** descending. See [Ordering Across Collections](#13-ordering-across-collections).
 
 **Returns:** `IQueryable<T>` — ordered query.
 
@@ -1287,11 +1287,7 @@ The entire `Brands` collection is bound as-is.
 
 ---
 
-### 10. Nested Collection Navigation
-
----
-
-### 11. `SelectDynamic<T>` — Dynamic Field Projection
+### 10. `SelectDynamic<T>` — Dynamic Field Projection
 
 **Direct scalars:**
 ```json
@@ -1407,7 +1403,7 @@ The entire `Brands` collection is bound as-is.
 
 ---
 
-### 12. `FilterDynamic<T>` / `ToListDynamic<T>(Filter)` / `ToListAsyncDynamic<T>(Filter)` — Full Dynamic Filter
+### 11. `FilterDynamic<T>` / `ToListDynamic<T>(Filter)` / `ToListAsyncDynamic<T>(Filter)` — Full Dynamic Filter
 
 Uses the same `Filter` JSON shape as example 7. The difference is the return type: `IQueryable` / `FilterResult<dynamic>` instead of `IQueryable<T>` / `FilterResult<T>`.
 
@@ -1462,7 +1458,7 @@ Uses the same `Filter` JSON shape as example 7. The difference is the return typ
 
 ---
 
-### 13. Nested Collection Navigation
+### 12. Nested Collection Navigation
 
 When a field path traverses a collection property (e.g., `Orders.OrderItems.ProductName`), the library automatically wraps the inner segment in a `.Any()` lambda.
 
@@ -1480,7 +1476,7 @@ When a field path traverses a collection property (e.g., `Orders.OrderItems.Prod
 
 ---
 
-### 14. Ordering Across Collections
+### 13. Ordering Across Collections
 
 A sort needs a single comparable value per row, so `.Any()` is not applicable to `OrderBy`. When an order field path crosses a collection property, each collection segment is reduced with an aggregate instead: **`Min` when sorting ascending, `Max` when sorting descending** — that is, rows are ordered by their *best matching* element in the requested direction.
 
@@ -1713,7 +1709,9 @@ It is refused only where the whole set of members a container can produce is kno
 | A column only a subtype maps, queried through the base | the queried type's model, which is what EF Core translates against | Refused |
 | A projection a provider that is not EF Core's ran | nothing — its rules are its own | Left alone, as it always did |
 
-A projection is therefore read only as far as its initializer can be read. An entity query names every producible member from the model; a projection names them only where each assignment is a nested initializer, a member copied from the entity, a value built and left empty, a null, or a conditional over those. Past `MaxComplexDepth` — eight levels — it stops reading and stops speaking. Under `Strict` such a path still reaches the provider and still fails there, exactly as it did before 3.3.0.
+A shadow property is a separate matter and unchanged: a field path names CLR members, and a shadow property has none, so no clause can name one — guarded or not, before this release or after it. Map it to a property, or project it with `EF.Property` and name the projected member.
+
+A projection is therefore read only as far as its initializer can be read. An entity query names every producible member from the model; a projection names them only where each assignment is a nested initializer, a member copied from the entity, a value built and left empty, or a conditional over those — a null branch beside one of them included. A member assigned nothing but a null is left alone, like any assignment this shape cannot read. Past `MaxComplexDepth` — eight levels — it stops reading and stops speaking. Under `Strict` such a path still reaches the provider and still fails there, exactly as it did before 3.3.0.
 
 **Left alone** is not a promise that the path runs. The policy does not refuse it, so it behaves exactly as it does unguarded: `Name.IsEmpty` beneath a column mapped through a value converter still fails inside the provider, as it always has.
 
@@ -2112,7 +2110,7 @@ What counts as the same posture:
 | The exposed entity catalogue: the same types, every name each answers to, and the name each is reported under | |
 | The provider *types*, in the order they were supplied | |
 
-`IncludeTraceInResult` is compared the way a cap is: it defaults to the tier's own answer, and the
+`IncludeTraceInResult` is compared the way the group floor is: it defaults to the tier's own answer, and the
 tiers are equal by then, so a host writing that answer out and a host leaving it null hand a caller
 the same result. A type exposed under two names is a different matter — it is reported under the last
 name it was given, so two catalogues that resolve every name alike still answer a schema request
@@ -2332,6 +2330,8 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 ## Breaking Changes & Known Limitations
 
 ### ⚠️ Breaking Points
+
+These are numbered as this document numbers them. The website's [breaking-changes page](https://doc.dynamicwhere.com/docs/breaking-changes) carries the same points with its own numbering, which runs further, so follow a point by its title rather than by its number.
 
 1. **Parameterless Constructor Required for Select Projection**
    `Select<T>(fields)` requires `T` to have a parameterless (default) constructor. If `T` does not have one — a positional record, most often — a `LogicException` is thrown whose `Message` is the stable code `SelectTypeMustHaveParameterlessConstructor` and whose `Subject` carries `typeof(T).Name`. Before 3.1.0 that message was an English sentence with the type name inside it. Most EF Core entity classes have parameterless constructors by default. A guarded query reaches the same refusal when a member carries `[DwNoSelect]`, because deny-select projects — since 3.2.0 whatever the member holds, and beneath another member when its value can reach the result (point 20).

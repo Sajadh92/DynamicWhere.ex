@@ -367,7 +367,7 @@ The complete reference — every enum, class, extension method, validation rule,
 | [Classes](https://doc.dynamicwhere.com/docs/classes)              | Condition, ConditionGroup, ConditionSet, OrderBy, GroupBy, AggregateBy, PageBy, Filter, Segment, Summary, Result types |
 | [Extension Methods](https://doc.dynamicwhere.com/docs/extensions) | All 28 methods with signatures, validations, examples |
 | [Validation Rules](https://doc.dynamicwhere.com/docs/validation)  | What's checked and what throws |
-| [JSON Cookbook](https://doc.dynamicwhere.com/docs/examples)       | 13 copy-pasteable end-to-end examples |
+| [JSON Cookbook](https://doc.dynamicwhere.com/docs/examples)       | 12 copy-pasteable end-to-end examples |
 | [Field-Level Policies](https://doc.dynamicwhere.com/docs/policies) | Attributes, precedence, masking, dynamic rules, admin API, k-anonymity |
 | [Cache & Optimization](https://doc.dynamicwhere.com/docs/cache)   | Architecture, stores, options, presets, monitoring |
 | [Error Codes](https://doc.dynamicwhere.com/docs/errors)           | Every `LogicException` message |

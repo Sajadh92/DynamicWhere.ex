@@ -49,7 +49,7 @@ export function softwareApplicationJsonLd() {
     alternateName: ["DynamicWhere", "Dynamic Where ex"],
     description: SITE.description,
     applicationCategory: "DeveloperApplication",
-    operatingSystem: "Cross-platform (.NET 6, 7, 8, 9)",
+    operatingSystem: "Cross-platform (.NET 6, 7, 8, 9, 10)",
     softwareVersion: SITE.version,
     url: BASE,
     downloadUrl: SITE.nuget,

@@ -3,9 +3,9 @@ import Link from "next/link";
 import DocPage from "@/components/DocPage";
 
 export const metadata: Metadata = {
-  title: "JSON Cookbook — 13 copy-paste EF Core dynamic filter examples",
+  title: "JSON Cookbook — 12 copy-paste EF Core dynamic filter examples",
   description:
-    "Thirteen copy-pasteable JSON examples for DynamicWhere.ex — select projection, single condition, condition groups, ordering, paging, group-by + aggregate, set operations, nested collections, dynamic shapes. Every extension method covered.",
+    "Twelve copy-pasteable JSON examples for DynamicWhere.ex — select projection, single condition, condition groups, ordering, paging, group-by + aggregate, set operations, nested collections, dynamic shapes. Every extension method covered.",
   keywords: [
     "EF Core dynamic filter examples",
     "dynamic LINQ JSON examples",
@@ -76,21 +76,21 @@ const EXAMPLES: { href: string; n: number; title: string; blurb: string }[] = [
   },
   {
     href: "/docs/examples/select-dynamic",
-    n: 11,
+    n: 10,
     title: "SelectDynamic — Dynamic Projection",
     blurb:
       "All eight path-style variants — direct, dotted reference, dotted collection, multi-level, merged, whole object, whole collection, deep reference.",
   },
   {
     href: "/docs/examples/filter-dynamic",
-    n: 12,
+    n: 11,
     title: "FilterDynamic — Dynamic Filter",
     blurb:
       "Full Filter request returning FilterResult<dynamic>, plus the projection-rule note.",
   },
   {
     href: "/docs/examples/nested-collection",
-    n: 13,
+    n: 12,
     title: "Nested Collection Navigation",
     blurb: "Field path through a collection — the library wraps it in .Any() lambdas.",
   },
@@ -101,7 +101,7 @@ export default function Page() {
     <DocPage pathname="/docs/examples">
       <h1>JSON Cookbook</h1>
       <p>
-        Thirteen copy-pasteable examples covering every extension method, every
+        Twelve copy-pasteable examples covering every extension method, every
         projection style, and every set / aggregation shape DynamicWhere.ex
         supports. Each example is the exact JSON your front-end would send.
       </p>

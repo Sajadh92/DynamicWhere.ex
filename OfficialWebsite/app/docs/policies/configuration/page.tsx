@@ -954,8 +954,9 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
         </tbody>
       </table>
       <p>
-        <code>IncludeTraceInResult</code> is compared the way a cap is: it
-        defaults to the tier&apos;s own answer, and the tiers are equal by then,
+        <code>IncludeTraceInResult</code> is compared the way the group floor
+        is — every other cap is compared as written. It defaults to the
+        tier&apos;s own answer, and the tiers are equal by then,
         so a host writing that answer out and a host leaving it null hand a
         caller the same result. The catalogue is stricter — a type exposed under
         two names is reported under the last one it was given, so two catalogues

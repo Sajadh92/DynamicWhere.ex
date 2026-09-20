@@ -310,7 +310,7 @@ export default function HomePage() {
               { title: "Installation", desc: "Add to your project in seconds.", href: "/docs/installation" },
               { title: "Quick Start", desc: "A working filter in 30 lines.", href: "/docs/quick-start" },
               { title: "Extension Methods", desc: "All 28 methods, one place.", href: "/docs/extensions" },
-              { title: "JSON Cookbook", desc: "13 copy-pasteable examples.", href: "/docs/examples" },
+              { title: "JSON Cookbook", desc: "12 copy-pasteable examples.", href: "/docs/examples" },
               { title: "Enums Reference", desc: "Every DataType & Operator.", href: "/docs/enums" },
               { title: "Classes Reference", desc: "Condition → Filter → Result.", href: "/docs/classes" },
               { title: "Field-Level Policies", desc: "Who may query what, and see what.", href: "/docs/policies" },

@@ -1508,8 +1508,10 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         A projection is read only as far as its initializer can be read. An
         entity query names every producible member from the model; a projection
         names them only where each assignment is a nested initializer, a member
-        copied from the entity, a value built and left empty, a null, or a
-        conditional over those. Past <code>MaxComplexDepth</code> — eight levels
+        copied from the entity, a value built and left empty, or a conditional
+        over those — a null branch beside one of them included. A member
+        assigned nothing but a null is left alone, like any assignment this
+        shape cannot read. Past <code>MaxComplexDepth</code> — eight levels
         — it stops reading and stops speaking, and under <code>Strict</code>
         such a path still reaches the provider and still fails there, exactly as
         it did before 3.3.0.

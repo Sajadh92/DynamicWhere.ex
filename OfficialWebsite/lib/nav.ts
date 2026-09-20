@@ -146,9 +146,9 @@ export const NAV: NavGroup[] = [
       { title: "7. Filter (Typed)", href: "/docs/examples/filter" },
       { title: "8. Summary", href: "/docs/examples/summary" },
       { title: "9. Segment", href: "/docs/examples/segment" },
-      { title: "11. SelectDynamic", href: "/docs/examples/select-dynamic" },
-      { title: "12. FilterDynamic", href: "/docs/examples/filter-dynamic" },
-      { title: "13. Nested Collections", href: "/docs/examples/nested-collection" },
+      { title: "10. SelectDynamic", href: "/docs/examples/select-dynamic" },
+      { title: "11. FilterDynamic", href: "/docs/examples/filter-dynamic" },
+      { title: "12. Nested Collections", href: "/docs/examples/nested-collection" },
     ],
   },
   {

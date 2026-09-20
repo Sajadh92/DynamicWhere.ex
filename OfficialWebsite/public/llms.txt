@@ -2048,8 +2048,10 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   `AggregateBy.Field`. It is also accepted in `Having` and summary `Orders` names that refer to an aliased
   group key.
 - Matching is case-insensitive, and the real path still works.
-- A name that could mean two fields throws `AmbiguousFieldName`, in both tiers and in dry run. That
-  happens when an alias equals another real path or another alias.
+- A name that could mean two fields throws `AmbiguousFieldName` under `Convenience` and in a dry run. That
+  happens when an alias equals another real path or another alias. Under `Strict` outside a dry run it is
+  refused as an unknown name is — the clause's own code, `FieldPath` `"*"` — because a name matching two
+  fields matches at least one (3.3.0); the trace records which fields it matched.
 - Exception: one member reached both at the root and through navigations (`Code`, `Manager.Code`)
   resolves to the root.
 - `PolicyException.FieldPath` carries the name the caller wrote. The trace records the canonical path,
@@ -2569,8 +2571,9 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
   `FieldPath = "*"`, `RuleId = null` and `SourceOrigin = null`, for a denied field, an alias and an unknown name
   alike, so their messages are identical. Every `CapExceeded` refusal carries `FieldPath = "*"` as well, and
   keeps its `SourceOrigin`. `MissingContextValue` carries `FieldPath = "*"` and `SourceOrigin = null`, naming
-  neither the scope's column nor the context key it reads. `OperatorNotAllowed`, `RequiredFilterMissing` and
-  `AmbiguousFieldName` still name their field.
+  neither the scope's column nor the context key it reads. `OperatorNotAllowed` and `RequiredFilterMissing` still name
+  their field. `AmbiguousFieldName` is not raised under this tier at all since 3.3.0: an ambiguous name is
+  refused as an unknown name is.
   - Inside a `Segment` every field refusal is `FieldDeniedForSegment` with `Feature = Segment`, whichever clause
     refused it: a condition in any set, an order, a select, or taking part at all (3.1.0). Answered by clause, a field
     denied for every clause but not for `Segment` would say `FieldDeniedForOrder` where a name that matches nothing
@@ -2586,10 +2589,11 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
   this caller may not order by, in both tiers, and in a `Segment` less every field this caller may not use in a
   segment. Each field left out is recorded as `Dropped` on `Order`, with a reason starting
   `left out of the default order`, and never refused. Dry run keeps it and still records it (section 13).
-- These throw regardless of tier and dry run: `AmbiguousFieldName`, `GroupTooSmall`, `AmbiguousGroupKey`,
+- These throw regardless of tier and dry run: `GroupTooSmall`, `AmbiguousGroupKey`,
   `CapExceeded` from a full audit buffer, `MissingHashSalt`, `MissingTokenVault`,
   `TransformRequiresMaterialization`, `StoreUnavailable` and `PolicyContextNotPrepared`. `PolicyRequired`
-  is raised on unguarded calls only.
+  is raised on unguarded calls only. `AmbiguousFieldName` throws under `Convenience` and in a dry run; under
+  `Strict` the name is refused as an unknown one instead (3.3.0).
 - Dry run is on when `DwPolicyOptions.DryRun` or `DwPolicyContext.DryRun` is true. It records every other
   throw and drop in the trace, applies none of them, and leaves the clause as written. In dry run:
   - no forced predicate is injected and no projection is synthesized;
@@ -2852,7 +2856,8 @@ Caps.MinGroupSize   unset -> DwCaps.DefaultMinGroupSize = 5 (IsMinGroupSizeSet =
     of a transformed field gets the field's chain. `MAX(Age) = 41` with `Round, Step = 10` returns `40`.
   - If two rows now share the same values across the transformed keys, the query throws
     `AmbiguousGroupKey`, in both tiers and in dry run. `FieldPath` is the transformed key paths joined by
-    `", "` and `Feature` is `Group`.
+    `", "` and `Feature` is `Group` — under `Strict` outside a dry run it is `"*"` with no `SourceOrigin`
+    (3.3.0), because the key's canonical path is the column behind the caller's alias.
 - Only the transformed keys are compared. Grouping by `[Department, Salary]` with `Salary` rounded throws
   as soon as two departments share a rounded salary.
 
@@ -4124,11 +4129,13 @@ PolicyException : LogicException                                   namespace Dyn
   Code          : string              ErrorCode.ToString(), for logs and JSON
   FieldPath     : string              the name the caller wrote; "*" for the whole request, including the
                                       PolicyContextNotPrepared ApplyPolicy raises; under the Strict tier "*" for
-                                      codes 1–6, CapExceeded and MissingContextValue too (3.1.0); the entity's
+                                      codes 1–6, CapExceeded and MissingContextValue too (3.1.0), and for
+                                      AmbiguousGroupKey, TransformRequiresMaterialization, MissingHashSalt and
+                                      MissingTokenVault (3.3.0); the entity's
                                       short type name for PolicyRequired, StoreUnavailable and a store provider's
                                       PolicyContextNotPrepared;
                                       the transformed paths joined by ", " for TransformRequiresMaterialization and
-                                      AmbiguousGroupKey
+                                      AmbiguousGroupKey outside the Strict tier
   Feature       : PolicyFeature       None for ApplyPolicy's PolicyContextNotPrepared; All for a store provider's refusals
   Tier          : DwTier              the tier in force; always Strict for PolicyRequired, StoreUnavailable and a store
                                       provider's PolicyContextNotPrepared (ApplyPolicy's carries the configured tier)
@@ -4136,7 +4143,10 @@ PolicyException : LogicException                                   namespace Dyn
                                       under the Strict tier (3.1.0)
   SourceOrigin  : string? { init; }   the attribute, rule, cap or reason that decided, e.g.
                                       "MaxPageSize cap (1000), request had 1001"; null for codes 1–6 and
-                                      MissingContextValue under the Strict tier (3.1.0)
+                                      MissingContextValue under the Strict tier (3.1.0), and for
+                                      AmbiguousGroupKey, MissingHashSalt and MissingTokenVault (3.3.0).
+                                      TransformRequiresMaterialization keeps its origin, which names the method
+                                      and what to call instead, never a field
   Message       "<Code>: field '<FieldPath>', feature '<Feature>', tier '<Tier>'."
 ```
 
@@ -4169,11 +4179,16 @@ through `PolicySimulator` or in dry run to see the decisions).
                                       its operators
 12  MissingContextValue               a [DwForceWhere] ContextValue key is absent or null in the context;       recorded
                                       under Strict FieldPath "*" and no SourceOrigin (3.1.0)
-13  AmbiguousFieldName                a name could mean two fields: an alias equal to a path or another alias   throws
+13  AmbiguousFieldName                a name could mean two fields: an alias equal to a path or another alias.  throws
+                                      Convenience and dry run only: under Strict the name is refused as an
+                                      unknown one, with the clause's own code (3.3.0)
 14  QueryStringDenied                 Strict tier and getQueryString: true (FieldPath "*")                      recorded
-15  AmbiguousGroupKey                 two summary rows share their key values once transformed                  throws
+15  AmbiguousGroupKey                 two summary rows share their key values once transformed; under Strict     throws
+                                      FieldPath "*" and no SourceOrigin (3.3.0)
 16  TransformRequiresMaterialization  SelectDynamic, FilterDynamic, Group or Summary on the guarded handle      throws
-                                      for a type with any transform for this caller
+                                      for a type with any transform for this caller; under Strict FieldPath
+                                      "*" rather than the transformed columns (3.3.0), and the origin, which
+                                      names the method and what to call instead, stays
 17  StoreUnavailable                  a FailClosed store provider is degraded, or the context's pinned          throws
                                       snapshot is older than MaxSnapshotAge
 18  PolicyContextNotPrepared          ApplyPolicy(ctx) sees a context that never went through PrepareAsync       throws
@@ -4183,8 +4198,10 @@ through `PolicySimulator` or in dry run to see the decisions).
                                       under Strict checked after the field gates (3.1.0)
 20  GroupTooSmall                     the caller used the reserved name "__dwGroupSize" as an alias, Having      throws
                                       field or order field. A small group never raises it: it is suppressed
-21  MissingHashSalt                   MaskStrategy.Hash while DwPolicyOptions.HashSalt is empty                 throws
-22  MissingTokenVault                 MaskStrategy.Tokenize while DwPolicyOptions.TokenVault is null            throws
+21  MissingHashSalt                   MaskStrategy.Hash while DwPolicyOptions.HashSalt is empty; under Strict   throws
+                                      FieldPath "*" and no SourceOrigin (3.3.0)
+22  MissingTokenVault                 MaskStrategy.Tokenize while DwPolicyOptions.TokenVault is null; under      throws
+                                      Strict FieldPath "*" and no SourceOrigin (3.3.0)
 ```
 
 "recorded" means dry run writes a `Denied` decision to the trace and runs the query anyway.
@@ -4306,8 +4323,9 @@ There are eleven. The first eight let a caller learn a value, or what the policy
   field refusal, so the two cannot be told apart; `Convenience` and a dry run still answer `CapExceeded`.
 - **A refusal that names a field:** four did under `Strict` until 3.3.0 — an ambiguous name, an ambiguous grouping
   key, a clause that cannot be transformed, and a deployment with no hash salt or token vault. An ambiguous name is
-  now refused as an unknown name is; the other three name the clause and carry no origin. `Convenience` and a dry
-  run are unchanged.
+  now refused as an unknown name is; the grouping key, the hash salt and the token vault name the clause and carry
+  no origin, and the clause that cannot be transformed names the clause and keeps an origin naming the method and
+  what to call instead, never a field. `Convenience` and a dry run, either switch, are unchanged.
 - **An unrecorded read:** until 3.3.0 `[DwAudit]` recorded only a field the request named, so a caller sending no
   `Selects` received every audited member of the row with nothing written down. Every audited member a projection
   the caller did not name hands back is recorded for `Select` now, one event per query.
@@ -4920,6 +4938,14 @@ MemoryCalculationInput
           trace record it. A simulation has no source, so PolicySimulator and /simulate cannot refuse such a path.
         - Behaviour change. LastTrace is assigned before a request is sanitized, so a refused request leaves its own
           trace readable instead of the previous request's.
+        - Security fix and behaviour change. Under Strict outside a dry run, four refusals that named a field name
+          the clause instead. AmbiguousFieldName said the caller's name matched more than one field, and so at
+          least one; it is refused as an unknown name is now, with the trace keeping the ambiguity.
+          AmbiguousGroupKey reported the column behind the caller's alias and an origin saying its values are
+          transformed; TransformRequiresMaterialization listed every transformed column on the type;
+          MissingHashSalt and MissingTokenVault named the masked field a deployment had not configured for. The
+          three report "*" and no origin, and TransformRequiresMaterialization keeps an origin that names the
+          method rather than a field. Convenience and a dry run, either switch, are unchanged.
         - Behaviour change and security fix. Under Strict outside a dry run, a query exhausting the audit buffer is
           refused with the clause's own field refusal rather than with CapExceeded and an origin naming the cap. An
           unknown name is never audited, so the two answers told a caller which names are real and audited.

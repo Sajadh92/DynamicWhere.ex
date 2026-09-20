@@ -1668,11 +1668,16 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         <code>TransformRequiresMaterialization</code> listed every transformed
         column on the type to a caller who named none of them.{" "}
         <code>MissingHashSalt</code> and <code>MissingTokenVault</code> named the
-        masked field a deployment forgot to configure for.
+        masked field a deployment forgot to configure for. Those three report{" "}
+        <code>&quot;*&quot;</code> and no origin;{" "}
+        <code>TransformRequiresMaterialization</code> reports{" "}
+        <code>&quot;*&quot;</code> and keeps an origin, which names the method
+        and what to call instead rather than any field.
       </p>
       <p>
-        All four are unchanged under <code>Convenience</code> and in a dry run,
-        where the tier names fields anyway. Code switching on{" "}
+        All four are unchanged under <code>Convenience</code> and in a dry run —
+        the posture&apos;s switch or the caller&apos;s — where the tier names
+        fields anyway. Code switching on{" "}
         <code>AmbiguousFieldName</code> under <code>Strict</code>, or reading{" "}
         <code>FieldPath</code> off any of the four, sees the change.
       </p>

@@ -156,7 +156,7 @@ var result = await db.Employees.ApplyPolicy(caller).ToListAsync(filter, cancella
         <li><Link href="/docs/policies/store">Dynamic store</Link> — rules without a redeploy</li>
         <li><Link href="/docs/policies/providers">Store providers</Link> — Redis and Entity Framework Core</li>
         <li><Link href="/docs/policies/admin">Admin API</Link> — schema, rules, explain, simulate, health</li>
-        <li><Link href="/docs/policies/security">Security &amp; k-anonymity</Link> — the eleven inference channels</li>
+        <li><Link href="/docs/policies/security">Security &amp; k-anonymity</Link> — eight inference channels and three bypasses</li>
         <li><Link href="/docs/policies/configuration">Configuration</Link> — options, caps and defaults</li>
       </ul>
 

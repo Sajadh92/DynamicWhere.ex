@@ -5,7 +5,7 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Security & k-anonymity — the eleven inference channels",
+  title: "Security & k-anonymity — eight inference channels and three bypasses",
   description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own — set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, SQL leakage, and schema probing through refusals — and the denials the gate could not see until 3.2.0.",
   keywords: ["k-anonymity", "MinGroupSize", "inference attack", "data disclosure", "aggregate disclosure", "EF Core security"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/security/" },
@@ -213,15 +213,19 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         more than one field, and so at least one; an ambiguous grouping key
         reported the column behind the caller&apos;s alias and said its values
         are transformed; the refusal for a clause that cannot be transformed
-        listed every masked column on the type; and a deployment with no hash
-        salt or token vault named the masked field it could not write.
+        listed every transformed column on the type — masked, generalized,
+        truncated or formatted; and a deployment with no hash salt or token
+        vault named the masked field it could not write.
       </p>
       <p>
         <strong>Closed by:</strong> under <code>Strict</code>, outside a dry
-        run, an ambiguous name is refused exactly as an unknown name is, and the
-        other three name the clause with no origin. The trace keeps the real
-        reason for the operator. <code>Convenience</code> and a dry run are
-        unchanged.
+        run, an ambiguous name is refused exactly as an unknown name is. The
+        grouping key, the hash salt and the token vault name the clause and
+        carry no origin; the clause that cannot be transformed names the clause
+        and keeps an origin, which names the method and what to call instead
+        rather than any field. The trace keeps the real reason for the operator.{" "}
+        <code>Convenience</code> and a dry run — the posture&apos;s switch or the
+        caller&apos;s — are unchanged.
       </p>
 
       <h2 id="two-more">9, 10 and 11. The three that are not channels</h2>

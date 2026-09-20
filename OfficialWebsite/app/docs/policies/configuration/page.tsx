@@ -628,6 +628,14 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
         can reach it, so it refuses with the clause&apos;s own field refusal and
         no origin. See{" "}
         <Link href="/docs/policies/security#audit-cap">the audit cap</Link>.{" "}
+        Four more refusals name the clause rather than a field since{" "}
+        <strong>3.3.0</strong>: an ambiguous name is refused as an unknown name
+        is, and <code>AmbiguousGroupKey</code>,{" "}
+        <code>TransformRequiresMaterialization</code>,{" "}
+        <code>MissingHashSalt</code> and <code>MissingTokenVault</code> carry{" "}
+        <code>FieldPath</code> <code>&quot;*&quot;</code> — all but the transform
+        refusal without an origin as well. See{" "}
+        <Link href="/docs/breaking-changes#strict-names-the-clause">breaking point 34</Link>.{" "}
         <code>MaxQueryCost</code> is the one with a code of its own,{" "}
         <code>QueryCostExceeded</code>, because an operator reading a log needs
         to know which of the two refused: raising the wrong one changes nothing. The three schema caps never throw at all —

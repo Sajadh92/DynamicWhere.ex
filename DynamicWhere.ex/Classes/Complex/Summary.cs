@@ -36,12 +36,17 @@ public class Summary
     /// <summary>
     /// Returns a deep copy.
     /// </summary>
+    /// <returns>A new summary sharing no object with this one.</returns>
     /// <remarks>
     /// A summary reaches a condition group twice — once through <see cref="ConditionGroup"/> and
     /// again through <see cref="Having"/>. Both are cloned; a copy shaped like a filter's would
     /// leave the having clause shared with the caller.
+    /// <para>
+    /// Public for the same reason <see cref="Filter.Clone"/> is: read a caller's request again with
+    /// one part changed, without editing what the caller handed in.
+    /// </para>
     /// </remarks>
-    internal Summary Clone() => new()
+    public Summary Clone() => new()
     {
         ConditionGroup = ConditionGroup?.Clone(),
         GroupBy = GroupBy?.Clone(),

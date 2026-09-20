@@ -115,7 +115,7 @@ internal static class FilterSanitizer
 
         // The gate is built first now, because canonicalizing a name needs the type's alias map and
         // the gate is what carries it. Nothing the gate does depends on the paths being canonical.
-        Gate gate = new(typeof(T), resolver, context, options, trace);
+        Gate gate = new(typeof(T), resolver, context, options, trace) { Rows = rows ?? RowShape.Unknown };
 
         // Before any name is resolved. Counting needs no name, and resolving every name of an
         // oversized request is exactly the work the caps exist to refuse.
@@ -181,6 +181,7 @@ internal static class FilterSanitizer
     /// <param name="context">The caller.</param>
     /// <param name="options">The enforcement posture.</param>
     /// <param name="trace">Collects what was decided.</param>
+    /// <param name="rows">What the source produces, when it can be read.</param>
     /// <returns>A sanitized copy, safe to hand to the existing pipeline.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the summary.</exception>
@@ -195,7 +196,8 @@ internal static class FilterSanitizer
         PolicyResolver resolver,
         DwPolicyContext context,
         DwPolicyOptions options,
-        PolicyTrace trace)
+        PolicyTrace trace,
+        RowShape? rows = null)
         where T : class
     {
         if (summary is null)
@@ -225,7 +227,7 @@ internal static class FilterSanitizer
 
         Summary working = summary.Clone();
 
-        Gate gate = new(typeof(T), resolver, context, options, trace);
+        Gate gate = new(typeof(T), resolver, context, options, trace) { Rows = rows ?? RowShape.Unknown };
 
         EnforceCaps(working, gate);
 
@@ -669,7 +671,11 @@ internal static class FilterSanitizer
 
         Segment working = segment.Clone();
 
-        Gate gate = new(typeof(T), resolver, context, options, trace) { InSegment = true };
+        Gate gate = new(typeof(T), resolver, context, options, trace)
+        {
+            InSegment = true,
+            Rows = rows ?? RowShape.Unknown
+        };
 
         EnforceCaps(working, gate);
 
@@ -2374,7 +2380,9 @@ internal static class FilterSanitizer
         // behavioural difference from before this existed.
         if (gate.TypePolicy.Aliases.Count == 0)
         {
-            return gate.HidesExistence ? TryValidate<T>(name) ?? gate.Unknown(name) : name.Validate<T>();
+            return gate.HidesExistence
+                ? Expressible(TryValidate<T>(name), name, gate) ?? gate.Unknown(name)
+                : name.Validate<T>();
         }
 
         string spoken = name.Trim();
@@ -2430,7 +2438,49 @@ internal static class FilterSanitizer
 
         string canonical = candidates[0];
 
+        if (gate.HidesExistence && Expressible(canonical, spoken, gate) is null)
+        {
+            return gate.Unknown(spoken);
+        }
+
         gate.RecordSpelling(canonical, spoken);
+
+        return canonical;
+    }
+
+    /// <summary>
+    /// The canonical path when the source can express it, and null when the source provably cannot.
+    /// </summary>
+    /// <remarks>
+    /// A member exists on the row's type and still has no value the provider can compute:
+    /// <c>Name.IsEmpty</c> over a localized text, a getter over two columns. Every check the policy
+    /// makes passes, and the query then fails inside the provider — a five-hundred where the strict
+    /// tier promises a refusal, and the one place the tier answers a caller with something other
+    /// than an answer or a refusal.
+    /// <para>
+    /// Only the strict tier reaches this, and only where <see cref="RowShape.Expresses"/> can prove
+    /// the path wrong. Elsewhere the name is returned unchanged and fails exactly as it does today,
+    /// which is what an unguarded query does with it.
+    /// </para>
+    /// <para>
+    /// The refusal is the unknown-name one, so a caller cannot tell a member that does not exist
+    /// from one that exists and cannot be computed, any more than they can tell either from a field
+    /// they may not use.
+    /// </para>
+    /// </remarks>
+    private static string? Expressible(string? canonical, string spoken, Gate gate)
+    {
+        if (canonical is null)
+        {
+            return null;
+        }
+
+        if (gate.Rows.Expresses(canonical) == false)
+        {
+            gate.RecordUnexpressible(canonical, spoken);
+
+            return null;
+        }
 
         return canonical;
     }
@@ -2648,6 +2698,12 @@ internal static class FilterSanitizer
         /// </summary>
         internal bool InSegment { get; init; }
 
+        /// <summary>
+        /// What the source produces, which decides whether a path the caller named is something the
+        /// query can express at all.
+        /// </summary>
+        internal RowShape Rows { get; init; } = RowShape.Unknown;
+
         /// <summary>The caller this query is being sanitized for.</summary>
         internal DwPolicyContext Context => _context;
 
@@ -2689,6 +2745,26 @@ internal static class FilterSanitizer
         /// still fails there as it would unguarded.
         /// </remarks>
         internal bool HidesExistence => IsStrict && !IsDryRun;
+
+        /// <summary>
+        /// Records that a path exists on the type and names no value the query can compute, before
+        /// it is refused as an unknown name would be.
+        /// </summary>
+        /// <remarks>
+        /// The refusal itself says nothing, on purpose, so the trace is where an operator reads what
+        /// happened. Without it, a filter on <c>Name.IsEmpty</c> would be refused with the same
+        /// wording as a misspelling and nothing anywhere would say which of the two it was.
+        /// </remarks>
+        internal void RecordUnexpressible(string canonicalPath, string spoken)
+        {
+            _trace.RecordSpelling(canonicalPath, spoken);
+
+            _trace.Add(new PolicyDecision(
+                canonicalPath,
+                PolicyFeature.None,
+                PolicyAction.Denied,
+                "the member exists on the type and the query cannot compute it, so it is refused as an unknown name is"));
+        }
 
         /// <summary>Remembers a name that matches nothing, and returns it for the gate to refuse.</summary>
         /// <remarks>

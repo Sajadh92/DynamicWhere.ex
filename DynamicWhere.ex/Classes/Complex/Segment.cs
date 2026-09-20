@@ -30,11 +30,16 @@ public class Segment
     /// <summary>
     /// Returns a deep copy, cloning every condition set independently.
     /// </summary>
+    /// <returns>A new segment sharing no object with this one.</returns>
     /// <remarks>
     /// Policy applies to each set on its own, so the sets must not share a condition group: a
     /// rewrite aimed at one would otherwise land on all of them.
+    /// <para>
+    /// Public for the same reason <see cref="Filter.Clone"/> is: read a caller's request again with
+    /// one part changed, without editing what the caller handed in.
+    /// </para>
     /// </remarks>
-    internal Segment Clone() => new()
+    public Segment Clone() => new()
     {
         ConditionSets = ConditionSets is null ? null! : ConditionSets.ConvertAll(s => s.Clone()),
         Selects = Selects is null ? null : new List<string>(Selects),

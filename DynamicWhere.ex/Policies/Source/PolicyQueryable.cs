@@ -894,13 +894,16 @@ public sealed class PolicyQueryable<T> where T : class
     /// <summary>Sanitizes a whole filter and records the outcome.</summary>
     private Filter Sanitize(Filter filter, PolicyTrace trace)
     {
+        // Before the sanitizing, not after it, so a refusal leaves the trace readable. A strict
+        // refusal names no field on purpose, and the trace is the only place that says which field
+        // it was and why — which is no use to anyone if a throw skips the assignment.
+        LastTrace = trace;
+
         // A source the caller ordered before guarding it keeps that order: a default would replace it.
         Filter sanitized = FilterSanitizer.Sanitize<T>(
             filter, _resolver, _context, _options, trace,
             applyDefaultOrder: TakesDefaultOrder,
             rows: RowShape.Of(_source));
-
-        LastTrace = trace;
 
         return sanitized;
     }
@@ -908,9 +911,10 @@ public sealed class PolicyQueryable<T> where T : class
     /// <summary>Sanitizes a summary and records the outcome.</summary>
     private Summary Sanitize(Summary summary, PolicyTrace trace)
     {
-        Summary sanitized = FilterSanitizer.Sanitize<T>(summary, _resolver, _context, _options, trace);
-
         LastTrace = trace;
+
+        Summary sanitized = FilterSanitizer.Sanitize<T>(
+            summary, _resolver, _context, _options, trace, rows: RowShape.Of(_source));
 
         return sanitized;
     }
@@ -928,10 +932,10 @@ public sealed class PolicyQueryable<T> where T : class
     {
         PolicyTrace trace = NewTrace();
 
+        LastTrace = trace;
+
         Filter sanitized = FilterSanitizer.Sanitize<T>(
             clause, _resolver, _context, _options, trace, synthesizeProjection: false, applyDefaultOrder);
-
-        LastTrace = trace;
 
         return sanitized;
     }

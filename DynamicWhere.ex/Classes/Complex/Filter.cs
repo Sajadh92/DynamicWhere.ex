@@ -31,7 +31,12 @@ public class Filter
     /// Returns a deep copy, so a guarded query can be canonicalized and rewritten without the
     /// caller's own filter changing underneath them.
     /// </summary>
-    /// <returns>A new filter sharing no object with this one.</returns>
+    /// <returns>
+    /// A new filter. Every node is new — the condition tree, each list and each clause — so nothing
+    /// either one is given afterwards reaches the other. The values inside a condition's
+    /// <c>Values</c> list are the same objects: the list is new, and what the caller put in it is
+    /// theirs, decoded from JSON and never written to.
+    /// </returns>
     /// <remarks>
     /// Public because callers need the same thing the library needs: a request read a second time
     /// with one part changed — the next page, another order — without editing the object a caller

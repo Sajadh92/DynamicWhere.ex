@@ -148,6 +148,37 @@ namespace DynamicWhere.Tests.Policies
         }
 
         [Fact]
+        public void Writing_the_trace_flag_the_tier_already_answers_is_the_same_posture()
+        {
+            // The value that applies, not whether somebody wrote it down. IncludeTraceInResult
+            // defaults to the tier's own answer, so a host writing that answer out and a host
+            // leaving it null hand a caller the same result.
+            DwPolicyOptions different = Copy();
+
+            different.IncludeTraceInResult = DwPolicy.Options.IncludeTraceInResult
+                                             ?? DwPolicy.Options.Tier == DwTier.Convenience;
+
+            Assert.NotEqual(DwPolicy.Options.IncludeTraceInResult, different.IncludeTraceInResult);
+
+            DwPolicyOptions inForce = DwPolicy.Options;
+
+            DwPolicy.Configure(different);
+
+            Assert.Same(inForce, DwPolicy.Options);
+        }
+
+        [Fact]
+        public void A_trace_flag_that_answers_differently_is_refused()
+        {
+            DwPolicyOptions different = Copy();
+
+            different.IncludeTraceInResult = !(DwPolicy.Options.IncludeTraceInResult
+                                               ?? DwPolicy.Options.Tier == DwTier.Convenience);
+
+            Refused(different);
+        }
+
+        [Fact]
         public void A_different_group_floor_is_refused()
         {
             DwPolicyOptions different = Copy();
@@ -392,7 +423,14 @@ namespace DynamicWhere.Tests.Policies
                 object target = declaring == typeof(DwCaps) ? different.Caps : different;
                 PropertyInfo property = declaring.GetProperty(name)!;
 
-                property.SetValue(target, Other(property.GetValue(target), property.PropertyType));
+                // The trace flag is compared by the value that applies, and it defaults to the
+                // tier's own answer, so what proves it is compared is a value answering differently.
+                // Writing the default down is the case above.
+                object? replacement = name == nameof(DwPolicyOptions.IncludeTraceInResult)
+                    ? !(DwPolicy.Options.IncludeTraceInResult ?? DwPolicy.Options.Tier == DwTier.Convenience)
+                    : Other(property.GetValue(target), property.PropertyType);
+
+                property.SetValue(target, replacement);
 
                 DwPolicyOptions inForce = DwPolicy.Options;
 

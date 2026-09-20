@@ -36,7 +36,12 @@ public class Summary
     /// <summary>
     /// Returns a deep copy.
     /// </summary>
-    /// <returns>A new summary sharing no object with this one.</returns>
+    /// <returns>
+    /// A new summary. Every node is new — the condition tree, each list and each clause — so nothing
+    /// either one is given afterwards reaches the other. The values inside a condition's
+    /// <c>Values</c> list are the same objects: the list is new, and what the caller put in it is
+    /// theirs, decoded from JSON and never written to.
+    /// </returns>
     /// <remarks>
     /// A summary reaches a condition group twice — once through <see cref="ConditionGroup"/> and
     /// again through <see cref="Having"/>. Both are cloned; a copy shaped like a filter's would

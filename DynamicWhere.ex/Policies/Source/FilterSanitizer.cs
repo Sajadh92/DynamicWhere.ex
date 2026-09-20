@@ -2454,7 +2454,8 @@ internal static class FilterSanitizer
     }
 
     /// <summary>
-    /// The canonical path when the source can express it, and null when the source provably cannot.
+    /// The canonical path when the clause can be answered with it, and null when the source provably
+    /// cannot express it and the clause needs the provider to compute it.
     /// </summary>
     /// <remarks>
     /// A member exists on the row's type and still has no value the provider can compute:
@@ -2468,11 +2469,24 @@ internal static class FilterSanitizer
     /// which is what an unguarded query does with it.
     /// </para>
     /// <para>
+    /// A projection is exempt. With <paramref name="computed"/> false the canonical path is returned
+    /// even where <see cref="RowShape.Expresses"/> proves it wrong, because EF Core evaluates the
+    /// last projection on the client, so a member no database can compute is still one a caller can
+    /// select.
+    /// </para>
+    /// <para>
     /// The refusal is the unknown-name one, so a caller cannot tell a member that does not exist
     /// from one that exists and cannot be computed, any more than they can tell either from a field
     /// they may not use.
     /// </para>
     /// </remarks>
+    /// <param name="canonical">The resolved path, or null when the name resolved to nothing.</param>
+    /// <param name="spoken">The name as the caller wrote it, for the trace.</param>
+    /// <param name="gate">The per-query state, carrying the shape of the rows.</param>
+    /// <param name="computed">
+    /// True when the clause needs the provider to compute the path, false for a projection.
+    /// </param>
+    /// <returns>The canonical path, or null when the strict tier is to refuse the name.</returns>
     private static string? Expressible(string? canonical, string spoken, Gate gate, bool computed)
     {
         if (canonical is null)

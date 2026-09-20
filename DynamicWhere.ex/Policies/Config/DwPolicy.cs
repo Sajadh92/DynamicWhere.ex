@@ -57,7 +57,7 @@ public static class DwPolicy
     public static IReadOnlyList<StorePolicyProvider> StoreProviders => _stores;
 
     /// <summary>
-    /// Sets the posture and the runtime policy sources, once, during startup.
+    /// Sets the posture and the runtime policy sources, during startup.
     /// </summary>
     /// <param name="options">The posture. Frozen by this call.</param>
     /// <param name="providers">
@@ -156,7 +156,7 @@ public static class DwPolicy
 
         if (inForce.Tier != asked.Tier
             || inForce.DryRun != asked.DryRun
-            || inForce.IncludeTraceInResult != asked.IncludeTraceInResult
+            || inForce.TraceInResult != asked.TraceInResult
             || inForce.AuditRefusals != asked.AuditRefusals
             || !string.Equals(inForce.HashSalt, asked.HashSalt, StringComparison.Ordinal)
             || inForce.StoreFailure != asked.StoreFailure
@@ -166,6 +166,10 @@ public static class DwPolicy
             return false;
         }
 
+        // IncludeTraceInResult is compared by the value that applies, not by whether somebody wrote
+        // it down: it defaults to the tier's own answer, and the tiers are equal by the line above,
+        // so a host writing that answer out enforces exactly what a host leaving it null does. The
+        // same rule as MinGroupSize below.
         if (!SameCaps(inForce.Caps, asked.Caps) || !SameCatalog(inForce.Entities, asked.Entities))
         {
             return false;

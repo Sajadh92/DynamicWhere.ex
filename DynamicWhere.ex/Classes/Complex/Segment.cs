@@ -30,7 +30,12 @@ public class Segment
     /// <summary>
     /// Returns a deep copy, cloning every condition set independently.
     /// </summary>
-    /// <returns>A new segment sharing no object with this one.</returns>
+    /// <returns>
+    /// A new segment. Every node is new — the condition tree, each list and each clause — so nothing
+    /// either one is given afterwards reaches the other. The values inside a condition's
+    /// <c>Values</c> list are the same objects: the list is new, and what the caller put in it is
+    /// theirs, decoded from JSON and never written to.
+    /// </returns>
     /// <remarks>
     /// Policy applies to each set on its own, so the sets must not share a condition group: a
     /// rewrite aimed at one would otherwise land on all of them.

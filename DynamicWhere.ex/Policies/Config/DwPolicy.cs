@@ -174,7 +174,16 @@ public static class DwPolicy
         return SameProviders(providers);
     }
 
-    /// <summary>True when two cap sets hold the same numbers, the group floor's opt-out included.</summary>
+    /// <summary>
+    /// True when two cap sets hold the same numbers.
+    /// </summary>
+    /// <remarks>
+    /// The floor that applies, not whether somebody wrote it down. <c>IsMinGroupSizeSet</c> tells a
+    /// deliberate opt-out from a deployment that never heard of the control, and nothing in
+    /// enforcement reads it — a host binding the documented appsettings sample, which writes
+    /// <c>"MinGroupSize": 5</c>, enforces exactly what a host on the defaults does, and refusing the
+    /// second one would refuse the case this feature exists for.
+    /// </remarks>
     private static bool SameCaps(DwCaps inForce, DwCaps asked) =>
         inForce.MaxPageSize == asked.MaxPageSize
         && inForce.DefaultPageSize == asked.DefaultPageSize
@@ -189,7 +198,6 @@ public static class DwPolicy
         && inForce.DefaultFieldCost == asked.DefaultFieldCost
         && inForce.MaxAuditEvents == asked.MaxAuditEvents
         && inForce.MinGroupSize == asked.MinGroupSize
-        && inForce.IsMinGroupSizeSet == asked.IsMinGroupSizeSet
         && inForce.SchemaDepth == asked.SchemaDepth
         && inForce.SchemaCycleLimit == asked.SchemaCycleLimit
         && inForce.MaxSchemaFields == asked.MaxSchemaFields;

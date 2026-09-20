@@ -298,15 +298,41 @@ namespace DynamicWhere.Tests.Policies
         }
 
         [Fact]
-        public void A_projection_naming_it_is_refused()
+        public void A_projection_naming_it_still_returns_it()
         {
-            PolicyException refusal = Assert.ThrowsAny<PolicyException>(
-                () => Guard(Built(), DwTier.Strict).ToList(new Filter
-                {
-                    Selects = new List<string> { "Id", "Name.IsEmpty" }
-                }));
+            // A projection is the last thing the provider builds, and EF Core evaluates that one on
+            // the client when it cannot translate it. Unguarded this returns rows, so refusing it
+            // would take back a projection that has always worked.
+            List<ZyRoleRow> unguarded = Built().Select(row => new ZyRoleRow
+            {
+                Id = row.Id,
+                Name = new ZyLocalizedText { Ar = row.Name.Ar, En = row.Name.En }
+            }).ToList();
 
-            Assert.Equal(PolicyErrorCode.FieldDeniedForSelect, refusal.ErrorCode);
+            Assert.Single(unguarded);
+
+            FilterResult<ZyRoleRow> result = Guard(Built(), DwTier.Strict).ToList(new Filter
+            {
+                Selects = new List<string> { "Id", "Name.IsEmpty" }
+            });
+
+            Assert.Single(result.Data);
+        }
+
+        [Fact]
+        public void An_unmapped_getter_on_the_entity_can_still_be_selected()
+        {
+            Assert.Single(_db.Roles.Select(role => new { role.Id, role.Display }).ToList());
+
+            FilterResult<ZyRole> result = Guard(_db.Roles, DwTier.Strict).ToList(new Filter
+            {
+                Selects = new List<string> { "Id", "Display" }
+            });
+
+            // The typed projection reads the members it was asked for, so the getter computes from
+            // those: Code was not selected, which is the core's own behaviour and not the policy's.
+            Assert.Single(result.Data);
+            Assert.Equal(1, result.Data[0].Id);
         }
 
         [Fact]

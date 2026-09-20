@@ -694,7 +694,7 @@ internal static class FilterSanitizer
         {
             for (int i = 0; i < working.Selects.Count; i++)
             {
-                working.Selects[i] = ResolveName<T>(working.Selects[i], gate);
+                working.Selects[i] = ResolveName<T>(working.Selects[i], gate, computed: false);
             }
         }
 
@@ -2371,17 +2371,22 @@ internal static class FilterSanitizer
     /// <typeparam name="T">The entity type being queried.</typeparam>
     /// <param name="name">The name as the caller wrote it.</param>
     /// <param name="gate">The per-query state, carrying the type's alias map.</param>
+    /// <param name="computed">
+    /// True when the clause needs the provider to compute the path — a filter, an order, a grouping
+    /// key, an aggregated field. False for a projection, which the provider evaluates on the client
+    /// when it cannot translate it, so a member no database can compute is still returned there.
+    /// </param>
     /// <returns>The canonical field path.</returns>
     /// <exception cref="PolicyException">Thrown when the name could mean more than one field.</exception>
     /// <exception cref="LogicException">Thrown when the name names nothing, outside the strict tier.</exception>
-    private static string ResolveName<T>(string name, Gate gate) where T : class
+    private static string ResolveName<T>(string name, Gate gate, bool computed = true) where T : class
     {
         // A type nobody has aliased takes the path it always did, with no extra reflection and no
         // behavioural difference from before this existed.
         if (gate.TypePolicy.Aliases.Count == 0)
         {
             return gate.HidesExistence
-                ? Expressible(TryValidate<T>(name), name, gate) ?? gate.Unknown(name)
+                ? Expressible(TryValidate<T>(name), name, gate, computed) ?? gate.Unknown(name)
                 : name.Validate<T>();
         }
 
@@ -2438,7 +2443,7 @@ internal static class FilterSanitizer
 
         string canonical = candidates[0];
 
-        if (gate.HidesExistence && Expressible(canonical, spoken, gate) is null)
+        if (gate.HidesExistence && Expressible(canonical, spoken, gate, computed) is null)
         {
             return gate.Unknown(spoken);
         }
@@ -2468,11 +2473,20 @@ internal static class FilterSanitizer
     /// they may not use.
     /// </para>
     /// </remarks>
-    private static string? Expressible(string? canonical, string spoken, Gate gate)
+    private static string? Expressible(string? canonical, string spoken, Gate gate, bool computed)
     {
         if (canonical is null)
         {
             return null;
+        }
+
+        if (!computed)
+        {
+            // A projection is the last thing the provider builds, and EF Core evaluates that one on
+            // the client when it cannot translate it. So a member no database can compute is still
+            // a member a caller can select, and refusing it here would take back a projection that
+            // has always worked.
+            return canonical;
         }
 
         if (gate.Rows.Expresses(canonical) == false)
@@ -2580,7 +2594,7 @@ internal static class FilterSanitizer
         {
             for (int i = 0; i < filter.Selects.Count; i++)
             {
-                filter.Selects[i] = ResolveName<T>(filter.Selects[i], gate);
+                filter.Selects[i] = ResolveName<T>(filter.Selects[i], gate, computed: false);
             }
         }
 

@@ -128,6 +128,26 @@ namespace DynamicWhere.Tests.Policies
         }
 
         [Fact]
+        public void Writing_the_group_floor_the_default_already_holds_is_the_same_posture()
+        {
+            // The floor that applies, not whether somebody wrote it down. The documented appsettings
+            // sample writes "MinGroupSize": 5, so a host binding it and a host on the defaults
+            // enforce the same floor — and refusing the second is refusing the case this is for.
+            DwPolicyOptions different = Copy();
+
+            different.Caps.MinGroupSize = DwPolicy.Options.Caps.MinGroupSize;
+
+            Assert.NotEqual(DwPolicy.Options.Caps.IsMinGroupSizeSet, different.Caps.IsMinGroupSizeSet);
+            Assert.Equal(DwPolicy.Options.Caps.MinGroupSize, different.Caps.MinGroupSize);
+
+            DwPolicyOptions inForce = DwPolicy.Options;
+
+            DwPolicy.Configure(different);
+
+            Assert.Same(inForce, DwPolicy.Options);
+        }
+
+        [Fact]
         public void A_different_group_floor_is_refused()
         {
             DwPolicyOptions different = Copy();

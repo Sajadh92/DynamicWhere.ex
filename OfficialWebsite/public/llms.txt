@@ -1462,9 +1462,10 @@ DwPolicy                                                                    stat
   hosts starting at once can both pass. This is what lets an integration suite start several
   `WebApplicationFactory<Program>` hosts over one composition root.
   - Compared: `Tier`, `DryRun`, `IncludeTraceInResult`, `AuditRefusals`, `HashSalt`, `StoreFailure`,
-    `MaxSnapshotAge`, `RefreshInterval`, every `DwCaps` value with `IsMinGroupSizeSet`, the exposed catalogue
-    (same types under the same names), and the provider **types**, in the order supplied, with
-    `AttributePolicyProvider` left out of both sides.
+    `MaxSnapshotAge`, `RefreshInterval`, every `DwCaps` value, the exposed catalogue — the same types under the same
+    names, and every name each type answers to — and the provider **types**, in the order supplied, with
+    `AttributePolicyProvider` left out of both sides. `IsMinGroupSizeSet` is not compared: nothing in enforcement
+    reads it, so writing `MinGroupSize = 5` and leaving it unset are the same posture.
   - Not compared, and not replaced: `TokenVault`, `Services`, and the provider **instances**. A second host builds
     its own and no two are ever the same reference, so they stay as the first call left them — a second host runs
     with the first host's vault, container and rule stores.
@@ -1840,7 +1841,8 @@ Rules:
 - `LastTrace` is assigned before the request is sanitized (3.3.0), so a refused request leaves its own trace
   readable. It used to be assigned after, so a refusal left the previous request's trace, or null. A strict refusal
   names no field, and the trace is where the real path and reason are.
-  - It holds the latest call that got past sanitizing, or a `QueryStringDenied` refusal.
+  - It holds the latest call the handle made: one that got past sanitizing, one sanitizing refused, or a
+    `QueryStringDenied` refusal.
 - Refusals throw `PolicyException` (a `LogicException`) from the handle method.
   - With `DwPolicyOptions.AuditRefusals` on, the terminal and composable methods also write the refusal to the context's audit buffer on its way out, once, without changing or catching it (section 22).
 
@@ -2312,7 +2314,13 @@ The resolver, fragment and provider types are listed in section 21.
 ## 17. Enforcement by tier and dry run
 
 Under `Strict` outside a dry run, a path that exists on the type but names no value the query can compute is refused
-as an unknown name is (3.3.0), with the clause's own code and `FieldPath` `"*"`. What decides:
+as an unknown name is (3.3.0), with the clause's own code and `FieldPath` `"*"`, in every clause the database has to
+compute: a filter, an order, a grouping key, an aggregated field, and each of those inside a `Segment`.
+
+`Selects` is not one of them. A projection is the last thing the provider builds, and EF Core evaluates that one on
+the client when it cannot translate it, so `Selects` naming such a member returns its value exactly as before.
+
+What decides:
 
 ```
 Source of the rows                                   What the set of producible members is read from   Name.IsEmpty
@@ -2322,13 +2330,16 @@ Select(...) before ApplyPolicy building the row      that initializer's assignme
   ... a member it copies whole: Name = role.Name     the model, beneath the copied member              refused
 rows in memory (EnumerableQuery)                     nothing; the getter runs                          runs
 beneath a column, converted or not                   nothing; the converter decides                    runs
-a framework member: Length, Year, Count, HasValue    nothing; the provider translates it               runs
+a framework member: Length, Year, HasValue           nothing; the provider translates it               runs
 a source the library cannot read into                nothing                                           runs
+a column only a subtype maps, through the base       the queried type's model, which EF Core
+                                                     translates against                                refused
+a projection another provider ran                    nothing; its rules are its own                    runs
 ```
 
 - An unmapped getter on the entity itself (`Display => $"{Code}:{Id}"`) is refused for the same reason.
 - `Convenience` and a dry run are unchanged: the provider throws, as it does unguarded.
-- A member a `[DbFunction]` or an `IMethodCallTranslatorPlugin` computes is not in the model and is refused too.
+- The rule is the model's: a member it maps nowhere is refused, whatever a provider extension could compute.
 - The trace records it: `the member exists on the type and the query cannot compute it, so it is refused as an unknown name is`.
 
 The count caps are checked first, before any name is resolved (3.1.0). Names are then resolved to canonical paths,
@@ -4833,16 +4844,19 @@ MemoryCalculationInput
           force and do nothing. A different posture still throws. The check is inside the lock that configures, so a
           caller needs no IsConfigured check of its own — that check is a check-then-act two hosts can both pass.
           Compared: tier, DryRun, IncludeTraceInResult, AuditRefusals, HashSalt, StoreFailure, MaxSnapshotAge,
-          RefreshInterval, every cap with IsMinGroupSizeSet, the exposed catalogue, and the provider types in order.
+          RefreshInterval, every cap value, the exposed catalogue with every name it answers to, and the provider
+          types in order.
           Not compared and not replaced: TokenVault, Services and the provider instances, so a second host runs with
           the first host's vault, container and rule stores. AddDwPolicies registers the posture in force rather than
           the instance it built.
         - Behaviour change. Under Strict outside a dry run, a path that exists on the type and names no value the
           query can compute — LocalizedText.IsEmpty over two columns, an unmapped getter on the entity — is refused
-          as an unknown name is, in every clause, where the provider used to throw and the caller saw a five-hundred.
-          Refused only where the producible members are known: an entity's model, and the initializers of a
-          projection composed before ApplyPolicy, including a member it copies from the entity. Rows in memory, a
-          framework member such as Length or Year, anything beneath a column, Convenience and a dry run are unchanged.
+          as an unknown name is, in every clause the database has to compute, where the provider used to throw and
+          the caller saw a five-hundred. Selects is not one of them: EF Core evaluates the last projection on the
+          client. Refused only where the producible members are known: the queried type's own model, and the
+          initializers of a projection EF Core ran before ApplyPolicy, including a member it copies from the entity.
+          Rows in memory, a framework member such as Length or Year, anything beneath a column, another provider's
+          rows, Convenience and a dry run are unchanged.
         - Behaviour change. LastTrace is assigned before a request is sanitized, so a refused request leaves its own
           trace readable instead of the previous request's.
         - New. Clone() is public on Filter, Segment and Summary. A deep copy: the condition tree, the projection list,
@@ -5095,10 +5109,13 @@ MemoryCalculationInput
   `[Column]`. Reached through a navigation (`Owner.New`) it is an ordinary member.
 - A declared date format may not write text ISO 8601 or a year-first date already reads; `DwDates.Configure`
   refuses one (section 4). ISO 8601 and year-first dates are read on every deployment and cannot be turned off.
-- A member no database can compute — a getter over columns, an unmapped getter on an entity, a member a
-  `[DbFunction]` or a translator plugin computes — cannot be filtered, ordered, selected, grouped or aggregated under
-  `Strict` on a source the library can read (3.3.0, section 17). Map it, or name the columns beneath it. Under
-  `Convenience` it still reaches the provider and still throws there.
+- A member no database can compute — a getter over columns, or an unmapped getter on an entity — cannot be
+  filtered, ordered, grouped or aggregated under `Strict` on a source the library can read (3.3.0, section 17). Map
+  it, or name the columns beneath it. A projection may still name it, because EF Core evaluates the last projection
+  on the client. Under `Convenience` every clause still reaches the provider and still throws there.
+- A column the model maps only on a subtype cannot be filtered, ordered, grouped or aggregated through the base type
+  (3.3.0, section 17). EF Core translates a member against the type the query is over, so it fails there too: query
+  the derived type, `Set<Merchant>()`.
 - A second host configuring the same posture runs with the first host's `TokenVault`, `Services` and rule store
   instances (3.3.0, section 12). They are not compared and not replaced.
 - Summary rows flatten dotted group fields (`CategoryName`); `SelectDynamic` rows nest them (`Category.Name`).

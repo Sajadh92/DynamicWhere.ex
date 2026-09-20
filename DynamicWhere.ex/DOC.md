@@ -1529,7 +1529,8 @@ caller request → ApplyPolicy(ctx) → sanitize → existing engine → transfo
 ```
 
 ```csharp
-// Once, at startup. Refused on a second call: the tier is read by every request thread.
+// At startup. A second call asking for the same posture does nothing; a different one is
+// refused, because the tier is read by every request thread. See "Configuring twice".
 DwPolicy.Configure(new DwPolicyOptions
 {
     Tier = DwTier.Convenience,
@@ -1689,7 +1690,9 @@ public sealed class LocalizedText
 }
 ```
 
-gives `Name.Ar` and `Name.En`, which translate, and `Name.IsEmpty`, which is a getter over the two. The policy has nothing to say about it — `[DwNoWhere]` on `Name` matches that path and not the ones beneath it — so every check passed and EF Core threw `InvalidOperationException`: a five-hundred where `Strict` promises a refusal. Such a path is now refused as an unknown name is, with the clause's own code and `FieldPath` `"*"`, in every clause.
+gives `Name.Ar` and `Name.En`, which translate, and `Name.IsEmpty`, which is a getter over the two. The policy has nothing to say about it — `[DwNoWhere]` on `Name` matches that path and not the ones beneath it — so every check passed and EF Core threw `InvalidOperationException`: a five-hundred where `Strict` promises a refusal. Such a path is now refused as an unknown name is, with the clause's own code and `FieldPath` `"*"`, in every clause the database has to compute: a filter, an order, a grouping key, an aggregated field, and each of those inside a `Segment`.
+
+**`Selects` is not one of them.** A projection is the last thing the provider builds, and EF Core evaluates that one on the client when it cannot translate it, so `Selects = ["Id", "Name.IsEmpty"]` returns the computed value exactly as it did before. Refusing it would take back a projection that has always worked.
 
 It is refused only where the whole set of members a container can produce is known:
 
@@ -1700,12 +1703,14 @@ It is refused only where the whole set of members a container can produce is kno
 | …where that `Select` copies the member from the entity, `Name = role.Name` | the model, beneath the member it copies | Refused |
 | Rows in memory | nothing — the getter runs | Runs, as it always did |
 | Anything beneath a column, a converted one included | nothing — the converter decides | Runs, as it always did |
-| A framework member such as `Length`, `Year`, `Count`, `HasValue` | nothing — the provider translates it | Runs, as it always did |
+| A framework member such as `Length`, `Year` or `HasValue` | nothing — the provider translates it | Runs, as it always did |
 | A source the library cannot read | nothing | Runs, as it always did |
+| A column only a subtype maps, queried through the base | the queried type's model, which is what EF Core translates against | Refused |
+| A projection a provider that is not EF Core's ran | nothing — its rules are its own | Runs, as it always did |
 
 An unmapped getter on the entity itself, `Display => $"{Code}:{Id}"`, is refused for the same reason. The convenience tier and a dry run are unchanged: both fail exactly as the unguarded query does, which is the provider's own error. The trace records the refusal — `the member exists on the type and the query cannot compute it` — and since 3.3.0 `LastTrace` is set before a request is sanitized, so a refusal leaves it readable rather than null.
 
-A member a custom EF Core translator computes, through `[DbFunction]` or an `IMethodCallTranslatorPlugin`, is not in the model and is refused with the rest. Map it, or filter on the columns beneath it.
+The rule is the model's: a member it maps nowhere is one the database cannot compute. A member some provider extension computes without a mapping is refused with the rest, so map it, or filter on the columns beneath it.
 
 ### A navigation named in Selects
 
@@ -2073,9 +2078,10 @@ and nothing here can tell the difference.
 
 #### Configuring twice
 
-*(3.3.0)* The first call decides the posture. A second `DwPolicy.Configure`, or a second
-`AddDwPolicies`, **asking for the posture already in force does nothing and returns**; one asking for
-a different posture still throws `InvalidOperationException`. The comparison happens inside the lock
+*(3.3.0)* The first call decides the posture. A second `DwPolicy.Configure` **asking for the posture
+already in force does nothing and returns**; one asking for a different posture still throws
+`InvalidOperationException`. A second `AddDwPolicies` binds and builds its options as ever, changes
+no posture, and registers the one in force. The comparison happens inside the lock
 that does the configuring, so a caller needs no lock and no `IsConfigured` check of its own — which
 matters because that check is a check-then-act two hosts starting at once can both pass.
 
@@ -2089,7 +2095,7 @@ What counts as the same posture:
 |---|---|
 | `Tier`, `DryRun`, `IncludeTraceInResult`, `AuditRefusals` | `TokenVault` |
 | `HashSalt`, `StoreFailure`, `MaxSnapshotAge`, `RefreshInterval` | `Services` |
-| Every value on `Caps`, the group floor's opt-out included | The provider *instances* |
+| Every value on `Caps`, the floor that applies rather than whether it was written down | The provider *instances* |
 | The exposed entity catalogue: the same types under the same names | |
 | The provider *types*, in the order they were supplied | |
 

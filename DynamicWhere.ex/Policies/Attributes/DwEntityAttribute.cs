@@ -39,10 +39,13 @@ public sealed class DwEntityAttribute : Attribute
     /// initializer and assigns every field the default names a column — a member the model maps, read
     /// directly, through reference navigations or through <c>EF.Property</c> — at every level of a
     /// nested path. That is the shape a caller writes who projects a row type before guarding it. A
-    /// constructor with arguments, a field the initializer leaves unassigned, and a field the projection
-    /// computes each leave the query in its own order, because a default must never be the reason a
-    /// query that ran unguarded fails. A <c>Select</c> composed on the guarded handle, or a
-    /// <c>Filter</c> carrying <c>Selects</c>, stays unordered. An in-memory sequence sorted before
+    /// projection with no initializer at all, <c>new TicketRow(t.Id, t.Code)</c>, a field the
+    /// initializer leaves unassigned, and a field the projection computes each leave the query in its
+    /// own order, because a default must never be the reason a query that ran unguarded fails. A
+    /// constructor with arguments <i>and</i> an initializer still takes the default, since the
+    /// initializer is what says which member holds which column. A <c>Select</c> composed on the
+    /// guarded handle leaves the rest of the chain unordered; a <c>Filter</c> carrying
+    /// <c>Selects</c> is ordered as any other filter is. An in-memory sequence sorted before
     /// <c>ApplyPolicy</c> is not recognised as ordered, because it reaches the policy as a query with no
     /// <c>OrderBy</c> in it, so send its order with the filter. End the default with a unique field, such
     /// as the key, or rows sharing the leading values can still change places between pages.

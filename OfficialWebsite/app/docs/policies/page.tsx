@@ -57,8 +57,9 @@ PolicyTrace                what the policy did: always on LastTrace, and on
                            (off under the strict tier by default)`}</Code>
 
       <h2 id="start">The whole thing in one screen</h2>
-      <Code lang="csharp">{`// Once, at startup. A second call is refused: the tier is read by every
-// request thread, and a posture that can change mid-flight can be relaxed.
+      <Code lang="csharp">{`// At startup. A second call asking for the same posture does nothing; a
+// different one is refused, because the tier is read by every request thread
+// and a posture that can change mid-flight can be relaxed.
 DwPolicy.Configure(new DwPolicyOptions
 {
     Tier = DwTier.Convenience,

@@ -1473,9 +1473,18 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
       <p>
         Since <strong>3.3.0</strong> such a path is refused as an unknown name
         is: the clause&apos;s own code, <code>FieldPath</code>{" "}
-        <code>&quot;*&quot;</code>, in a filter, an order, a projection, a group
-        and an aggregate alike. It is refused only where the whole set of
-        members a container can produce is known.
+        <code>&quot;*&quot;</code>, in every clause the database has to compute
+        — a filter, an order, a grouping key, an aggregated field, and each of
+        those inside a <code>Segment</code>. It is refused only where the whole
+        set of members a container can produce is known.
+      </p>
+      <p>
+        <strong><code>Selects</code> is not one of them.</strong> A projection
+        is the last thing the provider builds, and EF Core evaluates that one on
+        the client when it cannot translate it, so{" "}
+        <code>Selects = [&quot;Id&quot;, &quot;Name.IsEmpty&quot;]</code>{" "}
+        returns the computed value exactly as it did before. Refusing it would
+        take back a projection that has always worked.
       </p>
       <table>
         <thead>
@@ -1487,8 +1496,10 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
           <tr><td>…where the <code>Select</code> copies the member, <code>Name = role.Name</code></td><td>the model, beneath the member it copies</td><td>Refused</td></tr>
           <tr><td>Rows in memory</td><td>nothing — the getter runs</td><td>Runs, as before</td></tr>
           <tr><td>Anything beneath a column, converted or not</td><td>nothing — the converter decides</td><td>Runs, as before</td></tr>
-          <tr><td>A framework member: <code>Length</code>, <code>Year</code>, <code>Count</code></td><td>nothing — the provider translates it</td><td>Runs, as before</td></tr>
+          <tr><td>A framework member: <code>Length</code>, <code>Year</code>, <code>HasValue</code></td><td>nothing — the provider translates it</td><td>Runs, as before</td></tr>
           <tr><td>A source the library cannot read</td><td>nothing</td><td>Runs, as before</td></tr>
+          <tr><td>A column only a subtype maps, queried through the base</td><td>the queried type&apos;s model, which is what EF Core translates against</td><td>Refused</td></tr>
+          <tr><td>A projection a provider that is not EF Core&apos;s ran</td><td>nothing — its rules are its own</td><td>Runs, as before</td></tr>
         </tbody>
       </table>
       <p>
@@ -1498,10 +1509,11 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         unchanged: both fail exactly as the unguarded query does, which is the
         provider&apos;s own error.
       </p>
-      <Callout tone="warn" title="A member a custom translator computes is refused with the rest">
-        A member EF Core computes through <code>[DbFunction]</code> or an{" "}
-        <code>IMethodCallTranslatorPlugin</code> is not in the model, so the
-        strict tier refuses it. Map it, or filter on the columns beneath it.
+      <Callout tone="warn" title="The rule is the model's">
+        A member the model maps nowhere is one the database cannot compute, so
+        the strict tier refuses it wherever the database has to. A member some
+        provider extension computes without a mapping is refused with the rest:
+        map it, or filter on the columns beneath it.
       </Callout>
 
       <h2 id="last-trace-timing">31. <code>LastTrace</code> Is Set Before a Request Is Sanitized</h2>
@@ -1536,8 +1548,9 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         <code>IncludeTraceInResult</code>, <code>AuditRefusals</code>,{" "}
         <code>HashSalt</code>, <code>StoreFailure</code>,{" "}
         <code>MaxSnapshotAge</code>, <code>RefreshInterval</code>, every cap
-        including the group floor&apos;s opt-out, the exposed entity catalogue,
-        and the provider types in the order supplied. Not compared, and not
+        value, the exposed entity catalogue with every name it answers to, and
+        the provider types in the order supplied. Writing a cap&apos;s own
+        default down is not a difference. Not compared, and not
         replaced: <code>TokenVault</code>, <code>Services</code> and the
         provider instances — a second host builds its own, and no two are ever
         the same reference.

@@ -104,7 +104,7 @@ public static class DwPolicyConfiguration
     /// <returns>The same collection, for chaining.</returns>
     /// <exception cref="ArgumentNullException">Thrown when the collection or the section is null.</exception>
     /// <exception cref="InvalidOperationException">
-    /// Thrown when the policy layer is already configured with a <i>different</i> posture, and when
+    /// Thrown when the policy layer is already configured with a <i>different</i> posture, or when
     /// the section names a key nothing answers to.
     /// </exception>
     /// <remarks>

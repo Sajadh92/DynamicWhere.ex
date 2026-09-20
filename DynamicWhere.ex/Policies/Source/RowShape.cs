@@ -292,7 +292,7 @@ internal sealed class RowShape
     /// produce: an entity type and its derived types, a complex or owned type, or an initializer in
     /// the projection itself. Anywhere else the answer is null and the path is left alone — beneath a
     /// column, where a converter decides; on a framework type, where <c>Length</c>, <c>Year</c> and
-    /// <c>Count</c> are translated by the provider and are not members of any model; on rows in
+    /// <c>HasValue</c> are translated by the provider and are not members of any model; on rows in
     /// memory, which run the getter; and on a source this library cannot read.
     /// </para>
     /// <para>

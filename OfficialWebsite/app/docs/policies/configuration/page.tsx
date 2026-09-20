@@ -28,11 +28,14 @@ export default function Page() {
     MaxSnapshotAge       = TimeSpan.FromMinutes(15),
     RefreshInterval      = TimeSpan.FromSeconds(30),
 }, providers);`}</Code>
-      <Callout tone="warn" title="Frozen at startup, and refused on a second call">
+      <Callout tone="warn" title="Frozen at startup">
         The posture is read by every request thread without synchronization. A
         tier that can change while requests are in flight is one that can be
         relaxed by a code path nobody expected to be security-relevant, so
-        mutation after <code>Configure</code> throws.
+        mutation after <code>Configure</code> throws, and so does a second call
+        asking for a <em>different</em> posture. Since 3.3.0 a second call
+        asking for the one already in force is a no-op — see{" "}
+        <a href="#configuring-twice">Configuring twice</a>.
       </Callout>
       <p>
         <code>AttributePolicyProvider</code> is added whether or not you pass it.
@@ -907,10 +910,12 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
       <h2 id="configuring-twice">Configuring twice</h2>
       <p>
         The first call decides the posture. Since <strong>3.3.0</strong> a
-        second <code>DwPolicy.Configure</code>, or a second{" "}
-        <code>AddDwPolicies</code>, <strong>asking for the posture already in
-        force does nothing and returns</strong>; one asking for a different
-        posture still throws <code>InvalidOperationException</code>. The
+        second <code>DwPolicy.Configure</code> <strong>asking for the posture
+        already in force does nothing and returns</strong>; one asking for a
+        different posture still throws{" "}
+        <code>InvalidOperationException</code>. A second{" "}
+        <code>AddDwPolicies</code> binds and builds its options as ever, changes
+        no posture, and registers the one in force. The
         comparison happens inside the lock that does the configuring, so a
         caller needs no lock and no <code>IsConfigured</code> check of its own —
         which matters, because that check is a check-then-act two hosts starting
@@ -935,7 +940,7 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
             <td><code>Services</code></td>
           </tr>
           <tr>
-            <td>Every value on <code>Caps</code>, the group floor&apos;s opt-out included</td>
+            <td>Every value on <code>Caps</code> — the floor that applies, not whether it was written down</td>
             <td>The provider <em>instances</em></td>
           </tr>
           <tr>

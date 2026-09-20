@@ -198,9 +198,11 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
       <p>
         Such a path is now refused as an unknown name is: the clause&apos;s own
         code, <code>FieldPath</code> <code>&quot;*&quot;</code>, so it cannot be
-        told from a misspelling or from a field the caller may not use. It is
-        refused only where the whole set of members a container can produce is
-        known — an entity&apos;s own EF Core model, and the initializers of a
+        told from a misspelling or from a field the caller may not use. It
+        applies to every clause the database has to compute, and not to{" "}
+        <code>Selects</code>, which EF Core evaluates on the client when it
+        cannot translate it. It is refused only where the whole set of members a
+        container can produce is known — an entity&apos;s own EF Core model, and the initializers of a
         projection composed before <code>ApplyPolicy</code>, including a member
         that projection copies from the entity. Rows in memory, a framework
         member the provider translates such as <code>Length</code> or{" "}

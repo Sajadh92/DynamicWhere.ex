@@ -44,6 +44,7 @@ namespace DynamicWhere.Tests.Policies
     {
         public int Id { get; set; }
 
+        [DwAudit]
         [DwMask(MaskStrategy.Full)]
         public string? Card { get; set; }
     }
@@ -161,6 +162,35 @@ namespace DynamicWhere.Tests.Policies
 
             Assert.NotNull(row.B?.C?.D?.E);
             Assert.Equal("****************", row.B!.C!.D!.E!.Card);
+        }
+
+        /// <summary>
+        /// A typed projection builds the real types, so the rows show the audited member whether the
+        /// projection named it or not. Named, the gate was asked about it and recorded it; left out, the
+        /// row built for the projection holds nothing in it and nothing was read.
+        /// </summary>
+        [Fact]
+        public void An_audited_column_past_the_walk_is_recorded_once_when_named_and_not_when_left_out()
+        {
+            IQueryable<Rd8N1> graph = _db.Roots;
+
+            PolicyQueryable<Rd8N1> Deep(DwPolicyContext caller) => graph.ApplyPolicy(
+                caller,
+                new DwPolicyOptions { Tier = DwTier.Strict, Caps = { MaxNavigationDepth = 6 } },
+                new PolicyResolver(new IDwPolicyProvider[] { new AttributePolicyProvider() }));
+
+            DwPolicyContext named = Caller();
+
+            Rd8N1 row = Deep(named).ToList(new Filter { Selects = new() { "Id", "B.C.D.E.Card" } }).Data!.Single();
+
+            Assert.Equal("****************", row.B!.C!.D!.E!.Card);
+            Assert.Single(named.PendingAuditEvents, read => read.FieldPath == "B.C.D.E.Card");
+
+            DwPolicyContext leftOut = Caller();
+
+            Deep(leftOut).ToList(new Filter { Selects = new() { "Id", "B.C.D.E.Id" } });
+
+            Assert.DoesNotContain(leftOut.PendingAuditEvents, read => read.FieldPath == "B.C.D.E.Card");
         }
     }
 }

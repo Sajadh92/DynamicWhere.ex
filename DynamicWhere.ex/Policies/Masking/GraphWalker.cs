@@ -68,11 +68,16 @@ internal static class GraphWalker
     /// The chains of members the projection names past the attribute walk's depth, keyed by path, or
     /// null. Applied by path beside the type's own, so a generated row is reached as any other is.
     /// </param>
+    /// <returns>
+    /// Each audited member the rows hand back where no path names it, once per path, for the caller to
+    /// record: the gate records a use by path before the query runs, and these have none it could ask
+    /// about.
+    /// </returns>
     /// <exception cref="InvalidOperationException">
     /// Thrown when a path the result should carry cannot be reached on it. Skipping instead would
     /// emit the value untransformed, which is the failure this whole layer exists to prevent.
     /// </exception>
-    internal static void Apply(
+    internal static IReadOnlyList<UnnamedRead> Apply(
         IEnumerable rows,
         Type entityType,
         TypePolicy policy,
@@ -86,11 +91,11 @@ internal static class GraphWalker
         // Whether anything a row of this type can hold declares a transform at all. False for a model
         // with no transform attribute, which then pays nothing for the second pass below, and for a
         // resolver built over no attribute provider, which reads no attribute anywhere.
-        bool unwalked = attributes && HoldsTransform(entityType);
+        bool unwalked = attributes && (HoldsTransform(entityType) || HoldsAudit(entityType));
 
         if (policy.Transforms.Count == 0 && !unwalked && past is null)
         {
-            return;
+            return Array.Empty<UnnamedRead>();
         }
 
         // Reference identity, not equality. Two rows can share one referenced object, and
@@ -112,7 +117,7 @@ internal static class GraphWalker
 
         if (roots.Count == 0)
         {
-            return;
+            return Array.Empty<UnnamedRead>();
         }
 
         // What the first pass transformed, so the second never transforms it again: a hash of a hash
@@ -139,11 +144,16 @@ internal static class GraphWalker
             }
         }
 
-        if (unwalked)
-        {
-            ApplyUnwalked(roots, projected, context, options, trace, done!);
-        }
+        return unwalked
+            ? ApplyUnwalked(roots, entityType, projected, context, options, trace, done!)
+            : Array.Empty<UnnamedRead>();
     }
+
+    /// <summary>
+    /// One audited member the rows handed back where no path of the policy names it, and the effect it
+    /// was handed back with.
+    /// </summary>
+    internal readonly record struct UnnamedRead(string Path, Enums.PolicyEffect Effect);
 
     /// <summary>
     /// True when a result carrying this projection holds the path at all.
@@ -153,6 +163,25 @@ internal static class GraphWalker
     /// carried when it was selected, or when it sits beneath something that was: projecting
     /// <c>Contact</c> brings <c>Contact.Email</c> with it.
     /// </remarks>
+    /// <summary>True when the projection names this very path, rather than a member above it.</summary>
+    private static bool Spelled(string path, IReadOnlyCollection<string>? projected)
+    {
+        if (projected is null)
+        {
+            return false;
+        }
+
+        foreach (string selected in projected)
+        {
+            if (string.Equals(selected, path, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool IsCarried(string path, IReadOnlyCollection<string>? projected)
     {
         if (projected is null)
@@ -328,8 +357,9 @@ internal static class GraphWalker
     /// it is not woken.
     /// </para>
     /// </remarks>
-    private static void ApplyUnwalked(
+    private static IReadOnlyList<UnnamedRead> ApplyUnwalked(
         HashSet<object> roots,
+        Type entityType,
         IReadOnlyCollection<string>? projected,
         DwPolicyContext context,
         DwPolicyOptions options,
@@ -337,26 +367,36 @@ internal static class GraphWalker
         HashSet<(object Owner, string Member)> done)
     {
         HashSet<object> seen = new(ReferenceComparer.Instance);
-        Stack<(object Node, string Path)> pending = new();
+        Stack<Visit> pending = new();
         Dictionary<string, ValueTransform> recorded = new(StringComparer.Ordinal);
+        Dictionary<string, Enums.PolicyEffect> read = new(StringComparer.Ordinal);
 
         foreach (object root in roots)
         {
             seen.Add(root);
-            pending.Push((root, string.Empty));
+            pending.Push(new Visit(root, entityType, 0, string.Empty));
         }
 
         while (pending.Count > 0)
         {
-            (object node, string prefix) = pending.Pop();
+            Visit visit = pending.Pop();
 
-            foreach (Member member in Members(node.GetType()))
+            foreach (Member member in Members(visit.Node.GetType()))
             {
-                string path = prefix.Length == 0 ? member.Property.Name : prefix + "." + member.Property.Name;
+                string path = visit.Path.Length == 0
+                    ? member.Property.Name
+                    : visit.Path + "." + member.Property.Name;
 
-                if (member.Transform is { } chain
-                    && IsCarried(path, projected)
-                    && done.Add((node, member.Property.Name)))
+                // Named by the policy: a member the declared type has, within the walk's depth. The
+                // gate asked about that path before the query ran and recorded its use; the generated
+                // row of a dynamic projection carries the entity's member names and is read as it is.
+                PropertyInfo? named = visit.Declared is not null && visit.Depth < AttributePolicyProvider.MaxDepth
+                    ? CacheReflection.FindProperty(visit.Declared, member.Property.Name)
+                    : null;
+
+                bool carried = IsCarried(path, projected);
+
+                if (member.Transform is { } chain && carried && done.Add((visit.Node, member.Property.Name)))
                 {
                     if (member.Set is null)
                     {
@@ -366,11 +406,19 @@ internal static class GraphWalker
                             "that has one.");
                     }
 
-                    member.Set(node, TransformPipeline.Apply(
-                        chain, member.Get(node), member.Property.PropertyType,
-                        new DwTransformContext(node, path, context), options));
+                    member.Set(visit.Node, TransformPipeline.Apply(
+                        chain, member.Get(visit.Node), member.Property.PropertyType,
+                        new DwTransformContext(visit.Node, path, context), options));
 
                     recorded[path] = chain;
+                }
+
+                // An audited member no path names was handed back with nothing written down: the gate
+                // records by path, and this one has none. Once per path, not per row, as a named one is.
+                // A path the projection spells out is one the gate was asked about, however long it is.
+                if (member.Audited && named is null && carried && !Spelled(path, projected))
+                {
+                    read[path] = member.Transform is null ? Enums.PolicyEffect.Allow : Enums.PolicyEffect.Mask;
                 }
 
                 if (!member.Leads)
@@ -378,11 +426,15 @@ internal static class GraphWalker
                     continue;
                 }
 
-                foreach (object held in Held(member.Get(node)))
+                Type? beneath = named is null
+                    ? null
+                    : AttributePolicyProvider.NavigationTypeOf(named.PropertyType);
+
+                foreach (object held in Held(member.Get(visit.Node)))
                 {
                     if (seen.Add(held))
                     {
-                        pending.Push((held, path));
+                        pending.Push(new Visit(held, beneath, visit.Depth + 1, path));
                     }
                 }
             }
@@ -395,19 +447,37 @@ internal static class GraphWalker
                 string.Join(" then ", entry.Value.Stages.Select(s => s.Kind))
                 + " (declared on the member; no path of the policy names it)"));
         }
+
+        if (read.Count == 0)
+        {
+            return Array.Empty<UnnamedRead>();
+        }
+
+        List<UnnamedRead> reads = new(read.Count);
+
+        foreach (KeyValuePair<string, Enums.PolicyEffect> entry in read)
+        {
+            reads.Add(new UnnamedRead(entry.Key, entry.Value));
+        }
+
+        return reads;
     }
 
-    /// <summary>One readable member of a run-time type that transforms, or can lead to one that does.</summary>
+    /// <summary>One object of the result, where it stands, and the declared type the policy read it as.</summary>
+    private readonly record struct Visit(object Node, Type? Declared, int Depth, string Path);
+
+    /// <summary>One readable member of a run-time type that transforms or is audited, or can lead to one.</summary>
     private sealed record Member(
         PropertyInfo Property,
         Func<object, object?> Get,
         Action<object, object?>? Set,
         ValueTransform? Transform,
+        bool Audited,
         bool Leads);
 
     /// <summary>
-    /// The members of a run-time type the second pass reads: those declaring a transform, and those
-    /// whose value can hold an object that does. Read once per type and again once another assembly
+    /// The members of a run-time type the second pass reads: those declaring a transform or an audit,
+    /// and those whose value can hold an object that does. Read once per type and again once another assembly
     /// has loaded, since that can add a subtype.
     /// </summary>
     private static Member[] Members(Type type)
@@ -431,12 +501,14 @@ internal static class GraphWalker
                 }
 
                 ValueTransform? transform = AttributePolicyProvider.TransformOn(property);
-                bool leads = HoldsTransform(property.PropertyType);
+                bool audited = AuditsSelect(property);
+                bool leads = HoldsTransform(property.PropertyType) || HoldsAudit(property.PropertyType);
 
-                if (transform is not null || leads)
+                if (transform is not null || audited || leads)
                 {
                     members.Add(new Member(
-                        property, MutatorCache.Getter(property), MutatorCache.Setter(property), transform, leads));
+                        property, MutatorCache.Getter(property), MutatorCache.Setter(property),
+                        transform, audited, leads));
                 }
             }
         }
@@ -507,7 +579,7 @@ internal static class GraphWalker
             return known.Holds;
         }
 
-        bool holds = Scan(type);
+        bool holds = Scan(type, static property => AttributePolicyProvider.TransformOn(property) is not null);
 
         HoldsByType[type] = (epoch, holds);
 
@@ -516,7 +588,35 @@ internal static class GraphWalker
 
     private static readonly ConcurrentDictionary<Type, (int Epoch, bool Holds)> HoldsByType = new();
 
-    private static bool Scan(Type root)
+    /// <summary>
+    /// True when a value of this type can hold, at any depth, a member audited for Select. Read as
+    /// <see cref="HoldsTransform"/> is, and for the same reason: the second pass runs only where there
+    /// is something for it to find.
+    /// </summary>
+    internal static bool HoldsAudit(Type type)
+    {
+        int epoch = KnownSubtypes.Epoch;
+
+        if (AuditsByType.TryGetValue(type, out (int Epoch, bool Holds) known) && known.Epoch == epoch)
+        {
+            return known.Holds;
+        }
+
+        bool holds = Scan(type, AuditsSelect);
+
+        AuditsByType[type] = (epoch, holds);
+
+        return holds;
+    }
+
+    private static readonly ConcurrentDictionary<Type, (int Epoch, bool Holds)> AuditsByType = new();
+
+    /// <summary>True when a member's own attribute audits it for Select.</summary>
+    private static bool AuditsSelect(PropertyInfo property) =>
+        property.GetCustomAttribute<Attributes.DwAuditAttribute>(inherit: true) is { } audit
+        && (audit.Features & Enums.PolicyFeature.Select) != 0;
+
+    private static bool Scan(Type root, Func<PropertyInfo, bool> found)
     {
         HashSet<Type> seen = new();
         Stack<Type> pending = new();
@@ -568,7 +668,7 @@ internal static class GraphWalker
                     continue;
                 }
 
-                if (AttributePolicyProvider.TransformOn(property) is not null)
+                if (found(property))
                 {
                     return true;
                 }

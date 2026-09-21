@@ -38,7 +38,8 @@ internal static class ResultTransformer
     /// The transforms of members the projection names past the attribute walk's depth, which the
     /// type's own list does not hold, or null.
     /// </param>
-    internal static void Rows(
+    /// <returns>The audited members the rows hand back where no path names them, for the caller to record.</returns>
+    internal static IReadOnlyList<GraphWalker.UnnamedRead> Rows(
         IEnumerable rows,
         Type entityType,
         TypePolicy policy,

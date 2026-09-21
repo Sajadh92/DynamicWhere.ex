@@ -179,8 +179,10 @@ namespace DynamicWhere.Tests.Policies
 
         // =========================================================================================
         // A blank name in a clause with no InvalidField guard — Selects, GroupBy.Fields and a
-        // segment's Selects — leaves the library as ArgumentNullException rather than as one of its
-        // own two exception types, in both tiers.
+        // segment's Selects — used to leave the library as ArgumentNullException rather than as one
+        // of its own two exception types, in both tiers. The grouping key was guarded first, and a
+        // projection name is now too: RequestShape refuses it before anything looks the name up,
+        // with or without a policy, so every clause answers a blank name with a LogicException.
         // =========================================================================================
 
         [Fact]
@@ -257,7 +259,7 @@ namespace DynamicWhere.Tests.Policies
         /// rather than to anything the terminal does afterwards.
         /// </summary>
         [Fact]
-        public void A_blank_projection_name_reaches_the_gate_under_strict()
+        public void A_blank_projection_name_is_refused_before_it_reaches_the_gate()
         {
             Exception? error = Catch(() => FilterSanitizer.Sanitize<Sx6Blankable>(
                 new Filter { Selects = new List<string> { "Id", string.Empty } },
@@ -265,11 +267,13 @@ namespace DynamicWhere.Tests.Policies
 
             _out.WriteLine($"sanitizer, blank select : {Shape(error)}");
 
-            // Validator.Validate<T>(string) is documented to throw ArgumentNullException for a name
-            // that is null or whitespace, and ResolveName hands the raw name to it. Recorded rather
-            // than asserted as a defect: the unguarded surface does the same, which is the standard
-            // the library applies to every name it cannot resolve.
-            Assert.IsType<ArgumentNullException>(error);
+            // Validator.Validate<T>(string) throws ArgumentNullException for a name that is null or
+            // whitespace, and ResolveName used to hand the raw name to it, so a malformed projection
+            // left the sanitizer as a framework exception. The request's shape is checked first now,
+            // and a blank name is the malformed clause a blank grouping key already was.
+            LogicException malformed = Assert.IsType<LogicException>(error);
+
+            Assert.Equal("ConditionMustHasValidFieldName", malformed.Message);
         }
 
         /// <summary>The same for a blank grouping key.</summary>

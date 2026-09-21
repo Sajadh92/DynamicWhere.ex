@@ -56,7 +56,7 @@ public class Summary
         ConditionGroup = ConditionGroup?.Clone(),
         GroupBy = GroupBy?.Clone(),
         Having = Having?.Clone(),
-        Orders = Orders?.ConvertAll(o => o.Clone()),
+        Orders = Orders?.ConvertAll(o => o?.Clone()!),
         Page = Page?.Clone()
     };
 }

@@ -50,6 +50,9 @@ public static class Extension
             throw new LogicException(ErrorCode.MustHaveFields);
         }
 
+        // A name that is null or blank is a malformed request, refused as one rather than by the lookup.
+        RequestShape.Names(fields);
+
         // Validate each field if it exists in the query.
         for (int i = 0; i < fields.Count; i++)
         {
@@ -130,6 +133,9 @@ public static class Extension
             throw new LogicException(ErrorCode.MustHaveFields);
         }
 
+        // A name that is null or blank is a malformed request, refused as one rather than by the lookup.
+        RequestShape.Names(fields);
+
         // Validate each field against type T.
         for (int i = 0; i < fields.Count; i++)
         {
@@ -205,6 +211,9 @@ public static class Extension
             throw new ArgumentNullException(nameof(group));
         }
 
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(group);
+
         // Convert ConditionGroup to a string representation and apply filtering.
         string where = group.AsString<T>();
 
@@ -249,6 +258,9 @@ public static class Extension
         {
             throw new ArgumentNullException(nameof(groupBy));
         }
+
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(groupBy);
 
         // Convert GroupBy to dynamic LINQ strings.
         var (groupByString, selectString) = groupBy.AsString<T>();
@@ -319,6 +331,9 @@ public static class Extension
         {
             throw new ArgumentNullException(nameof(orders));
         }
+
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(orders);
 
         // Concatenate the individual order strings into a single comma-separated string.
         string orderBy = string.Join(",", orders
@@ -919,6 +934,9 @@ public static class Extension
             throw new ArgumentNullException(nameof(summary));
         }
 
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(summary);
+
         // Validate the Summary (including order fields against grouped fields).
         summary.Validate<T>();
 
@@ -992,6 +1010,9 @@ public static class Extension
         {
             throw new ArgumentNullException(nameof(summary));
         }
+
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(summary);
 
         // Validate the Summary (including order fields against grouped fields).
         summary.Validate<T>();
@@ -1142,6 +1163,9 @@ public static class Extension
             throw new ArgumentNullException(nameof(summary));
         }
 
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(summary);
+
         // Validate the Summary (including order fields against grouped fields).
         summary.Validate<T>();
 
@@ -1268,6 +1292,9 @@ public static class Extension
         {
             throw new ArgumentNullException(nameof(segment));
         }
+
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(segment);
 
         // Validate and retrieve ConditionSets from the Segment, in Sort order.
         List<ConditionSet> sets = segment.ValidateAndGetSets();

@@ -111,6 +111,9 @@ internal static class FilterSanitizer
             throw new ArgumentNullException(nameof(trace));
         }
 
+        // A malformed request is refused as one, before the copy reads a list entry by entry.
+        RequestShape.Refuse(filter);
+
         Filter working = filter.Clone();
 
         // The gate is built first now, because canonicalizing a name needs the type's alias map and
@@ -224,6 +227,9 @@ internal static class FilterSanitizer
         {
             throw new ArgumentNullException(nameof(trace));
         }
+
+        // A malformed request is refused as one, before the copy reads a list entry by entry.
+        RequestShape.Refuse(summary);
 
         Summary working = summary.Clone();
 
@@ -677,6 +683,9 @@ internal static class FilterSanitizer
         {
             throw new ArgumentNullException(nameof(trace));
         }
+
+        // A malformed request is refused as one, before the copy reads a list entry by entry.
+        RequestShape.Refuse(segment);
 
         Segment working = segment.Clone();
 

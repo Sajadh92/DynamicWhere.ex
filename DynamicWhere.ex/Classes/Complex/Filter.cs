@@ -51,12 +51,17 @@ public class Filter
     /// to synthesize a projection by testing <see cref="Selects"/> for null, so the distinction
     /// carries meaning.
     /// </para>
+    /// <para>
+    /// A null entry inside a list stays a null entry, here and on <see cref="Segment.Clone"/> and
+    /// <see cref="Summary.Clone"/>. A copy copies what is there: the request is malformed, and it is
+    /// for the method that runs it to refuse it, which it does with a <c>LogicException</c>.
+    /// </para>
     /// </remarks>
     public Filter Clone() => new()
     {
         ConditionGroup = ConditionGroup?.Clone(),
         Selects = Selects is null ? null : new List<string>(Selects),
-        Orders = Orders?.ConvertAll(o => o.Clone()),
+        Orders = Orders?.ConvertAll(o => o?.Clone()!),
         Page = Page?.Clone()
     };
 }

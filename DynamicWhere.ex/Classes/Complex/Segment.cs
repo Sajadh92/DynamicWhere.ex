@@ -46,9 +46,9 @@ public class Segment
     /// </remarks>
     public Segment Clone() => new()
     {
-        ConditionSets = ConditionSets is null ? null! : ConditionSets.ConvertAll(s => s.Clone()),
+        ConditionSets = ConditionSets is null ? null! : ConditionSets.ConvertAll(s => s?.Clone()!),
         Selects = Selects is null ? null : new List<string>(Selects),
-        Orders = Orders?.ConvertAll(o => o.Clone()),
+        Orders = Orders?.ConvertAll(o => o?.Clone()!),
         Page = Page?.Clone()
     };
 }

@@ -34,6 +34,10 @@ internal static class ResultTransformer
     /// <param name="options">The enforcement posture.</param>
     /// <param name="trace">Collects what was transformed.</param>
     /// <param name="attributes">False when the resolver in force reads no attributes at all.</param>
+    /// <param name="past">
+    /// The transforms of members the projection names past the attribute walk's depth, which the
+    /// type's own list does not hold, or null.
+    /// </param>
     internal static void Rows(
         IEnumerable rows,
         Type entityType,
@@ -42,8 +46,9 @@ internal static class ResultTransformer
         DwPolicyContext context,
         DwPolicyOptions options,
         PolicyTrace trace,
-        bool attributes) =>
-        GraphWalker.Apply(rows, entityType, policy, projected, context, options, trace, attributes);
+        bool attributes,
+        IReadOnlyDictionary<string, ValueTransform>? past = null) =>
+        GraphWalker.Apply(rows, entityType, policy, projected, context, options, trace, attributes, past);
 
     /// <summary>
     /// Rewrites the column names of generated rows into the caller's own vocabulary.

@@ -64,6 +64,10 @@ internal static class GraphWalker
     /// False when the resolver in force was built over no attribute provider. It reads no attribute
     /// along a path, and none off one either.
     /// </param>
+    /// <param name="past">
+    /// The chains of members the projection names past the attribute walk's depth, keyed by path, or
+    /// null. Applied by path beside the type's own, so a generated row is reached as any other is.
+    /// </param>
     /// <exception cref="InvalidOperationException">
     /// Thrown when a path the result should carry cannot be reached on it. Skipping instead would
     /// emit the value untransformed, which is the failure this whole layer exists to prevent.
@@ -76,14 +80,15 @@ internal static class GraphWalker
         DwPolicyContext context,
         DwPolicyOptions options,
         PolicyTrace trace,
-        bool attributes = true)
+        bool attributes = true,
+        IReadOnlyDictionary<string, ValueTransform>? past = null)
     {
         // Whether anything a row of this type can hold declares a transform at all. False for a model
         // with no transform attribute, which then pays nothing for the second pass below, and for a
         // resolver built over no attribute provider, which reads no attribute anywhere.
         bool unwalked = attributes && HoldsTransform(entityType);
 
-        if (policy.Transforms.Count == 0 && !unwalked)
+        if (policy.Transforms.Count == 0 && !unwalked && past is null)
         {
             return;
         }
@@ -122,6 +127,16 @@ internal static class GraphWalker
             }
 
             ApplyPath(roots, entry.Key, entry.Value, context, options, trace, done);
+        }
+
+        // Members the projection names past the walk's depth, which the type's list does not hold.
+        // Every one of them is carried: the projection is where they were read from.
+        if (past is not null)
+        {
+            foreach (KeyValuePair<string, ValueTransform> entry in past)
+            {
+                ApplyPath(roots, entry.Key, entry.Value, context, options, trace, done);
+            }
         }
 
         if (unwalked)

@@ -105,7 +105,7 @@ public sealed class PolicyResolver
                 "A policy lookup requires a field path with at least one segment.", nameof(fieldPath));
         }
 
-        (List<PolicyFragment> candidates, List<PolicyFragment> named, bool unwalked) =
+        (List<PolicyFragment> candidates, List<PolicyFragment> named, bool beneath, bool past) =
             Candidates(entityType, path, context);
 
         Dictionary<PolicyFeature, PolicyEffect> effects = new();
@@ -149,22 +149,33 @@ public sealed class PolicyResolver
             effects[PolicyFeature.Aggregate] = PolicyEffect.Deny;
         }
 
-        // A transform is applied to the member it was declared on, along a path the walk names. On a
-        // path the walk does not name there is nothing to apply it to: Bonus.Value is a decimal where
-        // Bonus is the member that is rounded, and a masked member five segments down is in no list
-        // the outbound walk reads. Every way such a path hands a value back is refused instead, since
-        // the value it would hand back is the stored one. Filtering and ordering run on stored values
-        // wherever the member is reached from, so they follow the member's own decision.
-        if (unwalked && transform is not null && !transform.IsEmpty)
+        // A transform is applied to a member, by the outbound walk, which reads the type's transforms by
+        // the paths the attribute walk names. Two kinds of path stand outside that list.
+        //
+        // One continues beneath the member: Bonus.Value is a decimal where Bonus is what is rounded,
+        // so there is no member to apply the chain to, and every way the path hands a value back would
+        // hand back the stored one. Select, Group and Aggregate are refused.
+        //
+        // The other is the member itself, past the walk's depth. A row carries it as a member, so the
+        // outbound walk transforms it there as it does anywhere else, and Select stays what the
+        // election made it. A grouping key and an aggregate are columns of a generated row, which the
+        // summary's own transform finds by the type's list and would not find: those two are refused.
+        // Filtering and ordering run on stored values wherever a member is reached from, so they
+        // follow the member's own decision on both kinds of path.
+        if ((beneath || past) && transform is not null && !transform.IsEmpty)
         {
-            effects[PolicyFeature.Select] = PolicyEffect.Deny;
             effects[PolicyFeature.Group] = PolicyEffect.Deny;
             effects[PolicyFeature.Aggregate] = PolicyEffect.Deny;
+
+            if (beneath)
+            {
+                effects[PolicyFeature.Select] = PolicyEffect.Deny;
+            }
         }
 
         // What is said about the member decides every path that reads it. What is said to the caller
         // about the member, its public name, the filter it demands, the scope it forces and how it is
-        // described, is about that member alone.
+        // described, is about that member alone, so a path beneath it takes none of them.
         return new FieldPolicy(
             path,
             effects,
@@ -174,8 +185,8 @@ public sealed class PolicyResolver
             ElectAlias(named),
             CollectForced(named),
             ElectRequired(named),
-            unwalked ? ElectTransform(named) : transform,
-            unwalked ? Carried(ElectFacts(named), candidates) : ElectFacts(candidates));
+            beneath ? ElectTransform(named) : transform,
+            beneath ? Carried(ElectFacts(named), candidates) : ElectFacts(candidates));
     }
 
     /// <summary>
@@ -187,7 +198,8 @@ public sealed class PolicyResolver
     /// <param name="context">The caller.</param>
     /// <returns>
     /// Every fragment that decides the path; the ones naming it exactly, a <c>"*"</c> rule included;
-    /// and whether any of the rest were added.
+    /// whether the path continues beneath a member it reads; and whether the attributes of a member
+    /// past the walk's depth were read for it.
     /// </returns>
     /// <remarks>
     /// A fragment that does not match is a field left allowed, and two kinds of path matched nothing
@@ -199,7 +211,7 @@ public sealed class PolicyResolver
     /// the attributes of the member at its end are read directly. Both are asked only of a resolver
     /// that reads attributes at all.
     /// </remarks>
-    private (List<PolicyFragment> All, List<PolicyFragment> Named, bool Unwalked) Candidates(
+    private (List<PolicyFragment> All, List<PolicyFragment> Named, bool Beneath, bool Past) Candidates(
         Type entityType, string path, DwPolicyContext context)
     {
         string? governing = AttributePolicyProvider.Governing(entityType, path);
@@ -220,13 +232,19 @@ public sealed class PolicyResolver
             }
         }
 
+        bool past = false;
+
         if (ReadsAttributes)
         {
             // Of the member the path reads, where there is one: B.C.D.E.Born.Year is decided by Born.
-            all.AddRange(AttributePolicyProvider.Unwalked(entityType, governing ?? path));
+            IReadOnlyList<PolicyFragment> declared = AttributePolicyProvider.Unwalked(entityType, governing ?? path);
+
+            past = declared.Count > 0;
+
+            all.AddRange(declared);
         }
 
-        return (all, named, all.Count != named.Count);
+        return (all, named, governing is not null, past);
     }
 
     /// <summary>True when attributes are among the sources this resolver was built over.</summary>

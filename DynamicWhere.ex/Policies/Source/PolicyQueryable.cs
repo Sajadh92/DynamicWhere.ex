@@ -82,6 +82,52 @@ public sealed class PolicyQueryable<T> where T : class
     /// </remarks>
     private TypePolicy TypePolicy => _typePolicy ??= _resolver.ResolveType(typeof(T), _context);
 
+    /// <summary>Transforms the rows of a filter or segment result on their way out.</summary>
+    /// <param name="rows">The materialized rows.</param>
+    /// <param name="projected">The projection they were read through, or null for whole rows.</param>
+    /// <param name="trace">Collects what was transformed.</param>
+    private void Outbound(System.Collections.IEnumerable rows, List<string>? projected, PolicyTrace trace) =>
+        ResultTransformer.Rows(
+            rows, typeof(T), TypePolicy, projected, _context, _options, trace,
+            _resolver.ReadsAttributes, PastTheWalk(projected));
+
+    /// <summary>
+    /// The transforms of the members a projection names past the attribute walk's depth, or null when it
+    /// names none.
+    /// </summary>
+    /// <remarks>
+    /// The type's transforms are listed by the paths the walk names, which stop at four segments, and a
+    /// host that raises <c>Caps.MaxNavigationDepth</c> lets a projection name a fifth. The resolver
+    /// reads such a member's own attributes, so its chain is known; it is handed to the outbound walk
+    /// beside the type's list, which applies it by path whatever the row is, a generated one included,
+    /// where no member carries an attribute to find it by.
+    /// </remarks>
+    private IReadOnlyDictionary<string, ValueTransform>? PastTheWalk(List<string>? projected)
+    {
+        if (projected is null)
+        {
+            return null;
+        }
+
+        Dictionary<string, ValueTransform>? found = null;
+
+        foreach (string path in projected)
+        {
+            if (path.Count(character => character == '.') < AttributePolicyProvider.MaxDepth
+                || TypePolicy.Transforms.ContainsKey(path))
+            {
+                continue;
+            }
+
+            if (_resolver.Resolve(typeof(T), path, _context).Transform is { IsEmpty: false } chain)
+            {
+                (found ??= new Dictionary<string, ValueTransform>(StringComparer.OrdinalIgnoreCase))[path] = chain;
+            }
+        }
+
+        return found;
+    }
+
     /// <summary>
     /// What the policy did to the most recent call on this handle.
     /// </summary>
@@ -113,9 +159,7 @@ public sealed class PolicyQueryable<T> where T : class
             {
                 FilterResult<T> result = Guarded().ToList(sanitized, getQueryString);
 
-                ResultTransformer.Rows(
-                    result.Data, typeof(T), TypePolicy, sanitized.Selects, _context, _options, trace,
-                    _resolver.ReadsAttributes);
+                Outbound(result.Data, sanitized.Selects, trace);
 
                 result.Policy = _options.TraceInResult ? trace : null;
 
@@ -166,9 +210,7 @@ public sealed class PolicyQueryable<T> where T : class
             {
                 FilterResult<T> result = await Guarded().ToListAsync(sanitized, getQueryString, cancellationToken);
 
-                ResultTransformer.Rows(
-                    result.Data, typeof(T), TypePolicy, sanitized.Selects, _context, _options, trace,
-                    _resolver.ReadsAttributes);
+                Outbound(result.Data, sanitized.Selects, trace);
 
                 result.Policy = _options.TraceInResult ? trace : null;
 
@@ -199,9 +241,7 @@ public sealed class PolicyQueryable<T> where T : class
             {
                 FilterResult<dynamic> result = Guarded().ToListDynamic(sanitized, getQueryString);
 
-                ResultTransformer.Rows(
-                    result.Data, typeof(T), TypePolicy, sanitized.Selects, _context, _options, trace,
-                    _resolver.ReadsAttributes);
+                Outbound(result.Data, sanitized.Selects, trace);
 
                 // After transformation, not before: the transform pipeline reads the generated columns
                 // by the names the projection baked in, and renaming first would leave it looking for
@@ -257,9 +297,7 @@ public sealed class PolicyQueryable<T> where T : class
             {
                 FilterResult<dynamic> result = await Guarded().ToListAsyncDynamic(sanitized, getQueryString, cancellationToken);
 
-                ResultTransformer.Rows(
-                    result.Data, typeof(T), TypePolicy, sanitized.Selects, _context, _options, trace,
-                    _resolver.ReadsAttributes);
+                Outbound(result.Data, sanitized.Selects, trace);
 
                 // After transformation, not before: the transform pipeline reads the generated columns
                 // by the names the projection baked in, and renaming first would leave it looking for
@@ -431,9 +469,7 @@ public sealed class PolicyQueryable<T> where T : class
             {
                 SegmentResult<T> result = await Guarded().ToListAsync(sanitized, cancellationToken);
 
-                ResultTransformer.Rows(
-                    result.Data, typeof(T), TypePolicy, sanitized.Selects, _context, _options, trace,
-                    _resolver.ReadsAttributes);
+                Outbound(result.Data, sanitized.Selects, trace);
 
                 result.Policy = _options.TraceInResult ? trace : null;
 

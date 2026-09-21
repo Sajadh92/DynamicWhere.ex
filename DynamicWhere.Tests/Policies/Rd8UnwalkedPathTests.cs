@@ -213,6 +213,22 @@ namespace DynamicWhere.Tests.Policies
             Assert.Equal(
                 new[] { 2 },
                 Guarded(tier).ToList(Where(Cond("Bonus.Value", DataType.Number, Operator.GreaterThan, 2000))).Data!.Select(row => row.Id));
+
+            // A projection hands the stored value back as surely as a grouping key does.
+            Filter projection = new() { Selects = new() { "Id", "Bonus.Value" } };
+
+            if (tier == DwTier.Strict)
+            {
+                Assert.Equal(
+                    PolicyErrorCode.FieldDeniedForSelect,
+                    Assert.Throws<PolicyException>(() => Guarded(tier).ToListDynamic(projection)).ErrorCode);
+            }
+            else
+            {
+                Assert.Equal(
+                    "[{\"Id\":1},{\"Id\":2}]",
+                    System.Text.Json.JsonSerializer.Serialize(Guarded(tier).ToListDynamic(projection).Data));
+            }
         }
 
         [Fact]
@@ -283,6 +299,25 @@ namespace DynamicWhere.Tests.Policies
 
             // Born is denied for Where alone.
             Assert.Equal(2, Guarded(tier).ToList(GroupBy("Born.Year")).Data!.Count);
+        }
+
+        /// <summary>
+        /// What is said to the caller about a member stays the member's: beneath it there is no member
+        /// for a chain to be applied to, so the path reports none, while the denial that follows from the
+        /// chain is there.
+        /// </summary>
+        [Fact]
+        public void A_path_beneath_a_transformed_member_carries_no_transform_of_its_own()
+        {
+            PolicyResolver resolver = Attributes();
+
+            Assert.True(resolver.Resolve(typeof(Rd8Row), "Bonus", Caller()).IsTransformed);
+
+            FieldPolicy beneath = resolver.Resolve(typeof(Rd8Row), "Bonus.Value", Caller());
+
+            Assert.False(beneath.IsTransformed);
+            Assert.False(beneath.Allows(PolicyFeature.Select));
+            Assert.True(beneath.Allows(PolicyFeature.Where));
         }
 
         [Fact]
@@ -382,20 +417,57 @@ namespace DynamicWhere.Tests.Policies
         }
 
         [Fact]
-        public void A_denied_or_masked_member_past_the_walk_is_never_handed_back()
+        public void A_denied_member_past_the_walk_is_never_handed_back()
         {
-            foreach (string field in new[] { "B.C.D.E.Secret", "B.C.D.E.Card" })
-            {
-                Filter filter = new() { Selects = new() { "Id", field } };
+            Filter filter = new() { Selects = new() { "Id", "B.C.D.E.Secret" } };
 
-                Assert.Equal(
-                    PolicyErrorCode.FieldDeniedForSelect,
-                    Assert.Throws<PolicyException>(() => Guarded(DwTier.Strict).ToListDynamic(filter)).ErrorCode);
+            Assert.Equal(
+                PolicyErrorCode.FieldDeniedForSelect,
+                Assert.Throws<PolicyException>(() => Guarded(DwTier.Strict).ToListDynamic(filter)).ErrorCode);
 
-                Assert.Equal(
-                    "[{\"Id\":1}]",
-                    System.Text.Json.JsonSerializer.Serialize(Guarded(DwTier.Convenience).ToListDynamic(filter).Data));
-            }
+            Assert.Equal(
+                "[{\"Id\":1}]",
+                System.Text.Json.JsonSerializer.Serialize(Guarded(DwTier.Convenience).ToListDynamic(filter).Data));
+        }
+
+        /// <summary>
+        /// A member past the walk is still a member: named in a projection it comes back transformed,
+        /// in a generated row as well, where no member carries an attribute to find the chain by. As a
+        /// grouping key or an aggregate it is a column of a generated row the summary's own transform
+        /// would not find, so those are refused.
+        /// </summary>
+        [Theory]
+        [InlineData(DwTier.Strict)]
+        [InlineData(DwTier.Convenience)]
+        public void A_masked_member_past_the_walk_comes_back_masked_and_is_no_grouping_key(DwTier tier)
+        {
+            string generated = System.Text.Json.JsonSerializer.Serialize(
+                Guarded(tier).ToListDynamic(new Filter { Selects = new() { "Id", "B.C.D.E.Card" } }).Data);
+
+            Assert.DoesNotContain("4111", generated);
+            Assert.Contains("****************", generated);
+
+            Assert.Equal(
+                PolicyErrorCode.FieldDeniedForGroup,
+                Assert.Throws<PolicyException>(() => Guarded(tier).ToList(new Summary
+                {
+                    GroupBy = new GroupBy
+                    {
+                        Fields = new() { "B.C.D.E.Card" },
+                        AggregateBy = new() { new AggregateBy { Aggregator = Aggregator.Count, Alias = "n" } }
+                    }
+                })).ErrorCode);
+
+            Assert.Equal(
+                PolicyErrorCode.FieldDeniedForAggregate,
+                Assert.Throws<PolicyException>(() => Guarded(tier).ToList(new Summary
+                {
+                    GroupBy = new GroupBy
+                    {
+                        Fields = new() { "Id" },
+                        AggregateBy = new() { new AggregateBy { Field = "B.C.D.E.Card", Aggregator = Aggregator.Maximum, Alias = "m" } }
+                    }
+                })).ErrorCode);
         }
 
         /// <summary>Precision: a member past the walk that declares nothing runs as it did.</summary>

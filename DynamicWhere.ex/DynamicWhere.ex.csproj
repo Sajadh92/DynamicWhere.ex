@@ -10,6 +10,13 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="6.0.22" />
     <PackageReference Include="System.Linq.Dynamic.Core" Version="1.6.7" />
 
+    <!-- Not used by this library directly. EF Core 6.0.22 asks for 6.0.1 or later, and 6.0.1 is the
+         last version open to CVE-2024-43483 (GHSA-qj66-m88j-hmgj), a denial of service through hash
+         flooding, so a host on the EF Core 6 floor resolved a vulnerable version through this
+         package and its three companions. Naming the patched version here raises that floor for all
+         four; a host on EF Core 8 or later already resolves a newer one and sees no change. -->
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="6.0.2" />
+
     <!-- The policy posture binds from IConfiguration, which is why these are here rather than in
          the ASP.NET Core package. The schema builder already lives in this assembly on the grounds
          that a host with no web stack should still get discovery; a worker service that wants its

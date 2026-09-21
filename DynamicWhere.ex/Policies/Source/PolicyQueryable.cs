@@ -847,10 +847,19 @@ public sealed class PolicyQueryable<T> where T : class
     /// </remarks>
     private void RefuseUnmaterialized(string method, string instead)
     {
-        if (TypePolicy.Transforms.Count == 0)
+        // The paths the policy names, and what a row can hold off them. A member only a subtype
+        // declares, or one five segments down, is on no path, and the outbound walk transforms it
+        // from its own attributes: a type whose only transforms sit there is transformed on the way
+        // out all the same, and reading the named paths alone handed its query over, rows as stored.
+        bool unnamed = _resolver.ReadsAttributes && Masking.GraphWalker.HoldsTransform(typeof(T));
+
+        if (TypePolicy.Transforms.Count == 0 && !unnamed)
         {
             return;
         }
+
+        // The columns the policy names, or the clause where it names none of what is transformed.
+        string named = TypePolicy.Transforms.Count == 0 ? "*" : string.Join(", ", TypePolicy.Transforms.Keys);
 
         // Under the strict tier the refusal names the clause. The list is every transformed column
         // on the type, handed to a caller who named none of them.
@@ -858,11 +867,11 @@ public sealed class PolicyQueryable<T> where T : class
             PolicyErrorCode.TransformRequiresMaterialization,
             _options.Tier == DwTier.Strict && !_options.DryRun && !_context.DryRun
                 ? "*"
-                : string.Join(", ", TypePolicy.Transforms.Keys),
+                : named,
             PolicyFeature.Select,
             _options.Tier)
         {
-            AuditPath = string.Join(", ", TypePolicy.Transforms.Keys),
+            AuditPath = named,
             SourceOrigin =
                 $"{method} returns a query for the caller to run, and a transformed value only " +
                 $"exists once the library has materialized it. Use {instead}, or " +

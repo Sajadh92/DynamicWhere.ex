@@ -209,6 +209,39 @@ namespace DynamicWhere.Tests.Policies
         }
 
         /// <summary>
+        /// Four methods hand back a query for the caller to run, which the library never sees
+        /// materialized, so they are refused on a type whose values are transformed on the way out.
+        /// "Transformed" was read from the paths the policy names, so a type whose only transforms sit
+        /// off them, on a subtype's member or five segments down, got the query, and its rows as stored.
+        /// </summary>
+        [Theory]
+        [InlineData(DwTier.Strict)]
+        [InlineData(DwTier.Convenience)]
+        public void A_query_the_caller_runs_is_refused_where_only_an_unnamed_member_is_transformed(DwTier tier)
+        {
+            Rd8Animal[] animals = { new Rd8Dog { Id = 1, Name = "rex", Chip = "CHIP-123" } };
+
+            foreach (Func<PolicyQueryable<Rd8Animal>, object> unmaterialized in new Func<PolicyQueryable<Rd8Animal>, object>[]
+                     {
+                         handle => handle.FilterDynamic(new Filter()),
+                         handle => handle.SelectDynamic(new List<string> { "Id" }),
+                         handle => handle.Group(new DynamicWhere.ex.Classes.Core.GroupBy { Fields = new() { "Name" } }),
+                         handle => handle.Summary(new Summary { GroupBy = new DynamicWhere.ex.Classes.Core.GroupBy { Fields = new() { "Name" } } }),
+                     })
+            {
+                DynamicWhere.ex.Exceptions.PolicyException refusal = Assert.Throws<DynamicWhere.ex.Exceptions.PolicyException>(
+                    () => unmaterialized(Guarded(animals, tier)));
+
+                Assert.Equal(PolicyErrorCode.TransformRequiresMaterialization, refusal.ErrorCode);
+            }
+
+            // A type nothing transforms anywhere still gets its query.
+            Rd8Plain[] plain = { new() { Id = 1 } };
+
+            Assert.Single(Guarded(plain, tier).FilterDynamic(new Filter()).Cast<object>());
+        }
+
+        /// <summary>
         /// A resolver built over no attribute provider reads no attribute, along a named path or off it:
         /// the second pass follows the first, rather than enforcing what the caller left out.
         /// </summary>

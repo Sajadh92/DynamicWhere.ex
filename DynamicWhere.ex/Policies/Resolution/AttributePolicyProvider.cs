@@ -242,6 +242,12 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// </remarks>
     internal static string? Governing(Type entityType, string path)
     {
+        // Asked of every path a query resolves, and nearly every one of them is a single member.
+        if (path.IndexOf('.') < 0)
+        {
+            return null;
+        }
+
         string[] segments = path.Split('.');
         Type type = entityType;
 
@@ -295,12 +301,23 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     /// </remarks>
     internal static IReadOnlyList<PolicyFragment> Unwalked(Type entityType, string path)
     {
-        string[] segments = path.Split('.');
+        // Counted before anything is split: only a path past the walk has anything to read here.
+        int separators = 0;
 
-        if (segments.Length <= MaxDepth)
+        for (int i = 0; i < path.Length; i++)
+        {
+            if (path[i] == '.')
+            {
+                separators++;
+            }
+        }
+
+        if (separators < MaxDepth)
         {
             return Array.Empty<PolicyFragment>();
         }
+
+        string[] segments = path.Split('.');
 
         Type type = entityType;
 
@@ -373,7 +390,7 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     private static readonly ConcurrentDictionary<PropertyInfo, ValueTransform?> TransformsByMember = new();
 
     /// <summary>A public instance property by name, whatever its letter case, as a path names one.</summary>
-    internal static PropertyInfo? Find(Type type, string name)
+    private static PropertyInfo? Find(Type type, string name)
     {
         foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {

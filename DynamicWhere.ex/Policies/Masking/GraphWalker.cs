@@ -21,6 +21,14 @@ namespace DynamicWhere.ex.Policies.Masking;
 /// importantly, incapable of missing a path because it failed to recognise a navigation. That was
 /// the shape of five separate defects on the input side.
 /// <para>
+/// A path is not the only place a value sits. A member only a subtype of the row's type declares,
+/// one past the four segments the policy names, one on an object a dictionary holds: no path reaches
+/// any of them, and each came back exactly as stored. A second pass walks the rows themselves, by
+/// run-time type, and applies the transform a member's own attributes declare wherever the first
+/// pass did not. It reads only what can lead to such a member, and runs only for a model that
+/// declares a transform at all.
+/// </para>
+/// <para>
 /// The objects being written to are detached. That is what makes this safe at all: a transform
 /// applied to a tracked entity is recorded by EF as a pending modification and written back as the
 /// real value on the next save anywhere in the same unit of work.
@@ -40,6 +48,10 @@ internal static class GraphWalker
     /// Transforms every value the policy speaks to, across a materialized result.
     /// </summary>
     /// <param name="rows">The materialized objects. Nulls are skipped.</param>
+    /// <param name="entityType">
+    /// The type the query was written over, which says whether anything its rows can hold declares a
+    /// transform where no path reaches.
+    /// </param>
     /// <param name="policy">The type's transform chains, keyed by canonical path.</param>
     /// <param name="projected">
     /// The paths the result actually carries, or null when it carries the whole entity. A path
@@ -48,6 +60,10 @@ internal static class GraphWalker
     /// <param name="context">Who is asking.</param>
     /// <param name="options">Carries the hash salt, the token vault and the service provider.</param>
     /// <param name="trace">Collects what was transformed.</param>
+    /// <param name="attributes">
+    /// False when the resolver in force was built over no attribute provider. It reads no attribute
+    /// along a path, and none off one either.
+    /// </param>
     /// <exception cref="InvalidOperationException">
     /// Thrown when a path the result should carry cannot be reached on it. Skipping instead would
     /// emit the value untransformed, which is the failure this whole layer exists to prevent.

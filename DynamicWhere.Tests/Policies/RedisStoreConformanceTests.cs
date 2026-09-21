@@ -23,7 +23,7 @@ namespace DynamicWhere.Tests.Policies;
 public sealed class RedisStoreConformanceTests : PolicyStoreConformanceTests, IAsyncLifetime
 {
     private readonly RedisContainer _server =
-        new RedisBuilder().WithImage("redis:7-alpine").Build();
+        new RedisBuilder("redis:7-alpine").Build();
 
     private IConnectionMultiplexer? _redis;
     private int _prefixes;

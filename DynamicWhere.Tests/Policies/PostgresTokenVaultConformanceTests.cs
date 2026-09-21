@@ -22,7 +22,7 @@ public sealed class PostgresTokenVaultConformanceTests
     : DurableTokenVaultConformanceTests, IAsyncLifetime
 {
     private readonly PostgreSqlContainer _server =
-        new PostgreSqlBuilder().WithImage("postgres:16-alpine").Build();
+        new PostgreSqlBuilder("postgres:16-alpine").Build();
 
     private Func<DbContext>? _contexts;
 

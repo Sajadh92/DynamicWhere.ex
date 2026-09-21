@@ -21,7 +21,7 @@ namespace DynamicWhere.Tests.Policies;
 public sealed class RedisTokenVaultConformanceTests : DurableTokenVaultConformanceTests, IAsyncLifetime
 {
     private readonly RedisContainer _server =
-        new RedisBuilder().WithImage("redis:7-alpine").Build();
+        new RedisBuilder("redis:7-alpine").Build();
 
     private readonly string _prefix = $"dw:tokens:{Guid.NewGuid():N}";
 

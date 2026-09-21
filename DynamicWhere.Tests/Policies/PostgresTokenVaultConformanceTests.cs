@@ -48,4 +48,40 @@ public sealed class PostgresTokenVaultConformanceTests
 
     /// <inheritdoc />
     protected override IDwTokenVault CreateVault() => new EfTokenVault(_contexts!);
+
+    /// <summary>
+    /// Many vaults holding the key, meeting at once a value an unkeyed vault already tokenized, all
+    /// hand back that token, and one of them retiring the unkeyed row under the others does not
+    /// disturb it.
+    /// </summary>
+    /// <remarks>
+    /// On the leg with a real server behind it, for the reason the unkeyed race gives: SQLite in memory
+    /// is one connection and cannot contend.
+    /// </remarks>
+    [Fact]
+    public void Many_keyed_callers_racing_for_a_value_all_get_the_token_it_already_had()
+    {
+        byte[] key = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
+
+        string issued = new EfTokenVault(_contexts!).GetOrCreate(Scope, "RACE-000123");
+
+        EfTokenVault[] vaults = Enumerable.Range(0, 8)
+            .Select(i => new EfTokenVault(_contexts!, key, retireUnkeyed: i % 2 == 0)).ToArray();
+
+        string[] tokens = new string[vaults.Length];
+
+        Parallel.For(0, vaults.Length, i => tokens[i] = vaults[i].GetOrCreate(Scope, "RACE-000123"));
+
+        Assert.All(tokens, token => Assert.Equal(issued, token));
+
+        Parallel.For(0, vaults.Length, i => tokens[i] = vaults[i].GetOrCreate(Scope, "RACE-NEW"));
+
+        Assert.Single(tokens.Distinct(StringComparer.Ordinal));
+
+        using DbContext db = _contexts!();
+
+        Assert.DoesNotContain(
+            db.Set<DwPolicyTokenRecord>().Select(row => row.Key).ToList(),
+            stored => stored == DwToken.KeyFor(Scope, "RACE-000123"));
+    }
 }

@@ -22,9 +22,12 @@ namespace DynamicWhere.ex.Policies.Redis;
 /// application-wide resource, and this is one of its users.
 /// </para>
 /// <para>
-/// Guard this hash as you would guard the column it protects. Reading it turns every token in every
-/// result back into the value behind it, which is the trade tokenization makes against hashing: the
-/// secret is a store you can lock, move and revoke, rather than a salt sitting in configuration.
+/// Guard this hash as you would guard the column it protects, and give the vault a key. Without one
+/// a field is a plain digest of the value, and a tokenized value is nearly always drawn from a space
+/// small enough to hash whole, so reading the hash turns every token in every result back into the
+/// value behind it. With one a field is an HMAC, and the hash and the key have to be taken together.
+/// Either way the trade tokenization makes against hashing stands: the mapping is a store you can
+/// lock, move and revoke, rather than an algorithm anyone with the salt can run.
 /// </para>
 /// </remarks>
 public sealed class RedisTokenVault : IDwTokenVault
@@ -32,6 +35,8 @@ public sealed class RedisTokenVault : IDwTokenVault
     private readonly IConnectionMultiplexer _redis;
     private readonly RedisPolicyKeys _keys;
     private readonly ConcurrentDictionary<string, string> _cache = new(StringComparer.Ordinal);
+    private readonly byte[]? _key;
+    private readonly bool _retireUnkeyed;
 
     /// <summary>
     /// Initializes the vault.
@@ -47,6 +52,44 @@ public sealed class RedisTokenVault : IDwTokenVault
     {
         _redis = redis ?? throw new ArgumentNullException(nameof(redis));
         _keys = new RedisPolicyKeys(prefix);
+    }
+
+    /// <summary>
+    /// Initializes a vault that stores its mappings under a key, so a copy of the hash gives no value back.
+    /// </summary>
+    /// <param name="redis">A connected multiplexer. Not owned, and not disposed.</param>
+    /// <param name="key">
+    /// The vault's secret, at least <see cref="DwToken.MinimumKeyLength"/> bytes, held where the hash
+    /// is not: configuration or a secret manager. Every instance sharing the hash takes the same one.
+    /// </param>
+    /// <param name="prefix">The prefix the hash shares with this application's policy keys, or null for <c>dw:policy</c>.</param>
+    /// <param name="retireUnkeyed">
+    /// True to delete a value's unkeyed mapping the first time this vault meets the value, once its
+    /// keyed one is there, whether this vault wrote it or found it. Leave it false until every
+    /// instance sharing the hash has the key: an instance still running without one mints a new
+    /// token for a value whose unkeyed mapping is gone.
+    /// </param>
+    /// <remarks>
+    /// Without a key a field of the hash is a plain digest of the value, and a tokenized column is
+    /// nearly always drawn from a space small enough to hash whole, so a dump of the hash is a dump of
+    /// the column. Under a key it is an HMAC, and the hash and the key have to be taken together.
+    /// <para>
+    /// A vault that already holds unkeyed mappings keeps every token it has issued. A value met for
+    /// the first time under the key is looked up under its unkeyed field too, and a token found there
+    /// is the one written under the keyed field, so yesterday's export still lines up with today's.
+    /// The unkeyed field is left in place until <paramref name="retireUnkeyed"/> says otherwise, and
+    /// one for a value never met again stays until an operator removes it:
+    /// <c>HSCAN</c> the hash and delete what does not match <c>hmac:*</c>, knowing that a value whose
+    /// only mapping is removed gets a new token the next time it is met.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="redis"/> or <paramref name="key"/> is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="key"/> is shorter than <see cref="DwToken.MinimumKeyLength"/>.</exception>
+    public RedisTokenVault(IConnectionMultiplexer redis, byte[] key, string? prefix = null, bool retireUnkeyed = false)
+        : this(redis, prefix)
+    {
+        _key = DwToken.RequireKey(key);
+        _retireUnkeyed = retireUnkeyed;
     }
 
     /// <summary>How many mappings this instance currently holds in process.</summary>
@@ -69,7 +112,7 @@ public sealed class RedisTokenVault : IDwTokenVault
             throw new ArgumentNullException(nameof(value));
         }
 
-        string field = DwToken.KeyFor(scope, value);
+        string field = _key is null ? DwToken.KeyFor(scope, value) : DwToken.KeyFor(scope, value, _key);
 
         if (_cache.TryGetValue(field, out string? cached))
         {
@@ -77,6 +120,11 @@ public sealed class RedisTokenVault : IDwTokenVault
         }
 
         IDatabase db = _redis.GetDatabase();
+
+        if (_key is not null)
+        {
+            return _cache.GetOrAdd(field, Keyed(db, scope, value, field));
+        }
 
         // Written before it is read, with NotExists, so two instances minting a token for the same
         // value at the same moment cannot both win. The loser's HashSet returns false and it reads
@@ -106,6 +154,63 @@ public sealed class RedisTokenVault : IDwTokenVault
         }
 
         return _cache.GetOrAdd(field, existing!);
+    }
+
+    /// <summary>
+    /// Resolves a value under the vault's key, adopting the token an unkeyed mapping already gave it.
+    /// </summary>
+    /// <remarks>
+    /// Both fields are read in one round trip. A keyed mapping answers on its own. Without one, the
+    /// token to write is the unkeyed mapping's where there is one, so a value keeps the token it has
+    /// always had, and a fresh one otherwise; it is written with <c>NotExists</c> for the reason the
+    /// unkeyed path gives, and the loser of that race reads the winner's.
+    /// </remarks>
+    private string Keyed(IDatabase db, string scope, string value, string field)
+    {
+        string unkeyedField = DwToken.KeyFor(scope, value);
+
+        RedisValue[] held = db.HashGet(_keys.Tokens, new RedisValue[] { field, unkeyedField });
+
+        RedisValue unkeyed = held[1];
+        string token;
+
+        if (!held[0].IsNullOrEmpty)
+        {
+            token = held[0]!;
+        }
+        else
+        {
+            string candidate = unkeyed.IsNullOrEmpty ? DwToken.New() : (string)unkeyed!;
+
+            if (db.HashSet(_keys.Tokens, field, candidate, When.NotExists))
+            {
+                token = candidate;
+            }
+            else
+            {
+                RedisValue winner = db.HashGet(_keys.Tokens, field);
+
+                if (winner.IsNullOrEmpty)
+                {
+                    throw new InvalidOperationException(
+                        $"The token for a value in scope '{scope}' was written and then could not be read "
+                        + $"back from '{_keys.Tokens}'. Something is deleting from the token hash while "
+                        + "queries are running; a token that is reissued is a column whose values stop "
+                        + "matching the ones already handed out.");
+                }
+
+                token = winner!;
+            }
+        }
+
+        // Only once the keyed mapping is there to answer for it, and only when told every instance
+        // can read that one.
+        if (_retireUnkeyed && !unkeyed.IsNullOrEmpty)
+        {
+            db.HashDelete(_keys.Tokens, unkeyedField);
+        }
+
+        return token;
     }
 
     /// <summary>Forgets every mapping this instance has cached, without touching Redis.</summary>

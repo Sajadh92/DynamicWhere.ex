@@ -10,9 +10,15 @@ using Xunit.Abstractions;
 namespace DynamicWhere.Tests.Policies
 {
     /// <summary>
-    /// DOC PROBE ONLY — not part of the suite. Checks the documented "Configuring twice" comparison
-    /// list against what SamePosture actually compares.
+    /// Holds the documented "Configuring twice" comparison list to what <c>SamePosture</c> actually
+    /// compares.
     /// </summary>
+    /// <remarks>
+    /// Written as a review probe and kept as a suite test, because the two sweeps below are the
+    /// guard the documentation rests on: they walk every writable property on
+    /// <c>DwPolicyOptions</c> and <c>DwCaps</c> by reflection and require each one to be refused,
+    /// so a value added later cannot quietly stop being compared.
+    /// </remarks>
     public sealed class ReviewPostureComparisonTests
     {
         private readonly ITestOutputHelper _out;

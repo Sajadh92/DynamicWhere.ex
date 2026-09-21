@@ -137,6 +137,46 @@ public class PolicyAuditMiddlewareTests
         Assert.Equal(new[] { "Salary", "NationalId" }, sink.Written.Select(e => e.FieldPath));
     }
 
+    /// <summary>A sink that stops when it is told to, as one writing through a database does.</summary>
+    private sealed class Obedient : IDwAuditSink
+    {
+        internal List<DwAuditEvent> Written { get; } = new();
+
+        public ValueTask WriteAsync(DwAuditEvent auditEvent, CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            Written.Add(auditEvent);
+
+            return default;
+        }
+    }
+
+    /// <summary>
+    /// A caller who hangs up does not take the record of what they read with them.
+    /// </summary>
+    /// <remarks>
+    /// The drain was handed the request's own abort token. A client that closed the connection, once
+    /// the rows had started to arrive or the moment they had, cancelled the write that follows the
+    /// response: the sink threw, the middleware logged it, and the events went with the context. An
+    /// audited read with nothing written down, at the price of closing a socket.
+    /// </remarks>
+    [Fact]
+    public async Task A_caller_who_disconnects_does_not_cancel_the_record_of_what_they_read()
+    {
+        Obedient sink = new();
+        Recording log = new();
+
+        HttpContext http = Request(Services(sink), Event(), Event("NationalId"));
+
+        http.RequestAborted = new CancellationToken(canceled: true);
+
+        await new DwPolicyAuditMiddleware(_ => Task.CompletedTask, log).InvokeAsync(http);
+
+        Assert.Equal(new[] { "Salary", "NationalId" }, sink.Written.Select(e => e.FieldPath));
+        Assert.Empty(log.Entries);
+    }
+
     /// <summary>
     /// A request that threw still writes what it did before it threw.
     /// </summary>

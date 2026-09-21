@@ -25,6 +25,9 @@ namespace DynamicWhere.ex.Policies.AspNetCore;
 /// </remarks>
 public sealed class DwPolicyAuditMiddleware
 {
+    /// <summary>How long a sink is given to write what one request recorded.</summary>
+    internal static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
+
     private readonly RequestDelegate _next;
     private readonly ILogger<DwPolicyAuditMiddleware>? _log;
 
@@ -87,9 +90,16 @@ public sealed class DwPolicyAuditMiddleware
             return;
         }
 
+        // Not the request's abort token. What was read has been read whether or not the caller is
+        // still there, and a caller who closed the connection as the rows arrived would otherwise
+        // cancel the write that records them: an audited read with nothing written down, for the
+        // price of a socket. The budget is the sink's alone, so one that hangs cannot hold the
+        // request open for good.
+        using CancellationTokenSource budget = new(DrainBudget);
+
         try
         {
-            await DwPolicy.DrainAuditAsync(context, sink, http.RequestAborted).ConfigureAwait(false);
+            await DwPolicy.DrainAuditAsync(context, sink, budget.Token).ConfigureAwait(false);
         }
         catch (Exception failure)
         {

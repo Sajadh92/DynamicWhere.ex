@@ -65,6 +65,11 @@ export default function Page() {
             <td>Enables string-based <code>Select</code> / <code>OrderBy</code> / <code>GroupBy</code> used by the dynamic variants.</td>
           </tr>
           <tr>
+            <td><code>Microsoft.Extensions.Caching.Memory</code></td>
+            <td><code>6.0.2</code></td>
+            <td>Not used directly. EF Core 6.0.22 asks for 6.0.1 or later, and 6.0.1 is the last version open to CVE-2024-43483, so naming 6.0.2 raises the floor for all four packages (3.3.0). A host on EF Core 8 or later already resolves a newer one.</td>
+          </tr>
+          <tr>
             <td><code>Microsoft.Extensions.Configuration.Abstractions</code></td>
             <td><code>6.0.0</code></td>
             <td>Provides <code>IConfiguration</code>, the section <code>DwPolicyOptions</code> and <code>DwDateOptions</code> bind from.</td>

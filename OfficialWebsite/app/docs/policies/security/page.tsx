@@ -5,8 +5,8 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Security & k-anonymity — eight inference channels and three bypasses",
-  description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own — set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, SQL leakage, and schema probing through refusals — and the denials the gate could not see until 3.2.0.",
+  title: "Security & k-anonymity — eight inference channels and five bypasses",
+  description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own — set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, SQL leakage, and schema probing through refusals — and the denials and transforms the gate could not see until 3.2.0 and 3.3.0.",
   keywords: ["k-anonymity", "MinGroupSize", "inference attack", "data disclosure", "aggregate disclosure", "EF Core security"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/security/" },
 };
@@ -18,11 +18,12 @@ export default function Page() {
       <p>
         Denying a field is easy. The hard part is the set of ways a caller can
         learn a value <em>without</em> reading it. Eight such channels follow,
-        then three bypasses that are not channels, then a path the query cannot compute
+        then five bypasses that are not channels, then a path the query cannot compute
         — not a channel either, but the one request the tier used to answer with
-        neither an answer nor a refusal — then the requests that, until 3.2.0,
-        carried out a denied value the gate could not see; each has a test that
-        reproduces the attack and goes red if the control is removed.
+        neither an answer nor a refusal — then the requests that, until 3.2.0 and
+        3.3.0, carried out a denied or untransformed value the gate could not
+        see; each has a test that reproduces the attack and goes red if the
+        control is removed.
       </p>
 
       <Callout tone="warn" title="MinGroupSize ships on, at 5">
@@ -228,7 +229,7 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         caller&apos;s — are unchanged.
       </p>
 
-      <h2 id="two-more">9, 10 and 11. The three that are not channels</h2>
+      <h2 id="two-more">9 to 13. The five that are not channels</h2>
       <table>
         <thead><tr><th>Attack</th><th>Control</th></tr></thead>
         <tbody>
@@ -249,6 +250,31 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
               written down — one token past <code>[DwAudit]</code>. Every audited
               member a projection the caller did not name hands back is recorded
               for <code>Select</code>, one event per query rather than per row.
+            </td>
+          </tr>
+          <tr>
+            <td>Read an audited member no path of the policy names: one only a subtype of the row&apos;s type declares, or one past the four segments the attribute walk reads, inside a row or a navigation returned whole</td>
+            <td>
+              The gate records a use by path, before the query runs, and such a
+              member has no path it could ask about, so it came back with
+              nothing written down. Since 3.3.0 the outbound walk&apos;s second
+              pass reports each one it meets and the terminal records it: one
+              event per path per query, for <code>Select</code>, with{" "}
+              <code>Effect</code> <code>Mask</code> where the member is
+              transformed as well. At <code>MaxAuditEvents</code> it fails
+              closed as the gate does and the rows are withheld.
+            </td>
+          </tr>
+          <tr>
+            <td>Close the connection as the rows arrive, so the record of what was read is never written</td>
+            <td>
+              The audit middleware drained a request&apos;s events with the
+              request&apos;s own abort token, so a client that hung up cancelled
+              the write that follows the response: the sink threw, the middleware
+              logged it, and the events went with the context — an audited read
+              with nothing written down, for the price of a socket. Since 3.3.0
+              the drain has a budget of its own, thirty seconds, which the caller
+              cannot cancel and a hung sink cannot outlast.
             </td>
           </tr>
         </tbody>
@@ -311,8 +337,9 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         A denied field often sits on a type the query reaches through a member:
         a secret on each line of an order, a code inside a nested object. The
         denial holds on every path that reaches it, and it has to hold whether
-        or not the caller names the member. Until 3.2.0 each request below
-        carried a denied value out. All are closed.
+        or not the caller names the member. Each request below carried a denied
+        or untransformed value out, until 3.2.0 or, where the row says so,
+        until 3.3.0. All are closed.
       </p>
       <table>
         <thead><tr><th>Attack</th><th>Control</th></tr></thead>
@@ -434,6 +461,74 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
               Such a path is denied, so a member holding one is narrowed, left out
               or refused. It used to resolve as allowed, so the member was
               returned whole, named or not.
+            </td>
+          </tr>
+          <tr>
+            <td>Name a path one segment beneath a denied member whose type the framework declares: <code>Salary.Value</code> on a <code>decimal?</code>, <code>Secret.Length</code>, <code>Born.Year</code>, <code>Bag.Count</code>, <code>Lines.Count</code> on an application&apos;s own collection class</td>
+            <td>
+              Such a path takes the policy of the member it reads since{" "}
+              <strong>3.3.0</strong>: the deny effects per feature, the{" "}
+              <code>[DwOperators]</code> restriction, the <code>[DwCost]</code>{" "}
+              weight and the audited features, from whichever provider supplied
+              them. No attribute can be placed there and no fragment named it,
+              so it resolved as allowed: a <code>[DwDenied] decimal?</code> was
+              filtered on, sorted by, grouped by with its values as the group
+              keys, aggregated and handed back by a dynamic projection, under{" "}
+              <code>Strict</code>. A transformed member gave its stored value the
+              same way, an audited one was read with nothing recorded, and a
+              weighted one cost the default. What is said to the caller about the
+              member stays the member&apos;s: the alias, the required filter, the
+              forced scope and the description.
+            </td>
+          </tr>
+          <tr>
+            <td>Raise <code>Caps.MaxNavigationDepth</code> above 4 and name a denied member five or more segments out</td>
+            <td>
+              The attributes of the member at the end of such a path are read
+              directly since <strong>3.3.0</strong>. No fragment of the attribute
+              walk, which stops at four segments, reached it, so the member was
+              filtered on, grouped by and returned under <code>Strict</code>.
+              Default configuration was never exposed to this one.
+            </td>
+          </tr>
+          <tr>
+            <td>Read a masked member the policy names no path to: five segments down an included or in-memory graph, one only a subtype of the row&apos;s type declares, one on an object a dictionary holds, one on the far side of a cycle</td>
+            <td>
+              The rows are walked by run-time type as well since{" "}
+              <strong>3.3.0</strong>, and a member that declares a transform and
+              was not transformed along a named path is transformed by its own
+              attributes, once. The outbound walk transformed along the named
+              paths only, so each of these came back exactly as stored — at the
+              default caps, under <code>Strict</code>, with no{" "}
+              <code>Selects</code>, with the navigation named whole in{" "}
+              <code>Selects</code>, and in a dynamic projection holding a real
+              object.
+            </td>
+          </tr>
+          <tr>
+            <td>Compose <code>SelectDynamic</code>, <code>Group</code>, <code>FilterDynamic</code> or <code>Summary</code> on a type whose only transformed member sits where the policy names no path</td>
+            <td>
+              Refused with{" "}
+              <code>TransformRequiresMaterialization</code> since{" "}
+              <strong>3.3.0</strong>. The four hand back a query the library
+              never sees materialized, and whether the type is transformed was
+              read from the named paths alone, so such a type got its query and
+              its rows exactly as stored — the same gap, one method call away
+              from the terminals. The refusal asks what a row of the type can
+              hold as well, and names the clause when it has no column to list.
+            </td>
+          </tr>
+          <tr>
+            <td>Declare a <code>[DwForceWhere]</code> on a type first met at the walk&apos;s fourth segment, then reach that type by a shorter path</td>
+            <td>
+              The walk returned at its depth limit with the type still marked as
+              being inside it, so the type read as a cycle wherever it was met
+              again — and what a cycle leaves out, the forced scope, the{" "}
+              <code>[DwRequireWhere]</code> and the <code>[DwAlias]</code>, was
+              left out of the shorter path. Which of two members was declared
+              first decided whether a tenant scope applied. Since{" "}
+              <strong>3.3.0</strong> all three apply on every path within four
+              segments that is not around a cycle.
             </td>
           </tr>
           <tr>

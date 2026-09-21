@@ -233,6 +233,28 @@ public string EmployeeCode { get; set; }`}</Code>
         query project the allowed members instead. See{" "}
         <Link href="/docs/policies/configuration#no-selects">A request that sends no Selects</Link>.
       </Callout>
+      <Callout tone="note" title="A navigation is a separate field; a framework-typed member is not (3.3.0)">
+        A denial on a navigation covers that path alone: <code>Contact</code> is
+        denied and <code>Contact.Email</code> is a field of its own, because it
+        is declared by an application&apos;s own type and can carry an attribute.
+        Decorate it, or deny its path. Nothing can be decorated beneath a member
+        whose type the framework declares — <code>Salary.Value</code> and{" "}
+        <code>Salary.HasValue</code> on a <code>decimal?</code>,{" "}
+        <code>Secret.Length</code>, <code>Born.Year</code>,{" "}
+        <code>Bag.Count</code>, <code>Lines.Count</code> on an application&apos;s
+        own collection class — so since <strong>3.3.0</strong> such a path takes
+        the policy of the member it reads, from whichever provider supplied it:
+        the deny effects per feature, the <code>[DwOperators]</code> restriction
+        (intersected), the <code>[DwCost]</code> weight and the audited features.
+        Not the alias, the required filter, the forced scope or the description,
+        which are about the member itself. One feature is one feature:{" "}
+        <code>[DwNoWhere] Born</code> refuses <code>WHERE Born.Year</code> and
+        still allows <code>GROUP BY Born.Year</code>, and a member nothing denies
+        is read beneath as before. A member only a <em>subtype</em> of the
+        navigated type declares is not such a path, and is still decided by the
+        rules naming it. Until 3.3.0 no fragment named such a path, so it
+        resolved as allowed.
+      </Callout>
       <Callout tone="note" title="A denial on an override or an implementation (3.2.0)">
         An access-control attribute on another declaration of a member applies
         to its path too: on the interface member a class or its subtype
@@ -269,6 +291,21 @@ public string Department { get; set; }`}</Code>
         Several sources can each force a predicate on the same field, and all of
         them apply. A conjunction can only narrow, so a low-authority rule can
         tighten a tenant scope and can never discard one.
+      </Callout>
+      <Callout tone="danger" title="Fixed (security) in 3.3.0: a type first met at the depth limit read as a cycle">
+        All three are left out around a cycle, where they are meaningless on a
+        type reached from itself, and they follow navigations up to four
+        segments otherwise. The attribute walk returned at its depth limit with
+        the type still marked as being inside it, so a type <em>first</em> met at
+        the fourth segment read as a cycle wherever it was met again in the same
+        walk: a forced scope, a required filter and an alias were then dropped
+        from a shorter path reaching that type directly, and which of two members
+        was declared first decided whether a tenant scope applied. All three now
+        apply on every path within four segments that is not around a cycle. A
+        query that ran unscoped is scoped, and a required filter may now be
+        demanded. A path beneath a member whose type the framework declares
+        takes none of the three: a filter on <code>TenantId.Value</code> does not
+        satisfy a <code>[DwRequireWhere]</code> on <code>TenantId</code>.
       </Callout>
 
       <h2 id="allow-null">A forced predicate that lets null through</h2>

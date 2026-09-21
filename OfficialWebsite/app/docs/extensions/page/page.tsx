@@ -75,6 +75,18 @@ export default function Page() {
   "pageSize": 25
 }`}</Code>
 
+      <Callout tone="note" title="A page past the last row is an empty page (3.3.0)">
+        The offset is worked out in 64 bits and held to{" "}
+        <code>int.MaxValue</code>, here and in the three summary methods. In
+        32 bits the product wrapped for a large enough page number: a negative
+        offset is an error on SQL Server and PostgreSQL, so the request became a
+        five-hundred, and the first page again on SQLite and in memory, so a
+        page far past the last row returned rows. A page past the last row is now
+        an empty page however far past it is, as it always was for a page number
+        that did not wrap. The policy layer caps <code>PageSize</code> and never{" "}
+        <code>PageNumber</code>, so a guarded query took the same path.
+      </Callout>
+
       <Callout tone="warn">
         <code>Page</code> does not order. Skipping rows of an unordered query
         lets the database return them in any order it likes, so two pages can

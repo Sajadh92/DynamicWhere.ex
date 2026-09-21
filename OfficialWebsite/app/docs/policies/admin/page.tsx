@@ -210,6 +210,16 @@ var caller = await DwClaimsAdapter.CreateContextAsync(User, claimsOptions, ct);`
         middleware the events are built and never written; with it and no sink
         registered, they are discarded with a warning.
       </p>
+      <Callout tone="danger" title="Fixed (security) in 3.3.0: a caller who disconnects does not cancel the record">
+        The drain used the request&apos;s own abort token, so a client that
+        closed the connection — as the rows arrived, or the moment they had —
+        cancelled the write that follows the response: the sink threw, the
+        middleware logged it, and the events went with the context. An audited
+        read with nothing written down, for the price of a socket. The drain has
+        a budget of its own now, thirty seconds, which the caller cannot cancel
+        and a hung sink cannot outlast; a sink that overruns it is cancelled,
+        logged and dropped, as a throwing one is.
+      </Callout>
       <p>
         It drains in a <code>finally</code>, so a request that threw still writes
         what it recorded. With{" "}

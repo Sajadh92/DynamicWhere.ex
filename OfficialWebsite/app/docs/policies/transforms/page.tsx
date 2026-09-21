@@ -39,7 +39,14 @@ export default function Page() {
         A transform on a query the caller materializes itself is refused with{" "}
         <code>TransformRequiresMaterialization</code> rather than skipped, so a
         composable method cannot hand back an <code>IQueryable</code> that quietly
-        never masks anything.
+        never masks anything. Since <strong>3.3.0</strong> that refusal asks
+        what a row of the type can hold as well as which paths the policy
+        names: a type whose only transform sits where no path reaches it — on a
+        member only a subtype declares, one five segments down, one of an object
+        a dictionary holds — was handed the query, and its rows came back
+        exactly as stored. With no named column to list, the refusal names the
+        clause, <code>FieldPath</code> <code>&quot;*&quot;</code>, in both
+        tiers. A type nothing transforms anywhere still gets its query.
       </p>
 
       <h2 id="mask">The nine mask strategies</h2>
@@ -187,10 +194,78 @@ public string SalaryBand { get; set; } = string.Empty;`}</Code>
       <p>
         The walk descends through reference navigations, collections, arrays,
         interfaces, structs and jagged collections, transforming every element it
-        reaches. A field one navigation deeper than the walk reaches is a field
-        that is quietly not protected, which is why the depth is a{" "}
-        <Link href="/docs/policies/configuration">configured cap</Link> rather
-        than a guess.
+        reaches. It is driven by the paths the policy names — the declared
+        types, four segments deep — which is what makes it incapable of missing
+        a path because it failed to recognise a navigation.
+      </p>
+
+      <h2 id="unnamed">A value no path of the policy names</h2>
+      <p>
+        A value can sit in the materialized rows where none of those paths goes.
+        A <code>[DwMask]</code> member five segments down an included or
+        in-memory graph, one only a subtype of the row&apos;s type declares —{" "}
+        <code>Dog.Chip</code> on rows typed <code>Animal</code>, in memory or in
+        a TPH hierarchy — one on an object a dictionary holds, and the far side
+        of a cycle: each came back exactly as stored, at the default caps, under{" "}
+        <code>Strict</code>, with no <code>Selects</code>, with the navigation
+        named whole in <code>Selects</code>, and in a dynamic projection holding
+        a real object.
+      </p>
+      <Callout tone="danger" title="Fixed (security) in 3.3.0: the rows are walked by run-time type as well">
+        A member that declares a transform attribute and was not transformed
+        along a named path is transformed by its own attributes, exactly once —
+        an object reached both ways is not transformed twice. No option had to
+        be set and no cap raised for the old behaviour: a column masked four
+        segments down was returned in the clear five segments down.
+      </Callout>
+      <ul>
+        <li>
+          Only members that declare a transform or an audit for{" "}
+          <code>Select</code>, or that can lead to one, are read. A navigation
+          whose type can reach neither is never touched, so a lazy loader behind
+          it is not woken, and a model that declares neither anywhere pays for no
+          second pass at all.
+        </li>
+        <li>
+          The same pass reports each audited member it meets where the policy
+          names no path to it, which the terminal records as a read — see{" "}
+          <Link href="/docs/breaking-changes#unnamed-audit">breaking point 43</Link>.
+        </li>
+        <li>
+          The transform is the member&apos;s own attributes. No rule can speak to
+          such a member, since no path names it — the same answer as{" "}
+          <em>no runtime rule can unmask a field</em> — and a resolver built over
+          no <code>AttributePolicyProvider</code> reads no attribute here either.
+        </li>
+        <li>
+          It obeys <code>Selects</code> as the first pass does, runs in a dry run
+          as transforms always have, and fails the query with{" "}
+          <code>InvalidOperationException</code> for a transformed member with no
+          setter, exactly as one along a named path does.
+        </li>
+        <li>
+          The trace records the path with its stages and the note{" "}
+          <code>(declared on the member; no path of the policy names it)</code>.
+        </li>
+        <li>
+          Still a limit: a member typed <code>object</code>, or a collection that
+          is not generic, says nothing about what it holds and is not read into.
+        </li>
+      </ul>
+      <p>
+        A transform is applied to a <em>member</em>, which is why a path{" "}
+        <em>beneath</em> one — <code>Bonus.Value</code>, a decimal where{" "}
+        <code>Bonus</code> is what is rounded — is refused for{" "}
+        <code>Select</code>, <code>Group</code> and <code>Aggregate</code>{" "}
+        instead: there is no member there to apply the chain to, and the value it
+        would hand back is the stored one. A transformed member past four
+        segments, which only a raised{" "}
+        <Link href="/docs/policies/configuration#caps"><code>MaxNavigationDepth</code></Link>{" "}
+        lets a request name, is a member, so naming it in <code>Selects</code>{" "}
+        returns it transformed; only a grouping key and an aggregated field are
+        refused there, because a summary&apos;s own transform finds a generated
+        row&apos;s columns by the type&apos;s list, and that list stops at four
+        segments.
       </p>
     </DocPage>
   );

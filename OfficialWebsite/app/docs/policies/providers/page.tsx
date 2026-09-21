@@ -29,6 +29,19 @@ var store = new RedisPolicyStore(redis);
 var provider = await StorePolicyProvider.CreateAsync(store, options);
 
 DwPolicy.Configure(options, provider);`}</Code>
+      <Callout tone="note" title="A writer that loses a race is told nothing was stored (3.3.0)">
+        <code>UpsertAsync</code> and <code>DeleteAsync</code> commit
+        conditionally on the rule&apos;s owner entry. Where a rule lives is read
+        before the transaction that moves or deletes it, so two writers of one
+        rule could read the same answer: the slower one then cleaned up after a
+        copy the faster had already moved and left that writer&apos;s copy
+        behind, under a user nobody any longer wrote it for and with no owner
+        entry pointing at it, which no later write or delete could find. The
+        writer that loses the race now gets the{" "}
+        <code>InvalidOperationException</code> a failed commit always raised —
+        its message ends <em>Another writer moved or removed the same rule in the
+        meantime; write it again</em> — and should write again.
+      </Callout>
       <Callout tone="note" title="The poll is not redundant">
         Redis pub/sub is fire-and-forget: a subscriber that is briefly
         disconnected never learns it missed a message. The poll behind the watch

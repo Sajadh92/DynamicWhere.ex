@@ -90,7 +90,8 @@ bool collectionsFull = CacheExpose.IsCacheFull(CacheMemoryType.CollectionElement
       <h2 id="lifetime">Entry lifetime</h2>
       <ul>
         <li>Entries are added on first reflection miss for a given key.</li>
-        <li>Entries record an access on every read — a timestamp under LRU, a counter under LFU, nothing under FIFO. <code>EvictionStrategy</code> alone decides which; the <code>Enable*Tracking</code> flags do not.</li>
+        <li>Entries record an access on read — a timestamp under LRU, a counter under LFU, nothing under FIFO. <code>EvictionStrategy</code> alone decides which; the <code>Enable*Tracking</code> flags do not.</li>
+        <li>Under LRU the timestamp is refreshed once it is a second old rather than on every read (3.3.0). Eviction only asks which entries are oldest, and an entry read a moment ago is already among the newest; writing it on every read put every thread reading the same few entries into one queue. A counter under LFU still counts every read.</li>
         <li>Entries are removed only when an eviction pass runs (automatic on overflow, or manual via <code>ForceEvictionOnAllCaches</code> / <code>ClearCache</code> / <code>ClearAllCaches</code>).</li>
       </ul>
 

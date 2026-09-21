@@ -590,7 +590,7 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
           <tr><td><code>MaxConditionValues</code></td><td>1000</td><td>Values in any one condition, such as the list of an <code>In</code>.</td></tr>
           <tr><td><code>MaxAggregates</code></td><td>50</td><td>Aggregates one summary computes.</td></tr>
           <tr><td><code>MaxOrderFields</code></td><td>10</td><td>Order fields in one query.</td></tr>
-          <tr><td><code>MaxNavigationDepth</code></td><td>4</td><td>How deep a field path may reach.</td></tr>
+          <tr><td><code>MaxNavigationDepth</code></td><td>4</td><td>How deep a field path may reach. Also the depth the attribute walk reads to: raised above 4, a request can name a path no fragment of that walk reached, and the member at the end of such a path is read for its own attributes (3.3.0). See <Link href="/docs/breaking-changes#past-the-walk">breaking point 40</Link>.</td></tr>
           <tr><td><code>MaxQueryCost</code></td><td>1000</td><td>Budget consumed by <code>[DwCost]</code> weights.</td></tr>
           <tr><td><code>DefaultFieldCost</code></td><td>1</td><td>Charged for an unweighted field, and for an aggregate with no field.</td></tr>
           <tr><td><code>MaxAuditEvents</code></td><td>10000</td><td>Audit buffer before draining.</td></tr>

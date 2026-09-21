@@ -287,6 +287,27 @@ namespace DynamicWhere.Tests.Policies
             Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, refusal.ErrorCode);
         }
 
+        /// <summary>
+        /// Which fragments match is about the type's shape and not about who supplied them, so a resolver built
+        /// over a store alone, reading no attribute, answers the same way.
+        /// </summary>
+        [Theory]
+        [InlineData(DwTier.Strict)]
+        [InlineData(DwTier.Convenience)]
+        public void A_rule_covers_the_paths_beneath_its_member_with_no_attribute_provider(DwTier tier)
+        {
+            FakePolicyProvider rules = new FakePolicyProvider()
+                .Add("Name", PolicyFeature.Where, PolicyEffect.Deny, PolicyLevel.DynamicGlobal);
+
+            PolicyResolver resolver = new(new IDwPolicyProvider[] { rules });
+
+            PolicyException refusal = Assert.Throws<PolicyException>(() => Rows().AsQueryable()
+                .ApplyPolicy(Caller(), Posture(tier), resolver)
+                .ToList(Where(Cond("Name.Length", DataType.Number, Operator.GreaterThan, 3))));
+
+            Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, refusal.ErrorCode);
+        }
+
         /// <summary>Precision: a member nothing denies is read beneath as it always was, and one feature is one feature.</summary>
         [Theory]
         [InlineData(DwTier.Strict)]

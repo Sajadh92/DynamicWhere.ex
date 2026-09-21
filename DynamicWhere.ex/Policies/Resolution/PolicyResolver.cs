@@ -208,8 +208,9 @@ public sealed class PolicyResolver
     /// fragment of that member applies, whichever provider supplied it, so a store's denial of
     /// <c>Salary</c> covers <c>Salary.Value</c> as an attribute's does. The other is longer than the
     /// attribute walk goes, which a request can only name once a host raises the navigation-depth cap:
-    /// the attributes of the member at its end are read directly. Both are asked only of a resolver
-    /// that reads attributes at all.
+    /// the attributes of the member at its end are read directly, by a resolver that reads attributes
+    /// at all. The first is about which fragments match and not where they came from, so it holds for
+    /// every resolver.
     /// </remarks>
     private (List<PolicyFragment> All, List<PolicyFragment> Named, bool Beneath, bool Past) Candidates(
         Type entityType, string path, DwPolicyContext context)

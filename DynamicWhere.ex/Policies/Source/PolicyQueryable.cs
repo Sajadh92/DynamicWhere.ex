@@ -114,7 +114,8 @@ public sealed class PolicyQueryable<T> where T : class
                 FilterResult<T> result = Guarded().ToList(sanitized, getQueryString);
 
                 ResultTransformer.Rows(
-                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+                    result.Data, typeof(T), TypePolicy, sanitized.Selects, _context, _options, trace,
+                    _resolver.ReadsAttributes);
 
                 result.Policy = _options.TraceInResult ? trace : null;
 
@@ -166,7 +167,8 @@ public sealed class PolicyQueryable<T> where T : class
                 FilterResult<T> result = await Guarded().ToListAsync(sanitized, getQueryString, cancellationToken);
 
                 ResultTransformer.Rows(
-                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+                    result.Data, typeof(T), TypePolicy, sanitized.Selects, _context, _options, trace,
+                    _resolver.ReadsAttributes);
 
                 result.Policy = _options.TraceInResult ? trace : null;
 
@@ -198,7 +200,8 @@ public sealed class PolicyQueryable<T> where T : class
                 FilterResult<dynamic> result = Guarded().ToListDynamic(sanitized, getQueryString);
 
                 ResultTransformer.Rows(
-                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+                    result.Data, typeof(T), TypePolicy, sanitized.Selects, _context, _options, trace,
+                    _resolver.ReadsAttributes);
 
                 // After transformation, not before: the transform pipeline reads the generated columns
                 // by the names the projection baked in, and renaming first would leave it looking for
@@ -255,7 +258,8 @@ public sealed class PolicyQueryable<T> where T : class
                 FilterResult<dynamic> result = await Guarded().ToListAsyncDynamic(sanitized, getQueryString, cancellationToken);
 
                 ResultTransformer.Rows(
-                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+                    result.Data, typeof(T), TypePolicy, sanitized.Selects, _context, _options, trace,
+                    _resolver.ReadsAttributes);
 
                 // After transformation, not before: the transform pipeline reads the generated columns
                 // by the names the projection baked in, and renaming first would leave it looking for
@@ -428,7 +432,8 @@ public sealed class PolicyQueryable<T> where T : class
                 SegmentResult<T> result = await Guarded().ToListAsync(sanitized, cancellationToken);
 
                 ResultTransformer.Rows(
-                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+                    result.Data, typeof(T), TypePolicy, sanitized.Selects, _context, _options, trace,
+                    _resolver.ReadsAttributes);
 
                 result.Policy = _options.TraceInResult ? trace : null;
 

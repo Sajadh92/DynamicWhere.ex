@@ -105,15 +105,8 @@ public sealed class PolicyResolver
                 "A policy lookup requires a field path with at least one segment.", nameof(fieldPath));
         }
 
-        List<PolicyFragment> candidates = new();
-
-        foreach (PolicyFragment fragment in Sweep(entityType, context))
-        {
-            if (fragment.Matches(path))
-            {
-                candidates.Add(fragment);
-            }
-        }
+        (List<PolicyFragment> candidates, List<PolicyFragment> named, bool unwalked) =
+            Candidates(entityType, path, context);
 
         Dictionary<PolicyFeature, PolicyEffect> effects = new();
         List<PolicySource> sources = new();
@@ -156,17 +149,125 @@ public sealed class PolicyResolver
             effects[PolicyFeature.Aggregate] = PolicyEffect.Deny;
         }
 
+        // A transform is applied to the member it was declared on, along a path the walk names. On a
+        // path the walk does not name there is nothing to apply it to: Bonus.Value is a decimal where
+        // Bonus is the member that is rounded, and a masked member five segments down is in no list
+        // the outbound walk reads. Every way such a path hands a value back is refused instead, since
+        // the value it would hand back is the stored one. Filtering and ordering run on stored values
+        // wherever the member is reached from, so they follow the member's own decision.
+        if (unwalked && transform is not null && !transform.IsEmpty)
+        {
+            effects[PolicyFeature.Select] = PolicyEffect.Deny;
+            effects[PolicyFeature.Group] = PolicyEffect.Deny;
+            effects[PolicyFeature.Aggregate] = PolicyEffect.Deny;
+        }
+
+        // What is said about the member decides every path that reads it. What is said to the caller
+        // about the member, its public name, the filter it demands, the scope it forces and how it is
+        // described, is about that member alone.
         return new FieldPolicy(
             path,
             effects,
             sources,
             isSealed,
             IntersectOperators(candidates),
-            ElectAlias(candidates),
-            CollectForced(candidates),
-            ElectRequired(candidates),
-            transform,
-            ElectFacts(candidates));
+            ElectAlias(named),
+            CollectForced(named),
+            ElectRequired(named),
+            unwalked ? ElectTransform(named) : transform,
+            unwalked ? Carried(ElectFacts(named), candidates) : ElectFacts(candidates));
+    }
+
+    /// <summary>
+    /// The fragments that decide one path: those naming it, and, where the walk that produces them
+    /// cannot name it, those of the member it reads.
+    /// </summary>
+    /// <param name="entityType">The entity being queried.</param>
+    /// <param name="path">The normalized path.</param>
+    /// <param name="context">The caller.</param>
+    /// <returns>
+    /// Every fragment that decides the path; the ones naming it exactly, a <c>"*"</c> rule included;
+    /// and whether any of the rest were added.
+    /// </returns>
+    /// <remarks>
+    /// A fragment that does not match is a field left allowed, and two kinds of path matched nothing
+    /// though a member above them was denied. One continues beneath a member whose type the framework
+    /// declares, <c>Salary.Value</c> or <c>Secret.Length</c>, where no attribute can be placed: every
+    /// fragment of that member applies, whichever provider supplied it, so a store's denial of
+    /// <c>Salary</c> covers <c>Salary.Value</c> as an attribute's does. The other is longer than the
+    /// attribute walk goes, which a request can only name once a host raises the navigation-depth cap:
+    /// the attributes of the member at its end are read directly. Both are asked only of a resolver
+    /// that reads attributes at all.
+    /// </remarks>
+    private (List<PolicyFragment> All, List<PolicyFragment> Named, bool Unwalked) Candidates(
+        Type entityType, string path, DwPolicyContext context)
+    {
+        string? governing = AttributePolicyProvider.Governing(entityType, path);
+
+        List<PolicyFragment> all = new();
+        List<PolicyFragment> named = new();
+
+        foreach (PolicyFragment fragment in Sweep(entityType, context))
+        {
+            if (fragment.Matches(path))
+            {
+                all.Add(fragment);
+                named.Add(fragment);
+            }
+            else if (governing is not null && fragment.Matches(governing))
+            {
+                all.Add(fragment);
+            }
+        }
+
+        if (ReadsAttributes)
+        {
+            // Of the member the path reads, where there is one: B.C.D.E.Born.Year is decided by Born.
+            all.AddRange(AttributePolicyProvider.Unwalked(entityType, governing ?? path));
+        }
+
+        return (all, named, all.Count != named.Count);
+    }
+
+    /// <summary>True when attributes are among the sources this resolver was built over.</summary>
+    internal bool ReadsAttributes
+    {
+        get
+        {
+            for (int i = 0; i < _providers.Count; i++)
+            {
+                if (_providers[i] is AttributePolicyProvider)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The facts of a path the walk cannot name: described as the fragments naming it describe it,
+    /// weighed and audited as the member it reads is.
+    /// </summary>
+    /// <remarks>
+    /// A weight and an audit are about the stored value, which the path reads. Left behind,
+    /// <c>Notes.Length</c> cost one where <c>Notes</c> cost fifty, and <c>Salary.Value</c> was read with
+    /// nothing written down where <c>Salary</c> is audited. A label, a group and a list of allowed
+    /// values describe the member to somebody building a query, and describe nothing beneath it.
+    /// </remarks>
+    private static FieldFacts? Carried(FieldFacts? named, IReadOnlyList<PolicyFragment> candidates)
+    {
+        int? cost = ElectCost(candidates);
+        PolicyFeature? audited = ElectAudited(candidates);
+
+        if (named is null && cost is null && audited is null)
+        {
+            return null;
+        }
+
+        return new FieldFacts(
+            named?.Label, named?.Description, named?.Group, named?.Order, named?.AllowedValues, cost, audited);
     }
 
     /// <summary>
@@ -197,15 +298,9 @@ public sealed class PolicyResolver
 
         string path = PolicyFragment.NormalizePath(fieldPath);
 
-        List<PolicyFragment> candidates = new();
-
-        foreach (PolicyFragment fragment in Sweep(entityType, context))
-        {
-            if (fragment.Matches(path))
-            {
-                candidates.Add(fragment);
-            }
-        }
+        // The same fragments Resolve decided from, so the explanation names the denial a path beneath
+        // a member inherits rather than reporting a refusal with no source.
+        List<PolicyFragment> candidates = Candidates(entityType, path, context).All;
 
         List<FeatureExplanation> features = new(Features.Length);
 

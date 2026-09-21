@@ -26,14 +26,24 @@ namespace DynamicWhere.ex.Policies.Source;
 internal static class ResultTransformer
 {
     /// <summary>Transforms the rows of an entity or projection result.</summary>
+    /// <param name="rows">The materialized rows.</param>
+    /// <param name="entityType">The type the query was written over, whose paths the policy names.</param>
+    /// <param name="policy">The type's policy.</param>
+    /// <param name="projected">The projection the rows were read through, or null for whole rows.</param>
+    /// <param name="context">The caller.</param>
+    /// <param name="options">The enforcement posture.</param>
+    /// <param name="trace">Collects what was transformed.</param>
+    /// <param name="attributes">False when the resolver in force reads no attributes at all.</param>
     internal static void Rows(
         IEnumerable rows,
+        Type entityType,
         TypePolicy policy,
         IReadOnlyCollection<string>? projected,
         DwPolicyContext context,
         DwPolicyOptions options,
-        PolicyTrace trace) =>
-        GraphWalker.Apply(rows, policy, projected, context, options, trace);
+        PolicyTrace trace,
+        bool attributes) =>
+        GraphWalker.Apply(rows, entityType, policy, projected, context, options, trace, attributes);
 
     /// <summary>
     /// Rewrites the column names of generated rows into the caller's own vocabulary.

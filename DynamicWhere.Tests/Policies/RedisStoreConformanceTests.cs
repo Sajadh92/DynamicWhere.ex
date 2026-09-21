@@ -207,6 +207,63 @@ public sealed class RedisStoreConformanceTests : PolicyStoreConformanceTests, IA
             async () => await store.LoadAsync(default));
     }
 
+    /// <summary>
+    /// Writers moving one rule between callers leave one copy of it, under the caller the owner entry
+    /// names.
+    /// </summary>
+    /// <remarks>
+    /// Where a rule lives is read before the transaction that moves it. Two writers could read the
+    /// same answer, and the slower one then cleaned up after a copy the faster had already moved,
+    /// leaving that writer's copy behind with no owner entry pointing at it: a rule still applying to
+    /// a caller nobody any longer wrote it for. The commit is conditional on the owner entry now, and
+    /// a writer that loses is told nothing was stored.
+    /// </remarks>
+    [Fact]
+    public async Task Writers_moving_one_rule_leave_one_copy_of_it()
+    {
+        string prefix = NextPrefix();
+        Guid id = Guid.NewGuid();
+        string[] callers = { "ann", "bob", "cyd" };
+
+        async Task Move(int seed)
+        {
+            RedisPolicyStore store = new(_redis!, prefix);
+
+            for (int i = 0; i < 400; i++)
+            {
+                PolicyRule rule = new(
+                    DwSubjectKind.User, callers[(i + seed) % callers.Length], StaffType, "Department",
+                    PolicyFeature.Select, PolicyEffect.Deny, id: id);
+
+                try
+                {
+                    await store.UpsertAsync(rule, default);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Lost the race, and said so. Nothing was stored; the next round writes again.
+                }
+            }
+        }
+
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(seed => Task.Run(() => Move(seed))));
+
+        IDatabase db = _redis!.GetDatabase();
+        string owner = (await db.HashGetAsync($"{prefix}:owner", id.ToString())).ToString();
+
+        List<string> holders = new();
+
+        foreach (string caller in callers)
+        {
+            if (await db.HashExistsAsync($"{prefix}:user:{caller}", id.ToString()))
+            {
+                holders.Add($"{prefix}:user:{caller}");
+            }
+        }
+
+        Assert.Equal(new[] { owner }, holders);
+    }
+
     /// <summary>A prefix no other store in this class is using.</summary>
     private string NextPrefix() => $"test:{Interlocked.Increment(ref _prefixes)}";
 }

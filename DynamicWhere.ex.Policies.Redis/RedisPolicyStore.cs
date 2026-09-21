@@ -168,6 +168,8 @@ public sealed class RedisPolicyStore : IDwPolicyWritableStore
 
         ITransaction write = db.CreateTransaction();
 
+        Unmoved(write, field, previous);
+
         List<Task> queued = new();
 
         if (previous.HasValue && previous != target)
@@ -209,6 +211,8 @@ public sealed class RedisPolicyStore : IDwPolicyWritableStore
 
         ITransaction write = db.CreateTransaction();
 
+        Unmoved(write, field, owner);
+
         List<Task> queued = new();
 
         if (owner.HasValue)
@@ -240,13 +244,29 @@ public sealed class RedisPolicyStore : IDwPolicyWritableStore
     /// dropping them turns a failed write into an unobserved exception and a silent success.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// Commits only if the rule still lives where it was just read to live.
+    /// </summary>
+    /// <remarks>
+    /// Where a rule lives is read before the transaction that moves or deletes it, and two writers of
+    /// one rule could both read the same answer. The second then cleaned up after a copy the first had
+    /// already moved, and left the first's copy behind: a rule applying to a caller nobody wrote it
+    /// for, with no owner entry left to find it by. The commit is conditional on the owner entry, so
+    /// the writer that lost the race is told nothing was stored, and writes again.
+    /// </remarks>
+    private void Unmoved(ITransaction write, RedisValue field, RedisValue owner) =>
+        write.AddCondition(owner.HasValue
+            ? Condition.HashEqual(_keys.Owner, field, owner)
+            : Condition.HashNotExists(_keys.Owner, field));
+
     private static async Task CommitAsync(ITransaction write, List<Task> queued)
     {
         if (!await write.ExecuteAsync().ConfigureAwait(false))
         {
             throw new InvalidOperationException(
                 "The Redis transaction holding this policy write was not committed, so nothing was " +
-                "stored. Reporting success here would record a rule that is not there.");
+                "stored. Reporting success here would record a rule that is not there. Another writer " +
+                "moved or removed the same rule in the meantime; write it again.");
         }
 
         await Task.WhenAll(queued).ConfigureAwait(false);

@@ -16,14 +16,21 @@ internal static class CacheReflection
     #region Configuration Management
 
     /// <summary>
-    /// Current cache configuration options. Can be modified at runtime.
+    /// The configuration in force: a private copy nothing edits, swapped whole by <see cref="Configure"/>.
     /// </summary>
     private static CacheOptions _options = new();
 
     /// <summary>
-    /// Lock object to ensure thread-safe configuration updates.
+    /// The configuration in force, as every lookup reads it.
     /// </summary>
-    private static readonly object _configLock = new();
+    /// <remarks>
+    /// One volatile read. It was a lock and a copy, on every property lookup of every query: each
+    /// request thread took the same lock several times per field, so eight threads ran each lookup
+    /// eighteen times slower than one did, and every lookup allocated the copy it then discarded. The
+    /// instance is never edited after it is installed, so handing it to the code in this assembly is
+    /// safe; a caller outside still gets a copy, since one they edited would be the one in force.
+    /// </remarks>
+    private static CacheOptions Current => Volatile.Read(ref _options);
 
     /// <summary>
     /// Configures the reflection cache with custom options.
@@ -42,23 +49,14 @@ internal static class CacheReflection
 
         options.Validate();
 
-        lock (_configLock)
-        {
-            _options = options.Clone();
-        }
+        Volatile.Write(ref _options, options.Clone());
     }
 
     /// <summary>
     /// Gets the current cache configuration.
     /// </summary>
     /// <returns>A copy of the current cache configuration options.</returns>
-    public static CacheOptions GetCacheConfigOptions()
-    {
-        lock (_configLock)
-        {
-            return _options.Clone();
-        }
-    }
+    public static CacheOptions GetCacheConfigOptions() => Current.Clone();
 
     #endregion Configuration Management
 
@@ -72,13 +70,18 @@ internal static class CacheReflection
     /// <returns>A dictionary mapping property names (case-insensitive) to PropertyInfo objects.</returns>
     public static Dictionary<string, PropertyInfo> GetTypeProperties(Type type)
     {
-        var config = GetCacheConfigOptions();
+        CacheOptions config = Current;
 
         // Update access tracking based on eviction strategy
-        var accessTrackingInput = AccessTrackingInput<Type>.Create(type, config,
+        CacheDatabase.Track(type, config,
             CacheDatabase.TypePropertiesAccessTime,
             CacheDatabase.TypePropertiesAccessCount);
-        CacheDatabase.UpdateAccessTracking(accessTrackingInput);
+
+        // A hit, which nearly every call is, builds no closure over the configuration.
+        if (CacheDatabase.TypePropertiesCache.TryGetValue(type, out Dictionary<string, PropertyInfo>? known))
+        {
+            return known;
+        }
 
         return CacheDatabase.GetOrAddTypeProperties(type, t =>
         {
@@ -132,13 +135,18 @@ internal static class CacheReflection
     /// <returns>The element type if it's a collection, null otherwise.</returns>
     public static Type? GetCollectionElementType(Type type)
     {
-        var config = GetCacheConfigOptions();
+        CacheOptions config = Current;
 
         // Update access tracking based on eviction strategy
-        var accessTrackingInput = AccessTrackingInput<Type>.Create(type, config,
+        CacheDatabase.Track(type, config,
             CacheDatabase.CollectionElementTypeAccessTime,
             CacheDatabase.CollectionElementTypeAccessCount);
-        CacheDatabase.UpdateAccessTracking(accessTrackingInput);
+
+        // A hit, which nearly every call is, builds no closure over the configuration.
+        if (CacheDatabase.CollectionElementTypeCache.TryGetValue(type, out Type? known))
+        {
+            return known;
+        }
 
         return CacheDatabase.GetOrAddCollectionElementType(type, t =>
         {
@@ -202,24 +210,27 @@ internal static class CacheReflection
         ReservedNames.Refuse(propertyPath);
 
         var cacheKey = (rootType, propertyPath);
-        var config = GetCacheConfigOptions();
+        CacheOptions config = Current;
 
-        string validated = CacheDatabase.GetOrAddPropertyPath(cacheKey, key =>
+        // A hit, which nearly every call is, builds no closure over the configuration.
+        if (!CacheDatabase.PropertyPathCache.TryGetValue(cacheKey, out string? validated))
         {
-            // Check if eviction is needed and perform it if necessary
-            CacheEviction.EvictPropertyPathEntries(config);
+            validated = CacheDatabase.GetOrAddPropertyPath(cacheKey, key =>
+            {
+                // Check if eviction is needed and perform it if necessary
+                CacheEviction.EvictPropertyPathEntries(config);
 
-            // Perform the actual property path validation
-            return ValidatePropertyPathInternal(key.Item1, key.Item2);
-        });
+                // Perform the actual property path validation
+                return ValidatePropertyPathInternal(key.Item1, key.Item2);
+            });
+        }
 
         // Tracked only once the path has validated. A path that fails adds no cache entry for eviction
         // to remove, so tracking it kept one access record per invented name for the life of the
         // process, and a caller sending unique names grew the process without limit.
-        var accessTrackingInput = AccessTrackingInput<(Type, string)>.Create(cacheKey, config,
+        CacheDatabase.Track(cacheKey, config,
             CacheDatabase.PropertyPathAccessTime,
             CacheDatabase.PropertyPathAccessCount);
-        CacheDatabase.UpdateAccessTracking(accessTrackingInput);
 
         return validated;
     }
@@ -285,13 +296,11 @@ internal static class CacheReflection
     public static Type GetFieldType(Type rootType, string propertyPath)
     {
         var cacheKey = (rootType, propertyPath);
-        var config = GetCacheConfigOptions();
 
         // Update access tracking based on eviction strategy
-        var accessTrackingInput = AccessTrackingInput<(Type, string)>.Create(cacheKey, config,
+        CacheDatabase.Track(cacheKey, Current,
             CacheDatabase.PropertyPathAccessTime,
             CacheDatabase.PropertyPathAccessCount);
-        CacheDatabase.UpdateAccessTracking(accessTrackingInput);
 
         // Reuse property path cache for field type resolution since the path is already validated
         // We just need to navigate to the final type

@@ -1,3 +1,4 @@
+using DynamicWhere.ex.Optimization.Cache.Config;
 using DynamicWhere.ex.Optimization.Cache.Enums;
 using DynamicWhere.ex.Optimization.Cache.Input;
 using DynamicWhere.ex.Optimization.Cache.Output;
@@ -196,6 +197,47 @@ internal static class CacheDatabase
                 break;
         }
     }
+
+    /// <summary>
+    /// Records one access for the eviction strategy in force, without the input object
+    /// <see cref="UpdateAccessTracking{TKey}"/> takes.
+    /// </summary>
+    /// <remarks>
+    /// The same bookkeeping, for the lookups that run on every field of every query: allocating an
+    /// input object per lookup only to read four references back out of it was most of what a cache
+    /// hit cost.
+    /// </remarks>
+    internal static void Track<TKey>(
+        TKey key,
+        CacheOptions config,
+        ConcurrentDictionary<TKey, long> accessTimes,
+        ConcurrentDictionary<TKey, long> accessCounts)
+        where TKey : notnull
+    {
+        switch (config.EvictionStrategy)
+        {
+            case CacheEvictionStrategy.LRU:
+                // A write takes the entry's lock, and every thread querying one entity type reads the
+                // same few entries, so writing on each read put them all in one queue. An entry read a
+                // moment ago is already among the most recent, and eviction only asks which entries are
+                // oldest: a last-access time that is right to the second orders them the same.
+                long now = DateTime.UtcNow.Ticks;
+
+                if (!accessTimes.TryGetValue(key, out long seen) || now - seen >= LruResolutionTicks)
+                {
+                    accessTimes[key] = now;
+                }
+
+                break;
+
+            case CacheEvictionStrategy.LFU:
+                accessCounts.AddOrUpdate(key, 1, static (_, count) => count + 1);
+                break;
+        }
+    }
+
+    /// <summary>How stale a last-access time may be before a read refreshes it: one second.</summary>
+    internal const long LruResolutionTicks = TimeSpan.TicksPerSecond;
 
     #endregion Access Tracking Operations
 

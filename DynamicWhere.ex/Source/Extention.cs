@@ -29,7 +29,7 @@ public static class Extension
     /// be null or empty.</param>
     /// <returns>An <see cref="IQueryable{T}"/> where each element contains only the specified fields from the original query.</returns>
     /// <exception cref="ArgumentNullException">Thrown if query or fields is null.</exception>
-    /// <exception cref="LogicException">Thrown if fields is empty, or if type T does not have a parameterless constructor.</exception>
+    /// <exception cref="LogicException">Thrown if fields is empty or holds a name that is null or blank, or if type T does not have a parameterless constructor.</exception>
     public static IQueryable<T> Select<T>(this IQueryable<T> query, List<string> fields) where T : class
     {
         // Refuse a type that requires a policy context when the call is not inside one.

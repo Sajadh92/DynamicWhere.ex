@@ -83,7 +83,10 @@ export default function Page() {
             <td><code>InvalidFormat</code></td>
           </tr>
           <tr>
-            <td><code>Number</code> values must parse as a numeric type</td>
+            <td>
+              <code>Number</code> values must be a literal the expression parser
+              reads, and one it can compare with the member the condition names
+            </td>
             <td><code>InvalidFormat</code></td>
           </tr>
           <tr>
@@ -118,6 +121,27 @@ export default function Page() {
         as <code>String</code> or <code>Guid</code> are ordinary members. Rename the
         CLR property and map the column with <code>[Column]</code>. See{" "}
         <Link href="/docs/breaking-changes#root-it-parent-members">breaking changes</Link>.
+      </Callout>
+
+      <Callout tone="warn" title="A number value is read the way the parser will read it (3.3.0)">
+        The predicate builder writes a <code>Number</code> value into the
+        expression unquoted, exactly as sent, so validation reads it as the
+        expression parser reads it and not as the host&apos;s culture does. First
+        the parser&apos;s grammar, in the invariant culture: optional white space,
+        an optional minus, digits, an optional fraction with a digit on both sides
+        of the point, an optional exponent. No leading plus, no thousands
+        separator, no trailing sign, no <code>NaN</code> and no{" "}
+        <code>Infinity</code>; an integer must fit <code>UInt64</code>, or{" "}
+        <code>Int64</code> when negative. Then, in a <code>Where</code> condition,
+        whether that literal compares with the member the condition names — the
+        parser itself is asked, so <code>1.5</code> is refused on an{" "}
+        <code>int?</code>, <code>1e-7</code> on a <code>decimal</code>, and any
+        number on a <code>string</code>. A <code>Having</code> condition reads the
+        grammar and stops, because an alias has no member type to ask about. Until{" "}
+        <strong>3.3.0</strong> the check was <code>TryParse</code> in the
+        host&apos;s culture and such values passed, then threw{" "}
+        <code>ParseException</code> when the query was built. See{" "}
+        <Link href="/docs/breaking-changes#number-values">breaking changes</Link>.
       </Callout>
 
       <Callout tone="warn" title="A date value is read the way the predicate will read it">

@@ -70,7 +70,10 @@ export default function Page() {
             <td>
               Any numeric value — <code>byte</code> through <code>decimal</code>{" "}
               (including <code>short</code>, <code>int</code>,{" "}
-              <code>long</code>, <code>float</code>, <code>double</code>).
+              <code>long</code>, <code>float</code>, <code>double</code>). The
+              value is read as the expression parser reads it, and has to compare
+              with the member (3.3.0) — see{" "}
+              <a href="#number-values">Number values</a> below.
             </td>
             <td>
               <code>Equal</code>, <code>NotEqual</code>,{" "}
@@ -483,6 +486,102 @@ DwDates.Configure(new DwDateOptions().Bind(configuration.GetSection("DynamicWher
   "operator": "Between",
   "values": [0, 1.569]
 }`}</Code>
+
+      <h4 id="number-values">Number values (3.3.0)</h4>
+      <p>
+        A number is written into the generated expression unquoted, exactly as
+        sent, so it is read the way the expression parser reads it rather than the
+        way the host&apos;s culture does. Two steps.
+      </p>
+      <p>
+        <strong>The grammar</strong>, in the invariant culture and ASCII digits
+        only: optional white space, an optional minus, digits, an optional
+        fraction — a point with a digit on both sides — and an optional exponent
+        (<code>e</code> or <code>E</code>, an optional sign, digits). No leading
+        plus, no thousands separator, no trailing sign, no parentheses, no{" "}
+        <code>NaN</code> and no <code>Infinity</code>. An integer, meaning one
+        with neither a fraction nor an exponent, must fit <code>UInt64</code>, or{" "}
+        <code>Int64</code> when negative; a real has no bound, and{" "}
+        <code>1e400</code> reads as infinity. A suffix (<code>5L</code>,{" "}
+        <code>5m</code>), hex (<code>0x1F</code>) and <code>- 5</code> are refused
+        as they always were, though the parser would read them: nothing is
+        accepted now that was not accepted before.
+      </p>
+      <p>
+        <strong>The member.</strong> In a <code>Where</code> condition, for the
+        operators that write the value into a comparison —{" "}
+        <code>Equal</code>, <code>NotEqual</code>, <code>In</code>,{" "}
+        <code>NotIn</code>, <code>GreaterThan</code>,{" "}
+        <code>GreaterThanOrEqual</code>, <code>LessThan</code>,{" "}
+        <code>LessThanOrEqual</code>, <code>Between</code> and{" "}
+        <code>NotBetween</code> — the literal also has to compare with the member
+        the condition names. The parser itself is asked, against the member&apos;s
+        declared type: a collection at the end of the path stands for itself, one
+        along the path stands for its elements. Refused there, where the parser
+        used to throw:
+      </p>
+      <ul>
+        <li>
+          a literal written with a point and no exponent (<code>1.5</code>,{" "}
+          <code>0.1</code>, <code>1.0</code>) on a <em>nullable</em> integral
+          member (<code>int?</code>, <code>long?</code>, …). A non-nullable{" "}
+          <code>int</code> still takes <code>1.5</code>, exactly as before;
+        </li>
+        <li>
+          an exponent form (<code>1e5</code>, <code>1E-7</code>) on{" "}
+          <code>decimal</code> or <code>decimal?</code>, and a real with more
+          digits than a <code>decimal</code> holds;
+        </li>
+        <li>
+          an integer above <code>Int64.MaxValue</code> on a signed integral member
+          (<code>sbyte</code>, <code>short</code>, <code>int</code>,{" "}
+          <code>long</code>, nullable or not): such a literal reads as a{" "}
+          <code>ulong</code>, which none of them converts to;
+        </li>
+        <li>
+          a negative number on <code>ulong</code> or <code>ulong?</code>;
+        </li>
+        <li>
+          any number on a <code>string</code>, <code>bool</code>,{" "}
+          <code>Guid</code>, <code>DateTime</code> or <code>char</code> member, or
+          on a collection of simple values such as{" "}
+          <code>List&lt;int&gt;</code> — a path <em>through</em> a collection,{" "}
+          <code>Lines.Quantity</code>, still works;
+        </li>
+        <li>
+          a nullable enum under an ordering operator. Equality works on it, and a
+          non-nullable enum orders.
+        </li>
+      </ul>
+      <p>
+        A <code>Having</code> condition reads the grammar and stops: an alias
+        names an aggregate, so there is no member type to ask the parser about.
+        Every refusal is <code>InvalidFormat</code>, the same in both policy
+        tiers, and a denied field is still refused by the gate before any value is
+        read.
+      </p>
+      <Callout tone="warn" title="JSON.stringify writes small numbers in exponent form">
+        JavaScript writes <code>0.0000001</code> as <code>1e-7</code>, which a{" "}
+        <code>decimal</code> member refuses. Send it as the string{" "}
+        <code>&quot;0.0000001&quot;</code>.
+      </Callout>
+      <Callout tone="danger" title="Before 3.3.0 these passed validation and then threw">
+        The check was <code>byte</code> / <code>short</code> / <code>int</code> /{" "}
+        <code>long</code> / <code>float</code> / <code>double</code> /{" "}
+        <code>decimal</code> <code>TryParse</code> in the host&apos;s culture.{" "}
+        <code>&quot;1,000&quot;</code>, <code>&quot;5-&quot;</code>,{" "}
+        <code>&quot;+5&quot;</code>, <code>&quot;.5&quot;</code>,{" "}
+        <code>&quot;5.&quot;</code>, <code>&quot;NaN&quot;</code>,{" "}
+        <code>&quot;Infinity&quot;</code> and an integer past{" "}
+        <code>UInt64</code> all passed and then threw{" "}
+        <code>ParseException</code> when the query was built, which a host maps to
+        a five-hundred. <code>&quot;1,5&quot;</code> passed on a German host and
+        was refused on an English one. And <code>&quot;NaN&quot;</code> and{" "}
+        <code>&quot;Infinity&quot;</code> were written into the expression as
+        identifiers, so on a type with a member of that name the condition
+        compared two columns. See{" "}
+        <Link href="/docs/breaking-changes#number-values">breaking point 44</Link>.
+      </Callout>
 
       <h3 id="boolean">Boolean</h3>
       <Code lang="json">{`{

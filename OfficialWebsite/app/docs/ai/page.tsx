@@ -96,7 +96,7 @@ DynamicWhere.ex code. It is the complete API surface.`}</Code>
         </li>
         <li>
           <strong>Validation and errors.</strong> Every rule in the order it is
-          checked, all thirty error strings with what raises them, and the
+          checked, all thirty-one error strings with what raises them, and the
           other exception types a caller can receive.
         </li>
         <li>

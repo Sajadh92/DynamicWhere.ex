@@ -110,7 +110,7 @@ Specifies the logical data type of a condition value. The library uses this to c
 |-------|-------------|---------------------|
 | `Text` | String data | All text operators including case-insensitive variants (`I*`), `In`, `IsNull` |
 | `Guid` | GUID as string | `Equal`, `NotEqual`, `In`, `NotIn`, `IsNull`, `IsNotNull` |
-| `Number` | Numeric value (byte → decimal) | `Equal`, `NotEqual`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `NotBetween`, `In`, `NotIn`, `IsNull`, `IsNotNull` |
+| `Number` | Numeric value (byte → decimal). The value is read as the expression parser reads it, in the invariant culture, and has to compare with the member (3.3.0) — see [Condition Validation Rules](#condition-validation-rules) | `Equal`, `NotEqual`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `NotBetween`, `In`, `NotIn`, `IsNull`, `IsNotNull` |
 | `Boolean` | `true` / `false` | `Equal`, `NotEqual`, `IsNull`, `IsNotNull` |
 | `DateTime` | Full timestamp. Works on `DateTime` and `DateTimeOffset` members, nullable or not | `Equal`, `NotEqual`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between`, `NotBetween`, `IsNull`, `IsNotNull` |
 | `Date` | Calendar day, compared on both sides | Same as `DateTime` (compares the day only) |
@@ -302,6 +302,8 @@ The library normalizes every element before validation/build:
 
 A value is read once to validate its format and again to build the predicate, so pass values that do not change: one whose `ToString()` answers differently each time is validated as one value and queried as another. Anything decoded from JSON is such a value already. No policy decision reads a value's content — only how many there are — so nothing a guard decides rests on which read won.
 
+**A number is read as the expression parser reads it (3.3.0).** The builder writes a `Number` value into the generated expression unquoted, exactly as sent, so validation reads it the same way rather than through the host's culture. First the parser's grammar, in the invariant culture and ASCII digits only: optional white space, an optional minus, digits, an optional fraction — a point with a digit on both sides — and an optional exponent. No leading plus, no thousands separator, no trailing sign, no parentheses, no `NaN` and no `Infinity`; an integer must fit `UInt64`, or `Int64` when negative, while a real has no bound. Then, in a `Where` condition and for the operators that write the value into a comparison, whether that literal compares with the member the condition names — the parser itself is asked, against the member's declared type, so `1.5` is refused on an `int?` but not on an `int`, an exponent form on a `decimal`, an integer above `Int64.MaxValue` on a signed integral member, a negative number on a `ulong`, any number on a `string`, `bool`, `Guid`, `DateTime` or `char` member or on a collection of simple values, and a nullable enum under an ordering operator. A `Having` condition reads the grammar and stops, since an alias has no member type to ask about. Everything refused is `InvalidFormat`, the same in both policy tiers, and nothing that ran before is refused now. JavaScript writes `0.0000001` as `1e-7`, which a `decimal` member refuses; send it as the string `"0.0000001"`. See breaking point 38.
+
 ---
 
 #### `ConditionGroup`
@@ -388,7 +390,7 @@ Combines filtering, selecting, ordering, and pagination in a single object.
 | `Orders` | `List<OrderBy>?` | Optional sort criteria |
 | `Page` | `PageBy?` | Optional pagination |
 
-**`Clone()`** *(public since 3.3.0)* returns a deep copy — the condition tree with its groups and conditions, the projection list, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — the condition tree with its groups and conditions, the projection list, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both. A null entry inside a list is copied as a null entry rather than failing on it (3.3.0), so the refusal belongs to the method that runs the request and reads the same for a copy; it used to throw `NullReferenceException`.
 
 ---
 
@@ -403,7 +405,7 @@ Combines multiple condition sets with set operations (Union / Intersect / Except
 | `Orders` | `List<OrderBy>?` | Optional sort criteria |
 | `Page` | `PageBy?` | Optional pagination |
 
-**`Clone()`** *(public since 3.3.0)* returns a deep copy — every condition set with its own condition group, the projection list, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — every condition set with its own condition group, the projection list, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both. A null entry inside a list is copied as a null entry rather than failing on it (3.3.0), so the refusal belongs to the method that runs the request and reads the same for a copy; it used to throw `NullReferenceException`.
 
 ---
 
@@ -419,7 +421,7 @@ Combines filtering → grouping → having → ordering → pagination for aggre
 | `Orders` | `List<OrderBy>?` | Sort on grouped result. Fields must be GroupBy fields or aggregate aliases |
 | `Page` | `PageBy?` | Optional pagination on grouped result |
 
-**`Clone()`** *(public since 3.3.0)* returns a deep copy — the condition group, the group-by with its aggregates, the having clause, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both.
+**`Clone()`** *(public since 3.3.0)* returns a deep copy — the condition group, the group-by with its aggregates, the having clause, each order and the page — every node new, though the values a condition carries stay the caller's own objects in a new list — so reading the same request again with one part changed, the next page or another order, never edits what the caller handed in. Rebuilding a request around the caller's own clauses leaves both holding one condition tree, and a rewrite of either reaches both. A null entry inside a list is copied as a null entry rather than failing on it (3.3.0), so the refusal belongs to the method that runs the request and reads the same for a copy; it used to throw `NullReferenceException`.
 
 ---
 
@@ -483,6 +485,7 @@ Projects only the specified fields into a new instance of `T`. Supports direct p
 **Validations:**
 - `query` and `fields` cannot be null.
 - `fields` must have at least one entry.
+- No entry may be null or blank — `InvalidField` since 3.3.0, where it used to be an `ArgumentNullException` from the name lookup.
 - Every field must exist on `T` (case-insensitive, auto-normalized).
 - `T` must have a parameterless constructor.
 
@@ -518,6 +521,7 @@ Multiple dotted fields sharing the same root segment are merged into the same ne
 **Validations:**
 - `query` and `fields` cannot be null.
 - `fields` must have at least one entry.
+- No entry may be null or blank — `InvalidField` since 3.3.0, where it used to be an `ArgumentNullException` from the name lookup.
 - Every field must exist on `T` (case-insensitive, auto-normalized).
 
 **Returns:** `IQueryable` — a dynamic projected query where each element is an anonymous object.
@@ -754,6 +758,8 @@ app.MapPost("/customers/search", async (Filter filter, AppDbContext db, Cancella
 
 ## Validation Rules
 
+**Before any of these (3.3.0).** Every method that takes a shape walks its lists for a null entry first, with or without a policy, in both tiers, sync and async: the composables `Where(ConditionGroup)`, `Order(List<OrderBy>)`, `Select`, `SelectDynamic`, `Group` and `Summary`, and every terminal for a `Filter`, a `Segment` and a `Summary`. `Filter` and `FilterDynamic` compose `Where`, `Order` and `Select`, so each list is walked as its clause is reached. Under `ApplyPolicy` the walk runs at the top of the sanitizer, before the caps and before the gate, because it is about the request's shape and not a policy decision. A null entry in `Conditions`, `SubConditionGroups`, `ConditionSets`, `Orders` or `AggregateBy` is `NullEntry(list)`; a `Selects` entry that is null or blank is `InvalidField`. A list that is itself null still means what it meant — most readers read it as empty. Before 3.3.0 a null entry surfaced as a `NullReferenceException` or an `ArgumentNullException` from inside the library. See breaking point 39.
+
 ### Condition Validation Rules
 
 | Rule | Error Code |
@@ -766,7 +772,7 @@ app.MapPost("/customers/search", async (Filter filter, AppDbContext db, Cancella
 | All other operators require exactly 1 value | `RequiredOneValue({Operator})` |
 | A null or blank value is **not** refused as such: it normalizes to `""`, which `Text` and `Enum` accept and every other DataType rejects on parsing | `InvalidFormat` — `ErrorCode.InvalidValue` exists but is never thrown |
 | `Guid` values must parse as `Guid` | `InvalidFormat` |
-| `Number` values must parse as a numeric type | `InvalidFormat` |
+| `Number` values must be a literal the expression parser reads — invariant, no thousands separator, no leading plus, no `NaN` — and, in a `Where` condition, one it can compare with the member the condition names (3.3.0) | `InvalidFormat` |
 | `Boolean` values must parse as `bool` | `InvalidFormat` |
 | `Date` / `DateTime` values must be ISO 8601, year-first, or a declared format | `InvalidFormat`, or `AmbiguousDateFormat` for a day/month-first date |
 
@@ -1924,8 +1930,8 @@ new DwPolicyOptions
 |---|---|---|
 | Output | 64 hex characters (HMAC-SHA256) | 32 hex characters (16 random bytes) |
 | Derived from the value | yes | no |
-| Reversed by | holding the salt | reading the vault |
-| A weak secret | brute-forced offline | does not exist |
+| Reversed by | holding the salt | reading the vault, and its key where it has one |
+| A weak secret | brute-forced offline | only a vault key under 16 bytes, which is refused |
 | Survives a restart | always | only with a durable vault |
 | Discloses equality | yes | yes |
 
@@ -1934,6 +1940,49 @@ process, which is right for a test and wrong for any column compared across rest
 `RedisTokenVault` and `EfTokenVault` keep the mapping outside the process, and each caches every
 mapping it resolves — a token is written once and never rewritten, so a cached answer cannot go
 stale.
+
+**Give a durable vault a key (3.3.0).** A vault stores its mapping under the scope and a digest of
+the value. Without a key that digest is a plain SHA-256, and a tokenized column is nearly always
+drawn from a space small enough to hash whole — phone numbers, national identifiers, card numbers.
+So a copy of the store, a backup or a replica or a dump, gives back every value in it, and with them
+the value behind every token ever issued. Under a key held where the store is not, in configuration
+or a secret manager, the digest is an HMAC-SHA256 and the store and the key have to be taken
+together. Guard the store as you would guard the column it protects either way.
+
+```csharp
+new DwPolicyOptions
+{
+    TokenVault = new RedisTokenVault(redis, key)                      // 16 bytes or more
+    // TokenVault = new EfTokenVault(() => new AppDbContext(opts), key)
+}
+```
+
+The constructors that take no key are unchanged and unkeyed, and so is `DwToken.KeyFor(scope,
+value)`. `DwToken.KeyFor(scope, value, key)` writes `hmac:{scope}:{64 lowercase hex}`, an HMAC-SHA256
+under the key over the scope, one zero byte and the value, so one value tokenized in two scopes
+shares no digest; `DwToken.RequireKey` refuses a key that is null or shorter than
+`DwToken.MinimumKeyLength` (16) and returns a copy of it, and `DwToken.KeyedPrefix` is the `hmac:`
+an operator can tell the two kinds of key apart by. `InMemoryTokenVault` draws a random 32-byte key
+of its own per instance — nothing to configure, no API change — since its mappings die with the
+process anyway.
+
+**Adoption keeps every token already issued.** A keyed vault meeting a value with no keyed mapping
+looks up the unkeyed mapping too, and the token found there is the one written under the keyed key,
+so yesterday's export still lines up with today's. The unkeyed mapping stays until `retireUnkeyed`
+is true, and a retiring vault deletes it the first time it meets the value, whether it wrote the
+keyed mapping or found it. **Roll out in two steps: give every instance the key, then turn
+`retireUnkeyed` on.** An instance still running without the key mints a *new* token for a value
+whose unkeyed mapping is gone, and a value first met while keyed and unkeyed instances run side by
+side can end up with two tokens. Unkeyed mappings of values never met again stay until an operator
+deletes them — `HSCAN` the Redis token hash and delete the fields that do not match `hmac:*`, or
+delete the rows of `DwPolicyTokens` whose `Key` does not start with `hmac:` — knowing such a value
+gets a new token the next time it is met. Changing the key re-issues every token, unless unkeyed
+mappings remain to adopt from.
+
+The cost is small and there is no schema change. Redis reads both fields in one round trip, so a
+value new to the store costs two round trips instead of one; EF Core costs one more read for a new
+value, and in retire mode one more read per first-met value. A keyed key is at most 326 characters
+against the 512 the `Key` column already holds.
 
 Tokens are namespaced by the field's own path, so two columns holding the same value get different
 tokens. Name a shared `TokenScope` when you want them to match:
@@ -2322,7 +2371,8 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `ConditionsUniqueSort` | `AnyListOfConditionsMustHasUniqueSortValue` | Duplicate Sort in Conditions |
 | `SubConditionsGroupsUniqueSort` | `AnyListOfSubConditionsGroupsMustHasUniqueSortValue` | Duplicate Sort in SubConditionGroups |
 | `RequiredIntersection` | `ConditionsSetOfIndex[1-N]MustHasIntersection` | Missing Intersection on set index 1+ |
-| `InvalidField` | `ConditionMustHasValidFieldName` | Empty or invalid field name. Under `ApplyPolicy` in the strict tier, outside a dry run, a name that matches nothing is refused as a `PolicyException` instead, like a denied field — see [Blocked-action semantics](#blocked-action-semantics) |
+| `InvalidField` | `ConditionMustHasValidFieldName` | Empty or invalid field name, and since 3.3.0 a `Selects` entry that is null or blank, where it used to be an `ArgumentNullException` from the name lookup. Under `ApplyPolicy` in the strict tier, outside a dry run, a name that matches nothing is refused as a `PolicyException` instead, like a denied field — see [Blocked-action semantics](#blocked-action-semantics) |
+| `NullEntry(list)` | `ListOf[{list}]MustNotHasNullEntry` | A list of the request shape holds a null entry — `Conditions`, `SubConditionGroups`, `ConditionSets`, `Orders` or `AggregateBy`, spelled as the shape declares it. New in 3.3.0: such an entry used to surface as a `NullReferenceException` from wherever it was first touched |
 | `StartsWithReservedName(path)` | `FieldPath[{path}]StartsWithReservedName` | A field path whose first segment is one of the expression parser's own words — `new`, `iif`, `np`, `isnull`, `is`, `as`, `cast`, `true`, `false`, `null`, whatever the letter case. Raised for every clause that takes a path, and for a `[DwAlias]` target. `LogicException.Subject` carries that first segment, trimmed. A `DefaultOrder` entry naming one is skipped like an unreadable entry, and reported by the startup scan. 3.1.0 |
 | `InvalidValue` | `ConditionValuesAreNullOrWhiteSpace` | Defined and never thrown. A null value normalizes to `""` and is judged by the DataType like any other string |
 | `RequiredValues` | `ConditionWithOperator[In-IIn-NotIn-INotIn]MustHasOneOrMoreValues` | In/NotIn with 0 values |
@@ -2332,7 +2382,7 @@ All validation errors throw `LogicException` (inherits `Exception`) with one of 
 | `InvalidPageNumber` | `PageNumberMustBeGreaterThanZero` | PageNumber ≤ 0 |
 | `InvalidPageSize` | `PageSizeMustBeGreaterThanZero` | PageSize ≤ 0 |
 | `MustHaveFields` | `MustHasFields` | Empty fields list in Select |
-| `InvalidFormat` | `InvalidFormat` | Value doesn't parse for declared DataType. For a date: not ISO 8601, year-first, or a declared format |
+| `InvalidFormat` | `InvalidFormat` | Value doesn't parse for declared DataType. For a number (3.3.0): not a literal the expression parser reads, or not one it can compare with the member the condition names. For a date: not ISO 8601, year-first, or a declared format |
 | `AmbiguousDateFormat` | `AmbiguousDateFormat` | A date value that leads with a day or a month (`01/09/2026`) and matches no declared format, or one two accepted formats read differently. `LogicException.Subject` carries the field: its path, and under `ApplyPolicy` the name the caller wrote |
 | `SelectTypeMustHaveParameterlessConstructor` | `SelectTypeMustHaveParameterlessConstructor` | `Select<T>` or `Filter.Selects` on a `T` the projection cannot construct. `LogicException.Subject` carries the type's name, `typeof(T).Name` |
 | `InvalidAlias` | `AggregationMustHasValidAlias` | Alias is not a plain identifier — empty, or carrying a dot, comma, space, or dash |
@@ -2505,6 +2555,20 @@ These are numbered as this document numbers them. The website's [breaking-change
 
 37. **`[DwAudit]` Records a Member No Path Names**
     Point 28 closed the read a request did not spell out; this closes the read the policy has no path for at all. The gate records a use by path, before the query runs, and a member only a subtype of the row's type declares, or one past the four segments the attribute walk reads, has no path it could ask about — so, handed back inside a row returned whole or a navigation kept whole, it was read with nothing written down. In a probe with four audited members, two were recorded. Fixed (security) in 3.3.0, in default configuration and both tiers: the outbound walk's second pass reports each audited member it meets where no path names it, and the terminal records it — one `DwAuditEvent` per path per query, not per row, `Feature` `Select`, `Effect` `Mask` where the member is transformed as well and `Allow` otherwise, and `FieldPath` the path through the rows. Only a member its own `[DwAudit]` audits for `Select`, and only where the projection carries it; a member the declared types hold within four segments is the gate's, and so is a path the projection spells out however long it is, so neither is recorded twice. Recorded in a dry run too, and read only by a resolver that reads attributes. At `DwCaps.MaxAuditEvents` it fails closed as the gate does and the rows are withheld: under `Strict` outside a dry run the clause's own refusal with `FieldPath` `"*"`, `FieldDeniedForSegment` inside a segment, and `CapExceeded` otherwise. A deployment already running the control sees more events for such models, and the cap can be reached by traffic that did not reach it before: raise it, or drain per request with `app.UseDwPolicyAudit()`.
+
+38. **A `Number` Value Is Read the Way the Expression Parser Reads It**
+    The predicate builder writes a `DataType.Number` value into the generated expression unquoted, exactly as sent, and validation checked it with `byte`/`short`/`int`/`long`/`float`/`double`/`decimal` `TryParse` in the host's culture. The two disagreed. `"1,000"`, `"5-"`, `"+5"`, `".5"`, `"5."`, `"-.5"`, `"1.e5"`, `"NaN"`, `"Infinity"`, `"-Infinity"` and an integer past `UInt64` — or below `Int64` when negative — all passed validation and then threw `System.Linq.Dynamic.Core.Exceptions.ParseException` when the query was built, which a host maps to a server error; `"1,5"` passed on a German host and was refused on an English one; and `"NaN"` and `"Infinity"` were written into the expression as identifiers, so on a type with a member of that name the condition compared two columns instead of filtering.
+
+    A value is read in two steps since 3.3.0. First the parser's own grammar, in the invariant culture and ASCII digits only: optional white space, an optional minus, digits, an optional fraction — a point with a digit on both sides — and an optional exponent. No leading plus, no thousands separator, no trailing sign, no parentheses, no `NaN` and no `Infinity`; an integer must fit `UInt64`, or `Int64` when negative, while a real has no bound, so `1e400` still reads as infinity. A suffix (`5L`, `5m`), hex and `- 5` are refused as they always were, though the parser would read them: nothing is accepted now that was not accepted before. Then, in a `Where` condition and for the operators that write the value into a comparison — `Equal`, `NotEqual`, `In`, `NotIn`, the four orderings, `Between` and `NotBetween` — the literal has to compare with the member the condition names, which the parser itself is asked, against the member's declared type. Refused there: a literal written with a point and no exponent (`1.5`) on a **nullable** integral member, where a non-nullable `int` still takes it; an exponent form (`1e5`, `1E-7`) on a `decimal` or `decimal?`, and a real with more digits than a `decimal` holds; an integer above `Int64.MaxValue` on a signed integral member, since such a literal reads as a `ulong` which none of them converts to; a negative number on a `ulong` or `ulong?`; any number on a `string`, `bool`, `Guid`, `DateTime` or `char` member, or on a collection of simple values such as `List<int>`; and a nullable enum under an ordering operator, where equality still works. A `Having` condition reads the grammar and stops, since an alias has no member type to ask about.
+
+    Every refusal is a `LogicException` with `InvalidFormat`, the same in both policy tiers, where a denied field is still refused by the gate before any value is read. Nothing that ran before is refused now: every value refused is one the parser refused. **Who is affected:** an endpoint that mapped `ParseException` to a five-hundred now gets a `LogicException` and a four-hundred, which is what it always should have been, and a client sending a locale-formatted number is refused on every host instead of working on some. A number a C# caller puts in `Values` is still written in the invariant culture and is unaffected, except that `double.NaN` is now `InvalidFormat`. JavaScript's `JSON.stringify(0.0000001)` is `1e-7`, which a `decimal` member refuses; send `"0.0000001"`.
+
+39. **A `null` Entry in a Request's List Is a Malformed Request**
+    A request body can say `"conditions": [null]`, `"subConditionGroups": [null]`, `"conditionSets": [null]`, `"orders": [null]`, `"aggregateBy": [null]` or `"selects": [null]`. Nothing read a list expecting that, so the null surfaced wherever it was first touched: a `NullReferenceException` from the sort-order check, from the ordering, or — under a policy — from inside the copy the sanitizer takes before it reads anything; and an `ArgumentNullException` for a null aggregate (parameter `"aggregate"`), a null summary order (parameter `"order"`) and, from the name lookup, a null or blank `Selects` entry (parameter `"name"`). A host maps those to a server error, for a request that was simply malformed.
+
+    Since 3.3.0 each is a `LogicException`: `ListOf[Conditions]MustNotHasNullEntry`, `ListOf[SubConditionGroups]MustNotHasNullEntry`, `ListOf[ConditionSets]MustNotHasNullEntry`, `ListOf[Orders]MustNotHasNullEntry` and `ListOf[AggregateBy]MustNotHasNullEntry`. A `Selects` entry that is null **or** blank — empty or white space — is `ConditionMustHasValidFieldName`, the refusal a null or blank `GroupBy.Fields` entry has always had. The walk runs in every method that takes a shape, before anything else reads the lists, with or without a policy, in both tiers, sync and async; under `ApplyPolicy` it runs at the top of the sanitizer, before the caps and before the gate, because it is about the request's shape and not a policy decision. A list that is itself null still means what it meant, a `ConditionSet` whose `ConditionGroup` is null is still an `ArgumentNullException` as is a null `Summary.GroupBy`, and a null element inside `Condition.Values` still reads as the empty string. `Filter.Clone()`, `Segment.Clone()` and `Summary.Clone()` copy a null entry as a null entry instead of throwing, so the refusal belongs to the method that runs the request.
+
+    **Who is affected:** any endpoint binding a request body it does not validate itself. Such a body used to produce a five-hundred and now produces a `LogicException`, which middleware written for this library already maps to a four-hundred. Code matching on `NullReferenceException`, or on the `ArgumentNullException` parameter names `"name"`, `"order"` or `"aggregate"`, to detect this needs updating.
 
 ---
 

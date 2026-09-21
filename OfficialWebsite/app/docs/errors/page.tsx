@@ -18,7 +18,7 @@ export default function Page() {
       <p>
         Every validation failure in DynamicWhere.ex throws a{" "}
         <code>LogicException</code> (which inherits from <code>Exception</code>).
-        The <code>Message</code> property carries one of the 30 stable error strings
+        The <code>Message</code> property carries one of the 31 stable error strings
         listed below, so you can pattern‑match them in middleware and surface
         meaningful problems to API callers.
       </p>
@@ -39,16 +39,36 @@ export default function Page() {
       </p>
       <p>
         <code>LogicException</code> is the usual type, but not the only one a
-        caller sees. A null argument or a blank <code>Selects</code> entry raises{" "}
-        <code>ArgumentNullException</code>; a null element inside{" "}
-        <code>Conditions</code>, <code>SubConditionGroups</code>,{" "}
-        <code>ConditionSets</code> or <code>Orders</code> raises{" "}
-        <code>NullReferenceException</code>; a guarded type raises{" "}
-        <code>PolicyException</code>, which derives from{" "}
+        caller sees. A null argument raises <code>ArgumentNullException</code>; a
+        guarded type raises <code>PolicyException</code>, which derives from{" "}
         <code>LogicException</code>; and input that passes validation but not the
         expression parser raises <code>ParseException</code> from{" "}
         <code>System.Linq.Dynamic.Core</code>.
       </p>
+      <Callout tone="danger" title="Changed in 3.3.0: a malformed request is a LogicException">
+        A null element inside <code>Conditions</code>,{" "}
+        <code>SubConditionGroups</code>, <code>ConditionSets</code>,{" "}
+        <code>Orders</code> or <code>AggregateBy</code> used to raise{" "}
+        <code>NullReferenceException</code>, and a null or blank{" "}
+        <code>Selects</code> entry used to raise{" "}
+        <code>ArgumentNullException</code> from the name lookup — a five-hundred
+        for a request that was simply malformed. They are{" "}
+        <code>{`ListOf[{list}]MustNotHasNullEntry`}</code> and{" "}
+        <code>ConditionMustHasValidFieldName</code> now. A{" "}
+        <code>ConditionSet</code> whose <code>ConditionGroup</code> is null, and a
+        null <code>Summary.GroupBy</code>, are still{" "}
+        <code>ArgumentNullException</code>. See{" "}
+        <Link href="/docs/breaking-changes#null-entries">breaking point 45</Link>.
+      </Callout>
+      <Callout tone="danger" title="Changed in 3.3.0: no Number value reaches the parser">
+        A <code>DataType.Number</code> value is read as the expression parser
+        reads it, so one the parser cannot read — <code>&quot;1,000&quot;</code>,{" "}
+        <code>&quot;+5&quot;</code>, <code>&quot;NaN&quot;</code> — or cannot
+        compare with the member the condition names is{" "}
+        <code>InvalidFormat</code> at validation, where it used to pass validation
+        and throw <code>ParseException</code> when the query was built. See{" "}
+        <Link href="/docs/breaking-changes#number-values">breaking point 44</Link>.
+      </Callout>
 
       <Callout tone="info" title="Surfacing errors in an API">
         Wrap the call in a <code>try / catch (LogicException ex)</code> and map it
@@ -69,7 +89,7 @@ export default function Page() {
 });`}</Code>
       </Callout>
 
-      <h2 id="all-errors">All 30 error codes</h2>
+      <h2 id="all-errors">All 31 error codes</h2>
       <p>
         Codes wrapped in <code>(parens)</code> are parameterized — the bracketed
         token in the message is replaced at runtime with the offending operator,
@@ -245,6 +265,10 @@ export default function Page() {
             <td><code>InvalidFormat</code></td>
             <td>
               Value doesn't parse for declared <code>DataType</code>. A{" "}
+              <code>Number</code> value must be a literal the expression parser
+              reads — invariant, no thousands separator, no leading plus, no{" "}
+              <code>NaN</code> — and one it can compare with the member the
+              condition names (3.3.0). A{" "}
               <code>Date</code> / <code>DateTime</code> value must be ISO&nbsp;8601,
               year-first, or a format declared through{" "}
               <code>DwDates.Configure</code>, read as the member&apos;s own date
@@ -344,6 +368,20 @@ export default function Page() {
               — since 3.2.0 whatever the field holds, and beneath a member where
               its value can reach the result — because the deny synthesizes a
               projection
+            </td>
+          </tr>
+          <tr>
+            <td><code>NullEntry(list)</code></td>
+            <td><code>{`ListOf[{list}]MustNotHasNullEntry`}</code></td>
+            <td>
+              A list of the request shape holds a <code>null</code> entry —{" "}
+              <code>Conditions</code>, <code>SubConditionGroups</code>,{" "}
+              <code>ConditionSets</code>, <code>Orders</code> or{" "}
+              <code>AggregateBy</code>, spelled as the shape declares it. New in{" "}
+              <strong>3.3.0</strong>: such an entry used to surface as a{" "}
+              <code>NullReferenceException</code> from wherever it was first
+              touched. See{" "}
+              <Link href="/docs/breaking-changes#null-entries">breaking point 45</Link>
             </td>
           </tr>
         </tbody>

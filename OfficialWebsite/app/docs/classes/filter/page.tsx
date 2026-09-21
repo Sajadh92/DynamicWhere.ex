@@ -139,7 +139,9 @@ page2.Page!.PageNumber = 2;          // the caller's own filter is untouched`}</
         which leaves both requests holding one condition tree: a rewrite of
         either reaches both. The library has cloned before rewriting anything
         since 3.0; callers could not until now. A branch the caller left null
-        stays null.
+        stays null, and a null entry inside a list is copied as a null entry
+        rather than failing on it (3.3.0), so the refusal belongs to the method
+        that runs the request and reads the same for a copy.
       </p>
 
       <h2 id="see-also">See also</h2>

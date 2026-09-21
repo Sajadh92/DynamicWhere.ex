@@ -574,6 +574,7 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         <li>Turn on <code>AuditRefusals</code> once an <code>IDwAuditSink</code> is registered, so a probe for hidden columns leaves a record.</li>
         <li>Leave <code>MinGroupSize</code> alone unless you have a reason; setting it to 1 is a decision, not a default.</li>
         <li>Prefer <code>Tokenize</code> over <code>Hash</code> where you can run a durable vault: neither hides equality, but only one of them can be undone by a leaked constant.</li>
+        <li>Give a durable token vault a key (3.3.0), and hold it where the store is not. Unkeyed, a mapping is stored under a plain digest of the value, and a tokenized column is nearly always drawn from a space small enough to hash whole — so a backup, a replica or a dump of the vault gives back every value in it, and with them the value behind every token ever issued. See <Link href="/docs/policies/transforms#vault-key">Transforms</Link>.</li>
         <li>Run <code>DwPolicy.ValidateModel(...)</code> at startup and treat its warnings as a checklist.</li>
         <li>Put <code>[DwEntity(RequirePolicy = true)]</code> on anything sensitive, so a DynamicWhere call that forgets <code>ApplyPolicy</code> fails loudly.</li>
         <li>Prefer <code>[DwOperators]</code> over allowing free filtering on a protected field.</li>

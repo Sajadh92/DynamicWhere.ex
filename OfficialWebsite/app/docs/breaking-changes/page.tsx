@@ -17,12 +17,12 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The forty-three points below cover constraints, surprises, and corner cases —
+        The forty-five points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
       <Callout tone="danger" title="Behaviour changes in 3.3.0">
-        Points&nbsp;30 to 43 changed in <strong>3.3.0</strong>. Under{" "}
+        Points&nbsp;30 to 45 changed in <strong>3.3.0</strong>. Under{" "}
         <code>Strict</code>, a path that exists on the type and names no value
         the query can compute is refused rather than run, where the provider
         used to throw and the caller saw a five-hundred (point&nbsp;30).{" "}
@@ -50,7 +50,12 @@ export default function Page() {
         caller to run are refused on a type whose only transformed member sits
         where the policy names no path (point&nbsp;42), and{" "}
         <code>[DwAudit]</code> records a member no path names once the rows show
-        it (point&nbsp;43).
+        it (point&nbsp;43). Two shapes of malformed request that used to reach
+        the caller as a five-hundred are refused as requests now: a{" "}
+        <code>Number</code> value the expression parser cannot read, or cannot
+        compare with the member the condition names (point&nbsp;44), and a{" "}
+        <code>null</code> entry inside one of the request&apos;s lists
+        (point&nbsp;45).
       </Callout>
       <Callout tone="danger" title="Behaviour changes in 3.2.0">
         Points&nbsp;25 to 29 changed in <strong>3.2.0</strong>, and each is
@@ -2030,10 +2035,189 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         <code>app.UseDwPolicyAudit()</code>.
       </p>
 
+      <h2 id="number-values">44. A <code>Number</code> Value Is Read the Way the Parser Reads It</h2>
+      <p>
+        The predicate builder writes a <code>DataType.Number</code> value into the
+        generated expression unquoted, exactly as sent, and validation checked it
+        with <code>byte</code> / <code>short</code> / <code>int</code> /{" "}
+        <code>long</code> / <code>float</code> / <code>double</code> /{" "}
+        <code>decimal</code> <code>TryParse</code> in the host&apos;s culture. The
+        two disagreed.
+      </p>
+      <Callout tone="danger" title="Fixed: a malformed number was a five-hundred, and a host's culture decided">
+        <code>&quot;1,000&quot;</code>, <code>&quot;5-&quot;</code>,{" "}
+        <code>&quot;+5&quot;</code>, <code>&quot;.5&quot;</code>,{" "}
+        <code>&quot;5.&quot;</code>, <code>&quot;-.5&quot;</code>,{" "}
+        <code>&quot;1.e5&quot;</code>, <code>&quot;NaN&quot;</code>,{" "}
+        <code>&quot;Infinity&quot;</code>, <code>&quot;-Infinity&quot;</code> and
+        an integer past <code>UInt64</code> — or below <code>Int64</code> when
+        negative — all passed validation and then threw{" "}
+        <code>System.Linq.Dynamic.Core.Exceptions.ParseException</code> when the
+        query was built, which a host maps to a server error.{" "}
+        <code>&quot;1,5&quot;</code> passed on a German host and was refused on an
+        English one. And <code>&quot;NaN&quot;</code> and{" "}
+        <code>&quot;Infinity&quot;</code> were written into the expression as
+        identifiers, so on a type with a member of that name the condition
+        compared two columns instead of filtering. Until{" "}
+        <strong>3.3.0</strong>.
+      </Callout>
+      <p>
+        A value is read in two steps now. First the parser&apos;s own grammar, in
+        the invariant culture and ASCII digits only: optional white space, an
+        optional minus, digits, an optional fraction — a point with a digit on
+        both sides — and an optional exponent. No leading plus, no thousands
+        separator, no trailing sign, no parentheses, no <code>NaN</code> and no{" "}
+        <code>Infinity</code>. An integer must fit <code>UInt64</code>, or{" "}
+        <code>Int64</code> when negative; a real has no bound, so{" "}
+        <code>1e400</code> still reads as infinity. A suffix (<code>5L</code>,{" "}
+        <code>5m</code>), hex and <code>- 5</code> are refused as they always
+        were, though the parser would read them.
+      </p>
+      <p>
+        Then, in a <code>Where</code> condition and for the operators that write
+        the value into a comparison — <code>Equal</code>, <code>NotEqual</code>,{" "}
+        <code>In</code>, <code>NotIn</code>, the four orderings,{" "}
+        <code>Between</code> and <code>NotBetween</code> — the literal has to
+        compare with the member the condition names. The parser itself is asked,
+        against the member&apos;s declared type, so these are refused where the
+        parser used to throw:
+      </p>
+      <ul>
+        <li>
+          a literal written with a point and no exponent (<code>1.5</code>) on a{" "}
+          <em>nullable</em> integral member (<code>int?</code>,{" "}
+          <code>long?</code>, …). A non-nullable <code>int</code> still takes{" "}
+          <code>1.5</code>, exactly as before;
+        </li>
+        <li>
+          an exponent form (<code>1e5</code>, <code>1E-7</code>) on{" "}
+          <code>decimal</code> or <code>decimal?</code>, and a real with more
+          digits than a <code>decimal</code> holds;
+        </li>
+        <li>
+          an integer above <code>Int64.MaxValue</code> on a signed integral
+          member: it reads as a <code>ulong</code>, which none of them converts
+          to;
+        </li>
+        <li>a negative number on <code>ulong</code> or <code>ulong?</code>;</li>
+        <li>
+          any number on a <code>string</code>, <code>bool</code>,{" "}
+          <code>Guid</code>, <code>DateTime</code> or <code>char</code> member, or
+          on a collection of simple values such as <code>List&lt;int&gt;</code>;
+        </li>
+        <li>a nullable enum under an ordering operator — equality still works.</li>
+      </ul>
+      <p>
+        A <code>Having</code> condition reads the grammar and stops there: an
+        alias names an aggregate, so there is no member type to ask the parser
+        about. Every refusal is <code>LogicException</code> with{" "}
+        <code>InvalidFormat</code>, and it is the same in both policy tiers — a
+        denied field is still <code>FieldDeniedForWhere</code> before any value is
+        read. Nothing that ran before is refused now: every value refused is one
+        the parser refused.
+      </p>
+      <Callout tone="warn" title="JSON.stringify writes small numbers in exponent form">
+        JavaScript&apos;s <code>JSON.stringify(0.0000001)</code> is{" "}
+        <code>1e-7</code>, which a <code>decimal</code> member refuses. Send it as
+        the string <code>&quot;0.0000001&quot;</code>.
+      </Callout>
+      <p>
+        <strong>Who is affected:</strong> an endpoint that passed a number through
+        from a caller and mapped <code>ParseException</code> to a{" "}
+        <code>500</code> now gets a <code>LogicException</code> and a{" "}
+        <code>400</code>, which is what it always should have been. A client
+        sending a locale-formatted number — a comma decimal separator, a thousands
+        separator — is refused on every host instead of working on some. A number
+        a C# caller puts in <code>Values</code> is still written in the invariant
+        culture and is unaffected, except that <code>double.NaN</code> is now{" "}
+        <code>InvalidFormat</code>. See{" "}
+        <Link href="/docs/enums/data-type#number-values"><code>DataType</code> → Number values</Link>.
+      </p>
+
+      <h2 id="null-entries">45. A <code>null</code> Entry in a Request&apos;s List Is a Malformed Request</h2>
+      <p>
+        A request body can say <code>{`"conditions": [null]`}</code>,{" "}
+        <code>{`"subConditionGroups": [null]`}</code>,{" "}
+        <code>{`"conditionSets": [null]`}</code>,{" "}
+        <code>{`"orders": [null]`}</code>,{" "}
+        <code>{`"aggregateBy": [null]`}</code> or{" "}
+        <code>{`"selects": [null]`}</code>. Nothing read a list expecting that.
+      </p>
+      <Callout tone="danger" title="Fixed: a malformed body surfaced as a server error">
+        The null surfaced wherever it was first touched: a{" "}
+        <code>NullReferenceException</code> from the sort-order check, from the
+        ordering, or — under a policy — from inside the copy the sanitizer takes
+        before it reads anything; and an <code>ArgumentNullException</code> for
+        a null aggregate (parameter <code>&quot;aggregate&quot;</code>), a null
+        summary order (parameter <code>&quot;order&quot;</code>) and, from the
+        name lookup, a null or blank <code>Selects</code> entry (parameter{" "}
+        <code>&quot;name&quot;</code>). A
+        host maps those to a five-hundred, for a request that was simply
+        malformed. Until <strong>3.3.0</strong>.
+      </Callout>
+      <p>
+        Each is a <code>LogicException</code> now:{" "}
+        <code>ListOf[Conditions]MustNotHasNullEntry</code>,{" "}
+        <code>ListOf[SubConditionGroups]MustNotHasNullEntry</code>,{" "}
+        <code>ListOf[ConditionSets]MustNotHasNullEntry</code>,{" "}
+        <code>ListOf[Orders]MustNotHasNullEntry</code> and{" "}
+        <code>ListOf[AggregateBy]MustNotHasNullEntry</code>. A{" "}
+        <code>Selects</code> entry that is null <em>or</em> blank — empty or white
+        space — is <code>ConditionMustHasValidFieldName</code>, the refusal a null
+        or blank <code>GroupBy.Fields</code> entry has always had.
+      </p>
+      <p>
+        The walk runs in every method that takes a shape, before anything else
+        reads the lists, with or without a policy, in both tiers, sync and async:
+        the composables <code>Where(ConditionGroup)</code>,{" "}
+        <code>Order(List&lt;OrderBy&gt;)</code>, <code>Select</code>,{" "}
+        <code>SelectDynamic</code>, <code>Group</code> and <code>Summary</code>,
+        and every terminal for a <code>Filter</code>, a <code>Segment</code> and a{" "}
+        <code>Summary</code>. <code>Filter</code> and{" "}
+        <code>FilterDynamic</code> compose <code>Where</code>,{" "}
+        <code>Order</code> and <code>Select</code>, so each list is walked as its
+        clause is reached. Under <code>ApplyPolicy</code> it runs at the top of
+        the sanitizer, before the caps and before the gate: it is about the
+        request&apos;s shape, not a policy decision.
+      </p>
+      <ul>
+        <li>
+          A list that is itself <code>null</code> still means what it meant — most
+          readers read it as empty.
+        </li>
+        <li>
+          A <code>ConditionSet</code> whose <code>ConditionGroup</code> is null is
+          still <code>ArgumentNullException</code>, and so is a null{" "}
+          <code>Summary.GroupBy</code>.
+        </li>
+        <li>
+          A null element inside <code>Condition.Values</code> still reads as the
+          empty string: <code>Text</code> and <code>Enum</code> compare with it,
+          and every other data type refuses it with <code>InvalidFormat</code>.
+        </li>
+        <li>
+          <code>Filter.Clone()</code>, <code>Segment.Clone()</code> and{" "}
+          <code>Summary.Clone()</code> copy a null entry as a null entry instead
+          of throwing <code>NullReferenceException</code>, so the refusal belongs
+          to the method that runs the request and reads the same for a copy.
+        </li>
+      </ul>
+      <p>
+        <strong>Who is affected:</strong> any endpoint binding a request body it
+        does not validate itself. Such a body used to produce a{" "}
+        <code>500</code> and now produces a <code>LogicException</code>, which
+        middleware written for this library already maps to a{" "}
+        <code>400</code>. Code matching on <code>NullReferenceException</code> or
+        on the <code>ArgumentNullException</code> parameter names{" "}
+        <code>&quot;name&quot;</code>, <code>&quot;order&quot;</code> or{" "}
+        <code>&quot;aggregate&quot;</code> to detect this needs updating. See{" "}
+        <Link href="/docs/errors">Error Codes Reference</Link>.
+      </p>
+
       <h2 id="next">See also</h2>
       <ul>
         <li>
-          <Link href="/docs/errors">Error Codes Reference →</Link> the 30 stable
+          <Link href="/docs/errors">Error Codes Reference →</Link> the 31 stable
           validation messages.
         </li>
         <li>

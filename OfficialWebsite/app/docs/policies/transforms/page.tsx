@@ -87,8 +87,8 @@ public string PassportNumber { get; set; }    // stable per vault, useful for jo
         <tbody>
           <tr><td>Output</td><td>64 hex characters</td><td>32 hex characters</td></tr>
           <tr><td>Derived from the value</td><td>yes</td><td>no</td></tr>
-          <tr><td>Reversed by</td><td>holding the salt</td><td>reading the vault</td></tr>
-          <tr><td>A weak secret</td><td>brute-forced offline</td><td>does not exist</td></tr>
+          <tr><td>Reversed by</td><td>holding the salt</td><td>reading the vault, and its key where it has one</td></tr>
+          <tr><td>A weak secret</td><td>brute-forced offline</td><td>only if you give the vault a short key, which is refused</td></tr>
           <tr><td>Survives a restart</td><td>always</td><td>only with a durable vault</td></tr>
           <tr><td>Discloses equality</td><td>yes</td><td>yes</td></tr>
         </tbody>
@@ -98,7 +98,8 @@ public string PassportNumber { get; set; }    // stable per vault, useful for jo
         deployment has ever emitted, and a guessable salt is recovered offline. A
         token is drawn at random the first time a value is seen and written into a
         vault, so the only way back is to read that vault — a store you can lock,
-        move and revoke separately from the data.
+        move and revoke separately from the data. Guard it as you would guard the
+        column it protects, and <a href="#vault-key">give it a key</a>.
       </p>
       <Code lang="csharp">{`new DwPolicyOptions
 {
@@ -112,6 +113,61 @@ public string PassportNumber { get; set; }    // stable per vault, useful for jo
         <code>RedisTokenVault</code> and <code>EfTokenVault</code> keep the mapping
         outside the process and cache every mapping they resolve, which they can do
         safely because a token is written once and never rewritten.
+      </p>
+
+      <h3 id="vault-key">Give a durable vault a key (3.3.0)</h3>
+      <p>
+        A vault stores its mapping under the scope and a digest of the value.
+        Without a key that digest is a plain SHA-256, and a tokenized column is
+        nearly always drawn from a space small enough to hash whole — phone
+        numbers, national identifiers, card numbers. So a copy of the store, a
+        backup or a replica or a dump, gives back every value in it, and with them
+        the value behind every token ever issued. Under a key held where the store
+        is not — configuration, a secret manager — the digest is an HMAC-SHA256,
+        and the store and the key have to be taken together.
+      </p>
+      <Code lang="csharp">{`new DwPolicyOptions
+{
+    TokenVault = new RedisTokenVault(redis, key)              // 16 bytes or more
+    // TokenVault = new EfTokenVault(() => new AppDbContext(opts), key)
+}`}</Code>
+      <p>
+        The constructors that take no key are unchanged and unkeyed.{" "}
+        <code>InMemoryTokenVault</code> draws a random 32-byte key of its own per
+        instance — nothing to configure, and no API change — because its mappings
+        die with the process anyway. The key must be at least{" "}
+        <code>DwToken.MinimumKeyLength</code> (16) bytes; a shorter one is refused
+        by the constructor, as a short hash salt is refused. A keyed mapping&apos;s key starts
+        with <code>DwToken.KeyedPrefix</code> (<code>&quot;hmac:&quot;</code>), so
+        an operator can tell the two kinds apart in a store holding both. The
+        scope sits inside the digest as well as in front of it, so one value
+        tokenized in two scopes is two unrelated keys.
+      </p>
+      <Callout tone="warn" title="Adding a key keeps every token already issued — roll it out in two steps">
+        A keyed vault meeting a value with no keyed mapping looks up the unkeyed
+        mapping too, and the token found there is the one written under the keyed
+        key, so yesterday&apos;s export still lines up with today&apos;s. The
+        unkeyed mapping stays until <code>retireUnkeyed: true</code>, and a
+        retiring vault deletes it the first time it meets the value, whether it
+        wrote the keyed mapping or found it. <strong>Give every instance the key
+        first, and turn <code>retireUnkeyed</code> on only after that:</strong> an
+        instance still running without the key mints a <em>new</em> token for a
+        value whose unkeyed mapping is gone, and a value first met while keyed and
+        unkeyed instances run side by side can end up with two tokens. Unkeyed
+        mappings for values never met again stay until an operator removes them —{" "}
+        <code>HSCAN</code> the Redis token hash and delete the fields that do not
+        match <code>hmac:*</code>, or delete the rows of{" "}
+        <code>DwPolicyTokens</code> whose <code>Key</code> does not start with{" "}
+        <code>hmac:</code> — knowing such a value gets a new token the next time it
+        is met. Changing the key re-issues every token, unless unkeyed mappings
+        remain to adopt from.
+      </Callout>
+      <p>
+        The cost is small and there is no schema change. Redis reads both fields in
+        one round trip, so a value new to the store costs two round trips instead
+        of one; EF Core costs one more read for a new value, and in retire mode one
+        more read per first-met value. A keyed key is at most 326 characters
+        against the 512 the <code>Key</code> column already holds.
       </p>
       <p>
         Tokens are namespaced by <code>TokenScope</code>, and where none is given

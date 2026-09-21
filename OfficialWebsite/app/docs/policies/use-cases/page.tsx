@@ -210,7 +210,15 @@ public string EmployeeCode { get; set; } = string.Empty;`}</Code>
       <Code lang="csharp">{`[DwMask(MaskStrategy.Tokenize)]
 [DwNoOrder]
 public string NationalId { get; set; } = string.Empty;`}</Code>
-      <Code lang="csharp">{`new DwPolicyOptions { TokenVault = new EfTokenVault(() => new DwPolicyDbContext(opts)) }`}</Code>
+      <Code lang="csharp">{`new DwPolicyOptions { TokenVault = new EfTokenVault(() => new DwPolicyDbContext(opts), key) }`}</Code>
+      <p>
+        Give the vault a key (3.3.0). Without one a row is keyed by a plain
+        SHA-256 of the value, and a national identifier comes from a space small
+        enough to hash whole, so a dump of the table is a dump of the column.
+        Under a key held outside the table the row is keyed by an HMAC, and the
+        table and the key have to be taken together. See{" "}
+        <Link href="/docs/policies/transforms#vault-key">Transforms</Link>.
+      </p>
       <p>
         <strong>Why a token and not a hash.</strong> Two reasons, and the second is
         the one that decides it.
@@ -229,12 +237,20 @@ public string NationalId { get; set; } = string.Empty;`}</Code>
       </ul>
       <p>
         The library ships no reverse lookup on purpose, so erasure is a direct
-        operation against the store. The key is public so you can compute it:
+        operation against the store. Compute the key the mapping is stored under
+        and delete it:
       </p>
-      <Code lang="csharp">{`string key = DwToken.KeyFor("patient-id", nationalId);
+      <Code lang="csharp">{`string unkeyed = DwToken.KeyFor("patient-id", nationalId);           // a vault with no key
+string keyed   = DwToken.KeyFor("patient-id", nationalId, vaultKey); // a vault with one (3.3.0)
 
-// EF Core: DELETE FROM DwPolicyTokens WHERE [Key] = @key
-// Redis:   HDEL dw:policy:tokens <key>`}</Code>
+// EF Core: DELETE FROM DwPolicyTokens WHERE [Key] IN (@unkeyed, @keyed)
+// Redis:   HDEL dw:policy:tokens <unkeyed> <keyed>`}</Code>
+      <p>
+        The unkeyed key is a plain digest, so anyone can compute it — which is
+        exactly why a durable vault wants a key. The keyed one can only be
+        computed by a holder of the vault&apos;s key. A vault that has not retired
+        its unkeyed mappings may still hold one for the value, so delete both.
+      </p>
 
       {/* ------------------------------------------------------------------ 6 */}
       <h2 id="join">6. One person, three entities, one token</h2>
@@ -405,6 +421,11 @@ public string FullTextNotes { get; set; } = string.Empty;`}</Code>
             <td><code>MaskStrategy.Tokenize</code></td>
             <td><code>TokenVault</code></td>
             <td>the query is refused with <code>MissingTokenVault</code></td>
+          </tr>
+          <tr>
+            <td>a copy of the vault giving no value back</td>
+            <td>a vault key, 16+ bytes (3.3.0)</td>
+            <td>a mapping is keyed by a plain digest of the value, so a backup, a replica or a dump of the store gives back every value in it</td>
           </tr>
           <tr>
             <td>a token joined across entities</td>

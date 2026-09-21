@@ -87,7 +87,7 @@ DwPolicy.Configure(options, provider);`}</Code>
         <tbody>
           <tr><td><code>DwPolicyRules</code></td><td>One row per rule, indexed by entity and field, and by subject.</td></tr>
           <tr><td><code>DwPolicyVersion</code></td><td>A single row carrying the snapshot version.</td></tr>
-          <tr><td><code>DwPolicyTokens</code></td><td>The <code>EfTokenVault</code> mapping, one row per tokenized value.</td></tr>
+          <tr><td><code>DwPolicyTokens</code></td><td>The <code>EfTokenVault</code> mapping, one row per tokenized value. <code>Key</code> is the scope and a digest of the value — a plain SHA-256, or, where the vault holds a key, an HMAC-SHA256 behind <code>hmac:</code> (3.3.0). Either fits the 512 characters the column already holds, so a key needs no migration.</td></tr>
         </tbody>
       </table>
 

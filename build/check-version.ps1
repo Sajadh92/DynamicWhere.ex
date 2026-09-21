@@ -163,3 +163,58 @@ if ($problems.Count -gt 0) {
 }
 
 Write-Host "All version references match $expected."
+
+# nuget.org refuses a package whose release notes run past 35,000 characters, and it says so only
+# when the package is pushed: after the merge, from master, with the docs already live. 3.3.0 met
+# it there. Each release adds an entry at the top, so the text only grows; when it nears the limit,
+# cut the oldest entries down to their headings, which is what the pointer beneath them is for.
+$noteLimit = 35000
+
+$packages = @(
+    'DynamicWhere.ex/DynamicWhere.ex.csproj',
+    'DynamicWhere.ex.Policies.AspNetCore/DynamicWhere.ex.Policies.AspNetCore.csproj',
+    'DynamicWhere.ex.Policies.EntityFrameworkCore/DynamicWhere.ex.Policies.EntityFrameworkCore.csproj',
+    'DynamicWhere.ex.Policies.Redis/DynamicWhere.ex.Policies.Redis.csproj'
+)
+
+$tooLong = @()
+
+foreach ($package in $packages) {
+    $path = Join-Path $root $package
+
+    if (-not (Test-Path $path)) {
+        $tooLong += "${package}: file not found"
+        continue
+    }
+
+    $node = ([xml](Get-Content $path -Raw)).SelectSingleNode('//PackageReleaseNotes')
+
+    if ($null -eq $node) {
+        $tooLong += "${package}: no <PackageReleaseNotes> element"
+        continue
+    }
+
+    # The text as nuget.org reads it, with the XML escapes undone.
+    $length = $node.InnerText.Length
+
+    if ($length -gt $noteLimit) {
+        $tooLong += "${package}: release notes are $length characters, and nuget.org takes $noteLimit"
+    }
+    else {
+        Write-Host "  ok  $package ($length of $noteLimit characters of release notes)"
+    }
+}
+
+if ($tooLong.Count -gt 0) {
+    Write-Host "::error::Release notes nuget.org would refuse"
+
+    foreach ($problem in $tooLong) {
+        Write-Host "  $problem"
+    }
+
+    Write-Host ''
+    Write-Host 'Cut the oldest entries down to their headings; the releases page keeps the full text.'
+    exit 1
+}
+
+Write-Host "All release notes fit nuget.org's limit."

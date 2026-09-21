@@ -400,6 +400,32 @@ public class SummaryTests : SalesTestBase
         Assert.Null(result.QueryString);
     }
 
+    /// <summary>
+    /// The three summary terminals page with the same product a filter does, and it wrapped the same
+    /// way: the first page of groups came back for a page number far past the last one.
+    /// </summary>
+    [Fact]
+    public async Task SummaryPageWhoseOffsetPassesInt32IsAnEmptyPage()
+    {
+        Summary summary = new()
+        {
+            GroupBy = CountAndAverage(),
+            Page = new PageBy { PageNumber = int.MaxValue, PageSize = 1000 }
+        };
+
+        Assert.Empty(Products.Summary(summary).ToDynamicList());
+
+        SummaryResult sync = Products.ToList(summary);
+
+        Assert.Empty(sync.Data!);
+        Assert.Equal(2, sync.TotalCount);
+
+        SummaryResult async = await Products.ToListAsync(summary);
+
+        Assert.Empty(async.Data!);
+        Assert.Equal(2, async.TotalCount);
+    }
+
     [Fact]
     public void SummaryToListSyncWithQueryString()
     {

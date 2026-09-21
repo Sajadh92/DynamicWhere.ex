@@ -363,7 +363,7 @@ public static class Extension
 
         // Skip the required number of items to reach the desired page,
         // and then take the specified number of items for the page.
-        return query.Skip((page.PageNumber - 1) * page.PageSize).Take(page.PageSize);
+        return query.Skip(Offset(page)).Take(page.PageSize);
     }
 
     /// <summary>
@@ -960,7 +960,7 @@ public static class Extension
         // Apply pagination.
         if (summary.Page != null)
         {
-            result = result.Skip((summary.Page.PageNumber - 1) * summary.Page.PageSize)
+            result = result.Skip(Offset(summary.Page))
                            .Take(summary.Page.PageSize);
         }
 
@@ -1043,7 +1043,7 @@ public static class Extension
         // Apply pagination.
         if (summary.Page != null)
         {
-            newResult = newResult.Skip((summary.Page.PageNumber - 1) * summary.Page.PageSize)
+            newResult = newResult.Skip(Offset(summary.Page))
                                  .Take(summary.Page.PageSize);
 
             pageNumber = summary.Page.PageNumber;
@@ -1192,7 +1192,7 @@ public static class Extension
         // Apply pagination.
         if (summary.Page != null)
         {
-            newResult = newResult.Skip((summary.Page.PageNumber - 1) * summary.Page.PageSize)
+            newResult = newResult.Skip(Offset(summary.Page))
                                  .Take(summary.Page.PageSize);
 
             pageNumber = summary.Page.PageNumber;
@@ -1297,4 +1297,15 @@ public static class Extension
             Data = fresult.Data
         };
     }
+
+    /// <summary>
+    /// The number of rows before a page, held to what <c>Skip</c> can take.
+    /// </summary>
+    /// <remarks>
+    /// Worked out in 64 bits. In 32 the product wraps for a large enough page number, and a negative
+    /// offset is an error on SQL Server and PostgreSQL and the first page again on SQLite and in memory,
+    /// where the answer to a page past the last row is an empty page.
+    /// </remarks>
+    private static int Offset(PageBy page) =>
+        (int)Math.Min((long)(page.PageNumber - 1) * page.PageSize, int.MaxValue);
 }

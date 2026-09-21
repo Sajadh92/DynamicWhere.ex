@@ -39,7 +39,14 @@ export default function Page() {
         A transform on a query the caller materializes itself is refused with{" "}
         <code>TransformRequiresMaterialization</code> rather than skipped, so a
         composable method cannot hand back an <code>IQueryable</code> that quietly
-        never masks anything.
+        never masks anything. Since <strong>3.3.0</strong> that refusal asks
+        what a row of the type can hold as well as which paths the policy
+        names: a type whose only transform sits where no path reaches it — on a
+        member only a subtype declares, one five segments down, one of an object
+        a dictionary holds — was handed the query, and its rows came back
+        exactly as stored. With no named column to list, the refusal names the
+        clause, <code>FieldPath</code> <code>&quot;*&quot;</code>, in both
+        tiers. A type nothing transforms anywhere still gets its query.
       </p>
 
       <h2 id="mask">The nine mask strategies</h2>
@@ -80,8 +87,8 @@ public string PassportNumber { get; set; }    // stable per vault, useful for jo
         <tbody>
           <tr><td>Output</td><td>64 hex characters</td><td>32 hex characters</td></tr>
           <tr><td>Derived from the value</td><td>yes</td><td>no</td></tr>
-          <tr><td>Reversed by</td><td>holding the salt</td><td>reading the vault</td></tr>
-          <tr><td>A weak secret</td><td>brute-forced offline</td><td>does not exist</td></tr>
+          <tr><td>Reversed by</td><td>holding the salt</td><td>reading the vault, and its key where it has one</td></tr>
+          <tr><td>A weak secret</td><td>brute-forced offline</td><td>only if you give the vault a short key, which is refused</td></tr>
           <tr><td>Survives a restart</td><td>always</td><td>only with a durable vault</td></tr>
           <tr><td>Discloses equality</td><td>yes</td><td>yes</td></tr>
         </tbody>
@@ -91,7 +98,8 @@ public string PassportNumber { get; set; }    // stable per vault, useful for jo
         deployment has ever emitted, and a guessable salt is recovered offline. A
         token is drawn at random the first time a value is seen and written into a
         vault, so the only way back is to read that vault — a store you can lock,
-        move and revoke separately from the data.
+        move and revoke separately from the data. Guard it as you would guard the
+        column it protects, and <a href="#vault-key">give it a key</a>.
       </p>
       <Code lang="csharp">{`new DwPolicyOptions
 {
@@ -105,6 +113,61 @@ public string PassportNumber { get; set; }    // stable per vault, useful for jo
         <code>RedisTokenVault</code> and <code>EfTokenVault</code> keep the mapping
         outside the process and cache every mapping they resolve, which they can do
         safely because a token is written once and never rewritten.
+      </p>
+
+      <h3 id="vault-key">Give a durable vault a key (3.3.0)</h3>
+      <p>
+        A vault stores its mapping under the scope and a digest of the value.
+        Without a key that digest is a plain SHA-256, and a tokenized column is
+        nearly always drawn from a space small enough to hash whole — phone
+        numbers, national identifiers, card numbers. So a copy of the store, a
+        backup or a replica or a dump, gives back every value in it, and with them
+        the value behind every token ever issued. Under a key held where the store
+        is not — configuration, a secret manager — the digest is an HMAC-SHA256,
+        and the store and the key have to be taken together.
+      </p>
+      <Code lang="csharp">{`new DwPolicyOptions
+{
+    TokenVault = new RedisTokenVault(redis, key)              // 16 bytes or more
+    // TokenVault = new EfTokenVault(() => new AppDbContext(opts), key)
+}`}</Code>
+      <p>
+        The constructors that take no key are unchanged and unkeyed.{" "}
+        <code>InMemoryTokenVault</code> draws a random 32-byte key of its own per
+        instance — nothing to configure, and no API change — because its mappings
+        die with the process anyway. The key must be at least{" "}
+        <code>DwToken.MinimumKeyLength</code> (16) bytes; a shorter one is refused
+        by the constructor, as a short hash salt is refused. A keyed mapping&apos;s key starts
+        with <code>DwToken.KeyedPrefix</code> (<code>&quot;hmac:&quot;</code>), so
+        an operator can tell the two kinds apart in a store holding both. The
+        scope sits inside the digest as well as in front of it, so one value
+        tokenized in two scopes is two unrelated keys.
+      </p>
+      <Callout tone="warn" title="Adding a key keeps every token already issued — roll it out in two steps">
+        A keyed vault meeting a value with no keyed mapping looks up the unkeyed
+        mapping too, and the token found there is the one written under the keyed
+        key, so yesterday&apos;s export still lines up with today&apos;s. The
+        unkeyed mapping stays until <code>retireUnkeyed: true</code>, and a
+        retiring vault deletes it the first time it meets the value, whether it
+        wrote the keyed mapping or found it. <strong>Give every instance the key
+        first, and turn <code>retireUnkeyed</code> on only after that:</strong> an
+        instance still running without the key mints a <em>new</em> token for a
+        value whose unkeyed mapping is gone, and a value first met while keyed and
+        unkeyed instances run side by side can end up with two tokens. Unkeyed
+        mappings for values never met again stay until an operator removes them —{" "}
+        <code>HSCAN</code> the Redis token hash and delete the fields that do not
+        match <code>hmac:*</code>, or delete the rows of{" "}
+        <code>DwPolicyTokens</code> whose <code>Key</code> does not start with{" "}
+        <code>hmac:</code> — knowing such a value gets a new token the next time it
+        is met. Changing the key re-issues every token, unless unkeyed mappings
+        remain to adopt from.
+      </Callout>
+      <p>
+        The cost is small and there is no schema change. Redis reads both fields in
+        one round trip, so a value new to the store costs two round trips instead
+        of one; EF Core costs one more read for a new value, and in retire mode one
+        more read per first-met value. A keyed key is at most 326 characters
+        against the 512 the <code>Key</code> column already holds.
       </p>
       <p>
         Tokens are namespaced by <code>TokenScope</code>, and where none is given
@@ -187,10 +250,78 @@ public string SalaryBand { get; set; } = string.Empty;`}</Code>
       <p>
         The walk descends through reference navigations, collections, arrays,
         interfaces, structs and jagged collections, transforming every element it
-        reaches. A field one navigation deeper than the walk reaches is a field
-        that is quietly not protected, which is why the depth is a{" "}
-        <Link href="/docs/policies/configuration">configured cap</Link> rather
-        than a guess.
+        reaches. It is driven by the paths the policy names — the declared
+        types, four segments deep — which is what makes it incapable of missing
+        a path because it failed to recognise a navigation.
+      </p>
+
+      <h2 id="unnamed">A value no path of the policy names</h2>
+      <p>
+        A value can sit in the materialized rows where none of those paths goes.
+        A <code>[DwMask]</code> member five segments down an included or
+        in-memory graph, one only a subtype of the row&apos;s type declares —{" "}
+        <code>Dog.Chip</code> on rows typed <code>Animal</code>, in memory or in
+        a TPH hierarchy — one on an object a dictionary holds, and the far side
+        of a cycle: each came back exactly as stored, at the default caps, under{" "}
+        <code>Strict</code>, with no <code>Selects</code>, with the navigation
+        named whole in <code>Selects</code>, and in a dynamic projection holding
+        a real object.
+      </p>
+      <Callout tone="danger" title="Fixed (security) in 3.3.0: the rows are walked by run-time type as well">
+        A member that declares a transform attribute and was not transformed
+        along a named path is transformed by its own attributes, exactly once —
+        an object reached both ways is not transformed twice. No option had to
+        be set and no cap raised for the old behaviour: a column masked four
+        segments down was returned in the clear five segments down.
+      </Callout>
+      <ul>
+        <li>
+          Only members that declare a transform or an audit for{" "}
+          <code>Select</code>, or that can lead to one, are read. A navigation
+          whose type can reach neither is never touched, so a lazy loader behind
+          it is not woken, and a model that declares neither anywhere pays for no
+          second pass at all.
+        </li>
+        <li>
+          The same pass reports each audited member it meets where the policy
+          names no path to it, which the terminal records as a read — see{" "}
+          <Link href="/docs/breaking-changes#unnamed-audit">breaking point 43</Link>.
+        </li>
+        <li>
+          The transform is the member&apos;s own attributes. No rule can speak to
+          such a member, since no path names it — the same answer as{" "}
+          <em>no runtime rule can unmask a field</em> — and a resolver built over
+          no <code>AttributePolicyProvider</code> reads no attribute here either.
+        </li>
+        <li>
+          It obeys <code>Selects</code> as the first pass does, runs in a dry run
+          as transforms always have, and fails the query with{" "}
+          <code>InvalidOperationException</code> for a transformed member with no
+          setter, exactly as one along a named path does.
+        </li>
+        <li>
+          The trace records the path with its stages and the note{" "}
+          <code>(declared on the member; no path of the policy names it)</code>.
+        </li>
+        <li>
+          Still a limit: a member typed <code>object</code>, or a collection that
+          is not generic, says nothing about what it holds and is not read into.
+        </li>
+      </ul>
+      <p>
+        A transform is applied to a <em>member</em>, which is why a path{" "}
+        <em>beneath</em> one — <code>Bonus.Value</code>, a decimal where{" "}
+        <code>Bonus</code> is what is rounded — is refused for{" "}
+        <code>Select</code>, <code>Group</code> and <code>Aggregate</code>{" "}
+        instead: there is no member there to apply the chain to, and the value it
+        would hand back is the stored one. A transformed member past four
+        segments, which only a raised{" "}
+        <Link href="/docs/policies/configuration#caps"><code>MaxNavigationDepth</code></Link>{" "}
+        lets a request name, is a member, so naming it in <code>Selects</code>{" "}
+        returns it transformed; only a grouping key and an aggregated field are
+        refused there, because a summary&apos;s own transform finds a generated
+        row&apos;s columns by the type&apos;s list, and that list stops at four
+        segments.
       </p>
     </DocPage>
   );

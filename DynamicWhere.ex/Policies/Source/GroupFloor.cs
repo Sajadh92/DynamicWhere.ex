@@ -200,17 +200,27 @@ internal static class GroupFloor
             return;
         }
 
-        foreach (Condition condition in group.Conditions)
+        // Either list can be null despite its initializer, as AggregateBy can above: a request body
+        // carrying "conditions": null or "subConditionGroups": null overwrites it. The pipeline takes
+        // such a group, and every other reader in the gate checks; this one did not, so with the floor
+        // on, which is the default, a summary that runs unguarded failed guarded with a null reference.
+        if (group.Conditions is not null)
         {
-            if (string.Equals(condition.Field, SizeAlias, StringComparison.OrdinalIgnoreCase))
+            foreach (Condition condition in group.Conditions)
             {
-                throw new ArgumentException(SizeAlias);
+                if (string.Equals(condition?.Field, SizeAlias, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ArgumentException(SizeAlias);
+                }
             }
         }
 
-        foreach (ConditionGroup sub in group.SubConditionGroups)
+        if (group.SubConditionGroups is not null)
         {
-            Refuse(sub);
+            foreach (ConditionGroup sub in group.SubConditionGroups)
+            {
+                Refuse(sub);
+            }
         }
     }
 }

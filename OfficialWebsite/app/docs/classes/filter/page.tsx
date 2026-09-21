@@ -121,6 +121,29 @@ FilterResult<Customer> result = await dbContext.Customers.ToListAsync(filter);`}
   "page": { "pageNumber": 1, "pageSize": 25 }
 }`}</Code>
 
+      <h2 id="clone">Clone</h2>
+      <p>
+        <code>Filter.Clone()</code> is public since <strong>3.3.0</strong>. It
+        returns a deep copy — the condition tree with its groups and conditions, the <code>Selects</code> list, each order and the page — so nothing either request is given afterwards reaches the other.
+      </p>
+      <p>
+        Every node is new. The values a condition carries stay the caller&apos;s
+        own objects, in a new list: they are scalars decoded from JSON and
+        nothing in the pipeline writes to them.
+      </p>
+      <Code lang="csharp">{`Filter page2 = caller.Clone();
+page2.Page!.PageNumber = 2;          // the caller's own filter is untouched`}</Code>
+      <p>
+        Reading one request again with a part changed, the next page or another
+        order, used to mean rebuilding it around the caller&apos;s own clauses,
+        which leaves both requests holding one condition tree: a rewrite of
+        either reaches both. The library has cloned before rewriting anything
+        since 3.0; callers could not until now. A branch the caller left null
+        stays null, and a null entry inside a list is copied as a null entry
+        rather than failing on it (3.3.0), so the refusal belongs to the method
+        that runs the request and reads the same for a copy.
+      </p>
+
       <h2 id="see-also">See also</h2>
       <ul>
         <li>

@@ -82,6 +82,121 @@ public sealed class PolicyQueryable<T> where T : class
     /// </remarks>
     private TypePolicy TypePolicy => _typePolicy ??= _resolver.ResolveType(typeof(T), _context);
 
+    /// <summary>Transforms the rows of a filter or segment result on their way out.</summary>
+    /// <param name="rows">The materialized rows.</param>
+    /// <param name="projected">The projection they were read through, or null for whole rows.</param>
+    /// <param name="trace">Collects what was transformed.</param>
+    /// <param name="segment">True for a segment's rows, whose field refusals carry the segment's code.</param>
+    private void Outbound(
+        System.Collections.IEnumerable rows, List<string>? projected, PolicyTrace trace, bool segment = false)
+    {
+        IReadOnlyList<Masking.GraphWalker.UnnamedRead> unnamed = ResultTransformer.Rows(
+            rows, typeof(T), TypePolicy, projected, _context, _options, trace,
+            _resolver.ReadsAttributes, PastTheWalk(projected));
+
+        foreach (Masking.GraphWalker.UnnamedRead read in unnamed)
+        {
+            RecordUnnamed(read, trace, segment);
+        }
+    }
+
+    /// <summary>
+    /// Records the read of an audited member the rows handed back where no path of the policy names it,
+    /// refusing the result when there is no room left to record it.
+    /// </summary>
+    /// <remarks>
+    /// The gate records a use by path, before the query runs. A member only a subtype of the row
+    /// declares, or one past the four segments the policy names, has no path it could ask about, so it
+    /// came back with the row and nothing was written down. It is recorded once the rows say it is
+    /// there: one event per path, for Select, as a named member is. The cap is the gate's own, and so
+    /// is what it does at the cap: fail closed, with the field refusal where the tier hides existence,
+    /// since only a real, audited member can reach it. The rows are withheld with the refusal.
+    /// </remarks>
+    private void RecordUnnamed(Masking.GraphWalker.UnnamedRead read, PolicyTrace trace, bool segment)
+    {
+        bool dryRun = _options.DryRun || _context.DryRun;
+
+        DwAuditEvent recorded = new(
+            DateTimeOffset.UtcNow,
+            typeof(T).FullName ?? typeof(T).Name,
+            read.Path,
+            PolicyFeature.Select,
+            read.Effect,
+            _context.Subjects,
+            _context.Purpose,
+            _options.Tier,
+            dryRun);
+
+        if (_context.TryRecordAudit(recorded, _options.Caps.MaxAuditEvents))
+        {
+            return;
+        }
+
+        string origin =
+            $"MaxAuditEvents cap ({_options.Caps.MaxAuditEvents}) reached with the buffer undrained";
+
+        trace.Add(new PolicyDecision(read.Path, PolicyFeature.Select, PolicyAction.Denied, origin));
+
+        bool strict = _options.Tier == DwTier.Strict;
+
+        if (strict && !dryRun)
+        {
+            throw segment
+                ? new PolicyException(PolicyErrorCode.FieldDeniedForSegment, "*", PolicyFeature.Segment, _options.Tier)
+                {
+                    AuditPath = read.Path
+                }
+                : new PolicyException(PolicyErrorCode.FieldDeniedForSelect, "*", PolicyFeature.Select, _options.Tier)
+                {
+                    AuditPath = read.Path
+                };
+        }
+
+        throw new PolicyException(
+            PolicyErrorCode.CapExceeded, strict ? "*" : read.Path, PolicyFeature.Select, _options.Tier)
+        {
+            SourceOrigin = origin,
+            AuditPath = read.Path
+        };
+    }
+
+    /// <summary>
+    /// The transforms of the members a projection names past the attribute walk's depth, or null when it
+    /// names none.
+    /// </summary>
+    /// <remarks>
+    /// The type's transforms are listed by the paths the walk names, which stop at four segments, and a
+    /// host that raises <c>Caps.MaxNavigationDepth</c> lets a projection name a fifth. The resolver
+    /// reads such a member's own attributes, so its chain is known; it is handed to the outbound walk
+    /// beside the type's list, which applies it by path whatever the row is, a generated one included,
+    /// where no member carries an attribute to find it by.
+    /// </remarks>
+    private IReadOnlyDictionary<string, ValueTransform>? PastTheWalk(List<string>? projected)
+    {
+        if (projected is null)
+        {
+            return null;
+        }
+
+        Dictionary<string, ValueTransform>? found = null;
+
+        foreach (string path in projected)
+        {
+            if (path.Count(character => character == '.') < AttributePolicyProvider.MaxDepth
+                || TypePolicy.Transforms.ContainsKey(path))
+            {
+                continue;
+            }
+
+            if (_resolver.Resolve(typeof(T), path, _context).Transform is { IsEmpty: false } chain)
+            {
+                (found ??= new Dictionary<string, ValueTransform>(StringComparer.OrdinalIgnoreCase))[path] = chain;
+            }
+        }
+
+        return found;
+    }
+
     /// <summary>
     /// What the policy did to the most recent call on this handle.
     /// </summary>
@@ -113,8 +228,7 @@ public sealed class PolicyQueryable<T> where T : class
             {
                 FilterResult<T> result = Guarded().ToList(sanitized, getQueryString);
 
-                ResultTransformer.Rows(
-                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+                Outbound(result.Data, sanitized.Selects, trace);
 
                 result.Policy = _options.TraceInResult ? trace : null;
 
@@ -165,8 +279,7 @@ public sealed class PolicyQueryable<T> where T : class
             {
                 FilterResult<T> result = await Guarded().ToListAsync(sanitized, getQueryString, cancellationToken);
 
-                ResultTransformer.Rows(
-                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+                Outbound(result.Data, sanitized.Selects, trace);
 
                 result.Policy = _options.TraceInResult ? trace : null;
 
@@ -197,8 +310,7 @@ public sealed class PolicyQueryable<T> where T : class
             {
                 FilterResult<dynamic> result = Guarded().ToListDynamic(sanitized, getQueryString);
 
-                ResultTransformer.Rows(
-                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+                Outbound(result.Data, sanitized.Selects, trace);
 
                 // After transformation, not before: the transform pipeline reads the generated columns
                 // by the names the projection baked in, and renaming first would leave it looking for
@@ -254,8 +366,7 @@ public sealed class PolicyQueryable<T> where T : class
             {
                 FilterResult<dynamic> result = await Guarded().ToListAsyncDynamic(sanitized, getQueryString, cancellationToken);
 
-                ResultTransformer.Rows(
-                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+                Outbound(result.Data, sanitized.Selects, trace);
 
                 // After transformation, not before: the transform pipeline reads the generated columns
                 // by the names the projection baked in, and renaming first would leave it looking for
@@ -414,19 +525,20 @@ public sealed class PolicyQueryable<T> where T : class
         {
             PolicyTrace trace = NewTrace();
 
+            // Before the sanitizing, as every other terminal does it, so a refused segment leaves
+            // its own trace readable rather than the request before it.
+            LastTrace = trace;
+
             Segment sanitized = FilterSanitizer.Sanitize<T>(
                 segment, _resolver, _context, _options, trace,
                 applyDefaultOrder: TakesDefaultOrder,
                 rows: RowShape.Of(_source));
 
-            LastTrace = trace;
-
             using (PolicyScope.Enter(_context, LastTrace))
             {
                 SegmentResult<T> result = await Guarded().ToListAsync(sanitized, cancellationToken);
 
-                ResultTransformer.Rows(
-                    result.Data, TypePolicy, sanitized.Selects, _context, _options, trace);
+                Outbound(result.Data, sanitized.Selects, trace, segment: true);
 
                 result.Policy = _options.TraceInResult ? trace : null;
 
@@ -804,17 +916,31 @@ public sealed class PolicyQueryable<T> where T : class
     /// </remarks>
     private void RefuseUnmaterialized(string method, string instead)
     {
-        if (TypePolicy.Transforms.Count == 0)
+        // The paths the policy names, and what a row can hold off them. A member only a subtype
+        // declares, or one five segments down, is on no path, and the outbound walk transforms it
+        // from its own attributes: a type whose only transforms sit there is transformed on the way
+        // out all the same, and reading the named paths alone handed its query over, rows as stored.
+        bool unnamed = _resolver.ReadsAttributes && Masking.GraphWalker.HoldsTransform(typeof(T));
+
+        if (TypePolicy.Transforms.Count == 0 && !unnamed)
         {
             return;
         }
 
+        // The columns the policy names, or the clause where it names none of what is transformed.
+        string named = TypePolicy.Transforms.Count == 0 ? "*" : string.Join(", ", TypePolicy.Transforms.Keys);
+
+        // Under the strict tier the refusal names the clause. The list is every transformed column
+        // on the type, handed to a caller who named none of them.
         throw new PolicyException(
             PolicyErrorCode.TransformRequiresMaterialization,
-            string.Join(", ", TypePolicy.Transforms.Keys),
+            _options.Tier == DwTier.Strict && !_options.DryRun && !_context.DryRun
+                ? "*"
+                : named,
             PolicyFeature.Select,
             _options.Tier)
         {
+            AuditPath = named,
             SourceOrigin =
                 $"{method} returns a query for the caller to run, and a transformed value only " +
                 $"exists once the library has materialized it. Use {instead}, or " +
@@ -894,13 +1020,16 @@ public sealed class PolicyQueryable<T> where T : class
     /// <summary>Sanitizes a whole filter and records the outcome.</summary>
     private Filter Sanitize(Filter filter, PolicyTrace trace)
     {
+        // Before the sanitizing, not after it, so a refusal leaves the trace readable. A strict
+        // refusal names no field on purpose, and the trace is the only place that says which field
+        // it was and why — which is no use to anyone if a throw skips the assignment.
+        LastTrace = trace;
+
         // A source the caller ordered before guarding it keeps that order: a default would replace it.
         Filter sanitized = FilterSanitizer.Sanitize<T>(
             filter, _resolver, _context, _options, trace,
             applyDefaultOrder: TakesDefaultOrder,
             rows: RowShape.Of(_source));
-
-        LastTrace = trace;
 
         return sanitized;
     }
@@ -908,9 +1037,10 @@ public sealed class PolicyQueryable<T> where T : class
     /// <summary>Sanitizes a summary and records the outcome.</summary>
     private Summary Sanitize(Summary summary, PolicyTrace trace)
     {
-        Summary sanitized = FilterSanitizer.Sanitize<T>(summary, _resolver, _context, _options, trace);
-
         LastTrace = trace;
+
+        Summary sanitized = FilterSanitizer.Sanitize<T>(
+            summary, _resolver, _context, _options, trace, rows: RowShape.Of(_source));
 
         return sanitized;
     }
@@ -928,10 +1058,11 @@ public sealed class PolicyQueryable<T> where T : class
     {
         PolicyTrace trace = NewTrace();
 
-        Filter sanitized = FilterSanitizer.Sanitize<T>(
-            clause, _resolver, _context, _options, trace, synthesizeProjection: false, applyDefaultOrder);
-
         LastTrace = trace;
+
+        Filter sanitized = FilterSanitizer.Sanitize<T>(
+            clause, _resolver, _context, _options, trace, synthesizeProjection: false, applyDefaultOrder,
+            rows: RowShape.Of(_source));
 
         return sanitized;
     }

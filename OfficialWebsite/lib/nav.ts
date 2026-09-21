@@ -8,7 +8,7 @@ export const SITE = {
     "DynamicWhere.ex is a free .NET library for building dynamic, JSON-driven LINQ queries on Entity Framework Core — filter, sort, paginate, project, group, aggregate, and run UNION / INTERSECT / EXCEPT set operations from your front-end. Works with ASP.NET Core on .NET 6, 7, 8, 9, and 10.",
   shortDescription:
     "Dynamic JSON filter, sort, paginate, group, aggregate, and set operations for EF Core. .NET 6/7/8/9/10.",
-  version: "3.2.0",
+  version: "3.3.0",
   domain: "doc.dynamicwhere.com",
   repo: "https://github.com/Sajadh92/DynamicWhere.ex",
   nuget: "https://www.nuget.org/packages/DynamicWhere.ex",
@@ -146,9 +146,9 @@ export const NAV: NavGroup[] = [
       { title: "7. Filter (Typed)", href: "/docs/examples/filter" },
       { title: "8. Summary", href: "/docs/examples/summary" },
       { title: "9. Segment", href: "/docs/examples/segment" },
-      { title: "11. SelectDynamic", href: "/docs/examples/select-dynamic" },
-      { title: "12. FilterDynamic", href: "/docs/examples/filter-dynamic" },
-      { title: "13. Nested Collections", href: "/docs/examples/nested-collection" },
+      { title: "10. SelectDynamic", href: "/docs/examples/select-dynamic" },
+      { title: "11. FilterDynamic", href: "/docs/examples/filter-dynamic" },
+      { title: "12. Nested Collections", href: "/docs/examples/nested-collection" },
     ],
   },
   {

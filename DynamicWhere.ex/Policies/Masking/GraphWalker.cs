@@ -1,9 +1,13 @@
 using System.Collections;
+using System.Collections.Concurrent;
+using System.Linq.Dynamic.Core;
 using System.Reflection;
 using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
+using DynamicWhere.ex.Policies.Resolution;
+using DynamicWhere.ex.Policies.Source;
 
 namespace DynamicWhere.ex.Policies.Masking;
 
@@ -16,6 +20,14 @@ namespace DynamicWhere.ex.Policies.Masking;
 /// exactly those and nothing else — which is both far cheaper on a wide entity and, more
 /// importantly, incapable of missing a path because it failed to recognise a navigation. That was
 /// the shape of five separate defects on the input side.
+/// <para>
+/// A path is not the only place a value sits. A member only a subtype of the row's type declares,
+/// one past the four segments the policy names, one on an object a dictionary holds: no path reaches
+/// any of them, and each came back exactly as stored. A second pass walks the rows themselves, by
+/// run-time type, and applies the transform a member's own attributes declare wherever the first
+/// pass did not. It reads only what can lead to such a member, and runs only for a model that
+/// declares a transform at all.
+/// </para>
 /// <para>
 /// The objects being written to are detached. That is what makes this safe at all: a transform
 /// applied to a tracked entity is recorded by EF as a pending modification and written back as the
@@ -36,6 +48,10 @@ internal static class GraphWalker
     /// Transforms every value the policy speaks to, across a materialized result.
     /// </summary>
     /// <param name="rows">The materialized objects. Nulls are skipped.</param>
+    /// <param name="entityType">
+    /// The type the query was written over, which says whether anything its rows can hold declares a
+    /// transform where no path reaches.
+    /// </param>
     /// <param name="policy">The type's transform chains, keyed by canonical path.</param>
     /// <param name="projected">
     /// The paths the result actually carries, or null when it carries the whole entity. A path
@@ -44,21 +60,42 @@ internal static class GraphWalker
     /// <param name="context">Who is asking.</param>
     /// <param name="options">Carries the hash salt, the token vault and the service provider.</param>
     /// <param name="trace">Collects what was transformed.</param>
+    /// <param name="attributes">
+    /// False when the resolver in force was built over no attribute provider. It reads no attribute
+    /// along a path, and none off one either.
+    /// </param>
+    /// <param name="past">
+    /// The chains of members the projection names past the attribute walk's depth, keyed by path, or
+    /// null. Applied by path beside the type's own, so a generated row is reached as any other is.
+    /// </param>
+    /// <returns>
+    /// Each audited member the rows hand back where no path names it, once per path, for the caller to
+    /// record: the gate records a use by path before the query runs, and these have none it could ask
+    /// about.
+    /// </returns>
     /// <exception cref="InvalidOperationException">
     /// Thrown when a path the result should carry cannot be reached on it. Skipping instead would
     /// emit the value untransformed, which is the failure this whole layer exists to prevent.
     /// </exception>
-    internal static void Apply(
+    internal static IReadOnlyList<UnnamedRead> Apply(
         IEnumerable rows,
+        Type entityType,
         TypePolicy policy,
         IReadOnlyCollection<string>? projected,
         DwPolicyContext context,
         DwPolicyOptions options,
-        PolicyTrace trace)
+        PolicyTrace trace,
+        bool attributes = true,
+        IReadOnlyDictionary<string, ValueTransform>? past = null)
     {
-        if (policy.Transforms.Count == 0)
+        // Whether anything a row of this type can hold declares a transform at all. False for a model
+        // with no transform attribute, which then pays nothing for the second pass below, and for a
+        // resolver built over no attribute provider, which reads no attribute anywhere.
+        bool unwalked = attributes && (HoldsTransform(entityType) || HoldsAudit(entityType));
+
+        if (policy.Transforms.Count == 0 && !unwalked && past is null)
         {
-            return;
+            return Array.Empty<UnnamedRead>();
         }
 
         // Reference identity, not equality. Two rows can share one referenced object, and
@@ -80,8 +117,12 @@ internal static class GraphWalker
 
         if (roots.Count == 0)
         {
-            return;
+            return Array.Empty<UnnamedRead>();
         }
+
+        // What the first pass transformed, so the second never transforms it again: a hash of a hash
+        // is not the token the first pass issued. Kept only when there is a second pass to read it.
+        HashSet<(object Owner, string Member)>? done = unwalked ? new(DoneComparer.Instance) : null;
 
         foreach (KeyValuePair<string, ValueTransform> entry in policy.Transforms)
         {
@@ -90,9 +131,29 @@ internal static class GraphWalker
                 continue;
             }
 
-            ApplyPath(roots, entry.Key, entry.Value, context, options, trace);
+            ApplyPath(roots, entry.Key, entry.Value, context, options, trace, done);
         }
+
+        // Members the projection names past the walk's depth, which the type's list does not hold.
+        // Every one of them is carried: the projection is where they were read from.
+        if (past is not null)
+        {
+            foreach (KeyValuePair<string, ValueTransform> entry in past)
+            {
+                ApplyPath(roots, entry.Key, entry.Value, context, options, trace, done);
+            }
+        }
+
+        return unwalked
+            ? ApplyUnwalked(roots, entityType, projected, context, options, trace, done!)
+            : Array.Empty<UnnamedRead>();
     }
+
+    /// <summary>
+    /// One audited member the rows handed back where no path of the policy names it, and the effect it
+    /// was handed back with.
+    /// </summary>
+    internal readonly record struct UnnamedRead(string Path, Enums.PolicyEffect Effect);
 
     /// <summary>
     /// True when a result carrying this projection holds the path at all.
@@ -102,6 +163,25 @@ internal static class GraphWalker
     /// carried when it was selected, or when it sits beneath something that was: projecting
     /// <c>Contact</c> brings <c>Contact.Email</c> with it.
     /// </remarks>
+    /// <summary>True when the projection names this very path, rather than a member above it.</summary>
+    private static bool Spelled(string path, IReadOnlyCollection<string>? projected)
+    {
+        if (projected is null)
+        {
+            return false;
+        }
+
+        foreach (string selected in projected)
+        {
+            if (string.Equals(selected, path, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool IsCarried(string path, IReadOnlyCollection<string>? projected)
     {
         if (projected is null)
@@ -132,7 +212,8 @@ internal static class GraphWalker
         ValueTransform chain,
         DwPolicyContext context,
         DwPolicyOptions options,
-        PolicyTrace trace)
+        PolicyTrace trace,
+        HashSet<(object Owner, string Member)>? done)
     {
         string[] segments = path.Split('.');
 
@@ -182,6 +263,8 @@ internal static class GraphWalker
             }
 
             accessors.Set(owner, replacement);
+
+            done?.Add((owner, accessors.Name));
 
             transformed = true;
         }
@@ -255,15 +338,361 @@ internal static class GraphWalker
     /// name, the getter, the setter — are each a hash of something, and each was being paid on
     /// every row of every result.
     /// </remarks>
+    /// <summary>
+    /// Applies the transform a member's own attributes declare, wherever in the materialized rows the
+    /// pass above did not reach that member.
+    /// </summary>
+    /// <remarks>
+    /// The attribute walk names the paths of the declared types, four segments deep, and the pass
+    /// above transforms along those paths and no others. A value can sit where none of them goes: on
+    /// a member only a subtype of the row's type declares, five segments down a graph somebody
+    /// included, on an object a dictionary holds, or the far side of a cycle. Each came back exactly as
+    /// stored, under a mask that the same member wears four segments up.
+    /// <para>
+    /// So the rows are walked as they are, by run-time type, and a member that declares a transform
+    /// and was not transformed above is transformed by its own attributes. No rule can take a
+    /// transform off a member, so where the pass above left one untouched it is because no path led
+    /// there, never because an election decided against it. Only what can lead to such a member is
+    /// read: a navigation whose type can reach no transform is never touched, so a lazy loader behind
+    /// it is not woken.
+    /// </para>
+    /// </remarks>
+    private static IReadOnlyList<UnnamedRead> ApplyUnwalked(
+        HashSet<object> roots,
+        Type entityType,
+        IReadOnlyCollection<string>? projected,
+        DwPolicyContext context,
+        DwPolicyOptions options,
+        PolicyTrace trace,
+        HashSet<(object Owner, string Member)> done)
+    {
+        HashSet<object> seen = new(ReferenceComparer.Instance);
+        Stack<Visit> pending = new();
+        Dictionary<string, ValueTransform> recorded = new(StringComparer.Ordinal);
+        Dictionary<string, Enums.PolicyEffect> read = new(StringComparer.Ordinal);
+
+        foreach (object root in roots)
+        {
+            seen.Add(root);
+            pending.Push(new Visit(root, entityType, 0, string.Empty));
+        }
+
+        while (pending.Count > 0)
+        {
+            Visit visit = pending.Pop();
+
+            foreach (Member member in Members(visit.Node.GetType()))
+            {
+                string path = visit.Path.Length == 0
+                    ? member.Property.Name
+                    : visit.Path + "." + member.Property.Name;
+
+                // Named by the policy: a member the declared type has, within the walk's depth. The
+                // gate asked about that path before the query ran and recorded its use; the generated
+                // row of a dynamic projection carries the entity's member names and is read as it is.
+                PropertyInfo? named = visit.Declared is not null && visit.Depth < AttributePolicyProvider.MaxDepth
+                    ? CacheReflection.FindProperty(visit.Declared, member.Property.Name)
+                    : null;
+
+                bool carried = IsCarried(path, projected);
+
+                if (member.Transform is { } chain && carried && done.Add((visit.Node, member.Property.Name)))
+                {
+                    if (member.Set is null)
+                    {
+                        throw new InvalidOperationException(
+                            $"'{path}' is transformed by policy but has no setter, so the transformed value " +
+                            "cannot replace the real one. Give the member a setter, or project into a type " +
+                            "that has one.");
+                    }
+
+                    member.Set(visit.Node, TransformPipeline.Apply(
+                        chain, member.Get(visit.Node), member.Property.PropertyType,
+                        new DwTransformContext(visit.Node, path, context), options));
+
+                    recorded[path] = chain;
+                }
+
+                // An audited member no path names was handed back with nothing written down: the gate
+                // records by path, and this one has none. Once per path, not per row, as a named one is.
+                // A path the projection spells out is one the gate was asked about, however long it is.
+                if (member.Audited && named is null && carried && !Spelled(path, projected))
+                {
+                    read[path] = member.Transform is null ? Enums.PolicyEffect.Allow : Enums.PolicyEffect.Mask;
+                }
+
+                if (!member.Leads)
+                {
+                    continue;
+                }
+
+                Type? beneath = named is null
+                    ? null
+                    : AttributePolicyProvider.NavigationTypeOf(named.PropertyType);
+
+                foreach (object held in Held(member.Get(visit.Node)))
+                {
+                    if (seen.Add(held))
+                    {
+                        pending.Push(new Visit(held, beneath, visit.Depth + 1, path));
+                    }
+                }
+            }
+        }
+
+        foreach (KeyValuePair<string, ValueTransform> entry in recorded)
+        {
+            trace.Add(new PolicyDecision(
+                entry.Key, Enums.PolicyFeature.Select, entry.Value.Action,
+                string.Join(" then ", entry.Value.Stages.Select(s => s.Kind))
+                + " (declared on the member; no path of the policy names it)"));
+        }
+
+        if (read.Count == 0)
+        {
+            return Array.Empty<UnnamedRead>();
+        }
+
+        List<UnnamedRead> reads = new(read.Count);
+
+        foreach (KeyValuePair<string, Enums.PolicyEffect> entry in read)
+        {
+            reads.Add(new UnnamedRead(entry.Key, entry.Value));
+        }
+
+        return reads;
+    }
+
+    /// <summary>One object of the result, where it stands, and the declared type the policy read it as.</summary>
+    private readonly record struct Visit(object Node, Type? Declared, int Depth, string Path);
+
+    /// <summary>One readable member of a run-time type that transforms or is audited, or can lead to one.</summary>
+    private sealed record Member(
+        PropertyInfo Property,
+        Func<object, object?> Get,
+        Action<object, object?>? Set,
+        ValueTransform? Transform,
+        bool Audited,
+        bool Leads);
+
+    /// <summary>
+    /// The members of a run-time type the second pass reads: those declaring a transform or an audit,
+    /// and those whose value can hold an object that does. Read once per type and again once another assembly
+    /// has loaded, since that can add a subtype.
+    /// </summary>
+    private static Member[] Members(Type type)
+    {
+        int epoch = KnownSubtypes.Epoch;
+
+        if (MembersByType.TryGetValue(type, out (int Epoch, Member[] Members) known) && known.Epoch == epoch)
+        {
+            return known.Members;
+        }
+
+        List<Member> members = new();
+
+        if (Reads(type))
+        {
+            foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!property.CanRead || property.GetIndexParameters().Length != 0)
+                {
+                    continue;
+                }
+
+                ValueTransform? transform = AttributePolicyProvider.TransformOn(property);
+                bool audited = AuditsSelect(property);
+                bool leads = HoldsTransform(property.PropertyType) || HoldsAudit(property.PropertyType);
+
+                if (transform is not null || audited || leads)
+                {
+                    members.Add(new Member(
+                        property, MutatorCache.Getter(property), MutatorCache.Setter(property),
+                        transform, audited, leads));
+                }
+            }
+        }
+
+        Member[] read = members.ToArray();
+
+        MembersByType[type] = (epoch, read);
+
+        return read;
+    }
+
+    private static readonly ConcurrentDictionary<Type, (int Epoch, Member[] Members)> MembersByType = new();
+
+    /// <summary>
+    /// True for an object whose members are an application's: its own types, the rows a dynamic
+    /// projection generates, and the pair a dictionary hands out. A framework object is a value here.
+    /// </summary>
+    private static bool Reads(Type type) =>
+        !AttributePolicyProvider.IsFramework(type)
+        || typeof(DynamicClass).IsAssignableFrom(type)
+        || (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(KeyValuePair<,>));
+
+    /// <summary>The objects a value holds: itself, or each element when it is a collection.</summary>
+    private static IEnumerable<object> Held(object? value)
+    {
+        if (value is null or string)
+        {
+            yield break;
+        }
+
+        if (value is IEnumerable collection)
+        {
+            foreach (object? element in collection)
+            {
+                if (element is not null and not string && !element.GetType().IsPrimitive)
+                {
+                    yield return element;
+                }
+            }
+
+            // An application's own collection class declares members beside its elements.
+            if (AttributePolicyProvider.IsFramework(value.GetType()))
+            {
+                yield break;
+            }
+        }
+
+        yield return value;
+    }
+
+    /// <summary>
+    /// True when a value of this type can hold, at any depth, a member that declares a transform.
+    /// </summary>
+    /// <remarks>
+    /// Wider than the attribute walk on purpose, as the projection gate's own scan is: every property,
+    /// every collection layer, the arguments of a framework generic, and every loaded subtype, with
+    /// the types already read remembered rather than levels counted. A member that can hold an object
+    /// of any type, one typed <see cref="object"/> or a collection that is not generic, says nothing
+    /// about what it holds and is not read, here or by the projection gate. Read once per type, and
+    /// again once another assembly has loaded.
+    /// </remarks>
+    internal static bool HoldsTransform(Type type)
+    {
+        int epoch = KnownSubtypes.Epoch;
+
+        if (HoldsByType.TryGetValue(type, out (int Epoch, bool Holds) known) && known.Epoch == epoch)
+        {
+            return known.Holds;
+        }
+
+        bool holds = Scan(type, static property => AttributePolicyProvider.TransformOn(property) is not null);
+
+        HoldsByType[type] = (epoch, holds);
+
+        return holds;
+    }
+
+    private static readonly ConcurrentDictionary<Type, (int Epoch, bool Holds)> HoldsByType = new();
+
+    /// <summary>
+    /// True when a value of this type can hold, at any depth, a member audited for Select. Read as
+    /// <see cref="HoldsTransform"/> is, and for the same reason: the second pass runs only where there
+    /// is something for it to find.
+    /// </summary>
+    internal static bool HoldsAudit(Type type)
+    {
+        int epoch = KnownSubtypes.Epoch;
+
+        if (AuditsByType.TryGetValue(type, out (int Epoch, bool Holds) known) && known.Epoch == epoch)
+        {
+            return known.Holds;
+        }
+
+        bool holds = Scan(type, AuditsSelect);
+
+        AuditsByType[type] = (epoch, holds);
+
+        return holds;
+    }
+
+    private static readonly ConcurrentDictionary<Type, (int Epoch, bool Holds)> AuditsByType = new();
+
+    /// <summary>True when a member's own attribute audits it for Select.</summary>
+    private static bool AuditsSelect(PropertyInfo property) =>
+        property.GetCustomAttribute<Attributes.DwAuditAttribute>(inherit: true) is { } audit
+        && (audit.Features & Enums.PolicyFeature.Select) != 0;
+
+    private static bool Scan(Type root, Func<PropertyInfo, bool> found)
+    {
+        HashSet<Type> seen = new();
+        Stack<Type> pending = new();
+
+        void Enqueue(Type candidate)
+        {
+            foreach (Type layer in AttributePolicyProvider.Layers(candidate))
+            {
+                if (layer.IsGenericType && AttributePolicyProvider.IsFramework(layer))
+                {
+                    foreach (Type argument in layer.GetGenericArguments())
+                    {
+                        Enqueue(argument);
+                    }
+                }
+
+                if (layer == typeof(string) || layer.IsPrimitive || layer.IsEnum)
+                {
+                    continue;
+                }
+
+                if (!AttributePolicyProvider.IsFramework(layer) && seen.Add(layer))
+                {
+                    pending.Push(layer);
+                }
+
+                // An application's subclass of the type, a framework class's included.
+                if (!layer.IsSealed)
+                {
+                    foreach (Type subtype in KnownSubtypes.Of(layer))
+                    {
+                        if (seen.Add(subtype))
+                        {
+                            pending.Push(subtype);
+                        }
+                    }
+                }
+            }
+        }
+
+        Enqueue(root);
+
+        while (pending.Count > 0)
+        {
+            foreach (PropertyInfo property in pending.Pop().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (property.GetIndexParameters().Length != 0)
+                {
+                    continue;
+                }
+
+                if (found(property))
+                {
+                    return true;
+                }
+
+                Enqueue(property.PropertyType);
+            }
+        }
+
+        return false;
+    }
+
     private readonly struct Accessors
     {
         private Accessors(
-            Type memberType, Func<object, object?> get, Action<object, object?>? set)
+            string name, Type memberType, Func<object, object?> get, Action<object, object?>? set)
         {
+            Name = name;
             MemberType = memberType;
             Get = get;
             Set = set;
         }
+
+        /// <summary>The member's name as its type declares it, whatever letter case the path used.</summary>
+        internal string Name { get; }
 
         /// <summary>The type the transformed value has to fit.</summary>
         internal Type MemberType { get; }
@@ -293,8 +722,22 @@ internal static class GraphWalker
                     $"{type.Name}. The value would otherwise be emitted exactly as stored.");
 
             return new Accessors(
-                property.PropertyType, MutatorCache.Getter(property), MutatorCache.Setter(property));
+                property.Name, property.PropertyType, MutatorCache.Getter(property), MutatorCache.Setter(property));
         }
+    }
+
+    /// <summary>One member of one object: the object by reference, the name as its type declares it.</summary>
+    private sealed class DoneComparer : IEqualityComparer<(object Owner, string Member)>
+    {
+        internal static DoneComparer Instance { get; } = new();
+
+        public bool Equals((object Owner, string Member) x, (object Owner, string Member) y) =>
+            ReferenceEquals(x.Owner, y.Owner) && string.Equals(x.Member, y.Member, StringComparison.Ordinal);
+
+        public int GetHashCode((object Owner, string Member) pair) =>
+            HashCode.Combine(
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(pair.Owner),
+                StringComparer.Ordinal.GetHashCode(pair.Member));
     }
 
     /// <summary>Compares by reference, so two equal-but-distinct objects are both visited.</summary>

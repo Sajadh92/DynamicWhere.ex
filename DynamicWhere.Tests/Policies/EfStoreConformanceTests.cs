@@ -52,7 +52,7 @@ public sealed class SqliteStoreConformanceTests : PolicyStoreConformanceTests, I
 public sealed class PostgresStoreConformanceTests : PolicyStoreConformanceTests, IAsyncLifetime
 {
     private readonly PostgreSqlContainer _server =
-        new PostgreSqlBuilder().WithImage("postgres:16-alpine").Build();
+        new PostgreSqlBuilder("postgres:16-alpine").Build();
 
     private Func<DbContext>? _contexts;
 

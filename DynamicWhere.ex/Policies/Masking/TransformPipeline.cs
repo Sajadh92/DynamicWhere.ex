@@ -52,6 +52,17 @@ internal static class TransformPipeline
         return Fit(result, memberType, context.FieldPath, chain);
     }
 
+    /// <summary>The path a refusal from this pipeline names: the clause, where the tier hides existence.</summary>
+    /// <remarks>
+    /// A missing salt or vault is a deployment's own mistake, and the caller who meets it named no
+    /// field: the request sent no projection, and the value being masked is one the policy chose to
+    /// mask. Naming it would hand that caller the canonical path of a masked column.
+    /// </remarks>
+    private static string Named(DwTransformContext context, DwPolicyOptions options) =>
+        options.Tier == DwTier.Strict && !options.DryRun && !context.Policy.DryRun
+            ? "*"
+            : context.FieldPath;
+
     /// <summary>Runs the stages in order, or the replacement alone.</summary>
     private static object? Run(
         ValueTransform chain,
@@ -102,9 +113,12 @@ internal static class TransformPipeline
             {
                 throw new PolicyException(
                     PolicyErrorCode.MissingHashSalt,
-                    context.FieldPath,
+                    Named(context, options),
                     PolicyFeature.Select,
-                    options.Tier);
+                    options.Tier)
+                {
+                    AuditPath = context.FieldPath
+                };
             }
 
             // Tokenization is the one strategy that is not a pure function of its input, so it is
@@ -146,9 +160,12 @@ internal static class TransformPipeline
         {
             throw new PolicyException(
                 PolicyErrorCode.MissingTokenVault,
-                context.FieldPath,
+                Named(context, options),
                 PolicyFeature.Select,
-                options.Tier);
+                options.Tier)
+            {
+                AuditPath = context.FieldPath
+            };
         }
 
         // Null has nothing to stand in for, and minting a token for it would invent a value where

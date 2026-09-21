@@ -56,9 +56,12 @@ public static class DwToken
     /// rather than two.
     /// <para>
     /// Unkeyed, unlike the hash mask. It is not standing in for the value anywhere a caller can
-    /// see it: the token is, and the token is random. This hash is an index into a store that is
-    /// already secret, so a salt here would protect nothing that reaching the store does not
-    /// already give away.
+    /// see it: the token is, and the token is random. It is an index into a store that has to be
+    /// kept secret, and that is all that protects it: a digest of a value drawn from a small space,
+    /// a phone number or a national identifier, is found by hashing every value there is, so
+    /// whoever reads a vault keyed this way reads the column it protects. A vault given a key uses
+    /// <see cref="KeyFor(string, string, byte[])"/> instead, and reading the store alone then
+    /// gives nothing back.
     /// </para>
     /// </remarks>
     public static string KeyFor(string scope, string value)
@@ -79,5 +82,107 @@ public static class DwToken
         byte[] digest = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value));
 
         return string.Concat(scope, ":", Convert.ToHexString(digest).ToLower(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>The fewest bytes a vault's key may have.</summary>
+    /// <remarks>
+    /// Sixteen, the floor the hash mask sets for its salt. A key is what stands between a copy of the
+    /// store and the values behind it, and a short one is found the way the values would have been.
+    /// </remarks>
+    public const int MinimumKeyLength = 16;
+
+    /// <summary>What a keyed mapping's key starts with.</summary>
+    /// <remarks>
+    /// So the two kinds of key can be told apart in a store that holds both while a deployment moves
+    /// from one to the other, by an operator and by a query: <c>WHERE [Key] LIKE 'hmac:%'</c>, or
+    /// <c>HSCAN ... MATCH hmac:*</c>.
+    /// </remarks>
+    public const string KeyedPrefix = "hmac:";
+
+    /// <summary>
+    /// Builds the key a vault that holds a secret stores one mapping under.
+    /// </summary>
+    /// <param name="scope">What the mapping is namespaced by.</param>
+    /// <param name="value">The real value.</param>
+    /// <param name="key">The vault's secret, at least <see cref="MinimumKeyLength"/> bytes.</param>
+    /// <returns>
+    /// <see cref="KeyedPrefix"/>, the scope in the clear, and an HMAC-SHA256 of the scope and the
+    /// value under the key, in lowercase hexadecimal.
+    /// </returns>
+    /// <remarks>
+    /// The unkeyed key is a plain digest of the value, and a tokenized column is nearly always one
+    /// whose values come from a small space. Every phone number there is can be hashed in an
+    /// afternoon, so a copy of a vault keyed that way, a backup or a replica or a dump, gives back
+    /// every value in it and with them the value behind every token ever handed out. Under a key held
+    /// outside the store, in configuration or a secret manager, the copy gives back nothing: the
+    /// store and the key have to be taken together.
+    /// <para>
+    /// The scope is inside the digest as well as in front of it, so one value tokenized in two scopes
+    /// is two unrelated keys, and the store does not show that two fields hold the same value.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="scope"/> is blank, or <paramref name="key"/> is shorter than
+    /// <see cref="MinimumKeyLength"/>.
+    /// </exception>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="value"/> or <paramref name="key"/> is null.
+    /// </exception>
+    public static string KeyFor(string scope, string value, byte[] key)
+    {
+        if (string.IsNullOrWhiteSpace(scope))
+        {
+            throw new ArgumentException("A token scope cannot be blank.", nameof(scope));
+        }
+
+        if (value is null)
+        {
+            throw new ArgumentNullException(nameof(value));
+        }
+
+        RequireKey(key);
+
+        byte[] scoped = System.Text.Encoding.UTF8.GetBytes(scope);
+        byte[] valued = System.Text.Encoding.UTF8.GetBytes(value);
+
+        // A zero byte between the two, which neither holds a meaning for, so "ab" + "c" and
+        // "a" + "bc" are two inputs rather than one.
+        byte[] input = new byte[scoped.Length + 1 + valued.Length];
+
+        scoped.CopyTo(input, 0);
+        valued.CopyTo(input, scoped.Length + 1);
+
+        byte[] digest = HMACSHA256.HashData(key, input);
+
+        return string.Concat(
+            KeyedPrefix, scope, ":", Convert.ToHexString(digest).ToLower(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// Refuses a vault key that is null or too short to be one.
+    /// </summary>
+    /// <param name="key">The key a vault was given.</param>
+    /// <returns>A copy, so a caller clearing or reusing its array does not re-key a running vault.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="key"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="key"/> is shorter than <see cref="MinimumKeyLength"/>.
+    /// </exception>
+    public static byte[] RequireKey(byte[] key)
+    {
+        if (key is null)
+        {
+            throw new ArgumentNullException(nameof(key));
+        }
+
+        if (key.Length < MinimumKeyLength)
+        {
+            throw new ArgumentException(
+                $"A token vault key must be at least {MinimumKeyLength} bytes. It is what stands between a " +
+                "copy of the vault and the values behind every token, and a short one is found the way " +
+                "the values would have been.",
+                nameof(key));
+        }
+
+        return (byte[])key.Clone();
     }
 }

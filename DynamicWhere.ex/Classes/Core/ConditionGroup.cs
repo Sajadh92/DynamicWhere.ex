@@ -38,9 +38,9 @@ public class ConditionGroup
     {
         Sort = Sort,
         Connector = Connector,
-        Conditions = Conditions is null ? null! : Conditions.ConvertAll(c => c.Clone()),
+        Conditions = Conditions is null ? null! : Conditions.ConvertAll(c => c?.Clone()!),
         SubConditionGroups = SubConditionGroups is null
             ? null!
-            : SubConditionGroups.ConvertAll(g => g.Clone())
+            : SubConditionGroups.ConvertAll(g => g?.Clone()!)
     };
 }

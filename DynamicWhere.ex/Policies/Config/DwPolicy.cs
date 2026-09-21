@@ -1,5 +1,6 @@
 ﻿using DynamicWhere.ex.Policies.Audit;
 using DynamicWhere.ex.Policies.Context;
+using DynamicWhere.ex.Policies.Discovery;
 using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Policies.Validation;
 
@@ -27,6 +28,11 @@ public static class DwPolicy
     private static DwPolicyOptions _options = CreateDefaultOptions();
     private static PolicyResolver _resolver = CreateResolver(Array.Empty<IDwPolicyProvider>());
     private static IReadOnlyList<StorePolicyProvider> _stores = Array.Empty<StorePolicyProvider>();
+
+    // The kinds of policy source the configured call supplied, in order. Read only when a second
+    // call asks whether it is asking for the same posture.
+    private static Type[] _providerTypes = Array.Empty<Type>();
+
     private static bool _configured;
 
     /// <summary>
@@ -51,7 +57,7 @@ public static class DwPolicy
     public static IReadOnlyList<StorePolicyProvider> StoreProviders => _stores;
 
     /// <summary>
-    /// Sets the posture and the runtime policy sources, once, during startup.
+    /// Sets the posture and the runtime policy sources, during startup.
     /// </summary>
     /// <param name="options">The posture. Frozen by this call.</param>
     /// <param name="providers">
@@ -59,11 +65,26 @@ public static class DwPolicy
     /// need to be listed.
     /// </param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="options"/> is null.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when called more than once.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when called again with a posture that differs from the one in force.
+    /// </exception>
     /// <remarks>
-    /// Refused after the first call. The posture is read by every request thread without
+    /// The first call decides. A later call carrying the same posture is a no-op, and one carrying a
+    /// different posture is refused: the posture is read by every request thread without
     /// synchronization, and a tier that can change while requests are in flight is one that can be
     /// relaxed by a code path nobody expected to be security-relevant.
+    /// <para>
+    /// The comparison covers everything that decides what a query is permitted to do: the tier, the
+    /// dry-run and trace flags, refusal auditing, the hash salt, the store-failure mode, both
+    /// intervals, every cap, the exposed entity catalogue, and the provider types supplied. It does
+    /// not cover the objects a host builds for itself — the token vault, the service provider and
+    /// the provider instances — because a second host builds its own and comparing them by
+    /// reference would make every second call a refusal. Those stay as the first call left them,
+    /// which is what makes a second host safe to start and what makes it the first host's vault and
+    /// container that the layer keeps using. Start a second host only where that is what you want:
+    /// an integration suite running many <c>WebApplicationFactory</c> hosts over one composition
+    /// root, which is the case this exists for.
+    /// </para>
     /// <para>
     /// <see cref="AttributePolicyProvider"/> is added whether or not it appears in
     /// <paramref name="providers"/>. Attributes are the sealed level, and a configuration that
@@ -82,9 +103,21 @@ public static class DwPolicy
         {
             if (_configured)
             {
-                throw new InvalidOperationException(
-                    "Policy is already configured. The enforcement posture is read by every request " +
-                    "thread and cannot change once the application is serving.");
+                if (!SamePosture(_options, options, providers))
+                {
+                    throw new InvalidOperationException(
+                        "Policy is already configured with a different posture. The enforcement " +
+                        "posture is read by every request thread and cannot change once the " +
+                        "application is serving. Configuring the same posture again is allowed, so " +
+                        "a second host over one composition root starts without a check of its own.");
+                }
+
+                // Frozen so a caller holding this instance cannot go on setting values that no
+                // longer decide anything. The posture in force is unchanged and stays the frozen
+                // one the first call installed.
+                options.Freeze();
+
+                return;
             }
 
             options.Freeze();
@@ -94,9 +127,128 @@ public static class DwPolicy
             _options = options;
             _resolver = CreateResolver(supplied);
             _stores = supplied.OfType<StorePolicyProvider>().ToList();
+            _providerTypes = ProviderTypes(supplied);
             _configured = true;
         }
     }
+
+    /// <summary>
+    /// True when a second configuration asks for exactly what is already in force.
+    /// </summary>
+    /// <remarks>
+    /// Every value that decides what a query may do is compared, so a posture that differs in any of
+    /// them is refused rather than quietly ignored. The three things not compared are the objects a
+    /// host constructs for itself — the token vault, the service provider and the provider instances
+    /// — since a second host builds its own and no two are ever the same reference. Provider
+    /// <i>types</i> are compared, in order, so a host that adds or drops a source is still refused.
+    /// </remarks>
+    private static bool SamePosture(DwPolicyOptions inForce, DwPolicyOptions asked, IDwPolicyProvider[]? providers)
+    {
+        if (ReferenceEquals(inForce, asked))
+        {
+            // The same instance carries the same values by definition, and says nothing about the
+            // sources. Handing the posture in force back with a store provider beside it is a call
+            // asking for that source, and answering "same posture" would drop it: the resolver is
+            // never rebuilt, the source is never consulted, and every rule in it — a denial
+            // included — quietly does not apply.
+            return SameProviders(providers);
+        }
+
+        if (inForce.Tier != asked.Tier
+            || inForce.DryRun != asked.DryRun
+            || inForce.TraceInResult != asked.TraceInResult
+            || inForce.AuditRefusals != asked.AuditRefusals
+            || !string.Equals(inForce.HashSalt, asked.HashSalt, StringComparison.Ordinal)
+            || inForce.StoreFailure != asked.StoreFailure
+            || inForce.MaxSnapshotAge != asked.MaxSnapshotAge
+            || inForce.RefreshInterval != asked.RefreshInterval)
+        {
+            return false;
+        }
+
+        // IncludeTraceInResult is compared by the value that applies, not by whether somebody wrote
+        // it down: it defaults to the tier's own answer, and the tiers are equal by the line above,
+        // so a host writing that answer out enforces exactly what a host leaving it null does. The
+        // same rule as MinGroupSize below.
+        if (!SameCaps(inForce.Caps, asked.Caps) || !SameCatalog(inForce.Entities, asked.Entities))
+        {
+            return false;
+        }
+
+        return SameProviders(providers);
+    }
+
+    /// <summary>
+    /// True when two cap sets hold the same numbers.
+    /// </summary>
+    /// <remarks>
+    /// The floor that applies, not whether somebody wrote it down. <c>IsMinGroupSizeSet</c> tells a
+    /// deliberate opt-out from a deployment that never heard of the control, and nothing in
+    /// enforcement reads it — a host binding the documented appsettings sample, which writes
+    /// <c>"MinGroupSize": 5</c>, enforces exactly what a host on the defaults does, and refusing the
+    /// second one would refuse the case this feature exists for.
+    /// </remarks>
+    private static bool SameCaps(DwCaps inForce, DwCaps asked) =>
+        inForce.MaxPageSize == asked.MaxPageSize
+        && inForce.DefaultPageSize == asked.DefaultPageSize
+        && inForce.MaxConditions == asked.MaxConditions
+        && inForce.MaxConditionDepth == asked.MaxConditionDepth
+        && inForce.MaxConditionSets == asked.MaxConditionSets
+        && inForce.MaxConditionValues == asked.MaxConditionValues
+        && inForce.MaxAggregates == asked.MaxAggregates
+        && inForce.MaxOrderFields == asked.MaxOrderFields
+        && inForce.MaxNavigationDepth == asked.MaxNavigationDepth
+        && inForce.MaxQueryCost == asked.MaxQueryCost
+        && inForce.DefaultFieldCost == asked.DefaultFieldCost
+        && inForce.MaxAuditEvents == asked.MaxAuditEvents
+        && inForce.MinGroupSize == asked.MinGroupSize
+        && inForce.SchemaDepth == asked.SchemaDepth
+        && inForce.SchemaCycleLimit == asked.SchemaCycleLimit
+        && inForce.MaxSchemaFields == asked.MaxSchemaFields;
+
+    /// <summary>True when both catalogues expose the same types and answer to the same names.</summary>
+    /// <remarks>
+    /// Every name, not only the last one each type was exposed under. A type exposed twice keeps
+    /// both names resolvable while <c>Entities</c> reports one, so two catalogues can report the
+    /// same pairs and still answer differently to an administrative request.
+    /// </remarks>
+    private static bool SameCatalog(DwEntityCatalog inForce, DwEntityCatalog asked) => inForce.SameAs(asked);
+
+    /// <summary>
+    /// True when the second call supplies the same kinds of policy source, in the same order.
+    /// </summary>
+    /// <remarks>
+    /// Types, not instances. A store provider reads its rules from wherever it was built to read
+    /// them, and nothing here can compare two stores; what it can refuse is a second call that adds
+    /// a source, drops one, or reorders them, which is the difference that changes what the resolver
+    /// decides. The attribute provider is left out of both sides, since it is added either way.
+    /// </remarks>
+    private static bool SameProviders(IDwPolicyProvider[]? asked)
+    {
+        Type[] wanted = ProviderTypes(asked);
+
+        if (_providerTypes.Length != wanted.Length)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < wanted.Length; i++)
+        {
+            if (_providerTypes[i] != wanted[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>The kinds of policy source a call supplies, in order, as the resolver takes them.</summary>
+    private static Type[] ProviderTypes(IDwPolicyProvider[]? providers) =>
+        (providers ?? Array.Empty<IDwPolicyProvider>())
+        .Where(provider => provider is not null and not AttributePolicyProvider)
+        .Select(provider => provider.GetType())
+        .ToArray();
 
     /// <summary>
     /// Prepares a context for use, once per request, before its first query.

@@ -61,6 +61,21 @@ public class PageTests : SalesTestBase
     public void HighPageNumberReturnsNothing() =>
         Assert.Empty(Products.Page(Page(999, 10)).ToList());
 
+    /// <summary>
+    /// The offset is a product, and in 32 bits it wraps: a negative offset was the first page again
+    /// on SQLite and in memory, and an error on SQL Server and PostgreSQL. A page past the last row is
+    /// an empty page however far past it is.
+    /// </summary>
+    [Theory]
+    [InlineData(int.MaxValue, 1000)]
+    [InlineData(int.MaxValue, 2)]
+    [InlineData(4_294_968, 1000)]
+    public void PageNumberWhoseOffsetPassesInt32IsAnEmptyPage(int number, int size)
+    {
+        Assert.Empty(Products.Page(Page(number, size)).ToList());
+        Assert.Empty(SalesSeed.Products().AsQueryable().Page(Page(number, size)).ToList());
+    }
+
     [Fact]
     public void RejectsPageNumberBelowOne()
     {

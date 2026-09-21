@@ -62,6 +62,25 @@ internal sealed class RowShape
     private static readonly ConditionalWeakTable<IEntityType, HashSet<string>> ComplexByType = new();
 
     private readonly HashSet<string>? _assigned;
+
+    // What a projection's initializer assigns beneath a member, by the member's path from the row.
+    // "Name" -> { "Ar", "En" } for Name = new LocalizedText { Ar = …, En = … }. A path with no entry
+    // is one this shape cannot speak for.
+    private readonly Dictionary<string, HashSet<string>>? _initialized;
+
+    // A member a projection copies from the query's own entity, by the member's path from the row:
+    // Name = x.Name records ("Name", the entity, "Name"), so what is beneath it is read from the model.
+    private readonly Dictionary<string, (IEntityType Entity, string Member)>? _copied;
+
+    // The paths whose value this shape could not read: a method call, a captured value, a subquery,
+    // two branches building the member two ways. The row carries the member; whether the query can
+    // compute it is not something the initializer says, so the answer for it is "cannot say".
+    private readonly HashSet<string>? _opaque;
+
+    // True when EF Core's own provider translates the query. What a query can compute is the
+    // translating provider's answer to give; a provider in front of EF Core, or in place of it, has
+    // rules of its own, so its rows are left alone.
+    private readonly bool _translated;
     private readonly Dictionary<string, Type> _built = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _narrowable = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _kept = new(StringComparer.OrdinalIgnoreCase);
@@ -73,10 +92,22 @@ internal sealed class RowShape
     private RowShape(RowKind kind) => Kind = kind;
 
     private RowShape(
-        RowKind kind, HashSet<string>? assigned, IEnumerable<string> narrowable, Type? built, IDictionary<string, Type> members)
+        RowKind kind,
+        HashSet<string>? assigned,
+        IEnumerable<string> narrowable,
+        Type? built,
+        IDictionary<string, Type> members,
+        Dictionary<string, HashSet<string>>? initialized = null,
+        Dictionary<string, (IEntityType Entity, string Member)>? copied = null,
+        bool translated = false,
+        HashSet<string>? opaque = null)
         : this(kind)
     {
         _assigned = assigned;
+        _initialized = initialized;
+        _copied = copied;
+        _opaque = opaque;
+        _translated = translated;
         _narrowable.UnionWith(narrowable);
         Built = built;
 
@@ -86,10 +117,11 @@ internal sealed class RowShape
         }
     }
 
-    private RowShape(IEntityType entity, IEnumerable<string> includes, bool includeUnknown)
+    private RowShape(IEntityType entity, IEnumerable<string> includes, bool includeUnknown, bool translated)
         : this(RowKind.Entity)
     {
         _entity = entity;
+        _translated = translated;
         _includes.UnionWith(includes);
         _includeUnknown = includeUnknown;
 
@@ -253,6 +285,248 @@ internal sealed class RowShape
 
         return true;
     }
+
+    /// <summary>
+    /// Whether the query behind these rows can express a path the caller named: true when every
+    /// segment is something the source produces, false when a segment provably is not, and null when
+    /// the shape cannot say. Only false is acted on: true is the absence of a reason to refuse
+    /// rather than a promise that the provider computes the path.
+    /// </summary>
+    /// <remarks>
+    /// A member exists on the row's type and still has no value the database can compute.
+    /// <c>LocalizedText.IsEmpty</c> is a getter over two columns, so a filter naming
+    /// <c>Name.IsEmpty</c> passes every check the policy makes and then fails inside the provider,
+    /// which is a five-hundred where the strict tier promises a refusal.
+    /// <para>
+    /// False is only ever returned where the shape knows the whole set of members a container can
+    /// produce: the entity type the query is over, a complex or owned type, or an initializer in the
+    /// projection itself. Anywhere else the answer is null and the path is left alone — beneath a
+    /// column, where a converter decides; on a framework type, where <c>Length</c>, <c>Year</c> and
+    /// <c>HasValue</c> are translated by the provider and are not members of any model; on rows in
+    /// memory, which run the getter; behind a provider that is not EF Core's own, which may rewrite
+    /// the member before EF Core ever sees it; and on a source this library cannot read.
+    /// </para>
+    /// <para>
+    /// The cost of being wrong is not symmetric. A path wrongly refused is a query that worked and
+    /// now does not, so nothing is refused on a guess; a path wrongly allowed is the five-hundred
+    /// this is fixing, which is what it already does today.
+    /// </para>
+    /// </remarks>
+    internal bool? Expresses(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        string[] segments = path.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (segments.Length == 0)
+        {
+            return null;
+        }
+
+        return Kind switch
+        {
+            RowKind.InMemory => null,
+            RowKind.Projected => ExpressesInProjection(segments),
+            _ => !_translated || _entity is null ? null : ExpressesInEntity(_entity, segments, 0)
+        };
+    }
+
+    /// <summary>
+    /// Whether a projected row can produce a path: the outermost initializer decides the first
+    /// segment, a nested initializer the ones beneath it, and a member copied from the query's own
+    /// entity hands the rest to the model.
+    /// </summary>
+    private bool? ExpressesInProjection(string[] segments)
+    {
+        if (!_translated)
+        {
+            // Another provider decides what it can compute, and its rules are not EF Core's. A
+            // provider that evaluates in memory runs the getter, as rows in memory do.
+            return null;
+        }
+
+        if (_opaque is not null && _opaque.Contains(string.Join(".", segments)))
+        {
+            // The initializer assigns the member from something this shape cannot read, so it says
+            // nothing about whether the query computes it.
+            return null;
+        }
+
+        if (_assigned is not null && !_assigned.Contains(segments[0]))
+        {
+            // Nothing assigns it, so the projection carries no value for it at all.
+            return false;
+        }
+
+        for (int i = 0; i < segments.Length - 1; i++)
+        {
+            string prefix = string.Join(".", segments.Take(i + 1));
+            string next = segments[i + 1];
+
+            if (_copied is not null && _copied.TryGetValue(prefix, out (IEntityType Entity, string Member) source))
+            {
+                List<string> rest = source.Member.Split('.', StringSplitOptions.RemoveEmptyEntries).ToList();
+
+                rest.AddRange(segments.Skip(i + 1));
+
+                return ExpressesInEntity(source.Entity, rest.ToArray(), 0);
+            }
+
+            if (_initialized is null || !_initialized.TryGetValue(prefix, out HashSet<string>? members))
+            {
+                return null;
+            }
+
+            if (!members.Contains(next))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether an entity query can express a path, walking the model: a column ends the walk, a
+    /// complex or owned member continues in its own type, a navigation continues in the type it
+    /// points at, and a member the model does not map anywhere is one the provider cannot compute.
+    /// </summary>
+    private static bool? ExpressesInEntity(IEntityType entity, IReadOnlyList<string> segments, int index)
+    {
+        IEntityType? current = entity;
+
+        for (int i = index; i < segments.Count; i++)
+        {
+            if (current is null)
+            {
+                return null;
+            }
+
+            string segment = segments[i];
+            bool last = i == segments.Count - 1;
+
+            if (MappedProperty(current, segment) is not null)
+            {
+                // A column, including a shadow property. Beneath one a converter decides, and the
+                // framework's own members are translated by the provider rather than mapped.
+                return last ? true : null;
+            }
+
+            if (ComplexMember(current, segment) is { } complex)
+            {
+                return last ? true : ExpressesInComplex(complex, segments, i + 1, depth: 0);
+            }
+
+            if (MappedNavigation(current, segment) is { } navigation)
+            {
+                if (last)
+                {
+                    return true;
+                }
+
+                current = navigation.TargetEntityType;
+
+                continue;
+            }
+
+            // The type carries the member and the queried type's model maps no value for it. A
+            // getter over columns is the shape this catches.
+            return CacheReflection.FindProperty(current.ClrType, segment) is null ? null : false;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether a complex or owned type can produce the rest of a path, read through reflection since
+    /// EF Core 6 has no complex properties.
+    /// </summary>
+    private static bool? ExpressesInComplex(object complex, IReadOnlyList<string> segments, int index, int depth)
+    {
+        if (depth > MaxComplexDepth
+            || complex.GetType().GetProperty("ComplexType")?.GetValue(complex) is not { } type)
+        {
+            return null;
+        }
+
+        string segment = segments[index];
+        bool last = index == segments.Count - 1;
+
+        if (Items(type, "GetProperties").Any(property => Named(property, segment)))
+        {
+            return last ? true : null;
+        }
+
+        if (Items(type, "GetComplexProperties").FirstOrDefault(nested => Named(nested, segment)) is { } deeper)
+        {
+            return last ? true : ExpressesInComplex(deeper, segments, index + 1, depth + 1);
+        }
+
+        return type.GetType().GetProperty("ClrType")?.GetValue(type) is Type clr
+               && CacheReflection.FindProperty(clr, segment) is not null
+            ? false
+            : null;
+    }
+
+    /// <summary>True when a model object answers to a name, whatever case the caller wrote.</summary>
+    private static bool Named(object model, string name) =>
+        model.GetType().GetProperty("Name")?.GetValue(model) is string held
+        && string.Equals(held, name, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when EF Core's own provider is the one that will translate the query.</summary>
+    /// <remarks>
+    /// What a query can compute is the translating provider's answer to give. A provider that wraps
+    /// EF Core exists to rewrite the members EF Core cannot translate — an expression expander, a
+    /// decompiler — so a member it computes is one the query produces, and holding its rows to EF
+    /// Core's model would refuse a query that runs. The model is read from the query root in the
+    /// expression, which such a wrapper leaves in place, so the provider is what tells the two
+    /// apart. EF Core's own provider is matched by name and by the assembly it was declared in: no
+    /// internal type is referenced, every version from EF Core 6 to 10 answers the same, and a type
+    /// declared under that name elsewhere is not taken for EF Core's.
+    /// <para>
+    /// The type itself, not a type derived from it. EF Core's provider derives from <c>object</c> in
+    /// every version, and the queryable a <c>DbSet</c> hands out carries that exact type through
+    /// every operator, so walking base types would match no EF Core query that an exact comparison
+    /// misses — and it would match a wrapper built by deriving from it, which is the very thing this
+    /// leaves alone.
+    /// </para>
+    /// </remarks>
+    private static bool EfCoreOwns(IQueryProvider provider)
+    {
+        Type type = provider.GetType();
+
+        return type.FullName == "Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider"
+               && type.Assembly.GetName().Name == "Microsoft.EntityFrameworkCore";
+    }
+
+    /// <summary>
+    /// The column the queried type maps under a name, or null.
+    /// </summary>
+    /// <remarks>
+    /// The queried type's own model, not a derived type's. EF Core translates a member against the
+    /// type the query is over: a member the model maps one level down, on a subtype, fails with
+    /// "Translation of member '…' failed. This commonly occurs when the specified member is
+    /// unmapped", which is the failure this whole walk exists to turn into a refusal. Query the
+    /// derived type to filter on it.
+    /// </remarks>
+    private static IProperty? MappedProperty(IEntityType entity, string name) =>
+        entity.GetProperties().FirstOrDefault(property => Same(property.Name, name));
+
+    /// <summary>The navigation the queried type maps under a name, or null.</summary>
+    private static INavigationBase? MappedNavigation(IEntityType entity, string name) =>
+        entity.GetNavigations().FirstOrDefault(navigation => Same(navigation.Name, name))
+        ?? (INavigationBase?)entity.GetSkipNavigations().FirstOrDefault(navigation => Same(navigation.Name, name));
+
+    /// <summary>The complex property the queried type declares under a name, or null.</summary>
+    private static object? ComplexMember(IEntityType entity, string name) =>
+        Items(entity, "GetComplexProperties").FirstOrDefault(complex => Named(complex, name));
+
+    /// <summary>Compares two model names the way a caller's spelling is compared everywhere else.</summary>
+    private static bool Same(string left, string right) =>
+        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Every member the value at a path loads beneath it, each with its path from the root, when an
@@ -507,7 +781,7 @@ internal sealed class RowShape
         bool unknown = !ReadIncludes(source.Expression, includes, out int included)
                        || (QueryRoot.Reshapes(source.Expression) && (included > 0 || QueryRoot.Builds(source.Expression)));
 
-        return new RowShape(entity, includes, unknown);
+        return new RowShape(entity, includes, unknown, EfCoreOwns(source.Provider));
     }
 
     /// <summary>
@@ -525,7 +799,9 @@ internal sealed class RowShape
         {
             // A constructor with arguments says nothing about which member each argument sets: every
             // member counts as assigned, and none can be narrowed.
-            return new RowShape(RowKind.Projected, null, Array.Empty<string>(), body.Type, built);
+            return new RowShape(
+                RowKind.Projected, null, Array.Empty<string>(), body.Type, built,
+                translated: EfCoreOwns(source.Provider));
         }
 
         List<string> narrowable = new();
@@ -536,6 +812,13 @@ internal sealed class RowShape
         HashSet<string>? assigned = initializer.NewExpression.Arguments.Count > 0
             ? null
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        Dictionary<string, HashSet<string>> initialized = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, (IEntityType Entity, string Member)> copied = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> opaque = new(StringComparer.OrdinalIgnoreCase);
+
+        ReadAssignments(initializer, string.Empty, row, rowSource, initialized, copied, opaque, depth: 0);
+        Forget(initialized, copied, opaque);
 
         foreach (MemberBinding binding in initializer.Bindings)
         {
@@ -560,8 +843,181 @@ internal sealed class RowShape
             }
         }
 
-        return new RowShape(RowKind.Projected, assigned, narrowable, initializer.Type, built);
+        return new RowShape(
+            RowKind.Projected, assigned, narrowable, initializer.Type, built, initialized, copied,
+            EfCoreOwns(source.Provider), opaque);
     }
+
+    /// <summary>
+    /// Records what an initializer assigns, at every depth: the member names it sets, and where a
+    /// member copied straight from the query's own entity comes from.
+    /// </summary>
+    /// <remarks>
+    /// Read by <see cref="Expresses"/> only, to answer whether a path the caller named is something
+    /// the projected row can produce. A member assigned from anything else — a method call, a
+    /// captured value — records nothing, and a path beneath it is one this shape cannot speak for.
+    /// <para>
+    /// A constructor with arguments says nothing about which member each argument sets, so the level
+    /// it builds is left unrecorded rather than recorded as incomplete.
+    /// </para>
+    /// </remarks>
+    private static void ReadAssignments(
+        MemberInitExpression initializer,
+        string prefix,
+        ParameterExpression row,
+        IEntityType? rowSource,
+        Dictionary<string, HashSet<string>> initialized,
+        Dictionary<string, (IEntityType Entity, string Member)> copied,
+        HashSet<string> opaque,
+        int depth)
+    {
+        if (depth > MaxComplexDepth)
+        {
+            return;
+        }
+
+        HashSet<string> members = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (MemberBinding binding in initializer.Bindings)
+        {
+            members.Add(binding.Member.Name);
+
+            if (binding is not MemberAssignment assignment)
+            {
+                continue;
+            }
+
+            string path = prefix.Length == 0 ? binding.Member.Name : $"{prefix}.{binding.Member.Name}";
+
+            if (!ReadValue(assignment.Expression, path, row, rowSource, initialized, copied, opaque, depth))
+            {
+                opaque.Add(path);
+            }
+        }
+
+        if (initializer.NewExpression.Arguments.Count == 0)
+        {
+            Record(initialized, prefix, members);
+        }
+    }
+
+    /// <summary>
+    /// Records one assigned value, and answers whether this shape could read it at all.
+    /// </summary>
+    /// <remarks>
+    /// A conditional is read branch by branch. The library's own typed projection null-guards every
+    /// nested node it builds — <c>Contact = contact == null ? new ContactRow() : new ContactRow { … }</c>
+    /// — so a row this library projected has to read exactly as the same row written by hand, or a
+    /// caller who composes <c>Select</c> and then filters loses the refusal the bare handle gives.
+    /// <para>
+    /// A branch that builds the value and sets nothing on it, <c>new ContactRow()</c>, assigns no
+    /// member, which is an answer rather than a gap: nothing beneath it is computed either.
+    /// </para>
+    /// </remarks>
+    private static bool ReadValue(
+        Expression value,
+        string path,
+        ParameterExpression row,
+        IEntityType? rowSource,
+        Dictionary<string, HashSet<string>> initialized,
+        Dictionary<string, (IEntityType Entity, string Member)> copied,
+        HashSet<string> opaque,
+        int depth)
+    {
+        Expression assigned = DefaultOrder.StripConversions(value);
+
+        switch (assigned)
+        {
+            case MemberInitExpression nested:
+                ReadAssignments(nested, path, row, rowSource, initialized, copied, opaque, depth + 1);
+
+                return true;
+
+            case NewExpression created when created.Arguments.Count == 0:
+                Record(initialized, path, Array.Empty<string>());
+
+                return true;
+
+            case ConstantExpression { Value: null }:
+                // A null branch carries no member of its own, and takes nothing away from the ones
+                // the other branch sets: a member of null is not a value any database computes.
+                return true;
+
+            case ConditionalExpression choice:
+                // Both branches, and neither short-circuited: a branch left unread is a member this
+                // shape would then speak for on half of what builds it.
+                return ReadValue(choice.IfTrue, path, row, rowSource, initialized, copied, opaque, depth)
+                       & ReadValue(choice.IfFalse, path, row, rowSource, initialized, copied, opaque, depth);
+
+            default:
+                if (rowSource is null || MemberChain(assigned, row, operators: false) is not { } chain)
+                {
+                    return false;
+                }
+
+                if (copied.TryGetValue(path, out (IEntityType Entity, string Member) already)
+                    && !Same(already.Member, chain))
+                {
+                    // Two branches copying two different members: what is beneath the one is not
+                    // what is beneath the other.
+                    return false;
+                }
+
+                copied[path] = (rowSource, chain);
+
+                return true;
+        }
+    }
+
+    /// <summary>Records what a level assigns, merged with what another branch of the same member assigns.</summary>
+    private static void Record(Dictionary<string, HashSet<string>> initialized, string path, IEnumerable<string> members)
+    {
+        if (initialized.TryGetValue(path, out HashSet<string>? already))
+        {
+            already.UnionWith(members);
+
+            return;
+        }
+
+        initialized[path] = new HashSet<string>(members, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Drops every path an assignment this shape could not read reaches, so that what is left is read
+    /// from a value the whole of which is known.
+    /// </summary>
+    /// <remarks>
+    /// One branch of a conditional this shape cannot read makes the member's whole value unreadable:
+    /// refusing on what the other branch happens to assign would refuse a path the query computes. A
+    /// path with no entry is one the shape cannot speak for, which is the answer such a member is
+    /// owed.
+    /// </remarks>
+    private static void Forget(
+        Dictionary<string, HashSet<string>> initialized,
+        Dictionary<string, (IEntityType Entity, string Member)> copied,
+        HashSet<string> opaque)
+    {
+        // One branch building the member in place and another copying it from the entity: the two
+        // say different things about what is beneath it, so the member is read from neither.
+        opaque.UnionWith(initialized.Keys.Where(copied.ContainsKey).ToList());
+
+        foreach (string path in opaque)
+        {
+            foreach (string reached in initialized.Keys.Where(key => Beneath(key, path)).ToList())
+            {
+                initialized.Remove(reached);
+            }
+
+            foreach (string reached in copied.Keys.Where(key => Beneath(key, path)).ToList())
+            {
+                copied.Remove(reached);
+            }
+        }
+    }
+
+    /// <summary>True when a path is the one named, or sits beneath it.</summary>
+    private static bool Beneath(string path, string root) =>
+        Same(path, root) || path.StartsWith(root + ".", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The type an assigned value is constructed as, <c>new ContactRow { … }</c>, or each element of a
@@ -722,7 +1178,17 @@ internal sealed class RowShape
     /// The member path a navigation lambda reads, <c>o =&gt; o.Lines</c> or <c>o =&gt; o.Customer.Address</c>,
     /// through casts and a filtered include's operators; null for any other shape.
     /// </summary>
-    private static string? MemberChain(Expression body, ParameterExpression parameter)
+    /// <param name="body">The expression to read.</param>
+    /// <param name="parameter">The lambda's own parameter, which the chain has to start at.</param>
+    /// <param name="operators">
+    /// Whether a sequence operator over the member may be stripped. A filtered include reads its
+    /// navigation through <c>Where</c>, <c>OrderBy</c>, <c>Skip</c>, <c>Take</c> and their kin, and
+    /// the member it reaches is the navigation itself. A projection's assignment is the other way
+    /// round: <c>Lines = o.Lines.Select(l =&gt; new LineRow { … }).ToList()</c> holds <c>LineRow</c>s
+    /// and not <c>Line</c>s, so reading it as the navigation would read every path beneath it out of
+    /// the wrong model — and refuse a member the row carries because the entity does not map it.
+    /// </param>
+    private static string? MemberChain(Expression body, ParameterExpression parameter, bool operators = true)
     {
         Expression node = DefaultOrder.StripConversions(body);
 
@@ -731,6 +1197,11 @@ internal sealed class RowShape
                && (call.Method.DeclaringType == typeof(Enumerable) || call.Method.DeclaringType == typeof(Queryable))
                && call.Arguments.Count > 0)
         {
+            if (!operators)
+            {
+                return null;
+            }
+
             node = DefaultOrder.StripConversions(call.Arguments[0]);
         }
 

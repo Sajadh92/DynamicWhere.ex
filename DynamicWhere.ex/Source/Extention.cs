@@ -29,7 +29,7 @@ public static class Extension
     /// be null or empty.</param>
     /// <returns>An <see cref="IQueryable{T}"/> where each element contains only the specified fields from the original query.</returns>
     /// <exception cref="ArgumentNullException">Thrown if query or fields is null.</exception>
-    /// <exception cref="LogicException">Thrown if fields is empty, or if type T does not have a parameterless constructor.</exception>
+    /// <exception cref="LogicException">Thrown if fields is empty or holds a name that is null or blank, or if type T does not have a parameterless constructor.</exception>
     public static IQueryable<T> Select<T>(this IQueryable<T> query, List<string> fields) where T : class
     {
         // Refuse a type that requires a policy context when the call is not inside one.
@@ -49,6 +49,9 @@ public static class Extension
         {
             throw new LogicException(ErrorCode.MustHaveFields);
         }
+
+        // A name that is null or blank is a malformed request, refused as one rather than by the lookup.
+        RequestShape.Names(fields);
 
         // Validate each field if it exists in the query.
         for (int i = 0; i < fields.Count; i++)
@@ -130,6 +133,9 @@ public static class Extension
             throw new LogicException(ErrorCode.MustHaveFields);
         }
 
+        // A name that is null or blank is a malformed request, refused as one rather than by the lookup.
+        RequestShape.Names(fields);
+
         // Validate each field against type T.
         for (int i = 0; i < fields.Count; i++)
         {
@@ -205,6 +211,9 @@ public static class Extension
             throw new ArgumentNullException(nameof(group));
         }
 
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(group);
+
         // Convert ConditionGroup to a string representation and apply filtering.
         string where = group.AsString<T>();
 
@@ -249,6 +258,9 @@ public static class Extension
         {
             throw new ArgumentNullException(nameof(groupBy));
         }
+
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(groupBy);
 
         // Convert GroupBy to dynamic LINQ strings.
         var (groupByString, selectString) = groupBy.AsString<T>();
@@ -320,6 +332,9 @@ public static class Extension
             throw new ArgumentNullException(nameof(orders));
         }
 
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(orders);
+
         // Concatenate the individual order strings into a single comma-separated string.
         string orderBy = string.Join(",", orders
                                .OrderBy(x => x.Sort)
@@ -363,7 +378,7 @@ public static class Extension
 
         // Skip the required number of items to reach the desired page,
         // and then take the specified number of items for the page.
-        return query.Skip((page.PageNumber - 1) * page.PageSize).Take(page.PageSize);
+        return query.Skip(Offset(page)).Take(page.PageSize);
     }
 
     /// <summary>
@@ -919,6 +934,9 @@ public static class Extension
             throw new ArgumentNullException(nameof(summary));
         }
 
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(summary);
+
         // Validate the Summary (including order fields against grouped fields).
         summary.Validate<T>();
 
@@ -960,7 +978,7 @@ public static class Extension
         // Apply pagination.
         if (summary.Page != null)
         {
-            result = result.Skip((summary.Page.PageNumber - 1) * summary.Page.PageSize)
+            result = result.Skip(Offset(summary.Page))
                            .Take(summary.Page.PageSize);
         }
 
@@ -992,6 +1010,9 @@ public static class Extension
         {
             throw new ArgumentNullException(nameof(summary));
         }
+
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(summary);
 
         // Validate the Summary (including order fields against grouped fields).
         summary.Validate<T>();
@@ -1043,7 +1064,7 @@ public static class Extension
         // Apply pagination.
         if (summary.Page != null)
         {
-            newResult = newResult.Skip((summary.Page.PageNumber - 1) * summary.Page.PageSize)
+            newResult = newResult.Skip(Offset(summary.Page))
                                  .Take(summary.Page.PageSize);
 
             pageNumber = summary.Page.PageNumber;
@@ -1142,6 +1163,9 @@ public static class Extension
             throw new ArgumentNullException(nameof(summary));
         }
 
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(summary);
+
         // Validate the Summary (including order fields against grouped fields).
         summary.Validate<T>();
 
@@ -1192,7 +1216,7 @@ public static class Extension
         // Apply pagination.
         if (summary.Page != null)
         {
-            newResult = newResult.Skip((summary.Page.PageNumber - 1) * summary.Page.PageSize)
+            newResult = newResult.Skip(Offset(summary.Page))
                                  .Take(summary.Page.PageSize);
 
             pageNumber = summary.Page.PageNumber;
@@ -1269,6 +1293,9 @@ public static class Extension
             throw new ArgumentNullException(nameof(segment));
         }
 
+        // A null entry in a list is a malformed request, refused as one before anything reads the list.
+        RequestShape.Refuse(segment);
+
         // Validate and retrieve ConditionSets from the Segment, in Sort order.
         List<ConditionSet> sets = segment.ValidateAndGetSets();
 
@@ -1297,4 +1324,15 @@ public static class Extension
             Data = fresult.Data
         };
     }
+
+    /// <summary>
+    /// The number of rows before a page, held to what <c>Skip</c> can take.
+    /// </summary>
+    /// <remarks>
+    /// Worked out in 64 bits. In 32 the product wraps for a large enough page number, and a negative
+    /// offset is an error on SQL Server and PostgreSQL and the first page again on SQLite and in memory,
+    /// where the answer to a page past the last row is an empty page.
+    /// </remarks>
+    private static int Offset(PageBy page) =>
+        (int)Math.Min((long)(page.PageNumber - 1) * page.PageSize, int.MaxValue);
 }

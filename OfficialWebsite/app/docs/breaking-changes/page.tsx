@@ -17,10 +17,46 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The twenty-nine points below cover constraints, surprises, and corner cases —
+        The forty-five points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
+      <Callout tone="danger" title="Behaviour changes in 3.3.0">
+        Points&nbsp;30 to 45 changed in <strong>3.3.0</strong>. Under{" "}
+        <code>Strict</code>, a path that exists on the type and names no value
+        the query can compute is refused rather than run, where the provider
+        used to throw and the caller saw a five-hundred (point&nbsp;30).{" "}
+        <code>LastTrace</code> is assigned before a request is sanitized, so a
+        refused request leaves its own trace readable (point&nbsp;31). And{" "}
+        <code>DwPolicy.Configure</code> takes a second call asking for the
+        posture already in force, which is what lets an integration suite start
+        several hosts over one composition root (point&nbsp;32). A query that
+        exhausts the audit buffer under <code>Strict</code> is now refused with
+        the clause&apos;s own field refusal rather than with{" "}
+        <code>CapExceeded</code> (point&nbsp;33). Four more refusals that named
+        a field under <code>Strict</code> name the clause instead
+        (point&nbsp;34). And <code>[DwAudit]</code> records the audited members
+        a projection the caller never named hands back, which an empty{" "}
+        <code>Selects</code> used to return unrecorded (point&nbsp;36), and{" "}
+        <code>MaxNavigationDepth</code> answers an alias the way it answers a
+        name that matches nothing (point&nbsp;35). A path the attribute walk
+        cannot name is policed rather than allowed: one beneath a member whose
+        type the framework declares (point&nbsp;37), a transform the walk
+        reached no path to (point&nbsp;38), a type first met at the walk&apos;s
+        depth limit (point&nbsp;39), and a path past four segments where a host
+        raised <code>MaxNavigationDepth</code> (point&nbsp;40). A page
+        number whose offset passes <code>Int32</code> is an empty page
+        (point&nbsp;41). And the four methods that hand back a query for the
+        caller to run are refused on a type whose only transformed member sits
+        where the policy names no path (point&nbsp;42), and{" "}
+        <code>[DwAudit]</code> records a member no path names once the rows show
+        it (point&nbsp;43). Two shapes of malformed request that used to reach
+        the caller as a five-hundred are refused as requests now: a{" "}
+        <code>Number</code> value the expression parser cannot read, or cannot
+        compare with the member the condition names (point&nbsp;44), and a{" "}
+        <code>null</code> entry inside one of the request&apos;s lists
+        (point&nbsp;45).
+      </Callout>
       <Callout tone="danger" title="Behaviour changes in 3.2.0">
         Points&nbsp;25 to 29 changed in <strong>3.2.0</strong>, and each is
         visible to code written for 3.1.0. A guarded query that sends no{" "}
@@ -958,7 +994,10 @@ PolicyTrace? recorded = guarded.LastTrace;  // recorded whatever the setting say
           <code>MaxNavigationDepth</code> and <code>MaxAuditEvents</code>, the two
           caps that named a field, used to report its canonical path, which
           confirmed that the path exists. They report <code>&quot;*&quot;</code>,
-          and <code>SourceOrigin</code> still names the cap.
+          and <code>SourceOrigin</code> still names the cap — except the audit
+          buffer, which since <strong>3.3.0</strong> refuses with the
+          clause&apos;s own field refusal under <code>Strict</code> outside a dry
+          run, and names no cap either (point&nbsp;33).
         </li>
         <li>
           <code>MaxQueryCost</code> is checked after every field has passed its
@@ -1446,10 +1485,739 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         ran on 3.1.0. It is now refused or dropped, as for any denied field.
       </Callout>
 
+      <h2 id="unexpressible-path">30. Under <code>Strict</code>, a Path the Query Cannot Compute Is Refused</h2>
+      <p>
+        A member of a row&apos;s type is not always a value a database can
+        produce. A shared type with two columns and a getter over them —{" "}
+        <code>LocalizedText</code> with <code>Ar</code>, <code>En</code> and{" "}
+        <code>IsEmpty</code> — gives two paths that translate and one that
+        cannot. The policy has nothing to say about the third:{" "}
+        <code>[DwNoWhere]</code> on <code>Name</code> matches that path and not
+        the ones beneath it. So every check passed, and EF Core threw{" "}
+        <code>InvalidOperationException</code> — a five-hundred where the strict
+        tier promises a refusal, and the one place the tier answered a caller
+        with neither an answer nor a refusal.
+      </p>
+      <p>
+        Since <strong>3.3.0</strong> such a path is refused as an unknown name
+        is: the clause&apos;s own code, <code>FieldPath</code>{" "}
+        <code>&quot;*&quot;</code>, in every clause the database has to compute
+        — a filter, an order, a grouping key, an aggregated field, and a filter
+        or an order inside a <code>Segment</code>. It is refused only where the
+        whole set of members a container can produce is known.
+      </p>
+      <p>
+        <strong><code>Selects</code> is not one of them.</strong> A projection
+        is the last thing the provider builds, and EF Core evaluates that one on
+        the client when it cannot translate it, so{" "}
+        <code>Selects = [&quot;Id&quot;, &quot;Name.IsEmpty&quot;]</code>{" "}
+        returns the computed value exactly as it did before. Refusing it would
+        take back a projection that has always worked.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Source of the rows</th><th>Read from</th><th><code>Name.IsEmpty</code></th></tr>
+        </thead>
+        <tbody>
+          <tr><td>An entity</td><td>the EF Core model: columns, shadow properties, owned and complex members, navigations</td><td>Refused</td></tr>
+          <tr><td>A row a <code>Select</code> built before <code>ApplyPolicy</code></td><td>that initializer&apos;s own assignments, at every level, both branches of a conditional included</td><td>Refused</td></tr>
+          <tr><td>…where the initializer assigns the member from something else: a method call, a captured value, a subquery, two branches building it two ways</td><td>nothing — the assignment is not one this shape reads</td><td>Left alone, as before</td></tr>
+          <tr><td>…where the <code>Select</code> copies the member, <code>Name = role.Name</code></td><td>the model, beneath the member it copies</td><td>Refused</td></tr>
+          <tr><td>Rows in memory</td><td>nothing — the getter runs</td><td>Runs, as before</td></tr>
+          <tr><td>Anything beneath a column, converted or not</td><td>nothing — the converter decides</td><td>Left alone, as before</td></tr>
+          <tr><td>A framework member: <code>Length</code>, <code>Year</code>, <code>HasValue</code></td><td>nothing — the provider translates it</td><td>Runs, as before</td></tr>
+          <tr><td>A source the library cannot read</td><td>nothing</td><td>Left alone, as before</td></tr>
+          <tr><td>A provider in front of EF Core: an expression expander, a decompiler</td><td>nothing — it rewrites what EF Core cannot translate</td><td>Left alone, as before</td></tr>
+          <tr><td>A column only a subtype maps, queried through the base</td><td>the queried type&apos;s model, which is what EF Core translates against</td><td>Refused</td></tr>
+          <tr><td>A projection a provider that is not EF Core&apos;s ran</td><td>nothing — its rules are its own</td><td>Left alone, as before</td></tr>
+        </tbody>
+      </table>
+      <p>
+        A projection that does not build its rows with an object initializer is
+        left alone whole: an anonymous type, and a constructor with arguments,
+        say nothing about which member each value sets, so no member of such a
+        row is refused here and none is claimed. A projection is otherwise read
+        only as far as its initializer can be read. An entity query names every
+        producible member from the model; a projection
+        names them only where each assignment is a nested initializer, a member
+        copied from the entity, a value built and left empty, or a conditional
+        over those — a null branch beside one of them included. A member
+        assigned nothing but a null is left alone, like any assignment this
+        shape cannot read. Past <code>MaxComplexDepth</code> — eight levels
+        — it stops reading and stops speaking, and under <code>Strict</code>
+        such a path still reaches the provider and still fails there, exactly as
+        it did before 3.3.0.
+      </p>
+      <p>
+        <strong>Left alone</strong> is not a promise that the path runs. The
+        policy does not refuse it, so it behaves exactly as it does unguarded:{" "}
+        <code>Name.IsEmpty</code> beneath a column mapped through a value
+        converter still fails inside the provider, as it always has.
+      </p>
+      <p>
+        An unmapped getter on the entity itself,{" "}
+        <code>Display =&gt; $&quot;&#123;Code&#125;:&#123;Id&#125;&quot;</code>,
+        is refused for the same reason. The convenience tier and a dry run are
+        unchanged: both fail exactly as the unguarded query does, which is the
+        provider&apos;s own error.
+      </p>
+      <Callout tone="warn" title="The rule is the model's">
+        A member the model maps nowhere is one the database cannot compute, so
+        the strict tier refuses it wherever the database has to. A member a
+        translator inside EF Core computes without a mapping — a member
+        translator plugin, a replaced query preprocessor — is refused with the
+        rest: map it, or filter on the columns beneath it.
+      </Callout>
+      <p>
+        A provider <em>in front of</em> EF Core is a different case, and is left
+        alone. LinqKit&apos;s <code>AsExpandable()</code> and
+        DelegateDecompiler&apos;s <code>Decompile()</code> exist to rewrite the
+        members EF Core cannot translate, so a member they compute is one the
+        query produces, over a projection and over an entity alike. The test is
+        EF Core&apos;s own provider type, from EF Core&apos;s own assembly —
+        every other provider is left alone for the same reason turned around: a
+        host&apos;s own, registered through{" "}
+        <code>ReplaceService&lt;IAsyncQueryProvider, …&gt;</code>, may rewrite or
+        may pass straight through, the library cannot tell, and refusing on that
+        guess would take back a query the rewriting host answers today. A row the
+        library itself projected is read like any other: the core&apos;s typed{" "}
+        <code>Select</code> null-guards every nested node it builds, and both
+        branches of that guard are read, so composing <code>Select</code> and
+        then filtering refuses what the bare handle refuses.
+      </p>
+      <p>
+        The refusal raises no <code>[DwAudit]</code> event, for the reason an
+        unknown name raises none: no field was read, and the refusal names none.{" "}
+        <code>AuditRefusals</code> records it, and so does the trace. A
+        simulation has no source, so <code>PolicySimulator</code> and{" "}
+        <code>/simulate</code> cannot refuse such a path — they show the request
+        running where the strict query refuses it.
+      </p>
+
+      <h2 id="last-trace-timing">31. <code>LastTrace</code> Is Set Before a Request Is Sanitized</h2>
+      <p>
+        Since <strong>3.3.0</strong>{" "}
+        <code>PolicyQueryable&lt;T&gt;.LastTrace</code> carries the trace of a
+        request that was refused. It used to be assigned after sanitizing
+        returned, so a refusal left it holding the previous request&apos;s
+        trace, or null on the first. A strict refusal names no field on purpose,
+        and the trace is where the real path and the reason live, so this is
+        what makes one readable. Code that read <code>LastTrace</code> after
+        catching a <code>PolicyException</code> and expected the earlier
+        request&apos;s trace reads this request&apos;s now.
+      </p>
+
+      <h2 id="configure-twice">32. <code>Configure</code> Takes the Same Posture Twice</h2>
+      <p>
+        Until <strong>3.3.0</strong> the first{" "}
+        <code>DwPolicy.Configure</code> won and every later call threw, so an
+        integration suite starting several{" "}
+        <code>WebApplicationFactory</code> hosts over one composition root had
+        to read <code>IsConfigured</code> first — a check-then-act two hosts
+        starting at once can both pass. A second call asking for the posture
+        already in force now does nothing and returns; one asking for a
+        different posture still throws{" "}
+        <code>InvalidOperationException</code>. The comparison happens inside
+        the lock that does the configuring, so no caller needs a lock of its
+        own.
+      </p>
+      <p>
+        Compared: the tier, <code>DryRun</code>,{" "}
+        <code>IncludeTraceInResult</code>, <code>AuditRefusals</code>,{" "}
+        <code>HashSalt</code>, <code>StoreFailure</code>,{" "}
+        <code>MaxSnapshotAge</code>, <code>RefreshInterval</code>, every cap
+        value, the exposed entity catalogue with every name it answers to and
+        the name each type is reported under, and the provider types in the
+        order supplied. Writing a value&apos;s own default down is not a
+        difference: the group floor, and <code>IncludeTraceInResult</code>{" "}
+        written as the tier&apos;s own answer, are compared by the value that
+        applies. Every other cap is compared as written. A type exposed under two names is reported under the last one,
+        so two catalogues resolving every name alike are still refused when the
+        order differs. Not compared, and not
+        replaced: <code>TokenVault</code>, <code>Services</code> and the
+        provider instances — a second host builds its own, and no two are ever
+        the same reference.
+      </p>
+      <Callout tone="warn" title="A second host runs with the first host's vault, container and rule stores">
+        In one test process that is what you want. Elsewhere, start a second
+        host only if it is. <code>AddDwPolicies</code> also registers the
+        posture in force rather than the instance it has just built, so a
+        container resolving <code>DwPolicyOptions</code> after a second
+        registration gets the first one&apos;s. Code that relied on the second
+        call throwing no longer sees the exception.
+      </Callout>
+
+      <h2 id="audit-cap-refusal">33. The Audit Cap Refuses Like Any Other Field, Under <code>Strict</code></h2>
+      <p>
+        An audited field records one event per use, and the library refuses the
+        query rather than dropping a record when{" "}
+        <code>DwCaps.MaxAuditEvents</code> is reached — fail closed, because an
+        access with nothing written down is the one outcome{" "}
+        <code>[DwAudit]</code> exists to prevent. Until <strong>3.3.0</strong>{" "}
+        that refusal carried <code>CapExceeded</code> and a{" "}
+        <code>SourceOrigin</code> naming the cap, while a name matching nothing
+        carried the ordinary field refusal and no origin.
+      </p>
+      <p>
+        Two answers, and the difference told a caller that the name they had
+        guessed is a real field <em>and</em> an audited one — the inference the
+        strict tier exists to prevent, since an unknown name is never audited
+        and never reaches the cap. Under <code>Strict</code>, outside a dry run,
+        the cap now refuses with the same code, the same{" "}
+        <code>FieldPath</code> <code>&quot;*&quot;</code> and the same absent
+        origin as any other field refusal. The request still fails, the trace
+        still records which refusal it really was, and{" "}
+        <code>Convenience</code> and a dry run still answer{" "}
+        <code>CapExceeded</code>. Code switching on <code>CapExceeded</code>{" "}
+        under <code>Strict</code> sees the change.
+      </p>
+
+      <h2 id="strict-names-the-clause">34. Four More Refusals Name the Clause Under <code>Strict</code></h2>
+      <p>
+        A strict refusal names no field, and four did.{" "}
+        <code>AmbiguousFieldName</code> told a caller that the name they wrote
+        matches more than one field, which is to say at least one; it is refused
+        as an unknown name is since <strong>3.3.0</strong>, with the ambiguity
+        kept in the trace for the operator who has to fix the aliases.{" "}
+        <code>AmbiguousGroupKey</code> reported the grouping key&apos;s
+        canonical path — the column behind whatever alias the caller wrote — and
+        an origin saying its values are transformed; it reports{" "}
+        <code>&quot;*&quot;</code> and no origin.{" "}
+        <code>TransformRequiresMaterialization</code> listed every transformed
+        column on the type to a caller who named none of them.{" "}
+        <code>MissingHashSalt</code> and <code>MissingTokenVault</code> named the
+        masked field a deployment forgot to configure for. Those three report{" "}
+        <code>&quot;*&quot;</code> and no origin;{" "}
+        <code>TransformRequiresMaterialization</code> reports{" "}
+        <code>&quot;*&quot;</code> and keeps an origin, which names the method
+        and what to call instead rather than any field.
+      </p>
+      <p>
+        All four are unchanged under <code>Convenience</code> and in a dry run —
+        the posture&apos;s switch or the caller&apos;s — where the tier names
+        fields anyway, and the refusal audit still records the real field, as it
+        does for every refusal whose caller-facing path is{" "}
+        <code>&quot;*&quot;</code>. Code switching on{" "}
+        <code>AmbiguousFieldName</code> under <code>Strict</code>, or reading{" "}
+        <code>FieldPath</code> off any of the four, sees the change.
+      </p>
+
+      <h2 id="nav-cap-alias">35. <code>MaxNavigationDepth</code> on a Name the Caller Wrote as One Token</h2>
+      <p>
+        The cap counts the canonical path, so an alias standing for a deep path
+        was refused with <code>CapExceeded</code> and an origin stating that
+        path&apos;s depth — where a name matching nothing got the clause&apos;s
+        own refusal and no origin. Under <code>Strict</code> outside a dry run
+        such a name is refused as an unknown name is since{" "}
+        <strong>3.3.0</strong>. A caller who wrote the path themselves already
+        knows its depth and still meets the cap, as every over-long request
+        does, and the trace keeps the cap and the depth for the operator.
+      </p>
+
+      <h2 id="audit-unnamed-read">36. <code>[DwAudit]</code> Records a Read the Request Did Not Name</h2>
+      <p>
+        A request that sends no <code>Selects</code> receives the row. Until{" "}
+        <strong>3.3.0</strong> only a field the request spelled out was
+        recorded, so that caller read every audited member of the row with
+        nothing written down — one token past a control whose whole purpose is
+        to answer who read a field.
+      </p>
+      <p>
+        Every audited member a projection the caller did not name hands back is
+        now recorded for <code>Select</code>: the members the synthesized
+        projection keeps where one is built, and every member the caller may
+        select where none is, since the row then comes back whole. One event per
+        query rather than one per row, and only for a field{" "}
+        <code>[DwAudit]</code> names, so a type with nothing audited records
+        nothing. A deployment already running the control sees more events than
+        it did, and <code>DwCaps.MaxAuditEvents</code> — which refuses rather
+        than dropping a record — can now be reached by traffic that did not
+        reach it before. Raise the cap, or drain per request with{" "}
+        <code>app.UseDwPolicyAudit()</code>.
+      </p>
+
+      <h2 id="beneath-framework-member">37. A Path Beneath a Framework-Typed Member Takes That Member&apos;s Policy</h2>
+      <p>
+        The attribute walk descends into an application&apos;s own types and
+        nowhere else, so no attribute can be placed beneath a member the
+        framework declares the type of. The pipeline validates such a path and
+        the provider translates it all the same:{" "}
+        <code>Salary.Value</code> and <code>Salary.HasValue</code> on a{" "}
+        <code>decimal?</code>, <code>Secret.Length</code> on a{" "}
+        <code>string</code>, <code>Born.Year</code> or{" "}
+        <code>Born.Date.Year</code> on a <code>DateTime</code>,{" "}
+        <code>Bag.Count</code> on a dictionary, and <code>Lines.Count</code> on
+        an application&apos;s own collection class — the collection&apos;s own
+        member, not an element&apos;s. No fragment named any of them, so each
+        resolved as allowed.
+      </p>
+      <Callout tone="danger" title="Fixed (security): one segment past a denied member there was no policy at all">
+        Until <strong>3.3.0</strong> a <code>[DwDenied] decimal?</code> was
+        filtered on, sorted by, grouped by with its values as the group keys,
+        aggregated as <code>MAX(Salary.Value)</code> and handed back by a
+        dynamic projection, under <code>Strict</code>. A transformed member gave
+        its stored value the same way, a <code>[DwAudit]</code> member was read
+        with nothing recorded, a <code>[DwCost]</code> member cost the default,
+        and a <code>[DwOperators]</code> restriction did not hold. The behaviour
+        is in 3.2.0 and earlier, in both tiers.
+      </Callout>
+      <p>
+        Such a path now takes every fragment of the member it reads, whichever
+        provider supplied it — an attribute and a store rule on{" "}
+        <code>Salary</code> both cover <code>Salary.Value</code>: the deny
+        effects per feature, the <code>[DwOperators]</code> restriction
+        (intersected), the <code>[DwCost]</code> weight and the audited
+        features. It does not take what is said to the caller about the member:
+        the alias, the required filter — a filter on{" "}
+        <code>TenantId.Value</code> does not satisfy a{" "}
+        <code>[DwRequireWhere]</code> on <code>TenantId</code> — the forced
+        scope, and the descriptive facts. A rule naming the sub-path itself
+        still applies alongside.
+      </p>
+      <p>
+        One feature is one feature: <code>[DwNoWhere] Born</code> refuses{" "}
+        <code>WHERE Born.Year</code> and still allows{" "}
+        <code>GROUP BY Born.Year</code>. A member nothing denies is read beneath
+        exactly as before, so <code>Name.Length</code> still runs. Where the
+        member is transformed there is no member beneath it to apply the chain
+        to, so <code>Select</code>, <code>Group</code> and{" "}
+        <code>Aggregate</code> on the path are refused rather than answered with
+        the stored value. And a member only a subtype of the navigated type
+        declares is <em>not</em> such a path: <code>Zone.Parent</code>, where a
+        subclass of Zone&apos;s type declares <code>Parent</code>, is decided by
+        the fragments naming it, as before, so a grant of <code>Zone</code>{" "}
+        under a <code>&quot;*&quot;</code> deny does not grant it.
+      </p>
+      <p>
+        <strong>Who is affected:</strong> any deployment whose callers can name
+        a path one segment beneath a denied, masked, audited, weighted or
+        operator-restricted member. Such a request now behaves as it does on the
+        member itself: a filter, a grouping or an aggregate on it is refused in
+        both tiers, and a select or an order is refused under{" "}
+        <code>Strict</code> and dropped under <code>Convenience</code>. Nothing
+        to do, unless a caller relied on reading <code>Salary.Value</code>, in
+        which case allow the member.
+      </p>
+
+      <h2 id="unwalked-transform">38. A Transformed Member No Path Reaches Is Transformed</h2>
+      <p>
+        The outbound walk transforms along the paths the policy names — the
+        declared types, four segments deep — and a value can sit in the
+        materialized rows where none of them goes. A{" "}
+        <code>[DwMask]</code> member five segments down an included or in-memory
+        graph (<code>B.C.D.E.Card</code>, while <code>B.C.D.Pin</code> four
+        segments down was masked), a masked member only a subtype of the
+        row&apos;s type declares (<code>Dog.Chip</code> on rows typed{" "}
+        <code>Animal</code>, in memory or in a TPH hierarchy), a masked member
+        of an object a dictionary holds, and the far side of a cycle each came
+        back exactly as stored — with no <code>Selects</code>, with a navigation
+        named whole in <code>Selects</code>, and in a dynamic projection holding
+        a real object.
+      </p>
+      <Callout tone="danger" title="Fixed (security): default configuration, both tiers, at the default caps">
+        No cap had to be raised and no option set. A column masked four segments
+        down was returned in the clear five segments down, under{" "}
+        <code>Strict</code>, until <strong>3.3.0</strong>.
+      </Callout>
+      <p>
+        The rows are now also walked by run-time type, and a member that
+        declares a transform attribute and was not transformed along a named
+        path is transformed by its own attributes, exactly once — an object
+        reached both ways is not transformed twice. Only members that declare a
+        transform or an audit for <code>Select</code>, or that can lead to one,
+        are read, so a navigation whose type can reach neither is never touched
+        and a lazy loader behind it is not woken, and a model that declares
+        neither anywhere pays for no second pass.
+        The transform is the member&apos;s own attributes: no rule can speak to
+        such a member, since no path names it, which is the same answer as
+        &quot;no runtime rule can unmask a field&quot;, and a resolver built
+        over no <code>AttributePolicyProvider</code> reads no attribute here
+        either. It runs in a dry run, as transforms always have, and the trace
+        records the path with its stages and the note{" "}
+        <code>(declared on the member; no path of the policy names it)</code>.
+      </p>
+      <p>
+        <strong>Who is affected:</strong> results that used to carry stored
+        values now carry transformed ones, which is the point of the fix and a
+        change to what a caller receives. A transformed member with no setter
+        there now fails the query with <code>InvalidOperationException</code>,
+        as one along a named path always has: give the member a setter, or
+        project into a type that has one. A member typed <code>object</code>, or
+        a collection that is not generic, still says nothing about what it holds
+        and is not read into.
+      </p>
+
+      <h2 id="depth-limit-cycle">39. A Forced Scope on a Type First Met at the Depth Limit Applies</h2>
+      <p>
+        The attribute walk leaves out what is meaningless around a cycle: a
+        forced scope, a required filter and an alias on a type reached from
+        itself. It returned at its depth limit with the type still marked as
+        being inside it, so a type <em>first</em> met at the fourth segment read
+        as a cycle wherever it was met again in the same walk — and the three
+        were then left out of a shorter path reaching that type directly.
+      </p>
+      <Callout tone="danger" title="Fixed (security): which member was declared first decided whether a tenant scope applied">
+        Two members of one type, one reached at the depth limit and one
+        directly, and the order the properties were declared in decided whether
+        the <code>[DwForceWhere]</code> on the navigated type reached the
+        shorter path. Until <strong>3.3.0</strong>.
+      </Callout>
+      <p>
+        The scope, the requirement and the alias now apply on every path within
+        four segments that is not around a cycle, as the documentation always
+        said they did.
+      </p>
+      <p>
+        <strong>Who is affected:</strong> a query that ran unscoped is now
+        scoped, so it returns fewer rows; a{" "}
+        <code>[DwRequireWhere]</code> that was never demanded may now be
+        demanded, with <code>RequiredFilterMissing</code>; and a member that was
+        reachable only by its real path now also answers to its{" "}
+        <code>[DwAlias]</code>. Check a model that declares any of the three on
+        a type reached both at four segments and nearer.
+      </p>
+
+      <h2 id="past-the-walk">40. Paths Past Four Segments When <code>MaxNavigationDepth</code> Is Raised</h2>
+      <p>
+        <code>Caps.MaxNavigationDepth</code> defaults to <strong>4</strong>, the
+        depth the attribute walk reads to, and a host may raise it. A request
+        could then name a path of five or more segments, which no attribute
+        fragment reached, so a <code>[DwDenied]</code> member at segment five
+        was filtered on, grouped by and returned, under <code>Strict</code>.
+        Default configuration was never exposed to this one.
+      </p>
+      <p>
+        The attributes of the member at the end of such a path are read directly
+        now: the deny family, <code>[DwOperators]</code>, the transform stages,{" "}
+        <code>[DwCost]</code>, <code>[DwAudit]</code>,{" "}
+        <code>[DwDescribe]</code> and allowed values. What is declared about the
+        queried entity itself is not read there, as it is not around a cycle:{" "}
+        <code>[DwAlias]</code>, <code>[DwRequireWhere]</code>,{" "}
+        <code>[DwForceWhere]</code>. Only a resolver that reads attributes does
+        this, which every resolver <code>DwPolicy.Configure</code> builds does.
+      </p>
+      <p>
+        A transformed member there is still a member, so a row that carries it
+        carries it transformed: <code>Selects</code> naming it returns it
+        transformed, in a typed projection and in a generated row alike, because
+        the chains of the members a projection names past the walk are handed to
+        the outbound walk beside the type&apos;s own list. A grouping key and an
+        aggregated field are columns of a generated row, which a summary&apos;s
+        own transform finds by that list, and the list stops at four segments,
+        so those two are refused with <code>FieldDeniedForGroup</code> and{" "}
+        <code>FieldDeniedForAggregate</code>. Filtering and ordering run on the
+        stored value, as at any depth.
+      </p>
+      <p>
+        <strong>Who is affected:</strong> only a deployment that raised the cap.
+        A request naming a denied member past four segments is refused where it
+        ran, and one naming a transformed member past four segments receives the
+        transformed value where it received the stored one.
+      </p>
+
+      <h2 id="page-offset-overflow">41. A Page Number Whose Offset Passes <code>Int32</code> Is an Empty Page</h2>
+      <p>
+        The offset a page skips is{" "}
+        <code>(PageNumber - 1) * PageSize</code>, and it was worked out in 32
+        bits. For a large enough page number the product wrapped: a negative
+        offset is an error on SQL Server and PostgreSQL, so the request became a
+        five-hundred, and the first page again on SQLite and in memory, so a
+        page far past the last row returned rows.
+      </p>
+      <p>
+        It is worked out in 64 bits and held to <code>int.MaxValue</code> now,
+        in <code>Page</code> and in the three summary methods, guarded or not.
+        A page past the last row is an empty page however far past it is, as it
+        always was for a page number that did not wrap.
+      </p>
+      <p>
+        <strong>Who is affected:</strong> any endpoint that passes a page number
+        through from a caller. The policy layer caps <code>PageSize</code>{" "}
+        through <code>MaxPageSize</code> and never <code>PageNumber</code>, so a
+        guarded query took the same path. Code that treated the five-hundred as
+        the signal for an out-of-range page now gets an empty page instead.
+      </p>
+
+      <h2 id="unmaterialized-unnamed-transform">42. A Query You Run Yourself Is Refused Where Only an Unnamed Member Is Transformed</h2>
+      <p>
+        <code>SelectDynamic</code>, <code>Group</code>,{" "}
+        <code>FilterDynamic</code> and <code>Summary</code> on the guarded
+        handle hand back a query for the caller to run, which the library never
+        sees materialized. They are refused with{" "}
+        <code>TransformRequiresMaterialization</code> on a type whose values are
+        transformed on the way out, because nothing would apply the transform to
+        the rows the caller reads.
+      </p>
+      <Callout tone="danger" title="Fixed (security): a type transformed only off the named paths was handed its query">
+        Whether a type is one was read from the paths the policy names. A type
+        whose only transforms sit off them — on a member only a subtype
+        declares, one five segments down, one of an object a dictionary holds —
+        got the query, and its rows exactly as stored: the same gap the outbound
+        walk&apos;s second pass closed for the terminals (point&nbsp;38), one
+        method call away from them. Until <strong>3.3.0</strong>.
+      </Callout>
+      <p>
+        The refusal now asks what a row of the type can hold as well — any
+        transform attribute anywhere in what the type can reach — which only a
+        resolver that reads attributes is asked. With no named column to list it
+        names the clause: <code>FieldPath</code> is{" "}
+        <code>&quot;*&quot;</code> in both tiers, where under{" "}
+        <code>Convenience</code> it otherwise lists the transformed columns. The
+        origin, which names the method and what to call instead, is unchanged. A
+        type nothing transforms anywhere still gets its query.
+      </p>
+      <p>
+        <strong>Who is affected:</strong> a caller that composed one of those
+        four methods on such a type receives a refusal where it received a
+        query. Materialize through <code>ToListDynamic</code> or{" "}
+        <code>ToList(Summary)</code>, which transform the rows, or leave the
+        policy deliberately with <code>AsUnguardedQueryable()</code>.
+      </p>
+
+      <h2 id="unnamed-audit">43. <code>[DwAudit]</code> Records a Member No Path Names</h2>
+      <p>
+        Point&nbsp;36 closed the read a request did not spell out. This closes
+        the read the policy has no path for at all. The gate records a use by
+        path, before the query runs, and a member only a subtype of the
+        row&apos;s type declares, or one past the four segments the attribute
+        walk reads, has no path it could ask about — so, handed back inside a
+        row returned whole or a navigation kept whole, it was read with nothing
+        written down.
+      </p>
+      <Callout tone="danger" title="Fixed (security): default configuration, both tiers">
+        In a probe with four audited members, two were recorded: the
+        subtype&apos;s and the one at segment five were not. It is the same gap
+        the outbound walk&apos;s second pass closed for transforms
+        (point&nbsp;38), and the pass that finds those members finds these.
+      </Callout>
+      <p>
+        That pass now reports each audited member it meets where the policy
+        names no path to it, and the terminal records it: one{" "}
+        <code>DwAuditEvent</code> per path per query, not per row, with{" "}
+        <code>Feature</code> <code>Select</code>, <code>Effect</code>{" "}
+        <code>Mask</code> where the member is transformed as well and{" "}
+        <code>Allow</code> otherwise, <code>EntityType</code> the queried
+        type&apos;s full name, and <code>FieldPath</code> the path through the
+        rows — <code>B.C.D.E.Five</code>, or <code>Hidden</code> for a
+        subtype&apos;s member at the root.
+      </p>
+      <ul>
+        <li>
+          Only a member its own <code>[DwAudit]</code> audits for{" "}
+          <code>Select</code>, and only where the projection carries it: a
+          member the projection left out is not a read.
+        </li>
+        <li>
+          A member the declared types hold within four segments is the
+          gate&apos;s and is left to it, and so is a path the projection spells
+          out however long it is. Neither is recorded twice.
+        </li>
+        <li>
+          Recorded in a dry run too, as every audited use is, and read only by a
+          resolver that reads attributes. A model that declares neither an audit
+          for <code>Select</code> nor a transform anywhere pays for no second
+          pass.
+        </li>
+        <li>
+          At <code>DwCaps.MaxAuditEvents</code> it fails closed as the gate
+          does, and the rows are withheld: under <code>Strict</code> outside a
+          dry run the clause&apos;s own refusal with <code>FieldPath</code>{" "}
+          <code>&quot;*&quot;</code> — <code>FieldDeniedForSegment</code> inside
+          a segment — and <code>CapExceeded</code> otherwise, whose origin names
+          the cap and the undrained buffer.
+        </li>
+      </ul>
+      <p>
+        <strong>Who is affected:</strong> a deployment already running the
+        control sees more events for models with such members, and{" "}
+        <code>MaxAuditEvents</code> can be reached by traffic that did not reach
+        it before. Raise the cap, or drain per request with{" "}
+        <code>app.UseDwPolicyAudit()</code>.
+      </p>
+
+      <h2 id="number-values">44. A <code>Number</code> Value Is Read the Way the Parser Reads It</h2>
+      <p>
+        The predicate builder writes a <code>DataType.Number</code> value into the
+        generated expression unquoted, exactly as sent, and validation checked it
+        with <code>byte</code> / <code>short</code> / <code>int</code> /{" "}
+        <code>long</code> / <code>float</code> / <code>double</code> /{" "}
+        <code>decimal</code> <code>TryParse</code> in the host&apos;s culture. The
+        two disagreed.
+      </p>
+      <Callout tone="danger" title="Fixed: a malformed number was a five-hundred, and a host's culture decided">
+        <code>&quot;1,000&quot;</code>, <code>&quot;5-&quot;</code>,{" "}
+        <code>&quot;+5&quot;</code>, <code>&quot;.5&quot;</code>,{" "}
+        <code>&quot;5.&quot;</code>, <code>&quot;-.5&quot;</code>,{" "}
+        <code>&quot;1.e5&quot;</code>, <code>&quot;NaN&quot;</code>,{" "}
+        <code>&quot;Infinity&quot;</code>, <code>&quot;-Infinity&quot;</code> and
+        an integer past <code>UInt64</code> — or below <code>Int64</code> when
+        negative — all passed validation and then threw{" "}
+        <code>System.Linq.Dynamic.Core.Exceptions.ParseException</code> when the
+        query was built, which a host maps to a server error.{" "}
+        <code>&quot;1,5&quot;</code> passed on a German host and was refused on an
+        English one. And <code>&quot;NaN&quot;</code> and{" "}
+        <code>&quot;Infinity&quot;</code> were written into the expression as
+        identifiers, so on a type with a member of that name the condition
+        compared two columns instead of filtering. Until{" "}
+        <strong>3.3.0</strong>.
+      </Callout>
+      <p>
+        A value is read in two steps now. First the parser&apos;s own grammar, in
+        the invariant culture and ASCII digits only: optional white space, an
+        optional minus, digits, an optional fraction — a point with a digit on
+        both sides — and an optional exponent. No leading plus, no thousands
+        separator, no trailing sign, no parentheses, no <code>NaN</code> and no{" "}
+        <code>Infinity</code>. An integer must fit <code>UInt64</code>, or{" "}
+        <code>Int64</code> when negative; a real has no bound, so{" "}
+        <code>1e400</code> still reads as infinity. A suffix (<code>5L</code>,{" "}
+        <code>5m</code>), hex and <code>- 5</code> are refused as they always
+        were, though the parser would read them.
+      </p>
+      <p>
+        Then, in a <code>Where</code> condition and for the operators that write
+        the value into a comparison — <code>Equal</code>, <code>NotEqual</code>,{" "}
+        <code>In</code>, <code>NotIn</code>, the four orderings,{" "}
+        <code>Between</code> and <code>NotBetween</code> — the literal has to
+        compare with the member the condition names. The parser itself is asked,
+        against the member&apos;s declared type, so these are refused where the
+        parser used to throw:
+      </p>
+      <ul>
+        <li>
+          a literal written with a point and no exponent (<code>1.5</code>) on a{" "}
+          <em>nullable</em> integral member (<code>int?</code>,{" "}
+          <code>long?</code>, …). A non-nullable <code>int</code> still takes{" "}
+          <code>1.5</code>, exactly as before;
+        </li>
+        <li>
+          an exponent form (<code>1e5</code>, <code>1E-7</code>) on{" "}
+          <code>decimal</code> or <code>decimal?</code>, and a real with more
+          digits than a <code>decimal</code> holds;
+        </li>
+        <li>
+          an integer above <code>Int64.MaxValue</code> on a signed integral
+          member: it reads as a <code>ulong</code>, which none of them converts
+          to;
+        </li>
+        <li>a negative number on <code>ulong</code> or <code>ulong?</code>;</li>
+        <li>
+          any number on a <code>string</code>, <code>bool</code>,{" "}
+          <code>Guid</code>, <code>DateTime</code> or <code>char</code> member, or
+          on a collection of simple values such as <code>List&lt;int&gt;</code>;
+        </li>
+        <li>a nullable enum under an ordering operator — equality still works.</li>
+      </ul>
+      <p>
+        A <code>Having</code> condition reads the grammar and stops there: an
+        alias names an aggregate, so there is no member type to ask the parser
+        about. Every refusal is <code>LogicException</code> with{" "}
+        <code>InvalidFormat</code>, and it is the same in both policy tiers — a
+        denied field is still <code>FieldDeniedForWhere</code> before any value is
+        read. Nothing that ran before is refused now: every value refused is one
+        the parser refused.
+      </p>
+      <Callout tone="warn" title="JSON.stringify writes small numbers in exponent form">
+        JavaScript&apos;s <code>JSON.stringify(0.0000001)</code> is{" "}
+        <code>1e-7</code>, which a <code>decimal</code> member refuses. Send it as
+        the string <code>&quot;0.0000001&quot;</code>.
+      </Callout>
+      <p>
+        <strong>Who is affected:</strong> an endpoint that passed a number through
+        from a caller and mapped <code>ParseException</code> to a{" "}
+        <code>500</code> now gets a <code>LogicException</code> and a{" "}
+        <code>400</code>, which is what it always should have been. A client
+        sending a locale-formatted number — a comma decimal separator, a thousands
+        separator — is refused on every host instead of working on some. A number
+        a C# caller puts in <code>Values</code> is still written in the invariant
+        culture and is unaffected, except that <code>double.NaN</code> is now{" "}
+        <code>InvalidFormat</code>. See{" "}
+        <Link href="/docs/enums/data-type#number-values"><code>DataType</code> → Number values</Link>.
+      </p>
+
+      <h2 id="null-entries">45. A <code>null</code> Entry in a Request&apos;s List Is a Malformed Request</h2>
+      <p>
+        A request body can say <code>{`"conditions": [null]`}</code>,{" "}
+        <code>{`"subConditionGroups": [null]`}</code>,{" "}
+        <code>{`"conditionSets": [null]`}</code>,{" "}
+        <code>{`"orders": [null]`}</code>,{" "}
+        <code>{`"aggregateBy": [null]`}</code> or{" "}
+        <code>{`"selects": [null]`}</code>. Nothing read a list expecting that.
+      </p>
+      <Callout tone="danger" title="Fixed: a malformed body surfaced as a server error">
+        The null surfaced wherever it was first touched: a{" "}
+        <code>NullReferenceException</code> from the sort-order check, from the
+        ordering, or — under a policy — from inside the copy the sanitizer takes
+        before it reads anything; and an <code>ArgumentNullException</code> for
+        a null aggregate (parameter <code>&quot;aggregate&quot;</code>), a null
+        summary order (parameter <code>&quot;order&quot;</code>) and, from the
+        name lookup, a null or blank <code>Selects</code> entry (parameter{" "}
+        <code>&quot;name&quot;</code>). A
+        host maps those to a five-hundred, for a request that was simply
+        malformed. Until <strong>3.3.0</strong>.
+      </Callout>
+      <p>
+        Each is a <code>LogicException</code> now:{" "}
+        <code>ListOf[Conditions]MustNotHasNullEntry</code>,{" "}
+        <code>ListOf[SubConditionGroups]MustNotHasNullEntry</code>,{" "}
+        <code>ListOf[ConditionSets]MustNotHasNullEntry</code>,{" "}
+        <code>ListOf[Orders]MustNotHasNullEntry</code> and{" "}
+        <code>ListOf[AggregateBy]MustNotHasNullEntry</code>. A{" "}
+        <code>Selects</code> entry that is null <em>or</em> blank — empty or white
+        space — is <code>ConditionMustHasValidFieldName</code>, the refusal a null
+        or blank <code>GroupBy.Fields</code> entry has always had.
+      </p>
+      <p>
+        The walk runs in every method that takes a shape, before anything else
+        reads the lists, with or without a policy, in both tiers, sync and async:
+        the composables <code>Where(ConditionGroup)</code>,{" "}
+        <code>Order(List&lt;OrderBy&gt;)</code>, <code>Select</code>,{" "}
+        <code>SelectDynamic</code>, <code>Group</code> and <code>Summary</code>,
+        and every terminal for a <code>Filter</code>, a <code>Segment</code> and a{" "}
+        <code>Summary</code>. <code>Filter</code> and{" "}
+        <code>FilterDynamic</code> compose <code>Where</code>,{" "}
+        <code>Order</code> and <code>Select</code>, so each list is walked as its
+        clause is reached. Under <code>ApplyPolicy</code> it runs at the top of
+        the sanitizer, before the caps and before the gate: it is about the
+        request&apos;s shape, not a policy decision.
+      </p>
+      <ul>
+        <li>
+          A list that is itself <code>null</code> still means what it meant — most
+          readers read it as empty.
+        </li>
+        <li>
+          A <code>ConditionSet</code> whose <code>ConditionGroup</code> is null is
+          still <code>ArgumentNullException</code>, and so is a null{" "}
+          <code>Summary.GroupBy</code>.
+        </li>
+        <li>
+          A null element inside <code>Condition.Values</code> still reads as the
+          empty string: <code>Text</code> and <code>Enum</code> compare with it,
+          and every other data type refuses it with <code>InvalidFormat</code>.
+        </li>
+        <li>
+          <code>Filter.Clone()</code>, <code>Segment.Clone()</code> and{" "}
+          <code>Summary.Clone()</code> copy a null entry as a null entry instead
+          of throwing <code>NullReferenceException</code>, so the refusal belongs
+          to the method that runs the request and reads the same for a copy.
+        </li>
+      </ul>
+      <p>
+        <strong>Who is affected:</strong> any endpoint binding a request body it
+        does not validate itself. Such a body used to produce a{" "}
+        <code>500</code> and now produces a <code>LogicException</code>, which
+        middleware written for this library already maps to a{" "}
+        <code>400</code>. Code matching on <code>NullReferenceException</code> or
+        on the <code>ArgumentNullException</code> parameter names{" "}
+        <code>&quot;name&quot;</code>, <code>&quot;order&quot;</code> or{" "}
+        <code>&quot;aggregate&quot;</code> to detect this needs updating. See{" "}
+        <Link href="/docs/errors">Error Codes Reference</Link>.
+      </p>
+
       <h2 id="next">See also</h2>
       <ul>
         <li>
-          <Link href="/docs/errors">Error Codes Reference →</Link> the 30 stable
+          <Link href="/docs/errors">Error Codes Reference →</Link> the 31 stable
           validation messages.
         </li>
         <li>

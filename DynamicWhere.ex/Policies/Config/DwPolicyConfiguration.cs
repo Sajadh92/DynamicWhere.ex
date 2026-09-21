@@ -104,8 +104,8 @@ public static class DwPolicyConfiguration
     /// <returns>The same collection, for chaining.</returns>
     /// <exception cref="ArgumentNullException">Thrown when the collection or the section is null.</exception>
     /// <exception cref="InvalidOperationException">
-    /// Thrown when the policy layer is already configured, or when the section names a key nothing
-    /// answers to.
+    /// Thrown when the policy layer is already configured with a <i>different</i> posture, or when
+    /// the section names a key nothing answers to.
     /// </exception>
     /// <remarks>
     /// Configuration binds first and the callback runs second, so code has the last word. That is
@@ -115,6 +115,14 @@ public static class DwPolicyConfiguration
     /// The posture is frozen by <c>DwPolicy.Configure</c> before this returns, and registered as a
     /// singleton so anything resolving <see cref="DwPolicyOptions"/> reads the same frozen instance
     /// the query path reads. There is no second posture anywhere.
+    /// </para>
+    /// <para>
+    /// Calling this a second time with the same posture is a no-op, and the container is given the
+    /// posture already in force. That is what lets an integration suite start many
+    /// <c>WebApplicationFactory</c> hosts over one composition root without a lock or an
+    /// <c>IsConfigured</c> check of its own — the check and the act are one step inside the
+    /// package. A second call asking for a <i>different</i> posture still throws, and what counts as
+    /// different is listed on <see cref="DwPolicy.Configure"/>.
     /// </para>
     /// </remarks>
     public static IServiceCollection AddDwPolicies(
@@ -134,7 +142,10 @@ public static class DwPolicyConfiguration
 
         DwPolicy.Configure(options, providers ?? Array.Empty<IDwPolicyProvider>());
 
-        services.AddSingleton(options);
+        // The posture in force, which is this call's instance on the first call and the first
+        // call's on any later one. Registering the instance built here instead would hand the
+        // container a posture the query path does not read.
+        services.AddSingleton(DwPolicy.Options);
 
         return services;
     }

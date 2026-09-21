@@ -87,7 +87,7 @@ public class PolicyGraphWalkTests
     {
         PolicyTrace trace = new(DwTier.Convenience, dryRun: false);
 
-        GraphWalker.Apply(rows, PolicyFor<T>(), projected, Caller(), Options(), trace);
+        GraphWalker.Apply(rows, typeof(T), PolicyFor<T>(), projected, Caller(), Options(), trace);
 
         return trace;
     }

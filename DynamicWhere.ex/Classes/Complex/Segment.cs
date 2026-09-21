@@ -30,15 +30,25 @@ public class Segment
     /// <summary>
     /// Returns a deep copy, cloning every condition set independently.
     /// </summary>
+    /// <returns>
+    /// A new segment. Every node is new — the condition tree, each list and each clause — so nothing
+    /// either one is given afterwards reaches the other. The values inside a condition's
+    /// <c>Values</c> list are the same objects: the list is new, and what the caller put in it is
+    /// theirs, decoded from JSON and never written to.
+    /// </returns>
     /// <remarks>
     /// Policy applies to each set on its own, so the sets must not share a condition group: a
     /// rewrite aimed at one would otherwise land on all of them.
+    /// <para>
+    /// Public for the same reason <see cref="Filter.Clone"/> is: read a caller's request again with
+    /// one part changed, without editing what the caller handed in.
+    /// </para>
     /// </remarks>
-    internal Segment Clone() => new()
+    public Segment Clone() => new()
     {
-        ConditionSets = ConditionSets is null ? null! : ConditionSets.ConvertAll(s => s.Clone()),
+        ConditionSets = ConditionSets is null ? null! : ConditionSets.ConvertAll(s => s?.Clone()!),
         Selects = Selects is null ? null : new List<string>(Selects),
-        Orders = Orders?.ConvertAll(o => o.Clone()),
+        Orders = Orders?.ConvertAll(o => o?.Clone()!),
         Page = Page?.Clone()
     };
 }

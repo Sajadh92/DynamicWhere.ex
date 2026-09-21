@@ -28,11 +28,14 @@ export default function Page() {
     MaxSnapshotAge       = TimeSpan.FromMinutes(15),
     RefreshInterval      = TimeSpan.FromSeconds(30),
 }, providers);`}</Code>
-      <Callout tone="warn" title="Frozen at startup, and refused on a second call">
+      <Callout tone="warn" title="Frozen at startup">
         The posture is read by every request thread without synchronization. A
         tier that can change while requests are in flight is one that can be
         relaxed by a code path nobody expected to be security-relevant, so
-        mutation after <code>Configure</code> throws.
+        mutation after <code>Configure</code> throws, and so does a second call
+        asking for a <em>different</em> posture. Since 3.3.0 a second call
+        asking for the one already in force is a no-op — see{" "}
+        <a href="#configuring-twice">Configuring twice</a>.
       </Callout>
       <p>
         <code>AttributePolicyProvider</code> is added whether or not you pass it.
@@ -587,14 +590,14 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
           <tr><td><code>MaxConditionValues</code></td><td>1000</td><td>Values in any one condition, such as the list of an <code>In</code>.</td></tr>
           <tr><td><code>MaxAggregates</code></td><td>50</td><td>Aggregates one summary computes.</td></tr>
           <tr><td><code>MaxOrderFields</code></td><td>10</td><td>Order fields in one query.</td></tr>
-          <tr><td><code>MaxNavigationDepth</code></td><td>4</td><td>How deep a field path may reach.</td></tr>
+          <tr><td><code>MaxNavigationDepth</code></td><td>4</td><td>How deep a field path may reach. Also the depth the attribute walk reads to: raised above 4, a request can name a path no fragment of that walk reached, and the member at the end of such a path is read for its own attributes (3.3.0). See <Link href="/docs/breaking-changes#past-the-walk">breaking point 40</Link>.</td></tr>
           <tr><td><code>MaxQueryCost</code></td><td>1000</td><td>Budget consumed by <code>[DwCost]</code> weights.</td></tr>
           <tr><td><code>DefaultFieldCost</code></td><td>1</td><td>Charged for an unweighted field, and for an aggregate with no field.</td></tr>
           <tr><td><code>MaxAuditEvents</code></td><td>10000</td><td>Audit buffer before draining.</td></tr>
           <tr><td><code>SchemaDepth</code></td><td>2</td><td>Levels a schema request walks when it names no depth.</td></tr>
           <tr><td><code>SchemaCycleLimit</code></td><td>2</td><td>Times one type may appear on one path.</td></tr>
           <tr><td><code>MaxSchemaFields</code></td><td>2000</td><td>Fields one schema response may carry before it truncates.</td></tr>
-          <tr><td><code>MinGroupSize</code></td><td><strong>5</strong></td><td>k-anonymity group floor. Set 1 to switch it off. See <Link href="/docs/policies/security">Security</Link>.</td></tr>
+          <tr><td><code>MinGroupSize</code></td><td><strong>5</strong></td><td><strong>On by default.</strong> A guarded summary drops every group with fewer than five rows, and nothing in the answer says so. Set 1 to switch it off. See <Link href="/docs/policies/security">Security</Link>.</td></tr>
         </tbody>
       </table>
       <p>
@@ -619,7 +622,20 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
         and <code>MaxAuditEvents</code> also put the field&apos;s path on{" "}
         <code>FieldPath</code>; under <code>Strict</code> every{" "}
         <code>CapExceeded</code> has <code>FieldPath</code>{" "}
-        <code>&quot;*&quot;</code>.{" "}
+        <code>&quot;*&quot;</code>. Since <strong>3.3.0</strong> the audit
+        buffer does not answer with <code>CapExceeded</code> under{" "}
+        <code>Strict</code> outside a dry run at all: only a real, audited field
+        can reach it, so it refuses with the clause&apos;s own field refusal and
+        no origin. See{" "}
+        <Link href="/docs/policies/security#audit-cap">the audit cap</Link>.{" "}
+        Four more refusals name the clause rather than a field since{" "}
+        <strong>3.3.0</strong>: an ambiguous name is refused as an unknown name
+        is, and <code>AmbiguousGroupKey</code>,{" "}
+        <code>TransformRequiresMaterialization</code>,{" "}
+        <code>MissingHashSalt</code> and <code>MissingTokenVault</code> carry{" "}
+        <code>FieldPath</code> <code>&quot;*&quot;</code> — all but the transform
+        refusal without an origin as well. See{" "}
+        <Link href="/docs/breaking-changes#strict-names-the-clause">breaking point 34</Link>.{" "}
         <code>MaxQueryCost</code> is the one with a code of its own,{" "}
         <code>QueryCostExceeded</code>, because an operator reading a log needs
         to know which of the two refused: raising the wrong one changes nothing. The three schema caps never throw at all —
@@ -902,6 +918,77 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
         rule for the callers it names, so <code>Rank</code> is left out only until
         one does; and <code>Region</code> is left out only of guarded segments,
         which refuse it in any clause, while a filter still orders by it.
+      </p>
+
+      <h2 id="configuring-twice">Configuring twice</h2>
+      <p>
+        The first call decides the posture. Since <strong>3.3.0</strong> a
+        second <code>DwPolicy.Configure</code> <strong>asking for the posture
+        already in force does nothing and returns</strong>; one asking for a
+        different posture still throws{" "}
+        <code>InvalidOperationException</code>. A second{" "}
+        <code>AddDwPolicies</code> binds and builds its options as ever, changes
+        no posture, and registers the one in force. The
+        comparison happens inside the lock that does the configuring, so a
+        caller needs no lock and no <code>IsConfigured</code> check of its own —
+        which matters, because that check is a check-then-act two hosts starting
+        at once can both pass.
+      </p>
+      <p>
+        This is what an integration suite needs. Several{" "}
+        <code>WebApplicationFactory&lt;Program&gt;</code> hosts run the same
+        composition root, and before 3.3.0 the second one threw, so every such
+        suite wrote the check itself and re-registered{" "}
+        <code>DwPolicy.Options</code> by hand.
+      </p>
+      <table>
+        <thead><tr><th>Compared</th><th>Not compared</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>Tier</code>, <code>DryRun</code>, <code>AuditRefusals</code>, and <code>IncludeTraceInResult</code> by the value that applies</td>
+            <td><code>TokenVault</code></td>
+          </tr>
+          <tr>
+            <td><code>HashSalt</code>, <code>StoreFailure</code>, <code>MaxSnapshotAge</code>, <code>RefreshInterval</code></td>
+            <td><code>Services</code></td>
+          </tr>
+          <tr>
+            <td>Every value on <code>Caps</code> — the floor that applies, not whether it was written down</td>
+            <td>The provider <em>instances</em></td>
+          </tr>
+          <tr>
+            <td>The exposed entity catalogue: the same types, every name each answers to, and the name each is reported under</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>The provider <em>types</em>, in the order they were supplied</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        <code>IncludeTraceInResult</code> is compared the way the group floor
+        is — every other cap is compared as written. It defaults to the
+        tier&apos;s own answer, and the tiers are equal by then,
+        so a host writing that answer out and a host leaving it null hand a
+        caller the same result. The catalogue is stricter — a type exposed under
+        two names is reported under the last one it was given, so two catalogues
+        that resolve every name alike still answer a schema request differently,
+        and the second posture is refused.
+      </p>
+      <Callout tone="warn" title="A second host runs with the first host's vault, container and rule stores">
+        The three on the right are objects a host builds for itself, and a
+        second host builds its own, so comparing them by reference would make
+        every second call a refusal. They stay as the first call left them. In
+        one test process that is what you want; start a second host in
+        production only if it is.
+      </Callout>
+      <p>
+        <code>AddDwPolicies</code> registers the posture in force rather than
+        the instance it has just built, so whatever resolves{" "}
+        <code>DwPolicyOptions</code> reads what the query path reads. The
+        options handed to a second call are frozen too, so nothing goes on
+        setting values that decide nothing.
       </p>
 
       <h2 id="from-a-file">Configuration from a file</h2>

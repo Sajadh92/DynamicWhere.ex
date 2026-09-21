@@ -86,7 +86,8 @@ using DynamicWhere.ex.Optimization.Cache.Output;   // CacheCounts, TrackingCount
         <li>It asks <code>CacheDatabase</code> for the cached path. A hit skips the next two steps.</li>
         <li>On a miss, <code>CacheEviction</code> runs first: if the store already holds more than <code>MaxCacheSize</code> entries, the configured algorithm trims it.</li>
         <li><code>CacheReflection</code> then performs the real reflection, validates the path, normalises the casing, and writes the result into <code>CacheDatabase</code>. The eviction pass runs before that write, so a store settles at <code>MaxCacheSize</code> + 1 entries. A path that fails validation throws here, and nothing is written.</li>
-        <li>Only a path that has validated records an access under the active strategy — a timestamp for LRU, a counter for LFU, nothing for FIFO. A path that fails records nothing (3.1.0), so an invented name leaves no record behind.</li>
+        <li>Only a path that has validated records an access under the active strategy — a timestamp for LRU, a counter for LFU, nothing for FIFO. A path that fails records nothing (3.1.0), so an invented name leaves no record behind. Under LRU the timestamp is refreshed once it is a second old rather than on every read (3.3.0).</li>
+        <li>A lookup takes no lock and a hit allocates nothing (3.3.0). The configuration in force is read with one volatile read, where every lookup used to lock and copy it; <code>GetCacheConfigOptions()</code> still returns a copy, because an instance a caller edited would be the one in force.</li>
         <li><code>CacheReporting</code> and <code>CacheCalculator</code> are read-only consumers of <code>CacheDatabase</code> — they never mutate cache state.</li>
       </ol>
 

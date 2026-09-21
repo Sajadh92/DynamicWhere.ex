@@ -15,7 +15,7 @@ export default function Page() {
   return (
     <DocPage pathname="/docs/policies/admin">
       <h1>Admin API</h1>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.AspNetCore --version 3.2.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.AspNetCore --version 3.3.0`}</Code>
       <Code lang="csharp">{`app.MapDwPolicyAdmin(options =>
 {
     options.RoutePrefix  = "/dw-policies";    // the default; mount it anywhere
@@ -180,7 +180,10 @@ export default function Page() {
         loads; over rows in memory, values only. So the simulated clause can
         list fewer members than the query returns, and can show a projection
         an entity query does not need. <code>PolicySimulator</code> reads a
-        type the same way. See{" "}
+        type the same way. For the same reason neither can refuse a path no
+        database can compute: that refusal is read from the model behind the
+        source, so a simulation shows such a request running where the strict
+        query refuses it. See{" "}
         <Link href="/docs/policies/configuration#no-selects">A request that sends no Selects</Link>.
       </p>
 
@@ -207,6 +210,16 @@ var caller = await DwClaimsAdapter.CreateContextAsync(User, claimsOptions, ct);`
         middleware the events are built and never written; with it and no sink
         registered, they are discarded with a warning.
       </p>
+      <Callout tone="danger" title="Fixed (security) in 3.3.0: a caller who disconnects does not cancel the record">
+        The drain used the request&apos;s own abort token, so a client that
+        closed the connection — as the rows arrived, or the moment they had —
+        cancelled the write that follows the response: the sink threw, the
+        middleware logged it, and the events went with the context. An audited
+        read with nothing written down, for the price of a socket. The drain has
+        a budget of its own now, thirty seconds, which the caller cannot cancel
+        and a hung sink cannot outlast; a sink that overruns it is cancelled,
+        logged and dropped, as a throwing one is.
+      </Callout>
       <p>
         It drains in a <code>finally</code>, so a request that threw still writes
         what it recorded. With{" "}

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 
 namespace DynamicWhere.ex.Policies.Tokens;
 
@@ -27,12 +28,23 @@ public sealed class InMemoryTokenVault : IDwTokenVault
 {
     private readonly ConcurrentDictionary<string, string> _tokens = new(StringComparer.Ordinal);
 
+    /// <summary>The key this vault's mappings are stored under, drawn once and never written down.</summary>
+    /// <remarks>
+    /// The mappings die with the process, so the key can too, and nothing has to be configured for
+    /// it. What it buys is that a memory dump holds keyed digests rather than plain ones of values
+    /// that are short enough to be found by trying them all.
+    /// </remarks>
+    private readonly byte[] _key = RandomNumberGenerator.GetBytes(32);
+
     /// <summary>How many distinct values this vault currently holds a token for.</summary>
     /// <remarks>
     /// Reported so a deployment can see the dictionary growing before it becomes a problem, and so
     /// a test can prove that a repeated value was not re-tokenized.
     /// </remarks>
     public int Count => _tokens.Count;
+
+    /// <summary>The keys the mappings are held under, for the test that none is a plain digest of a value.</summary>
+    internal IEnumerable<string> Keys => _tokens.Keys;
 
     /// <inheritdoc/>
     public string GetOrCreate(string scope, string value)
@@ -42,7 +54,7 @@ public sealed class InMemoryTokenVault : IDwTokenVault
             throw new ArgumentNullException(nameof(value));
         }
 
-        string key = DwToken.KeyFor(scope, value);
+        string key = DwToken.KeyFor(scope, value, _key);
 
         // TryGetValue before GetOrAdd, so the common path — a value already seen — never builds a
         // token it then throws away. GetOrAdd with a factory would call it on every miss of the

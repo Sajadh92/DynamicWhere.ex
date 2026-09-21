@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "Install DynamicWhere.ex — NuGet, dotnet CLI, PackageReference",
   description:
-    "How to install DynamicWhere.ex from NuGet into a .NET 6, 7, 8, or 9 project — dotnet CLI, Visual Studio Package Manager, or csproj PackageReference. Works with EF Core on SQL Server, PostgreSQL, MySQL, and SQLite.",
+    "How to install DynamicWhere.ex from NuGet into a .NET 6, 7, 8, 9 or 10 project — dotnet CLI, Visual Studio Package Manager, or csproj PackageReference. Works with EF Core on SQL Server, PostgreSQL, MySQL, and SQLite.",
   keywords: [
     "DynamicWhere.ex install",
     "DynamicWhere.ex NuGet",
@@ -28,14 +28,14 @@ export default function Page() {
       </p>
 
       <h2 id="cli">dotnet CLI</h2>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 3.2.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 3.3.0`}</Code>
 
       <h2 id="package-manager">Package Manager (Visual Studio)</h2>
-      <Code lang="powershell">{`Install-Package DynamicWhere.ex -Version 3.2.0`}</Code>
+      <Code lang="powershell">{`Install-Package DynamicWhere.ex -Version 3.3.0`}</Code>
 
       <h2 id="package-reference">PackageReference (csproj)</h2>
       <Code lang="xml">{`<ItemGroup>
-  <PackageReference Include="DynamicWhere.ex" Version="3.2.0" />
+  <PackageReference Include="DynamicWhere.ex" Version="3.3.0" />
 </ItemGroup>`}</Code>
 
       <h2 id="dependencies">Dependencies</h2>
@@ -63,6 +63,11 @@ export default function Page() {
             <td><code>System.Linq.Dynamic.Core</code></td>
             <td><code>1.6.7</code></td>
             <td>Enables string-based <code>Select</code> / <code>OrderBy</code> / <code>GroupBy</code> used by the dynamic variants.</td>
+          </tr>
+          <tr>
+            <td><code>Microsoft.Extensions.Caching.Memory</code></td>
+            <td><code>6.0.2</code></td>
+            <td>Not used directly. EF Core 6.0.22 asks for 6.0.1 or later, and 6.0.1 is the last version open to CVE-2024-43483, so naming 6.0.2 raises the floor for all four packages (3.3.0). A host on EF Core 8 or later already resolves a newer one.</td>
           </tr>
           <tr>
             <td><code>Microsoft.Extensions.Configuration.Abstractions</code></td>

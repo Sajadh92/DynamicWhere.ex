@@ -55,6 +55,16 @@ export default function Page() {
         <code>PageNumber = 0</code> or <code>PageSize = 0</code> fails validation.
       </Callout>
 
+      <Callout tone="note" title="There is no upper bound on PageNumber">
+        The core sets none, and the policy layer caps <code>PageSize</code>{" "}
+        through <code>MaxPageSize</code> and never <code>PageNumber</code>. The
+        offset the query skips is worked out in 64 bits and held to{" "}
+        <code>int.MaxValue</code> (3.3.0), so a page past the last row is an
+        empty page however far past it is; in 32 bits it wrapped, which was a
+        five-hundred on SQL Server and PostgreSQL and the first page again on
+        SQLite and in memory.
+      </Callout>
+
       <h2 id="csharp-example">C# example</h2>
       <Code lang="csharp">{`var page = new PageBy { PageNumber = 1, PageSize = 25 };`}</Code>
 

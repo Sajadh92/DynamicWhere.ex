@@ -21,7 +21,7 @@ namespace DynamicWhere.Tests.Policies;
 public sealed class RedisTokenVaultConformanceTests : DurableTokenVaultConformanceTests, IAsyncLifetime
 {
     private readonly RedisContainer _server =
-        new RedisBuilder().WithImage("redis:7-alpine").Build();
+        new RedisBuilder("redis:7-alpine").Build();
 
     private readonly string _prefix = $"dw:tokens:{Guid.NewGuid():N}";
 
@@ -105,5 +105,113 @@ public sealed class RedisTokenVaultConformanceTests : DurableTokenVaultConforman
 
         Assert.Equal(0, vault.CachedCount);
         Assert.Equal(first, vault.GetOrCreate(Scope, "AAA-000123"));
+    }
+
+    // ------------------------------------------------------------------ under a key
+
+    private static readonly byte[] Key = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
+    private static readonly byte[] Other = Enumerable.Range(101, 32).Select(i => (byte)i).ToArray();
+
+    private string[] Fields(string prefix) => _redis!.GetDatabase()
+        .HashKeys(new RedisPolicyKeys(prefix).Tokens)
+        .Select(field => (string)field!)
+        .OrderBy(field => field, StringComparer.Ordinal)
+        .ToArray();
+
+    [Fact]
+    public void Under_a_key_the_hash_holds_no_plain_digest_of_the_value()
+    {
+        string prefix = $"{_prefix}:keyed";
+
+        new RedisTokenVault(_redis!, Key, prefix).GetOrCreate(Scope, "07701234567");
+
+        string field = Assert.Single(Fields(prefix));
+
+        Assert.Equal(DwToken.KeyFor(Scope, "07701234567", Key), field);
+        Assert.NotEqual(DwToken.KeyFor(Scope, "07701234567"), field);
+    }
+
+    /// <summary>A deployment that adds a key keeps every token it has handed out.</summary>
+    [Fact]
+    public void Under_a_key_a_value_keeps_the_token_an_unkeyed_vault_gave_it()
+    {
+        string prefix = $"{_prefix}:adopt";
+        string issued = new RedisTokenVault(_redis!, prefix).GetOrCreate(Scope, "AAA-000123");
+
+        Assert.Equal(issued, new RedisTokenVault(_redis!, Key, prefix).GetOrCreate(Scope, "AAA-000123"));
+
+        // Both fields, until the vault is told every instance holds the key.
+        Assert.Equal(
+            new[] { DwToken.KeyFor(Scope, "AAA-000123"), DwToken.KeyFor(Scope, "AAA-000123", Key) }
+                .OrderBy(field => field, StringComparer.Ordinal),
+            Fields(prefix));
+
+        Assert.Equal(issued, new RedisTokenVault(_redis!, prefix).GetOrCreate(Scope, "AAA-000123"));
+        Assert.Equal(issued, new RedisTokenVault(_redis!, Key, prefix).GetOrCreate(Scope, "AAA-000123"));
+    }
+
+    [Fact]
+    public void Retiring_deletes_the_unkeyed_field_and_keeps_the_token()
+    {
+        string prefix = $"{_prefix}:retire";
+        string issued = new RedisTokenVault(_redis!, prefix).GetOrCreate(Scope, "AAA-000123");
+
+        Assert.Equal(issued, new RedisTokenVault(_redis!, Key, prefix, retireUnkeyed: true).GetOrCreate(Scope, "AAA-000123"));
+        Assert.Equal(DwToken.KeyFor(Scope, "AAA-000123", Key), Assert.Single(Fields(prefix)));
+        Assert.Equal(issued, new RedisTokenVault(_redis!, Key, prefix).GetOrCreate(Scope, "AAA-000123"));
+    }
+
+    /// <summary>Every instance takes the key first and retiring begins afterwards, so the values that matter are already adopted.</summary>
+    [Fact]
+    public void Retiring_reaches_a_value_adopted_before_retiring_began()
+    {
+        string prefix = $"{_prefix}:late";
+        string issued = new RedisTokenVault(_redis!, prefix).GetOrCreate(Scope, "AAA-000123");
+
+        Assert.Equal(issued, new RedisTokenVault(_redis!, Key, prefix).GetOrCreate(Scope, "AAA-000123"));
+        Assert.Equal(2, Fields(prefix).Length);
+
+        Assert.Equal(issued, new RedisTokenVault(_redis!, Key, prefix, retireUnkeyed: true).GetOrCreate(Scope, "AAA-000123"));
+        Assert.Equal(DwToken.KeyFor(Scope, "AAA-000123", Key), Assert.Single(Fields(prefix)));
+    }
+
+    [Fact]
+    public void Many_keyed_callers_racing_for_a_value_all_get_the_token_it_already_had()
+    {
+        string prefix = $"{_prefix}:race";
+        string issued = new RedisTokenVault(_redis!, prefix).GetOrCreate(Scope, "AAA-000123");
+
+        RedisTokenVault[] vaults = Enumerable.Range(0, 8)
+            .Select(i => new RedisTokenVault(_redis!, Key, prefix, retireUnkeyed: i % 2 == 0)).ToArray();
+
+        string[] tokens = new string[vaults.Length];
+
+        Parallel.For(0, vaults.Length, i => tokens[i] = vaults[i].GetOrCreate(Scope, "AAA-000123"));
+
+        Assert.All(tokens, token => Assert.Equal(issued, token));
+
+        // And for a value nobody has met, one token between them.
+        Parallel.For(0, vaults.Length, i => tokens[i] = vaults[i].GetOrCreate(Scope, "NEW-1"));
+
+        Assert.Single(tokens.Distinct(StringComparer.Ordinal));
+    }
+
+    /// <summary>Stated as a test because it is the hazard of changing a key: every value is met for the first time again.</summary>
+    [Fact]
+    public void Another_key_is_another_vault()
+    {
+        string prefix = $"{_prefix}:rotate";
+
+        Assert.NotEqual(
+            new RedisTokenVault(_redis!, Key, prefix).GetOrCreate(Scope, "AAA-000123"),
+            new RedisTokenVault(_redis!, Other, prefix).GetOrCreate(Scope, "AAA-000123"));
+    }
+
+    [Fact]
+    public void A_key_that_is_absent_or_short_is_refused()
+    {
+        Assert.Throws<ArgumentNullException>(() => new RedisTokenVault(_redis!, (byte[])null!, _prefix));
+        Assert.Throws<ArgumentException>(() => new RedisTokenVault(_redis!, new byte[8], _prefix));
+        Assert.Throws<ArgumentNullException>(() => new RedisTokenVault(null!, Key, _prefix));
     }
 }

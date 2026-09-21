@@ -209,12 +209,38 @@ namespace DynamicWhere.Tests.Policies
             return _db.Customers.Where(c => c.Name != string.Empty).SelectMany(c => level2.Where(x => x.Id == c.Id));
         }
 
+
         /// <summary>Customers already in memory, handed out as a query.</summary>
         public IQueryable<ZwCustomer> InMemory(List<ZwCustomer> held) => held.AsQueryable();
     }
 
     internal static class ZwKit
     {
+        /// <summary>The asynchronous twin of <see cref="Code(Action)"/>, so a test awaits rather than blocks.</summary>
+        /// <remarks>
+        /// Blocking on an asynchronous read holds a thread-pool thread for the whole query. Enough of
+        /// those at once and a test elsewhere in the run that waits on a background task never gets
+        /// scheduled, which is how a suite acquires a flaky failure that has nothing to do with the
+        /// code under test.
+        /// </remarks>
+        internal static async Task<string> CodeAsync(Func<Task> run)
+        {
+            try
+            {
+                await run();
+
+                return "ran";
+            }
+            catch (PolicyException refusal)
+            {
+                return refusal.ErrorCode.ToString();
+            }
+            catch (Exception other)
+            {
+                return $"{other.GetType().Name}: {other.Message.Split('\n')[0]}";
+            }
+        }
+
         private static readonly JsonSerializerOptions JsonOptions = new() { ReferenceHandler = ReferenceHandler.IgnoreCycles };
 
         internal static PolicyQueryable<T> Guard<T>(IQueryable<T> source, DwTier tier = DwTier.Strict) where T : class =>

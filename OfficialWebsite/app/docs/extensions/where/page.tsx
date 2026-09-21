@@ -122,8 +122,13 @@ export default function Page() {
           <code>InvalidFormat</code>.
         </li>
         <li>
-          <code>Number</code> values must parse as a numeric type —{" "}
-          <code>InvalidFormat</code>.
+          <code>Number</code> values must be a literal the expression parser reads
+          — invariant, no thousands separator, no leading plus, no{" "}
+          <code>NaN</code> — and one it can compare with the member the condition
+          names, so <code>1.5</code> is refused on an <code>int?</code> and{" "}
+          <code>1e-7</code> on a <code>decimal</code> (3.3.0) —{" "}
+          <code>InvalidFormat</code>. The server&apos;s culture decides nothing.
+          See <Link href="/docs/validation/condition">Condition validation</Link>.
         </li>
         <li>
           <code>Boolean</code> values must parse as <code>bool</code> —{" "}

@@ -164,7 +164,12 @@ public class InMemoryPolicyStoreTests
     public async Task A_watch_yields_the_version_on_every_write()
     {
         using InMemoryPolicyStore store = new();
-        using CancellationTokenSource cancel = new(TimeSpan.FromSeconds(10));
+
+        // Generous on purpose, and for the same reason the store conformance watch is: the reader
+        // runs on the thread pool, and a suite of three thousand tests can leave it waiting behind
+        // work that has nothing to do with this store. Only a watch that never reports waits this
+        // long.
+        using CancellationTokenSource cancel = new(TimeSpan.FromSeconds(60));
 
         IAsyncEnumerable<long> watch = store.WatchAsync(cancel.Token)!;
 
@@ -193,7 +198,10 @@ public class InMemoryPolicyStoreTests
         {
             await store.UpsertAsync(Rule(field: "Notes"), cancel.Token);
 
-            await Task.Delay(10, cancel.Token);
+            // Waits on the reader itself rather than on the clock, so the loop ends as soon as the
+            // watch has reported twice and does not go on writing while the reader waits to be
+            // scheduled.
+            await Task.WhenAny(reader, Task.Delay(10, cancel.Token));
         }
 
         await reader;

@@ -4,7 +4,7 @@
 > opt-in field-level policy layer that decides what each caller may filter, sort, select, group,
 > aggregate and see, and a reflection cache that needs no setup.
 >
-> Version 3.2.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
+> Version 3.3.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
 > Docs: https://doc.dynamicwhere.com · Source: https://github.com/Sajadh92/DynamicWhere.ex
 
 This file is the whole library in one pass: every public type and member of the four packages, the
@@ -14,7 +14,7 @@ library. No other page is needed; where another page disagrees with this file, t
 Where a name is not in this file, it does not exist — do not invent members.
 
 ```
-dotnet add package DynamicWhere.ex --version 3.2.0
+dotnet add package DynamicWhere.ex --version 3.3.0
 dotnet add package DynamicWhere.ex.Policies.Redis                 # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.EntityFrameworkCore   # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.AspNetCore            # optional, same version as the core
@@ -75,6 +75,7 @@ Four packages, always the same version. All target `net6.0` and run on .NET 6–
 DynamicWhere.ex                               the query engine, policies, token vault interface, cache
   Microsoft.EntityFrameworkCore                         6.0.22
   System.Linq.Dynamic.Core                              1.6.7
+  Microsoft.Extensions.Caching.Memory                   6.0.2    (3.3.0)
   Microsoft.Extensions.Configuration.Abstractions       6.0.0
   Microsoft.Extensions.Configuration.Binder             6.0.0
   Microsoft.Extensions.DependencyInjection.Abstractions  6.0.0
@@ -89,6 +90,11 @@ DynamicWhere.ex.Policies.AspNetCore           MapDwPolicyAdmin, claims adapter, 
   FrameworkReference Microsoft.AspNetCore.App
 ```
 
+- `Microsoft.Extensions.Caching.Memory` is named for its patched version (3.3.0); the library does not use it
+  directly. EF Core 6.0.22 asks for 6.0.1 or later, and 6.0.1 is the last version open to CVE-2024-43483
+  (GHSA-qj66-m88j-hmgj), so a host on the EF Core 6 floor resolved a vulnerable version through all four packages.
+  Naming 6.0.2 raises that floor for all four. A host on EF Core 8 or later already resolves a newer one and sees
+  no change.
 - The engine parses every expression it builds with its own `ParsingConfig`: System.Linq.Dynamic.Core's defaults
   with `AreContextKeywordsEnabled = false`. It does not read `ParsingConfig.Default` (since 3.1.0), so a change a host
   makes there does not reach DynamicWhere queries.
@@ -203,6 +209,20 @@ Summary         ConditionGroup      ConditionGroup?       null        where, bef
                 Having              ConditionGroup?       null        each Condition.Field is an AggregateBy.Alias, not a path
                 Orders              List<OrderBy>?        null        each Field is a GroupBy field or an Alias
                 Page                PageBy?               null        pages the groups
+
+Clone()         on Filter, Segment and Summary                        public since 3.3.0; deep copy, every node new,
+                                                                      a condition's values shared in a new list
+                                                                      with the original: the condition tree with its
+                                                                      groups and conditions, the Selects list, each
+                                                                      OrderBy, the Page, and a Summary's GroupBy with
+                                                                      its AggregateBy list and its Having. A null
+                                                                      branch stays null, and a null entry inside a
+                                                                      list is copied as a null entry (3.3.0), so the
+                                                                      refusal is the running method's and reads the
+                                                                      same for a copy; it used to throw
+                                                                      NullReferenceException. Use it to read one
+                                                                      request again with a different page or order
+                                                                      without editing what the caller handed in.
 ```
 
 ```
@@ -381,8 +401,8 @@ DataType   Check                                                    Send
 Text       none                                                     a string; a null element is "" and matches empty strings only
 Enum       none                                                     member name in any case ("Pending", "pending") or its number
 Guid       Guid.TryParse                                            any Guid format: "D", upper-case, "N" (no hyphens)
-Number     TryParse as byte/short/int/long/float/double/decimal     a JSON number or numeric string: 12, -3.5, "15.5", "1e3"
-           (server culture)
+Number     the parser's own grammar, then the member's type         a JSON number or numeric string: 12, -3.5, "15.5", "1e3";
+           (3.3.0); invariant, not the server's culture             see the Number bullet below for what is refused
 Boolean    bool.TryParse                                            true / false as JSON booleans or strings in any case; 1 and 0 fail
 DateTime   ISO 8601 / year-first / a declared format (3.1.0)       ISO 8601: "2024-06-15T14:30:00", or with Z / an offset
 Date       ISO 8601 / year-first / a declared format (3.1.0)       ISO 8601 date: "2024-06-15"; the time is dropped on both sides
@@ -390,9 +410,48 @@ Date       ISO 8601 / year-first / a declared format (3.1.0)       ISO 8601 date
 
 - **Null:** a null element is `""`. Text and Enum compare with the empty string; every other DataType throws
   `InvalidFormat`. To test for NULL use `IsNull` / `IsNotNull` with `"values": []`.
-- **Number:** the token is embedded unquoted exactly as sent. A thousands separator (`"1,000"`) or `"NaN"` /
-  `"Infinity"` passes the culture TryParse, then throws `System.Linq.Dynamic.Core.Exceptions.ParseException`
-  when the query is built. Send invariant literals without separators.
+- **Number (3.3.0 rewrote this):** the token is embedded unquoted exactly as sent, so a value is read the way the
+  parser reads it rather than the way the host's culture does. Two steps.
+  - **The grammar**, in the invariant culture, ASCII digits only: optional white space around it (space, tab, LF,
+    VT, FF, CR, exactly what `TryParse` allowed), an optional minus, digits, an optional fraction (a point with a
+    digit on both sides), an optional exponent (`e` or `E`, an optional sign, digits). No leading plus, no
+    thousands separator, no trailing sign, no parentheses, no `NaN` and no `Infinity`. An integer — no fraction,
+    no exponent — must fit `UInt64`, or `Int64` when negative. A real has no bound: `1e400` still reads as
+    infinity.
+    - A suffix (`5L`, `5m`, `5f`, `5d`), hex (`0x1F`), parentheses (`(5)`) and a minus standing apart from its
+      digits (`- 5`) are refused as they always were, though the parser would read them. Nothing is accepted now
+      that was not accepted before.
+  - **The member**, in a `WHERE` condition only, for `Equal`, `NotEqual`, `In`, `NotIn`, `GreaterThan`,
+    `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `Between` and `NotBetween`: the literal has to compare
+    with the member the condition names. The parser itself is asked, against the member's **declared** type — a
+    collection at the end of the path stands for itself, one along the path stands for its elements. Refused now,
+    where the parser used to throw:
+    - a literal written with a point and no exponent (`1.5`, `0.1`, `1.0`) on a **nullable** integral member
+      (`int?`, `long?`, …). A non-nullable `int` still takes `1.5`, exactly as before, and an exponent form
+      (`1e5`) still compares with an `int?`;
+    - an exponent form (`1e5`, `1E-7`) on `decimal` or `decimal?`, and a real with more digits than a `decimal`
+      holds (`79228162514264337593543950335.5`);
+    - an integer above `Int64.MaxValue` on a signed integral member (`sbyte`, `short`, `int`, `long`, nullable or
+      not): such a literal reads as a `ulong`, which none of them converts to. `byte`, `ushort`, `uint`, `ulong`,
+      `float`, `double` and `decimal` take it;
+    - a negative number on `ulong` or `ulong?`;
+    - any number on a `string`, `bool`, `Guid`, `DateTime` or `char` member, or on a collection of simple values
+      (`Scores` where `Scores` is a `List<int>`; `Lines.Quantity` still works, since the path steps through);
+    - a nullable enum with an ordering operator. Equality works on it, and a non-nullable enum orders.
+  - A `Having` condition reads the grammar and stops there: an alias names an aggregate, so there is no member
+    type to ask the parser about.
+  - Every refusal is `LogicException` with `InvalidFormat`. Nothing that ran before is refused now: every value
+    refused is one the parser refused. Under `ApplyPolicy` it is the same in both tiers, and the gate still
+    answers first — a denied field is `FieldDeniedForWhere` before any value is read.
+  - Before 3.3.0 the check was `byte` / `short` / `int` / `long` / `float` / `double` / `decimal` `TryParse` in
+    the host's culture. `"1,000"`, `"5-"`, `"+5"`, `".5"`, `"5."`, `"-.5"`, `"1.e5"`, `"NaN"`, `"Infinity"`,
+    `"-Infinity"` and an integer past `UInt64` (or below `Int64` when negative) all passed validation and then
+    threw `System.Linq.Dynamic.Core.Exceptions.ParseException`, which a host maps to a server error. `"1,5"`
+    passed on a de-DE host and was refused on an en-US one. And `"NaN"` and `"Infinity"` were written into the
+    expression as identifiers, so on a type with a member of that name the condition compared two columns.
+  - A number a C# caller places in `Values` is still written in the invariant culture (the normalizer table
+    above), so `12.5` is `"12.5"` on every host. `double.NaN` in `Values` is now `InvalidFormat`.
+  - JavaScript's `JSON.stringify(0.0000001)` is `1e-7`, which a `decimal` member refuses. Send `"0.0000001"`.
 - **Date / DateTime (3.1.0 rewrote this):** the predicate is built from the member's own type.
   - **Which texts are dates (3.1.0).** Read against explicit formats, never the lenient parser; the server's culture
     and calendar decide nothing.
@@ -595,8 +654,8 @@ Path                              Where predicate generated
     parser; it is refused now too, so one rule covers every clause.
   - The remedy for such a column: rename the CLR property and map the column with `[Column("New")]`.
 - **Errors.** A missing segment or a null / blank path throws `LogicException("ConditionMustHasValidFieldName")`,
-  the same string for Condition, OrderBy, GroupBy and AggregateBy paths. A null or blank `Selects` entry throws
-  `ArgumentNullException` instead. Under `ApplyPolicy` in the Strict tier, outside dry run, a path that matches
+  the same string for Condition, OrderBy, GroupBy, AggregateBy and, since 3.3.0, `Selects` paths — a null or blank
+  `Selects` entry threw `ArgumentNullException` before. Under `ApplyPolicy` in the Strict tier, outside dry run, a path that matches
   nothing is refused like a denied field instead, with a `PolicyException` (3.1.0, section 17).
 - **What counts as a collection:** arrays, `List<>`, `IList<>`, `ICollection<>`, `IEnumerable<>`, `HashSet<>`,
   `ISet<>`. Anything else (`IReadOnlyList<>`, `IReadOnlyCollection<>`, `Collection<>`, `ObservableCollection<>`, a
@@ -668,14 +727,15 @@ against 3.1 still binds.
 ### Rules for every method
 
 - The first statement is the `[DwEntity(RequirePolicy = true)]` guard: on such a T, a call outside `ApplyPolicy`
-  throws `PolicyException` `PolicyRequired` (section 13). Then null arguments throw `ArgumentNullException`, then
-  the validation rules of section 8 throw `LogicException`.
+  throws `PolicyException` `PolicyRequired` (section 13). Then null arguments throw `ArgumentNullException`, then a
+  null entry in one of the shape's lists throws `ListOf[<list>]MustNotHasNullEntry` (3.3.0, section 8), then the
+  validation rules of section 8 throw `LogicException`.
 - Composable methods validate and build when called, not when enumerated, so a bad field throws at the call.
 - The async terminals are `async` methods: every exception, validation included, surfaces at `await`.
 - Validation rewrites the caller's objects in place: path strings get the declared casing (`"price"` → `"Price"`)
   in `Condition.Field`, `OrderBy.Field`, `GroupBy.Fields`, `AggregateBy.Field` and `Selects`; null `Values`,
   `Conditions`, `SubConditionGroups`, `ConditionSets`, `Fields` and `AggregateBy` become empty lists; the first
-  `ConditionSet`'s `Intersection` becomes null. Clone a shape before reusing it if that matters.
+  `ConditionSet`'s `Intersection` becomes null. Call `Clone()` on the shape before reusing it if that matters (3.3.0).
 
 ### Select<T>
 
@@ -687,7 +747,8 @@ products.Select(["Id", "Name", "Category.Name", "OrderItems.Quantity"]) builds
          OrderItems = e.OrderItems.AsQueryable().Select(c => new OrderItem { Id = c.Id, Quantity = c.Quantity }).ToList() }
 ```
 
-- Errors: `fields` empty → `MustHasFields`; a null or blank entry → `ArgumentNullException`; an unknown path →
+- Errors: `fields` empty → `MustHasFields`; a null or blank entry → `ConditionMustHasValidFieldName` (3.3.0; it was
+  `ArgumentNullException`); an unknown path →
   `ConditionMustHasValidFieldName`; no public parameterless constructor on T →
   `LogicException("SelectTypeMustHaveParameterlessConstructor")` with `Subject = typeof(T).Name` (checked at
   run time; the constraint is only `class`). Before 3.1.0 that message was an English sentence carrying the type
@@ -778,6 +839,12 @@ Labels (List<string>)          asc    Labels.Min() asc
 
 - Emits `Skip((PageNumber - 1) * PageSize).Take(PageSize)`. `PageNumber <= 0` → `PageNumberMustBeGreaterThanZero`;
   `PageSize <= 0` → `PageSizeMustBeGreaterThanZero`.
+- The offset is worked out in 64 bits and held to `int.MaxValue` (3.3.0), here and in the three summary methods
+  (section 7). In 32 bits the product wrapped for a large enough page number: a negative offset is an error on SQL
+  Server and PostgreSQL, so the request became a five-hundred, and the first page again on SQLite and in memory, so
+  a page far past the last row returned rows. A page past the last row is an empty page however far past it is, as
+  it always was for a page number that did not wrap. The policy layer caps `PageSize` (`MaxPageSize`) and never
+  `PageNumber`, so a guarded query took the same path.
 - The core sets no upper bound (the policy layer has `MaxPageSize`). A page past the end is empty. `Page` neither
   adds nor requires an ordering; order before paging for stable pages. (The guarded `Page` of section 13 takes the
   type's declared `DefaultOrder` on a source nothing has ordered; this one never reads it.)
@@ -842,7 +909,9 @@ then exactly as ToListAsync(Filter): Order(Orders) -> Page(Page) -> Select(Selec
 - `Orders` apply before the projection, as for `Filter`, so an order field need not be selected. Order is the
   database's: text sorts by collation and NULLs fall where the provider puts them.
 - Under `ApplyPolicy`, `Caps.MaxConditionSets` (default 10) bounds how many sets one statement carries (section 12).
-- Validation: duplicate set Sort → `ListOfConditionsSetsMustHasUniqueSortValue`; a set after the first with a
+- Validation: a null entry in `ConditionSets`, `Orders` or a condition list →
+  `ListOf[<list>]MustNotHasNullEntry`, before anything else (3.3.0); duplicate set Sort →
+  `ListOfConditionsSetsMustHasUniqueSortValue`; a set after the first with a
   null `Intersection` → `ConditionsSetOfIndex[1-N]MustHasIntersection`; the first set's `Intersection` is ignored;
   a set with a null `ConditionGroup` → `ArgumentNullException`. Every clause is validated before the database is
   queried.
@@ -855,7 +924,8 @@ then exactly as ToListAsync(Filter): Order(Orders) -> Page(Page) -> Select(Selec
 ### In memory: the IEnumerable<T> overloads
 
 - `ToList(Filter)`, `ToListDynamic(Filter)` and `ToList(Summary)` on `IEnumerable<T>` call `AsQueryable()` and
-  run the same pipeline with LINQ to Objects. For any other method call `list.AsQueryable()` yourself; the async
+  run the same pipeline with LINQ to Objects. `ApplyPolicy` takes an `IEnumerable<T>` too, and a summary read
+  through it is floored like any other: groups smaller than `DwCaps.MinGroupSize`, 5 by default, are dropped. For any other method call `list.AsQueryable()` yourself; the async
   methods do not work on such a source.
 - Differences from EF Core: text operators follow .NET string semantics; a null reference navigation in a path
   throws `NullReferenceException`; typed `Select` through a reference navigation throws (EF.Property);
@@ -924,8 +994,9 @@ LastOrDefault   Select(f).OrderByDescending($).FirstOrDefault()    any simple ty
   (`CategoryName`) — or an Alias, case-insensitive; else
   `SummaryOrderField[<field>]MustExistInGroupByFieldsOrAggregateByAliases`. Emitted as `<field without dots> asc|desc`,
   sorted by Sort, with no collection rewriting and no duplicate-Sort check.
-- Summary validation order: `GroupBy` null (`ArgumentNullException`, parameter `GroupBy`) → GroupBy and AggregateBy
-  rules → Orders → Page → Having → ConditionGroup → Having DataType/Operator pairs.
+- Summary validation order: a null entry in any list (3.3.0) → `GroupBy` null (`ArgumentNullException`, parameter
+  `GroupBy`) → GroupBy and AggregateBy rules → Orders → Page → Having → ConditionGroup → Having DataType/Operator
+  pairs.
 - Aggregation runs in SQL on stored values. Under `ApplyPolicy`, transformed fields need `AllowAggregate`, every
   guarded summary is subject to the group floor (section 19), and `Caps.MaxAggregates` (default 50, 3.1.0) bounds how
   many `AggregateBy` entries one summary sends (section 12).
@@ -946,9 +1017,16 @@ derives from it, so catch `PolicyException` first.
 ```
 String                                                                 Raised when
 ConditionMustHasValidFieldName                                         a Condition / OrderBy / GroupBy / AggregateBy / Having / Summary.Orders
-                                                                       field is null or blank, or a path does not resolve on T. Under
-                                                                       ApplyPolicy in the Strict tier, outside dry run, an unresolved
-                                                                       path is a PolicyException instead (3.1.0, section 17)
+                                                                       field is null or blank, or a path does not resolve on T; also a
+                                                                       Selects entry that is null or blank (3.3.0; it was an
+                                                                       ArgumentNullException). Under ApplyPolicy in the Strict tier,
+                                                                       outside dry run, an unresolved path is a PolicyException
+                                                                       instead (3.1.0, section 17)
+ListOf[<list>]MustNotHasNullEntry                                      a list of the request shape holds a null entry (3.3.0). <list> is
+                                                                       Conditions, SubConditionGroups, ConditionSets, Orders or
+                                                                       AggregateBy, spelled as the shape declares it. Before 3.3.0 a
+                                                                       null entry was a NullReferenceException from wherever it was
+                                                                       first touched
 FieldPath[<path>]StartsWithReservedName                                a Condition / OrderBy / GroupBy / AggregateBy / Selects path, or a
                                                                        [DwAlias] target, whose first segment is one of the parser's own
                                                                        words — new, iif, np, isnull, is, as, cast, true, false, null,
@@ -959,7 +1037,9 @@ ConditionWithOperator[<Operator>]MustHasOnlyOneValue                   an operat
 ConditionWithOperator[Between-NotBetween]MustHasOnlyTwoValues          Between / NotBetween without exactly 2 values
 ConditionWithOperator[In-IIn-NotIn-INotIn]MustHasOneOrMoreValues       an In-family operator with no values
 ConditionWithOperator[IsNull-IsNotNull]MustHasNoValues                 IsNull / IsNotNull with any value
-InvalidFormat                                                          a Guid / Number / Boolean / Date / DateTime value fails its TryParse
+InvalidFormat                                                          a Guid / Boolean / Date / DateTime value fails its check, or a
+                                                                       Number value is not a literal the expression parser reads, or is
+                                                                       one it cannot compare with the member (3.3.0, section 4)
 AnyListOfConditionsMustHasUniqueSortValue                              two Conditions of one group (or Having group) share Sort
 AnyListOfSubConditionsGroupsMustHasUniqueSortValue                     two SubConditionGroups of one group share Sort
 ListOfConditionsSetsMustHasUniqueSortValue                             two ConditionSets share Sort
@@ -1000,14 +1080,16 @@ The last one is a literal message; every other string above is a fixed code. Exa
 ### Other exceptions a caller can see
 
 ```
-ArgumentNullException          a null query or shape argument; a null or blank Selects entry (parameter "name");
-                               Summary.GroupBy null (parameter "GroupBy"); a ConditionSet whose ConditionGroup is null
-NullReferenceException         a null element inside Conditions, SubConditionGroups, ConditionSets or Orders;
-                               in memory, a null reference navigation inside a path
+ArgumentNullException          a null query or shape argument; Summary.GroupBy null (parameter "GroupBy"); a ConditionSet
+                               whose ConditionGroup is null. A null or blank Selects entry was one until 3.3.0; it is
+                               ConditionMustHasValidFieldName now
+NullReferenceException         in memory, a null reference navigation inside a path. A null element inside Conditions,
+                               SubConditionGroups, ConditionSets, Orders or AggregateBy was one until 3.3.0; it is
+                               ListOf[<list>]MustNotHasNullEntry now
 PolicyException                PolicyRequired from the [DwEntity(RequirePolicy = true)] guard; every refusal under ApplyPolicy
 ParseException                 System.Linq.Dynamic.Core.Exceptions.ParseException for input that passes validation but not
-                               the parser: "1,000", "NaN", an enum name that is not a member, Contains on an enum-typed
-                               member, a Where on a collection of simple values
+                               the parser: an enum name that is not a member, Contains on an enum-typed member, a Where
+                               on a collection of simple values. No Number value reaches it since 3.3.0 (section 4)
 InvalidOperationException      async terminal on a non-EF source; typed Select through a reference navigation in memory;
                                two group fields ending in the same segment; ordering by a non-comparable type in memory
 EF Core / provider exceptions  unwrapped (for example SQLite NotSupportedException for ORDER BY on decimal)
@@ -1026,7 +1108,8 @@ ConditionGroup   Sort unique among Conditions → Sort unique among SubCondition
                  each sub-group in Sort order (recursively)
 OrderBy          Field null/blank → Field resolves → not ending on a collection of entities
 PageBy           PageNumber >= 1 → PageSize >= 1
-Selects          list not null (ArgumentNullException) → not empty → no blank entry → each resolves → constructor (Select<T>)
+Selects          list not null (ArgumentNullException) → not empty → no null or blank entry → each resolves →
+                 constructor (Select<T>)
 GroupBy          Fields not empty → each field: null/blank, resolves, unique, not complex → each AggregateBy:
                  Alias identifier → Field (unless Count) → simple type → aggregator valid for type → Alias not a group
                  field → Alias unique
@@ -1034,6 +1117,18 @@ Summary          GroupBy not null → GroupBy rules → Orders → Page → Havi
 Segment          set Sort unique → Intersection on later sets → each set's ConditionGroup → Orders → Page → Selects
 Filter           ConditionGroup → Orders → Page → Selects, each only when not null
 ```
+
+- **A null entry in a list is read before any of this (3.3.0).** Every method that takes a shape walks its lists for a
+  null entry first: the composables `Where(ConditionGroup)`, `Order(List<OrderBy>)`, `Select`, `SelectDynamic`,
+  `Group`, `Summary`, and every terminal for a Filter, a Segment and a Summary, sync and async. `Filter` and
+  `FilterDynamic` compose `Where`, `Order` and `Select`, so each list is walked as that clause is reached. Under
+  `ApplyPolicy` the walk runs at the top of the sanitizer, before the caps and before the gate, because it is about
+  the request's shape and not about a policy decision — so a guarded Filter with a null `Orders` entry is refused
+  before its condition group is validated, where an unguarded one reaches the condition group first. Refusals:
+  `ListOf[Conditions]MustNotHasNullEntry`, `ListOf[SubConditionGroups]MustNotHasNullEntry`,
+  `ListOf[ConditionSets]MustNotHasNullEntry`, `ListOf[Orders]MustNotHasNullEntry`,
+  `ListOf[AggregateBy]MustNotHasNullEntry`, and `ConditionMustHasValidFieldName` for a `Selects` entry that is null
+  or blank. A list that is itself null still means what it meant — most readers read it as empty.
 
 ---
 
@@ -1320,7 +1415,7 @@ Each of these compiles, passes validation, and returns something other than what
 3. **Negated operators never match null.** `NotEqual`, `NotIn`, `NotContains`, `NotStartsWith`, `NotEndsWith` and
    `NotBetween` all exclude rows whose member is null. Add an `IsNull` condition in an `Or` group to keep them.
 4. **Validation rewrites the request objects you pass.** Paths are re-cased, null lists become empty, the first
-   set's `Intersection` is cleared. Clone a shape before reusing it. (Guarded calls work on a clone.)
+   set's `Intersection` is cleared. Call `Clone()` on the shape before reusing it (3.3.0). (Guarded calls work on a clone.)
 5. **Enum names in JSON need `JsonStringEnumConverter`.** Without it the body fails to bind. An omitted enum
    property silently becomes member 0: `Text`, `Equal`, `And`, `Ascending`, `Count`.
 6. **A `DateTime` member reads a zoned value as server local time.** A value carrying `Z` or an offset is converted
@@ -1332,8 +1427,9 @@ Each of these compiles, passes validation, and returns something other than what
 8. **Each `Order(...)` call replaces the previous ordering.** Put every key in one `List<OrderBy>`.
 9. **Some requests pass validation and then fail in the parser** with `System.Linq.Dynamic.Core.Exceptions.ParseException`:
    `Contains` / `StartsWith` / `EndsWith` on an enum-typed member, a `Where`
-   directly on a `List<string>`, a Number value with a thousands separator or `NaN`, an enum name that is not a member.
-   Treat `ParseException` as a 400 too.
+   directly on a `List<string>`, an enum name that is not a member.
+   Treat `ParseException` as a 400 too. Number values no longer reach it (3.3.0, section 4): one the parser cannot read,
+   or cannot compare with the member, is `InvalidFormat` at validation.
 10. **Summary column names collide silently.** Two group fields ending in the same segment (`Name`, `Category.Name`)
     throw `InvalidOperationException` at run time, and an alias equal to a dot-stripped group field (`CategoryName`
     beside `Category.Name`) silently drops a column.
@@ -1446,7 +1542,24 @@ DwPolicy                                                                    stat
 
 - `Configure` refuses only two things:
   - null `options` → `ArgumentNullException`;
-  - a second call, including one made by `AddDwPolicies` → `InvalidOperationException`.
+  - a second call, including one made by `AddDwPolicies`, asking for a **different** posture → `InvalidOperationException`.
+- A second call asking for the posture already in force is a no-op (3.3.0). It returns, `DwPolicy.Options` keeps
+  pointing at the first call's instance, and the options passed to the second call are frozen. The check runs inside
+  the lock that configures, so a caller needs no `IsConfigured` check of its own — that check is a check-then-act two
+  hosts starting at once can both pass. This is what lets an integration suite start several
+  `WebApplicationFactory<Program>` hosts over one composition root.
+  - Compared: `Tier`, `DryRun`, `IncludeTraceInResult`, `AuditRefusals`, `HashSalt`, `StoreFailure`,
+    `MaxSnapshotAge`, `RefreshInterval`, every `DwCaps` value, the exposed catalogue — the same types under the same
+    names, every name each type answers to, and the name each type is reported under — and the provider **types**,
+    in the order supplied, with `AttributePolicyProvider` left out of both sides. `IsMinGroupSizeSet` is not
+    compared: nothing in enforcement reads it, so writing `MinGroupSize = 5` and leaving it unset are the same
+    posture. `IncludeTraceInResult` is compared by the value that applies, not by whether it was written down: it
+    defaults to the tier's own answer, so writing that answer out is the same posture. A type exposed under two
+    names is reported under the last one, so two catalogues resolving every name alike are still refused when the
+    order differs.
+  - Not compared, and not replaced: `TokenVault`, `Services`, and the provider **instances**. A second host builds
+    its own and no two are ever the same reference, so they stay as the first call left them — a second host runs
+    with the first host's vault, container and rule stores.
 - `Configure` freezes `options`, `options.Caps` and `options.Entities`. Any setter or `Expose` after that → `InvalidOperationException`.
 - `Configure` does not validate the model.
   - Invalid values were already refused by the setters.
@@ -1478,14 +1591,19 @@ DwPolicyConfiguration                                                       stat
   Bind(this DwPolicyOptions options, IConfiguration section)                -> DwPolicyOptions   same instance
 ```
 
-`AddDwPolicies` does exactly this: `new DwPolicyOptions().Bind(section)` → `configure?.Invoke(options)` → `DwPolicy.Configure(options, providers)` → `services.AddSingleton(options)`.
+`AddDwPolicies` does exactly this: `new DwPolicyOptions().Bind(section)` → `configure?.Invoke(options)` → `DwPolicy.Configure(options, providers)` → `services.AddSingleton(DwPolicy.Options)`.
+
+Since 3.3.0 the singleton registered is the posture **in force**, not the instance this call built. On the first call
+they are the same object. On a later call asking for the same posture the first one's is registered, so whatever
+resolves `DwPolicyOptions` reads what the query path reads. A later call asking for a different posture still throws.
 
 - There is one overload, and `section` is required (null → `ArgumentNullException`).
   - `"DynamicWhere:Policies"` is a convention; any section works.
   - For configuration from code only, call `DwPolicy.Configure`.
 - Configuration binds first and `configure` runs second, so code wins over the file.
 - It configures the static `DwPolicy` immediately, during service registration. Anything set in `configure` (`Services` included) must already exist at that point.
-- It registers only the frozen `DwPolicyOptions` singleton. No resolver, sink, vault, catalogue or provider is registered.
+- It registers only the frozen `DwPolicyOptions` singleton — the one in force. No resolver, sink, vault, catalogue or provider is registered.
+- Calling it a second time with the same posture is safe (3.3.0), which is what an integration suite starting several hosts needs.
 - A `StorePolicyProvider` reads `StoreFailure`, `MaxSnapshotAge` and `RefreshInterval` from the options instance passed to `StorePolicyProvider.CreateAsync`.
   - `AddDwPolicies` creates its options internally, so a provider cannot share them. With a store, bind by hand:
 
@@ -1631,10 +1749,14 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
   MaxOrderFields       10       1    Orders.Count                                                       CapExceeded (9)
   MaxNavigationDepth   4        1    dot segments of any path ("A.B.C.D" passes, 5 segments refused) in
                                      conditions, Selects, Orders, GroupBy.Fields, AggregateBy.Field     CapExceeded (9)
+                                     4 is also the depth the attribute walk reads to. Raised above it, a request
+                                     can name a path no fragment of that walk reached; the member at the end of
+                                     such a path is read for its own attributes (3.3.0, section 14)
   MaxQueryCost         1000     1    sum of cost over every field reference                             QueryCostExceeded (19)
   DefaultFieldCost     1        0    cost of one reference to a field with no [DwCost] or rule weight, and
                                      (3.1.0) of an aggregate with no Field, such as a Count
-  MaxAuditEvents       10000    1    undrained audit events one context may hold                        CapExceeded (9)
+  MaxAuditEvents       10000    1    undrained audit events one context may hold                        CapExceeded (9);
+                                     under Strict outside a dry run, the clause's own field refusal
   MinGroupSize         5        1    k-anonymity floor for guarded grouped summaries; 1 = off           groups suppressed
   SchemaDepth          2        1    default PolicySchemaRequest.Depth
   SchemaCycleLimit     2        1    times one type may appear on one schema path
@@ -1666,7 +1788,8 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
   - `FieldPath` is `"*"`, or, in the Convenience tier, the path for `MaxNavigationDepth`. Under `Strict` every `CapExceeded` refusal carries `"*"` (3.1.0); the trace keeps the path.
   - `Reason` and `SourceOrigin` name the cap, e.g. `"MaxConditions cap (50), request had 51"`, `"MaxConditionValues cap (1000), request had 1001"`, `"MaxAggregates cap (50), request had 51"`.
   - In dry run it is recorded and not thrown.
-- `MaxAuditEvents` throws even in dry run, with `FieldPath` = the audited field (`"*"` under `Strict`).
+- `MaxAuditEvents` throws even in dry run, with `FieldPath` = the audited field. Under `Strict` outside a dry run
+  it throws the clause's own field refusal instead of `CapExceeded`, with `FieldPath` `"*"` (3.3.0).
 - `MinGroupSize`:
   - The effective floor is the largest of `Caps.MinGroupSize` and the `MinGroupSize` of the transform chain on any aggregated field.
   - Above 1, a guarded `Summary` with a `GroupBy` gets a `Count` column `__dwGroupSize` plus `HAVING __dwGroupSize >= floor` in SQL.
@@ -1769,7 +1892,7 @@ Composable: sanitize one clause, apply the type's forced predicates, return a ne
   Filter(Filter filter)               -> PolicyQueryable<T>
 
 Composable, returning a query the caller materializes; each throws TransformRequiresMaterialization (16)
-when any field of T is transformed for this caller
+on a type whose values are transformed on the way out for this caller
   SelectDynamic(List<string> fields)  -> IQueryable
   Group(GroupBy groupBy)              -> IQueryable
   FilterDynamic(Filter filter)        -> IQueryable
@@ -1796,7 +1919,18 @@ Rules:
 - The terminal's trace is on `result.Policy` only when `DwPolicyOptions.IncludeTraceInResult` allows it: null follows the tier (off under `Strict`, on under `Convenience`), and `true` or `false` overrides it (3.1.0). `LastTrace` holds it whatever the setting.
 - `getQueryString: true` under `Strict` → `QueryStringDenied` (14). This is checked before sanitizing; dry run records it instead.
 - `TransformRequiresMaterialization` depends on the type, not on the fields named.
-  - It is thrown even in dry run, and `FieldPath` lists the transformed paths.
+  - It is thrown even in dry run, and `FieldPath` lists the transformed paths — except under `Strict` outside a
+    dry run (3.3.0), and except where the policy names no transformed path at all, where it is `"*"` in both
+    tiers (3.3.0).
+  - It asks two questions since 3.3.0: whether the policy names a transformed path, and whether a row of the
+    type can hold a member that declares a transform attribute anywhere in what the type can reach — a member
+    only a subtype declares, one five segments down, one of an object a dictionary holds. The outbound walk
+    transforms those from their own attributes (section 18), so a type whose only transforms sit there is
+    transformed on the way out as well; reading the named paths alone handed such a type its query, and its rows
+    came back exactly as stored. The second question is asked only of a resolver that reads attributes.
+  - With no named column to list, the refusal names the clause: `FieldPath` is `"*"` in both tiers, where under
+    `Convenience` it otherwise lists the transformed columns. The `AuditRefusals` event records the same text.
+  - A type nothing transforms anywhere still gets its query.
   - Use `ToListDynamic` or `ToList(Summary)`, or leave deliberately with `AsUnguardedQueryable()`.
 - `Where`, `Order` and `Page` never fail with `AllSelectsDenied`: no projection is synthesized for a single clause.
 - `Group(GroupBy)` runs its sanitized summary through the summary pipeline, so forced predicates and the
@@ -1811,7 +1945,11 @@ Rules:
   - On a fresh handle it is the original, tracked source with no predicates.
   - Calling a DynamicWhere extension on it for a `RequirePolicy` type → `PolicyRequired`.
 - `LastTrace` is set on the handle the method was called on, not on the handle it returns.
-  - It holds the latest call that got past sanitizing, or a `QueryStringDenied` refusal.
+- `LastTrace` is assigned before the request is sanitized (3.3.0), so a refused request leaves its own trace
+  readable. It used to be assigned after, so a refusal left the previous request's trace, or null. A strict refusal
+  names no field, and the trace is where the real path and reason are.
+  - It holds the latest call the handle made: one that got past sanitizing, one sanitizing refused, or a
+    `QueryStringDenied` refusal.
 - Refusals throw `PolicyException` (a `LogicException`) from the handle method.
   - With `DwPolicyOptions.AuditRefusals` on, the terminal and composable methods also write the refusal to the context's audit buffer on its way out, once, without changing or catching it (section 22).
 
@@ -1914,6 +2052,18 @@ AttributeUsage (every attribute: Inherited = true)
 
 - Only public instance properties are read, including properties reached through navigations and
   collection elements, up to paths of 4 segments. An attribute on a field compiles and does nothing.
+- A request can name a longer path only where a host raises `Caps.MaxNavigationDepth` above 4. The attributes of
+  the member at the end of such a path are then read directly (3.3.0): the deny family, `[DwOperators]`, the
+  transform stages, `[DwCost]`, `[DwAudit]`, `[DwDescribe]` and `[DwAllowedValues]`. What is declared about the
+  queried entity itself is left out there, as it is around a cycle: `[DwAlias]`, `[DwRequireWhere]`,
+  `[DwForceWhere]`. Only a resolver that reads attributes does this, which every resolver `DwPolicy.Configure`
+  builds does. Until 3.3.0 no fragment reached such a path, so a `[DwDenied]` member at segment five was filtered
+  on, grouped by and returned, under `Strict`.
+- A type first met at the fourth segment used to read as a type reached from itself wherever it was met again in
+  the same walk, so what a cycle leaves out — `[DwForceWhere]`, `[DwRequireWhere]`, `[DwAlias]` — was left out of a
+  shorter path reaching that type directly, and which of two members was declared first decided whether a forced
+  tenant scope applied. Fixed in 3.3.0: the three apply on every path within 4 segments that is not around a
+  cycle.
 - Every attribute except `DwEntity` derives from `DwPolicyAttribute` and has `Overridable:bool = false`.
   False places it at `PolicyLevel.SealedAttribute`; true places it at `PolicyLevel.OverridableAttribute`.
 - A type's attributes are read once and cached. A malformed one throws `ArgumentException` on every
@@ -1974,7 +2124,28 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 ### DwDeny family
 
 - Each attribute refuses its features on that exact path. Several on one member all apply.
-- A denial on a navigation (`Contact`) covers only `Contact`. `Contact.Email` is a separate field.
+- A denial on a navigation (`Contact`) covers only `Contact`. `Contact.Email` is a separate field: it is declared
+  by an application's own type, so an attribute can be placed on it. Decorate it, or deny its path.
+- A path that continues beneath a member whose type the framework declares is not a separate field (3.3.0). No
+  attribute can be placed on `Salary.Value` or `Salary.HasValue` on a `decimal?`, `Secret.Length` on a `string`,
+  `Born.Year` or `Born.Date.Year` on a `DateTime`, `Bag.Count` on a dictionary, or `Lines.Count` on an
+  application's own collection class — the collection's own member, not an element's — and no fragment named such
+  a path, so it resolved as allowed: a `[DwDenied] decimal?` was filtered on, sorted by, grouped by with its
+  values as the group keys, aggregated (`MAX(Salary.Value)`) and handed back by a dynamic projection, under
+  `Strict`. Such a path now takes every fragment of the member it reads, whichever provider supplied it — an
+  attribute and a store rule on `Salary` both cover `Salary.Value`: the deny effects per feature, the
+  `[DwOperators]` restriction (intersected), the `[DwCost]` weight and the audited features. A rule naming the
+  sub-path itself still applies alongside.
+  - One feature is one feature: `[DwNoWhere] Born` refuses `WHERE Born.Year` and still allows
+    `GROUP BY Born.Year`. A member nothing denies is read beneath exactly as before, so `Name.Length` still runs.
+  - It does not take what is said to the caller about the member: the alias, the required filter
+    (`[DwRequireWhere]` on `TenantId` is not satisfied by a filter on `TenantId.Value`), the forced scope, and the
+    descriptive facts — label, description, group, order, allowed values.
+  - Where the member it reads is transformed, `Select`, `Group` and `Aggregate` on the sub-path are refused
+    (section 18): there is nothing beneath the member to apply the transform to.
+  - A member only a subtype of the navigated type declares is not such a path: `Zone.Parent`, where a subclass of
+    Zone's type declares `Parent`, is decided by the fragments naming it, as before, so a grant of `Zone` under a
+    `"*"` deny does not grant it.
 - `[DwDeny(PolicyFeature.None)]` refuses nothing, and nothing reports it.
 - `[DwNoSelect]` leaves the field filterable, sortable, groupable and aggregatable, so it can still be
   counted.
@@ -1994,7 +2165,9 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - `Resolve()` returns `Allow` (every `Operator` when null) minus `Deny`. An operator in both lists is
   refused. `Allow = new Operator[0]` permits nothing, so the field cannot be filtered at all.
 - Every restriction matching the field is intersected: repeated attributes, rules at any level, and `"*"`
-  rules. A rule can only narrow the set, so `Overridable` changes nothing.
+  rules. A rule can only narrow the set, so `Overridable` changes nothing. A path beneath a member whose type the
+  framework declares intersects that member's restriction too (3.3.0), so a restriction on `Salary` holds for
+  `Salary.Value`.
 - It is checked on every WHERE condition at any depth and in every Segment set. It is also checked on a
   `Having` condition that reaches the field through a group key or an aggregate alias.
 - A failure throws `OperatorNotAllowed` in both tiers. If the field is also denied for Where,
@@ -2009,8 +2182,10 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   `AggregateBy.Field`. It is also accepted in `Having` and summary `Orders` names that refer to an aliased
   group key.
 - Matching is case-insensitive, and the real path still works.
-- A name that could mean two fields throws `AmbiguousFieldName`, in both tiers and in dry run. That
-  happens when an alias equals another real path or another alias.
+- A name that could mean two fields throws `AmbiguousFieldName` under `Convenience` and in a dry run. That
+  happens when an alias equals another real path or another alias. Under `Strict` outside a dry run it is
+  refused as an unknown name is — the clause's own code, `FieldPath` `"*"` — because a name matching two
+  fields matches at least one (3.3.0); the trace records which fields it matched.
 - Exception: one member reached both at the root and through navigations (`Code`, `Manager.Code`)
   resolves to the root.
 - `PolicyException.FieldPath` carries the name the caller wrote. The trace records the canonical path,
@@ -2022,7 +2197,11 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   - A nested path's column is matched by its path without dots.
   - Typed `FilterResult<T>` and `SegmentResult<T>` rows keep their member names.
   - An alias that stands for more than one path is not renamed.
-- An alias is not applied on a type reached from itself (`Employee.Manager.Code`).
+- An alias is not applied on a type reached from itself (`Employee.Manager.Code`). Until 3.3.0 a type first met
+  at the fourth segment counted as reached from itself wherever it was met again in the same walk, which dropped
+  the alias from a shorter path reaching that type directly.
+- A path beneath a member whose type the framework declares does not take that member's alias (3.3.0): an alias
+  is a public name for the member, and `Salary.Value` is not the member.
 
 ### DwForceWhere
 
@@ -2079,6 +2258,12 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - A predicate declared on a navigated type is injected through the navigation, up to 4 segments, except
   onto a type reached from itself. For example, a query on `Order` injects `Buyer.TenantId`; through a
   collection the condition becomes `Any`.
+  - Until 3.3.0 a type first met at the fourth segment read as a type reached from itself wherever it was met
+    again in the same walk, so its forced scope was dropped from a shorter path reaching it directly, and which
+    of two members was declared first decided whether the scope applied. It applies on every path within 4
+    segments that is not around a cycle now. A query that ran unscoped is scoped.
+  - A path beneath a member whose type the framework declares takes no forced scope from that member (3.3.0): the
+    scope is about the rows, not about the value one segment down.
 
 ### DwRequireWhere
 
@@ -2098,7 +2283,11 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - In a Segment, every condition set must satisfy it.
 - It is checked on every guarded call, so a lone `.Order(...)` or `.Page(...)` on the handle also throws.
 - It follows navigations the same way `[DwForceWhere]` does: a query on `Order` can require
-  `Buyer.Division`.
+  `Buyer.Division`, and since 3.3.0 on every path within 4 segments that is not around a cycle, so a type first
+  met at the fourth segment no longer drops it from a shorter path. A requirement a caller was never asked for
+  may now be demanded.
+- A filter on a path beneath the member does not satisfy it (3.3.0): `[DwRequireWhere]` on `TenantId` asks for a
+  filter on `TenantId`, which `TenantId.Value` is not.
 - It is elected: a rule cannot lift a sealed requirement but may add one where none exists. A `"*"` rule
   cannot carry one.
 
@@ -2126,6 +2315,8 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - Not charged: a synthesized projection, `Having`, summary `Orders`, forced predicates and the group-size
   count.
 - An unweighted field costs `Caps.DefaultFieldCost` (default 1, may be 0).
+- A path beneath a member whose type the framework declares costs that member's weight (3.3.0): `Notes.Length`
+  costs what `Notes` costs, where it used to cost the default.
 - A total above `Caps.MaxQueryCost` (default 1000) throws `QueryCostExceeded` in both tiers. In dry run
   it is only recorded.
   - The Convenience tier checks the total before gating. The Strict tier checks it after every field gate
@@ -2144,12 +2335,35 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - A field the type's `DefaultOrder` adds is recorded too (3.1.0): audited for `Order`, it is an `Order` use,
   `Effect` `Allow`, each time a guarded query orders by it (section 13).
 - Not recorded:
-  - columns returned because the request had no `Selects`
   - a `DefaultOrder` field left out for this caller, outside a dry run
   - forced predicates
-  - output transforms
-- If the context already holds `Caps.MaxAuditEvents` (default 10000) events, the query throws
-  `CapExceeded`, in both tiers and in dry run.
+  - applying an output transform, which is no use of its own
+  - columns returned because the request had no `Selects` — until 3.3.0, which records every audited member the
+    query hands back (below)
+- If the context already holds `Caps.MaxAuditEvents` (default 10000) events, the query is refused, in both tiers
+  and in dry run. `CapExceeded`, except under `Strict` outside a dry run, where it is the clause's own field
+  refusal instead (3.3.0): only a real, audited field can reach the cap, so answering with the cap's own code
+  would set such a field apart from a name that matches nothing.
+- A use is what the request reads: a field it names, a default-order field the query adds, and — since 3.3.0 —
+  every audited member a projection the caller did not name hands back, recorded for `Select`. One event per query,
+  not per row. Until 3.3.0 an empty `Selects` returned the value with nothing written down.
+- A path beneath a member whose type the framework declares is audited as that member is (3.3.0): reading
+  `Salary.Value` records what reading `Salary` records, where it used to record nothing.
+- A member the rows hand back where no path of the policy names it is recorded once the rows show it (3.3.0).
+  The gate records a use by path, before the query runs, and a member only a subtype of the row's type declares,
+  or one past the four segments the attribute walk reads, has no path it could ask about: handed back inside a
+  row returned whole or a navigation kept whole, it was read with nothing written down. The outbound walk's
+  second pass reports each one it meets and the terminal records it (section 22): one event per path per query,
+  `Feature` `Select`, `Effect` `Mask` where the member is transformed as well and `Allow` otherwise.
+  - Only a member its own `[DwAudit]` audits for Select, and only where the projection carries it: a member the
+    projection left out is not a read.
+  - A member the declared types hold within four segments is the gate's and is left to it, and so is a path the
+    projection spells out, however long — neither is recorded twice.
+  - Read only by a resolver that reads attributes. A model that declares neither an audit for Select nor a
+    transform anywhere pays for no second pass.
+- What is handed back is read strictly: a member kept whole records the audited paths inside it; a navigation
+  nothing loads records nothing, since the caller receives null for it; a value the source does not carry records
+  nothing. A dry run applies no projection, so everything the row carries is recorded, a denied member included.
 - A refusal becomes an event of its own, with an `ErrorCode`, only when `DwPolicyOptions.AuditRefusals` is
   on, and then for every refused guarded query, audited field or not (3.1.0, section 22).
 - It is elected: the top-ranked audit wins outright, and fragments tied with it are unioned. A rule can
@@ -2282,6 +2496,67 @@ The resolver, fragment and provider types are listed in section 21.
 
 ## 17. Enforcement by tier and dry run
 
+Under `Strict` outside a dry run, a path that exists on the type but names no value the query can compute is refused
+as an unknown name is (3.3.0), with the clause's own code and `FieldPath` `"*"`, in every clause the database has to
+compute: a filter, an order, a grouping key, an aggregated field, and a filter or an order inside a `Segment`.
+
+`Selects` is not one of them. A projection is the last thing the provider builds, and EF Core evaluates that one on
+the client when it cannot translate it, so `Selects` naming such a member returns its value exactly as before.
+
+What decides:
+
+```
+Source of the rows                                   What the set of producible members is read from   Name.IsEmpty
+entity query                                         EF Core model of the queried type: columns
+                                                     (shadow included), owned, complex, navigations    refused
+Select(...) before ApplyPolicy building the row      that initializer's assignments, at every level,
+                                                     both branches of a conditional included           refused
+  ... a member assigned from something else: a       nothing; the assignment is not one this shape
+      method call, a captured value, a subquery,     reads
+      two branches building it two ways                                                                left alone
+  ... a member it copies whole: Name = role.Name     the model, beneath the copied member              refused
+rows in memory (EnumerableQuery)                     nothing; the getter runs                          runs
+beneath a column, converted or not                   nothing; the converter decides                    left alone
+a framework member: Length, Year, HasValue           nothing; the provider translates it               runs
+a source the library cannot read into                nothing                                           left alone
+a provider in front of EF Core                       nothing; it rewrites what EF Core cannot
+                                                     translate                                         left alone
+a column only a subtype maps, through the base       the queried type's model, which EF Core
+                                                     translates against                                refused
+a projection another provider ran                    nothing; its rules are its own                    left alone
+```
+
+- The `Length, Year, HasValue` row says whether such a path is computable, and it is. Its *policy* is the
+  member's own since 3.3.0 (section 14), so it runs only where that member may be used for that feature.
+- A projection is read only as far as its initializer can be read: a nested initializer, a member copied from the
+  entity, a value built and left empty, and a conditional over those, a null branch included. A member assigned
+  nothing but a null is left alone. Past `MaxComplexDepth` (eight levels) it stops reading and stops speaking. Such
+  a path reaches the provider and fails there, as before 3.3.0.
+- `left alone` is not a promise that the path runs: the policy does not refuse it, so it behaves
+  exactly as it does unguarded. `Name.IsEmpty` beneath a column mapped through a value converter
+  still fails inside the provider.
+- An unmapped getter on the entity itself (`Display => $"{Code}:{Id}"`) is refused for the same reason.
+- The rule is EF Core's own provider's — that exact type, from EF Core's own assembly. A provider that wraps EF
+  Core — LinqKit's `AsExpandable()`, DelegateDecompiler's `Decompile()` — rewrites what EF Core cannot translate, so
+  its rows are left alone, over a projection and over an entity alike. Every other provider is left alone for the
+  same reason turned around, a host's own through `ReplaceService<IAsyncQueryProvider, …>` included: the library
+  cannot tell one that rewrites from one that passes straight through, and refusing on that guess would take back a
+  query the rewriting host answers today. A rewrite inside EF Core's own pipeline — a member-translator plugin, a
+  replaced query preprocessor — leaves EF Core's own provider in place, so such a member is refused.
+- A projection that does not build its rows with an object initializer — an anonymous type, a constructor with
+  arguments — says nothing about which member each value sets, so no member of such a row is refused here.
+- A member assigned through a sequence operator — `Lines = o.Lines.ToList()`, `o.Lines.Where(…).ToList()`, a
+  subquery building rows of its own — is left alone as well: what the row holds is not what the navigation holds,
+  and reading it as the navigation would refuse a member the row carries.
+- A row the library itself projected reads like any other: the core's typed `Select` null-guards every nested node
+  it builds, and both branches of that guard are read, so `Select` composed and then filtered refuses what the bare
+  handle refuses.
+- The refusal raises no `[DwAudit]` event, as an unknown name raises none: no field was read and the refusal names
+  none. `AuditRefusals` records it, and so does the trace.
+- `Convenience` and a dry run are unchanged: the provider throws, as it does unguarded.
+- The rule is the model's: a member it maps nowhere is refused, whatever a provider extension could compute.
+- The trace records it: `the member exists on the type and the query cannot compute it, so it is refused as an unknown name is`.
+
 The count caps are checked first, before any name is resolved (3.1.0). Names are then resolved to canonical paths,
 `MaxNavigationDepth` is checked, and the cost budget is checked before field policies — except under `Strict` outside
 dry run, where it is checked after them (3.1.0). Nothing is clamped.
@@ -2308,6 +2583,17 @@ no Selects while a denied field can reach the result (3.2.0) allowed members   a
 GROUP BY a denied field                                      throw             throw    FieldDeniedForGroup
 AGGREGATE a denied field, or a transformed field lacking
   AllowAggregate on a stage                                  throw             throw    FieldDeniedForAggregate
+any clause on a path the attribute walk cannot name:
+  Salary.Value beneath a framework-typed member, or a
+  path past four segments with MaxNavigationDepth
+  raised (3.3.0)                                             the member's      same     the member's own code
+                                                             own decision
+SELECT a path beneath a transformed member, Bonus.Value:
+  no member there to apply the chain to (3.3.0)              drop              throw    FieldDeniedForSelect
+SELECT a transformed member past four segments (3.3.0)       transformed       transformed
+GROUP BY or AGGREGATE a path of either kind whose member
+  is transformed (3.3.0)                                     throw             throw    FieldDeniedForGroup /
+                                                                                        FieldDeniedForAggregate
 field denied for Segment used anywhere in a Segment          throw             throw    FieldDeniedForSegment
 Segment condition on a field denied for Select               allowed           throw    FieldDeniedForSegment
 any other field refusal inside a Segment (3.1.0)             the rows above    throw    Strict: FieldDeniedForSegment
@@ -2449,6 +2735,26 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
     projects into T, so a T with no public parameterless constructor, an abstract one among them, fails there with
     `SelectTypeMustHaveParameterlessConstructor`; the dynamic terminals build their own class.
   - With nothing counted, `Selects` stays null and the query is the one an unguarded call runs.
+- A path the attribute walk cannot name takes the policy of the member it reads (3.3.0, section 14): one that
+  continues beneath a member whose type the framework declares — `Salary.Value` and `Salary.HasValue` on a
+  `decimal?`, `Secret.Length` on a `string`, `Born.Year` on a `DateTime`, `Bag.Count` on a dictionary,
+  `Lines.Count` on an application's own collection class — and, where a host raised `MaxNavigationDepth`, one
+  longer than the walk's four segments.
+  - The deny effects per feature, the `[DwOperators]` restriction, the `[DwCost]` weight and the audited features
+    come from the member; its alias, its required filter, its forced scope and its descriptive facts do not. A
+    rule naming the sub-path itself still applies alongside, and `Explain` names the member's fragment as the
+    source.
+  - Where the member it reads is transformed, a path beneath it has no member to apply the chain to, so every
+    way it hands a value back is refused: `Select`, `Group` and `Aggregate`, with a `Selects` entry dropped under
+    `Convenience` as any field denied for Select is. A transformed member past the walk is itself a member, so
+    `Selects` naming it returns it transformed (section 18); only `Group` and `Aggregate` are refused there,
+    because a summary's own transform finds a generated row's columns by the type's list, which stops at four
+    segments. `Where` and `Order` follow the member's own decision and run on the stored value, as they do along
+    a named path.
+  - A member only a subtype of the navigated type declares is not such a path: it is decided by the fragments
+    naming it, as before.
+  - The member a path reads is found whatever the providers are, an attribute and a store rule alike. The
+    attributes past the walk's depth are read only by a resolver that reads attributes.
 - A path that matches nothing on `T` (3.1.0):
   - Convenience, and dry run in either tier: validation throws `LogicException`
     `ConditionMustHasValidFieldName` before any policy decision, as it does unguarded.
@@ -2466,8 +2772,9 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
   `FieldPath = "*"`, `RuleId = null` and `SourceOrigin = null`, for a denied field, an alias and an unknown name
   alike, so their messages are identical. Every `CapExceeded` refusal carries `FieldPath = "*"` as well, and
   keeps its `SourceOrigin`. `MissingContextValue` carries `FieldPath = "*"` and `SourceOrigin = null`, naming
-  neither the scope's column nor the context key it reads. `OperatorNotAllowed`, `RequiredFilterMissing` and
-  `AmbiguousFieldName` still name their field.
+  neither the scope's column nor the context key it reads. `OperatorNotAllowed` and `RequiredFilterMissing` still name
+  their field. `AmbiguousFieldName` is not raised under this tier at all since 3.3.0: an ambiguous name is
+  refused as an unknown name is.
   - Inside a `Segment` every field refusal is `FieldDeniedForSegment` with `Feature = Segment`, whichever clause
     refused it: a condition in any set, an order, a select, or taking part at all (3.1.0). Answered by clause, a field
     denied for every clause but not for `Segment` would say `FieldDeniedForOrder` where a name that matches nothing
@@ -2483,10 +2790,11 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
   this caller may not order by, in both tiers, and in a `Segment` less every field this caller may not use in a
   segment. Each field left out is recorded as `Dropped` on `Order`, with a reason starting
   `left out of the default order`, and never refused. Dry run keeps it and still records it (section 13).
-- These throw regardless of tier and dry run: `AmbiguousFieldName`, `GroupTooSmall`, `AmbiguousGroupKey`,
+- These throw regardless of tier and dry run: `GroupTooSmall`, `AmbiguousGroupKey`,
   `CapExceeded` from a full audit buffer, `MissingHashSalt`, `MissingTokenVault`,
   `TransformRequiresMaterialization`, `StoreUnavailable` and `PolicyContextNotPrepared`. `PolicyRequired`
-  is raised on unguarded calls only.
+  is raised on unguarded calls only. `AmbiguousFieldName` throws under `Convenience` and in a dry run; under
+  `Strict` the name is refused as an unknown one instead (3.3.0).
 - Dry run is on when `DwPolicyOptions.DryRun` or `DwPolicyContext.DryRun` is true. It records every other
   throw and drop in the trace, applies none of them, and leaves the clause as written. In dry run:
   - no forced predicate is injected and no projection is synthesized;
@@ -2529,6 +2837,42 @@ alone  Default        [DwDefault]     constant or type default, converted to mem
   selected paths and every path beneath a selected navigation.
   - Collections and navigations are followed, and null navigations are skipped.
   - An object shared by several rows is transformed once.
+- The rows are also walked by run-time type (3.3.0), so a member that declares a transform attribute and was not
+  transformed along a path the policy names is transformed by its own attributes, exactly once: an object reached
+  both ways is not transformed twice. The walk of the declared types names the paths of four segments, and a
+  value can sit where none of them goes — a `[DwMask]` member five segments down an included or in-memory graph
+  (`B.C.D.E.Card`, while `B.C.D.Pin` four segments down was masked), a masked member only a subtype of the row's
+  type declares (`Dog.Chip` on rows typed `Animal`, in memory or in a TPH hierarchy), a masked member of an
+  object a dictionary holds, and the far side of a cycle — with no `Selects`, with a navigation named whole in
+  `Selects`, and in a dynamic projection holding a real object. Each came back exactly as stored, at the default
+  caps, under `Strict`.
+  - Only members that declare a transform or an audit for Select, or that can lead to one, are read, so a
+    navigation whose type can reach neither is never touched and a lazy loader behind it is not woken. A model
+    that declares neither anywhere pays for no second pass at all.
+  - The same pass reports each audited member it meets where the policy names no path to it, which the terminal
+    records (3.3.0, section 22).
+  - The transform is the member's own attributes. No rule can speak to such a member, since no path names it,
+    which is the same answer as "no runtime rule can unmask a field" (section 32). A resolver built over no
+    `AttributePolicyProvider` reads no attribute here either.
+  - It carries only what the result carries, as the first pass does; it runs in a dry run, as transforms always
+    have; and a transformed member with no setter fails the query with `InvalidOperationException`, as one along
+    a named path does.
+  - The trace records the path with its stages and the note
+    `(declared on the member; no path of the policy names it)`.
+  - Still a limit: a member typed `object`, or a collection that is not generic, says nothing about what it
+    holds and is not read into.
+- A transform is applied to a member. Beneath that member the value is another type — `Bonus.Value` is a decimal
+  where `Bonus` is the member that is rounded — so there is no member to apply the chain to, and `Select`, `Group`
+  and `Aggregate` on such a path are refused (3.3.0): `FieldDeniedForSelect`, `FieldDeniedForGroup`,
+  `FieldDeniedForAggregate`, with a `Selects` entry dropped under `Convenience` as any field denied for Select is.
+- A transformed member past the walk's depth is itself a member, so a row that carries it carries it transformed
+  (3.3.0). `Selects` naming it returns it transformed, in a typed projection and in a generated row alike: the
+  chains of the members a projection names past the walk are handed to the outbound walk beside the type's own
+  list and applied by path. A grouping key and an aggregated field are columns of a generated row, which a
+  summary's own transform finds by the type's list, and that list stops at four segments, so those two are
+  refused: `FieldDeniedForGroup`, `FieldDeniedForAggregate`.
+- `Where` and `Order` run on stored values wherever a member is reached from, so on both kinds of path they
+  follow the member's own decision, as they do along a named path.
 - A transformed member with no setter, or a path missing on the runtime type, throws
   `InvalidOperationException`.
 - Segment results are transformed like Filter results.
@@ -2540,7 +2884,13 @@ alone  Default        [DwDefault]     constant or type default, converted to mem
   `AllowAggregate = true`. That includes a short-circuiting `[DwDefault]`, and the check overrides every
   Allow, sealed ones included. The field's own floor is the largest `MinGroupSize` among its stages.
 - On the guarded handle, `SelectDynamic`, `FilterDynamic`, `Group` and `Summary` throw
-  `TransformRequiresMaterialization` if the type has any transform for this caller.
+  `TransformRequiresMaterialization` on a type whose values are transformed on the way out for this caller: one
+  the policy names a transformed path on, and, since 3.3.0, one a row of which can hold a member that declares a
+  transform attribute anywhere in what the type can reach, which only a resolver that reads attributes is asked.
+  Until 3.3.0 a type whose only transforms sit off the named paths — a member only a subtype declares, one five
+  segments down, one of an object a dictionary holds — was handed the query, and its rows came back exactly as
+  stored. With no named column to list the refusal names the clause, `FieldPath` `"*"`, in both tiers. A type
+  nothing transforms anywhere still gets its query.
 - `AsUnguardedQueryable()` output is never transformed.
 - Transforms also run in dry run.
 
@@ -2603,10 +2953,12 @@ Tokenize                                   any value           -> 32 lowercase h
   token.
 - `DwToken.New()` returns 16 cryptographic random bytes as 32 lowercase hex characters.
 - `DwToken.KeyFor(string scope, string value)` returns `scope + ":" + lowercase hex SHA-256(UTF-8 value)`.
-  `InMemoryTokenVault`, `RedisTokenVault` and `EfTokenVault` all store mappings under this key. There is no
-  reverse lookup.
+  A vault given a key stores under `DwToken.KeyFor(scope, value, key)` instead (3.3.0), which is
+  `"hmac:" + scope + ":" + the lowercase hex HMAC-SHA256`, so a copy of the store gives no value back.
+  There is no reverse lookup either way. Section 24.
 - `InMemoryTokenVault` lasts for the process and is unbounded. It exposes `Count` and `Clear()`, and a
-  restart issues new tokens.
+  restart issues new tokens. It draws a key of its own (3.3.0), so its mappings are keyed with nothing to
+  configure.
 - `Hash` and `Tokenize` both preserve equality, so the column still groups and joins, given the same salt
   or the same scope.
 
@@ -2715,6 +3067,10 @@ ValueTransform(MutateStage? mutate = null, GeneralizeStage? generalize = null, F
 
 ## 19. Group floor and transformed summaries
 
+**The floor is on by default.** `Caps.MinGroupSize` ships at 5, so a guarded summary drops every group with fewer
+than five rows, and nothing in the answer says a group was dropped. Right for anonymised reporting, surprising for
+an operational count. `Caps.MinGroupSize = 1` switches it off, deliberately. An unguarded summary is never floored.
+
 ```
 effective floor   = max(Caps.MinGroupSize, MinGroupSize of the chain of each AggregateBy.Field)
 Caps.MinGroupSize   unset -> DwCaps.DefaultMinGroupSize = 5 (IsMinGroupSizeSet = false); 1 = no global floor
@@ -2737,6 +3093,10 @@ Caps.MinGroupSize   unset -> DwCaps.DefaultMinGroupSize = 5 (IsMinGroupSizeSet =
 - `GroupTooSmall` means the caller already used `"__dwGroupSize"` (case-insensitive) as an aggregate
   alias, a `Having` field or an `Orders` field. It throws in both tiers and in dry run. A small group never
   raises it.
+  - The walk over `Having` that looks for the name reads a null `Conditions` or `SubConditionGroups` as an empty
+    list (3.3.0). A request body sending `"conditions": null` or `"subConditionGroups": null` overwrites the
+    list's initializer, and such a summary used to fail guarded with a `NullReferenceException` wherever the
+    floor is on, which is the default, though it ran unguarded. It runs, and the floor still applies.
 - Dry run adds the column without the predicate. Each group below the floor gets its own decision
   (`"a group of {n}, below the group floor of {floor}"`) and stays in `Data`.
 - Transformed keys are handled in this order:
@@ -2745,7 +3105,8 @@ Caps.MinGroupSize   unset -> DwCaps.DefaultMinGroupSize = 5 (IsMinGroupSizeSet =
     of a transformed field gets the field's chain. `MAX(Age) = 41` with `Round, Step = 10` returns `40`.
   - If two rows now share the same values across the transformed keys, the query throws
     `AmbiguousGroupKey`, in both tiers and in dry run. `FieldPath` is the transformed key paths joined by
-    `", "` and `Feature` is `Group`.
+    `", "` and `Feature` is `Group` — under `Strict` outside a dry run it is `"*"` with no `SourceOrigin`
+    (3.3.0), because the key's canonical path is the column behind the caller's alias.
 - Only the transformed keys are compared. Grouping by `[Department, Salary]` with `Salary` rounded throws
   as soon as two departments share a rounded salary.
 
@@ -2883,6 +3244,9 @@ What is recorded
                included navigation or an object of a row in memory (Select); Reason starts "left out:" (3.2.0)
   Dropped      a member a Convenience caller named that can hold a denied field no path names (Select); Reason
                "it holds a field denied for Select where no path can name it" (3.2.0)
+  Denied       an audited member no path of the policy names that the audit buffer has no room for (Select),
+               before the refusal that withholds the rows; Reason "MaxAuditEvents cap (<n>) reached with the
+               buffer undrained" (3.3.0, section 22)
   Denied       a refusal: Strict denial, cap, cost, query string ("*"), required filter, segment inference,
                MaxAuditEvents; the throw follows unless dry run. Under Strict a name that matches nothing
                is Denied under that name, Reason "names nothing on <TypeName>" (3.1.0)
@@ -2891,6 +3255,10 @@ What is recorded
   Masked | Mutated | Defaulted | Generalized
                once per transformed path per query (Select); Reason lists the stages ("Mask then Truncate");
                summary key and aggregate columns use Feature Aggregate
+  Masked | Mutated | Defaulted | Generalized
+               a member the run-time-type pass transformed because no path of the policy names it (Select),
+               once per path per query; Reason is the stages followed by
+               " (declared on the member; no path of the policy names it)" (3.3.0, section 18)
   Allowed      an aliased column renamed on output (dynamic and Summary rows); Reason "emitted as '<alias>'"
   Dropped      "__dwGroupSize", Aggregate: the floor was applied; in dry run, one record per group below it
 ```
@@ -3102,21 +3470,41 @@ DwAuditEvent                                        sealed class
     use, `Effect` `Allow`, each time a guarded query orders by it, as a caller's own order is. A dry run keeps a
     default field that enforcement would leave out, so it records that one too, with its `Order` effect (`Deny` for a
     field the caller may not order by) and `DryRun` true.
+- An audited member the rows hand back where no path of the policy names it is recorded once the rows show it
+  (3.3.0). The gate records by path before the query runs, and a member only a subtype of the row's type
+  declares, or one past the four segments the attribute walk reads, has no path it could ask about, so it came
+  back inside a row or a navigation kept whole with nothing written down. The outbound walk's second pass
+  (section 18) reports each one and the terminal records it.
+  - One `DwAuditEvent` per path per query, not per row. `Feature` `Select`; `Effect` `Mask` where the member is
+    transformed as well, `Allow` otherwise; `EntityType` the queried type's `FullName`; `FieldPath` the path
+    through the rows, such as `B.C.D.E.Five`, or `Hidden` for a subtype's member at the root.
+  - Only a member its own `[DwAudit]` audits for Select, and only where the projection carries it. A member the
+    declared types hold within four segments is the gate's, and so is a path the projection spells out however
+    long it is, so neither is recorded twice.
+  - Recorded in a dry run too, as every audited use is, and read only by a resolver that reads attributes.
+  - At `Caps.MaxAuditEvents` it fails closed as the gate does, and the rows are withheld: under `Strict` outside
+    a dry run the clause's own refusal, `FieldDeniedForSelect` or `FieldDeniedForSegment` for a segment, with
+    `FieldPath` `"*"`; otherwise `CapExceeded`, whose `SourceOrigin` reads
+    `MaxAuditEvents cap (<n>) reached with the buffer undrained`. The trace records a `Denied` decision on the
+    path first, and an `AuditRefusals` event records the path.
 - Events are recorded whether the use was allowed, masked, dropped or denied, and in dry run too.
 - Nothing is recorded for:
   - a `DefaultOrder` field left out for this caller, outside a dry run: the query does not order by it, and the
     caller never named it;
-  - a projection the library synthesized;
+  - a projection the library synthesized, as an act of its own: since 3.3.0 every audited member it hands back
+    is recorded for `Select` (section 14);
   - `PolicySimulator`;
   - `Explain`;
   - schema building.
 - Events buffer on the context (`PendingAuditEvents`); the query path never calls a sink.
   - Drain once per request with `DwPolicy.DrainAuditAsync(context, sink)`. Undrained events are lost with the context.
 - `Caps.MaxAuditEvents` bounds the undrained buffer.
-  - The event that does not fit refuses the query with `CapExceeded` (9), `SourceOrigin` containing `"MaxAuditEvents"`, even in dry run.
+  - The event that does not fit refuses the query, even in dry run: `CapExceeded` (9) with `SourceOrigin`
+    containing `"MaxAuditEvents"`, and under `Strict` outside a dry run the clause's own field refusal with no
+    origin at all (3.3.0).
   - Draining makes room again.
 - A sink must throw when it fails to write. It is passed per call and never stored in options, so a scoped sink works.
-- ASP.NET Core package: `app.UseDwPolicyAudit()` drains the context stored on `HttpContext.Features` to the `IDwAuditSink` registered in DI, after each response.
+- ASP.NET Core package: `app.UseDwPolicyAudit()` drains the context stored on `HttpContext.Features` to the `IDwAuditSink` registered in DI, after each response. The drain does not use the request's abort token: it has a budget of its own, thirty seconds (3.3.0, section 29).
 
 ### Refused queries — `DwPolicyOptions.AuditRefusals` (3.1.0)
 
@@ -3128,7 +3516,7 @@ DwAuditEvent                                        sealed class
   - `EntityType` = the queried type's `FullName`; `Effect` = `Deny`; `DryRun` = false; `ErrorCode` = the refusal's code;
   - `Feature` and `Tier` = the refusal's own, so a store provider's refusal reports `All` and `Strict`;
   - `Subjects` and `Purpose` = the context's;
-  - `FieldPath` = the field the refusal was about, as its canonical path, in both tiers. A `FieldDeniedFor*`, `OperatorNotAllowed` or `RequiredFilterMissing` refusal, a `CapExceeded` refusal from `MaxNavigationDepth` or `MaxAuditEvents`, and `MissingContextValue`, which records the scoped field, are all recorded under the path although the refusal itself named the caller's alias or, under `Strict`, said `"*"`. A name that matches nothing (`Strict`) is recorded as the caller sent it, trimmed and with empty segments dropped. Every other refusal records its own `FieldPath` (section 30): `"*"` for a whole-request refusal such as `QueryStringDenied`, `QueryCostExceeded`, a cap on the request's size or `ApplyPolicy`'s `PolicyContextNotPrepared`; the entity's short type name for a store provider's refusal; the name as written for `AmbiguousFieldName`.
+  - `FieldPath` = the field the refusal was about, as its canonical path, in both tiers. A `FieldDeniedFor*`, `OperatorNotAllowed` or `RequiredFilterMissing` refusal, a `CapExceeded` refusal from `MaxNavigationDepth`, the audit buffer's refusal whichever code it carries, and `MissingContextValue`, which records the scoped field, are all recorded under the path although the refusal itself named the caller's alias or, under `Strict`, said `"*"`. A name that matches nothing (`Strict`) is recorded as the caller sent it, trimmed and with empty segments dropped. Every other refusal records its own `FieldPath` (section 30): `"*"` for a whole-request refusal such as `QueryStringDenied`, `QueryCostExceeded`, a cap on the request's size or `ApplyPolicy`'s `PolicyContextNotPrepared`; the entity's short type name for a store provider's refusal; the name as written for `AmbiguousFieldName`.
   - The recorded path is cut to its first 256 characters followed by `…` (3.1.0). Then every character in Unicode category Control (Cc), Format (Cf), Line Separator (Zl) or Paragraph Separator (Zp) is written as `\u` and four lowercase hex digits: a line feed as `\u000a`, U+2028 as `\u2028`, U+202E as `\u202e`. A character outside the Basic Multilingual Plane is judged whole, and both halves of its surrogate pair are escaped. A name that matches nothing is text the caller wrote: a line break in it would forge a second entry in a log written one event per line, a format character such as U+202E would reverse the text after it without showing itself, and a name a megabyte long would be kept whole.
 - Written at most once per refusal, from an exception filter: the refusal is never changed, caught or swallowed.
 - A full buffer (`Caps.MaxAuditEvents`) records nothing, and the original refusal is still thrown.
@@ -3294,6 +3682,16 @@ DwToken                                             static class; helpers for va
   New()                                -> string    32 lowercase hex characters from 16 RandomNumberGenerator bytes
   KeyFor(string scope, string value)   -> string    "<scope>:<lowercase hex SHA-256 of the UTF-8 value>"
                                                     blank scope → ArgumentException; null value → ArgumentNullException
+  KeyFor(string scope, string value, byte[] key)    "hmac:<scope>:<64 lowercase hex>" (3.3.0); HMAC-SHA256 under the
+                                       -> string    key over UTF8(scope), one zero byte, UTF8(value), so one value in
+                                                    two scopes shares no digest. Blank scope → ArgumentException;
+                                                    null value or key → ArgumentNullException; key under
+                                                    MinimumKeyLength → ArgumentException
+  RequireKey(byte[] key)               -> byte[]    (3.3.0) returns a copy, so a caller clearing or reusing its array
+                                                    cannot re-key a running vault. null → ArgumentNullException;
+                                                    under MinimumKeyLength → ArgumentException
+  MinimumKeyLength : const int = 16                 (3.3.0) the fewest bytes a vault key may have
+  KeyedPrefix      : const string = "hmac:"         (3.3.0) what a keyed mapping's key starts with
 
 InMemoryTokenVault : IDwTokenVault                  sealed class; parameterless constructor
   GetOrCreate(string scope, string value)  -> string
@@ -3302,9 +3700,31 @@ InMemoryTokenVault : IDwTokenVault                  sealed class; parameterless 
 ```
 
 - `InMemoryTokenVault` is process-local, thread-safe and unbounded (no eviction).
-  - It is keyed by `DwToken.KeyFor`, so raw values are never keys.
+  - It draws a random 32-byte key of its own per instance and stores under `KeyFor(scope, value, key)` (3.3.0), so a
+    memory dump holds keyed digests rather than plain ones. Nothing to configure, and no API change: its mappings die
+    with the process, so the key can too.
+  - Raw values are never keys.
   - Tokens are lost on restart, and two instances or processes issue different tokens for one value.
 - `RedisTokenVault` (Redis package) and `EfTokenVault` (EF Core package) keep tokens across restarts and instances.
+  Each takes a key in a constructor of its own (3.3.0, sections 27 and 28); the constructors that do not take one are
+  unchanged and store under the unkeyed `KeyFor`.
+- **Why a durable vault wants a key (3.3.0).** The unkeyed key is a plain digest, and a tokenized column is nearly
+  always drawn from a space small enough to hash whole — phone numbers, national identifiers, card numbers. So a copy
+  of the store, a backup or a replica or a dump, gives back every value in it, and with them the value behind every
+  token ever issued. Under a key held outside the store, in configuration or a secret manager, the store and the key
+  have to be taken together. Guard the store as you would guard the column it protects either way.
+  - **Adoption keeps every token already issued.** A keyed vault meeting a value with no keyed mapping looks up the
+    unkeyed mapping too, and the token found there is the one written under the keyed key, so yesterday's export
+    still lines up with today's. The unkeyed mapping stays until `retireUnkeyed` is true; a retiring vault deletes it
+    the first time it meets the value, whether it wrote the keyed mapping or found it.
+  - **Roll out in two steps:** give every instance the key, then turn `retireUnkeyed` on. An instance still running
+    without the key mints a *new* token for a value whose unkeyed mapping is gone, and a value first met while keyed
+    and unkeyed instances run side by side can end up with two tokens.
+  - Unkeyed mappings of values never met again stay until an operator deletes them — Redis: `HSCAN` the token hash
+    and delete the fields that do not match `hmac:*`; SQL: delete the rows of `DwPolicyTokens` whose `Key` does not
+    start with `hmac:` — knowing such a value gets a new token the next time it is met.
+  - Changing the key re-issues every token, unless unkeyed mappings remain to adopt from. Another key is another
+    vault.
 - A vault is read on the query path, once per value per row, from many threads. A remote vault must cache in process.
 - Implementation contract:
   - thread-safe;
@@ -3640,7 +4060,7 @@ options.Entities.Expose<Employee>("Employee");
 
 var store    = new InMemoryPolicyStore(options.Entities.Resolve);
 var provider = await StorePolicyProvider.CreateAsync(store, options);
-DwPolicy.Configure(options, provider);                         // once; freezes options
+DwPolicy.Configure(options, provider);                         // freezes options; a second call must ask for this posture
 
 builder.Services.AddSingleton<IDwPolicyStore>(store);          // admin API reads
 builder.Services.AddSingleton<IDwPolicyWritableStore>(store);  // admin API writes
@@ -3656,13 +4076,15 @@ DwPolicyContext caller = await DwPolicy.PrepareAsync(new DwPolicyContext().WithS
 ## 27. Redis package — DynamicWhere.ex.Policies.Redis
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.1.0, StackExchange.Redis 2.8.24   namespace DynamicWhere.ex.Policies.Redis
+net6.0   dependencies: DynamicWhere.ex 3.3.0, StackExchange.Redis 2.8.24   namespace DynamicWhere.ex.Policies.Redis
 
 new RedisPolicyStore(IConnectionMultiplexer redis, string? prefix = null, Func<string, Type?>? resolveType = null)
     : IDwPolicyWritableStore
 new RedisTokenVault(IConnectionMultiplexer redis, string? prefix = null)     : IDwTokenVault
+new RedisTokenVault(IConnectionMultiplexer redis, byte[] key, string? prefix = null, bool retireUnkeyed = false)  (3.3.0)
     string GetOrCreate(string scope, string value)   int CachedCount   void ClearCache()
 null redis -> ArgumentNullException; the multiplexer is not owned and never disposed
+null key -> ArgumentNullException; a key under DwToken.MinimumKeyLength (16) -> ArgumentException
 ```
 
 Key layout, from the internal `RedisPolicyKeys` (prefix trimmed; blank -> `dw:policy`):
@@ -3673,6 +4095,8 @@ Key layout, from the internal `RedisPolicyKeys` (prefix trimmed; blank -> `dw:po
 {prefix}:version        string  counter; absent reads as 0
 {prefix}:version        pub/sub channel; message = the new version
 {prefix}:tokens         hash    "{scope}:{sha256(value) lowercase hex}" -> 32 lowercase hex token
+                                "hmac:{scope}:{hmac-sha256 lowercase hex}" for a keyed vault (3.3.0); one hash holds
+                                both kinds while a deployment moves from one to the other
 ```
 
 RedisPolicyStore:
@@ -3682,6 +4106,7 @@ RedisPolicyStore:
   - INCRs the version.
 - **Upsert failures:** an EXEC that does not commit throws `InvalidOperationException`. After commit it PUBLISHes the version; a `RedisException` from that publish is swallowed and the poll catches up.
 - **Delete:** one transaction removes the rule and its owner entry and always INCRs the version, then PUBLISHes.
+- **Concurrent writers (3.3.0):** both transactions are conditional on the rule's `owner` entry — equal to the owner just read, or absent where the rule was new. Where a rule lives is read before the transaction that moves or deletes it, so two writers of one rule could read the same answer: the slower one then cleaned up after a copy the faster had already moved and left that writer's copy behind, under a user nobody any longer wrote it for and with no owner entry pointing at it, which no later write or delete could find. The writer that loses the race now gets the `InvalidOperationException` a failed commit always raised, whose message ends "Another writer moved or removed the same rule in the meantime; write it again."; write it again.
 - **LoadAsync:** reads the version before the rules. A document it cannot read throws `ArgumentException`.
 - **LoadNarrowAsync:** one HGETALL per identity, skipping blank identities. Keys are lower-case, so casing never splits one user into two.
 - **WatchAsync:** subscribes to the channel. The provider still polls `{prefix}:version`.
@@ -3693,7 +4118,11 @@ RedisTokenVault:
   - A field that disappears between the two calls throws `InvalidOperationException`.
   - A `RedisException` propagates.
 - **Query path:** Redis calls are synchronous and happen on a cache miss, during the query.
-- **Protection:** the hash stores the scope in clear and an unkeyed SHA-256 of the value, never the value itself. Anyone who can read it can confirm a value they can guess, so guard it like the column it protects.
+- **Protection:** the hash stores the scope in clear and a digest of the value, never the value itself. Unkeyed that digest is a plain SHA-256, and a tokenized column is nearly always drawn from a space small enough to hash whole, so a dump of the hash is a dump of the column. Guard it like the column it protects, and give the vault a key: under one the field is an HMAC, and the hash and the key have to be taken together.
+- **Keyed (3.3.0):** `new RedisTokenVault(redis, key, prefix, retireUnkeyed)`. The key is held where the hash is not — configuration or a secret manager — and every instance sharing the hash takes the same one.
+  - **Adoption:** a value with no keyed field is looked up under its unkeyed field too, and the token found there is the one written under the keyed field, so every token already issued is kept. Both fields are read in one `HMGET`, so a value new to the store costs two round trips instead of one; a value already keyed still costs one, and a cached one none.
+  - **Retiring:** `retireUnkeyed: true` `HDEL`s the unkeyed field the first time this vault meets the value, once the keyed field is there, whether this vault wrote it or found it. Leave it false until every instance has the key (section 24).
+  - Minting under a key uses the same `HSETNX`-then-`HGET` race handling, with the same `InvalidOperationException` when the field disappears between the two calls.
 
 ```csharp
 IConnectionMultiplexer redis = await ConnectionMultiplexer.ConnectAsync(connectionString);
@@ -3708,13 +4137,15 @@ DwPolicy.Configure(options, await StorePolicyProvider.CreateAsync(store, options
 ## 28. Entity Framework Core package — DynamicWhere.ex.Policies.EntityFrameworkCore
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.1.0, Microsoft.EntityFrameworkCore.Relational 6.0.22
+net6.0   dependencies: DynamicWhere.ex 3.3.0, Microsoft.EntityFrameworkCore.Relational 6.0.22
 namespace DynamicWhere.ex.Policies.EntityFrameworkCore      no raw SQL; any EF Core relational provider; ships no migrations
 
 new EfPolicyStore(Func<DbContext> contexts, Func<string, Type?>? resolveType = null)    : IDwPolicyWritableStore
 new EfTokenVault(Func<DbContext> contexts)                                               : IDwTokenVault
+new EfTokenVault(Func<DbContext> contexts, byte[] key, bool retireUnkeyed = false)       (3.3.0)
     string GetOrCreate(string scope, string value)   int CachedCount   void ClearCache()
 null contexts -> ArgumentNullException
+null key -> ArgumentNullException; a key under DwToken.MinimumKeyLength (16) -> ArgumentException
 
 class DwPolicyDbContext(DbContextOptions<DwPolicyDbContext> options) : DbContext
     DbSet<DwPolicyRuleRecord> PolicyRules   DbSet<DwPolicyVersionRecord> PolicyVersion   DbSet<DwPolicyTokenRecord> PolicyTokens
@@ -3735,7 +4166,9 @@ DwPolicyRules    Id Guid PK, never generated
                  CreatedBy string(256)   CreatedAt DateTimeOffset? (UTC)   UpdatedBy string(256)   UpdatedAt DateTimeOffset? (UTC)
                  index (SubjectKind, SubjectKeyNormalized, EntityType)   index (EntityType, FieldPath)
 DwPolicyVersion  Id int PK, never generated (one row, Id = 1)   Version long, concurrency token   UpdatedAt DateTimeOffset
-DwPolicyTokens   Key string(512) PK, never generated = "{scope}:{sha256 hex}"   Scope string(256) required, indexed
+DwPolicyTokens   Key string(512) PK, never generated = "{scope}:{sha256 hex}", or "hmac:{scope}:{hmac-sha256 hex}"
+                 under a key (3.3.0; no schema change — a keyed key is at most 326 characters)
+                 Scope string(256) required, indexed
                  Token string(64) required   CreatedAt DateTimeOffset (written as UTC)
 
 DwPolicyRuleRecord     Guid Id  string SubjectKind  string? SubjectKey  string? SubjectKeyNormalized  string EntityType
@@ -3784,14 +4217,16 @@ EfPolicyStore:
 EfTokenVault:
 - **Contexts:** `contexts` is called only on a cache miss and the context is disposed. The model must include `DwPolicyTokenConfiguration`.
 - **Minting:** reads with no tracking, then inserts. On a `DbUpdateException` from a primary-key race it clears the change tracker and reads the winning row. If that row is still missing it throws `InvalidOperationException`.
-- **Behaviour:** EF calls are synchronous. It caches in the process and uses the same scope-plus-digest keys as `RedisTokenVault`.
+- **Behaviour:** EF calls are synchronous. It caches in the process and uses the same keys as `RedisTokenVault`.
+- **Protection:** unkeyed, a row's `Key` is a plain digest of the value, and a tokenized column is nearly always drawn from a space small enough to hash whole, so reading the table turns every token in every result back into the value behind it. Guard it like the column it protects, and give the vault a key: under one the `Key` is an HMAC, and the table and the key have to be taken together.
+- **Keyed (3.3.0):** `new EfTokenVault(contexts, key, retireUnkeyed)`. A value with no keyed row is looked up under its unkeyed key too and keeps the token that row gave it, so every token already issued is kept. It costs one more read for a value new to the store, and in retire mode one more read per first-met value. `retireUnkeyed: true` deletes the unkeyed row the first time this vault meets the value, once the keyed row is there, whether this vault wrote it or found it; a concurrent delete of the same row is not an error. Leave it false until every instance has the key (section 24). No schema change.
 
 ---
 
 ## 29. ASP.NET Core package — DynamicWhere.ex.Policies.AspNetCore
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.1.0, FrameworkReference Microsoft.AspNetCore.App
+net6.0   dependencies: DynamicWhere.ex 3.3.0, FrameworkReference Microsoft.AspNetCore.App
 namespace DynamicWhere.ex.Policies.AspNetCore
 ```
 
@@ -3995,11 +4430,13 @@ app.UseDwPolicyAudit();                    static IApplicationBuilder UseDwPolic
 new DwPolicyAuditMiddleware(RequestDelegate next, ILogger<DwPolicyAuditMiddleware>? log = null)   Task InvokeAsync(HttpContext http)
 ```
 - **When it runs:** after the rest of the pipeline, in a `finally`, so also when the request threw. It then drains the request's pending audit events.
+- **How long it has:** the drain does not use the request's abort token. It has a budget of its own, thirty seconds, which the caller cannot cancel and a hung sink cannot outlast (3.3.0). A client that closed the connection, as the rows arrived or the moment they had, used to cancel the write that follows the response: the sink threw, the middleware logged it, and the events went with the context — an audited read with nothing written down, for the price of a socket.
 - **Which context:** only the `DwPolicyContext` in `http.Features`, which `GetPolicyContextAsync` stores there. For a context you built yourself, call `http.Features.Set(context)`. With no context or no pending events it does nothing.
 - **Sink:** `IDwAuditSink`, resolved from `RequestServices` (so a scoped sink works), written through `DwPolicy.DrainAuditAsync`.
 - **Failures:**
   - No sink registered: logs a warning and discards the events. The warning ends "Register one, or stop recording them: remove [DwAudit] from the fields that produced them, or turn off DwPolicyOptions.AuditRefusals." (3.1.0).
   - A throwing sink: logs an error and does not rethrow. The unwritten events stay on the context and are lost with the request.
+  - A sink that does not finish inside the thirty-second budget is cancelled, and the cancellation is logged and dropped the same way (3.3.0).
   - The request's own exception is never replaced.
 - **Events:** the middleware records nothing itself. Events come from audited fields (`[DwAudit]`, or a rule's `facts.audit`), one `DwAuditEvent` per use, and, with `DwPolicyOptions.AuditRefusals` (3.1.0), one per refused guarded query, with `OccurredAt EntityType FieldPath Feature Effect Subjects Purpose Tier DryRun ErrorCode`.
 - **Placement:** register it before anything that touches audited fields. The source recommends placing it before authentication and routing.
@@ -4015,11 +4452,13 @@ PolicyException : LogicException                                   namespace Dyn
   Code          : string              ErrorCode.ToString(), for logs and JSON
   FieldPath     : string              the name the caller wrote; "*" for the whole request, including the
                                       PolicyContextNotPrepared ApplyPolicy raises; under the Strict tier "*" for
-                                      codes 1–6, CapExceeded and MissingContextValue too (3.1.0); the entity's
+                                      codes 1–6, CapExceeded and MissingContextValue too (3.1.0), and for
+                                      AmbiguousGroupKey, TransformRequiresMaterialization, MissingHashSalt and
+                                      MissingTokenVault (3.3.0); the entity's
                                       short type name for PolicyRequired, StoreUnavailable and a store provider's
                                       PolicyContextNotPrepared;
                                       the transformed paths joined by ", " for TransformRequiresMaterialization and
-                                      AmbiguousGroupKey
+                                      AmbiguousGroupKey outside the Strict tier
   Feature       : PolicyFeature       None for ApplyPolicy's PolicyContextNotPrepared; All for a store provider's refusals
   Tier          : DwTier              the tier in force; always Strict for PolicyRequired, StoreUnavailable and a store
                                       provider's PolicyContextNotPrepared (ApplyPolicy's carries the configured tier)
@@ -4027,7 +4466,10 @@ PolicyException : LogicException                                   namespace Dyn
                                       under the Strict tier (3.1.0)
   SourceOrigin  : string? { init; }   the attribute, rule, cap or reason that decided, e.g.
                                       "MaxPageSize cap (1000), request had 1001"; null for codes 1–6 and
-                                      MissingContextValue under the Strict tier (3.1.0)
+                                      MissingContextValue under the Strict tier (3.1.0), and for
+                                      AmbiguousGroupKey, MissingHashSalt and MissingTokenVault (3.3.0).
+                                      TransformRequiresMaterialization keeps its origin, which names the method
+                                      and what to call instead, never a field
   Message       "<Code>: field '<FieldPath>', feature '<Feature>', tier '<Tier>'."
 ```
 
@@ -4052,18 +4494,31 @@ through `PolicySimulator` or in dry run to see the decisions).
 8   OperatorNotAllowed                an operator outside the field's allowed set ([DwOperators], rules)        recorded
 9   CapExceeded                       MaxPageSize, MaxConditions, MaxConditionDepth, MaxConditionSets,          recorded, except the
                                       MaxConditionValues, MaxAggregates, MaxOrderFields or MaxNavigationDepth   audit buffer: throws
-                                      exceeded; or the context already holds MaxAuditEvents undrained events
+                                      exceeded; or the context already holds MaxAuditEvents undrained events,
+                                      which under Strict outside a dry run is refused as a field instead. The
+                                      buffer is also reached on the way out, by an audited member no path names
+                                      (3.3.0, section 22): the rows are withheld, FieldPath is the path under
+                                      Convenience and "*" under Strict
 10  PolicyRequired                    a DynamicWhere extension method called on a                               throws
                                       [DwEntity(RequirePolicy = true)] type outside ApplyPolicy
 11  RequiredFilterMissing             a [DwRequireWhere] field has no AND-reachable condition using one of      recorded
                                       its operators
 12  MissingContextValue               a [DwForceWhere] ContextValue key is absent or null in the context;       recorded
                                       under Strict FieldPath "*" and no SourceOrigin (3.1.0)
-13  AmbiguousFieldName                a name could mean two fields: an alias equal to a path or another alias   throws
+13  AmbiguousFieldName                a name could mean two fields: an alias equal to a path or another alias.  throws
+                                      Convenience and dry run only: under Strict the name is refused as an
+                                      unknown one, with the clause's own code (3.3.0)
 14  QueryStringDenied                 Strict tier and getQueryString: true (FieldPath "*")                      recorded
-15  AmbiguousGroupKey                 two summary rows share their key values once transformed                  throws
+15  AmbiguousGroupKey                 two summary rows share their key values once transformed; under Strict     throws
+                                      FieldPath "*" and no SourceOrigin (3.3.0)
 16  TransformRequiresMaterialization  SelectDynamic, FilterDynamic, Group or Summary on the guarded handle      throws
-                                      for a type with any transform for this caller
+                                      for a type whose values are transformed on the way out for this caller:
+                                      one the policy names a transformed path on, or (3.3.0) one a row of which
+                                      can hold a member declaring a transform attribute anywhere in what the
+                                      type can reach. Under Strict FieldPath is "*" rather than the transformed
+                                      columns (3.3.0), and so it is in both tiers where the policy names no
+                                      transformed path; the origin, which names the method and what to call
+                                      instead, stays
 17  StoreUnavailable                  a FailClosed store provider is degraded, or the context's pinned          throws
                                       snapshot is older than MaxSnapshotAge
 18  PolicyContextNotPrepared          ApplyPolicy(ctx) sees a context that never went through PrepareAsync       throws
@@ -4073,8 +4528,10 @@ through `PolicySimulator` or in dry run to see the decisions).
                                       under Strict checked after the field gates (3.1.0)
 20  GroupTooSmall                     the caller used the reserved name "__dwGroupSize" as an alias, Having      throws
                                       field or order field. A small group never raises it: it is suppressed
-21  MissingHashSalt                   MaskStrategy.Hash while DwPolicyOptions.HashSalt is empty                 throws
-22  MissingTokenVault                 MaskStrategy.Tokenize while DwPolicyOptions.TokenVault is null            throws
+21  MissingHashSalt                   MaskStrategy.Hash while DwPolicyOptions.HashSalt is empty; under Strict   throws
+                                      FieldPath "*" and no SourceOrigin (3.3.0)
+22  MissingTokenVault                 MaskStrategy.Tokenize while DwPolicyOptions.TokenVault is null; under      throws
+                                      Strict FieldPath "*" and no SourceOrigin (3.3.0)
 ```
 
 "recorded" means dry run writes a `Denied` decision to the trace and runs the query anyway.
@@ -4143,7 +4600,9 @@ catch (LogicException ex)
   Whoever holds the salt can recompute every digest.
 - **Low-entropy regulated ID with a right to erasure:** `[DwMask(MaskStrategy.Tokenize)]` + `[DwNoOrder]`
   + a durable vault. To erase, delete the vault entry at `DwToken.KeyFor(scope, value)`, where the scope
-  is `TokenScope` or the field path.
+  is `TokenScope` or the field path — or, where the vault holds a key, at
+  `DwToken.KeyFor(scope, value, key)` (3.3.0), which only a holder of the key can compute. A vault that has
+  not retired its unkeyed mappings may still hold one for the value; delete both.
 - **One subject across entities:** give every tokenized member that must match the same explicit
   `TokenScope`, e.g. `"patient-id"`.
 - **Different visibility per role:**
@@ -4171,8 +4630,8 @@ any policy                  [DwEntity(RequirePolicy = true)]   a DynamicWhere ca
 
 ### Inference channels
 
-There are eight. The first six let a caller learn a value, or what the policy hides, without reading it;
-**Forgotten guard** and **Empty store** are bypasses.
+There are eleven. The first eight let a caller learn a value, or what the policy hides, without reading it;
+**Forgotten guard**, **Empty store** and **An unrecorded read** are bypasses.
 
 - **Set operations:** `EXCEPT` or `INTERSECT` rebuild a field that is denied for Select but allowed for
   Where, from set membership.
@@ -4190,6 +4649,23 @@ There are eight. The first six let a caller learn a value, or what the policy hi
   - The trace on a result names the same things: `result.Policy` lists the fields a policy dropped, the
     attribute or rule that sealed each one, and every injected predicate, and an API that serializes the
     result sends it on. Strict leaves it off unless `IncludeTraceInResult = true`; Convenience returns it (3.1.0).
+- **The audit cap:** a buffer at `MaxAuditEvents` refuses the next audited use. Until 3.3.0 that refusal carried
+  `CapExceeded` and an origin naming the cap, while an unknown name — never audited, so never reaching the cap —
+  carried the ordinary field refusal. Under `Strict` outside a dry run the cap now refuses with the clause's own
+  field refusal, so the two cannot be told apart; `Convenience` and a dry run still answer `CapExceeded`.
+- **The navigation cap on an aliased name:** `MaxNavigationDepth` counts the canonical path, so an alias the caller
+  wrote as one token was refused with the cap's own code and an origin stating that path's depth, where a name
+  matching nothing got the clause's refusal. Under `Strict` outside a dry run such a name is refused as an unknown
+  name is (3.3.0); a caller who wrote the path themselves still meets the cap.
+- **A refusal that names a field:** four did under `Strict` until 3.3.0 — an ambiguous name, an ambiguous grouping
+  key, a clause that cannot be transformed, and a deployment with no hash salt or token vault. An ambiguous name is
+  now refused as an unknown name is; the grouping key, the hash salt and the token vault name the clause and carry
+  no origin, and the clause that cannot be transformed names the clause and keeps an origin naming the method and
+  what to call instead, never a field. `Convenience` and a dry run, either switch, are unchanged, and
+  `AuditRefusals` still records the real field for all four.
+- **An unrecorded read:** until 3.3.0 `[DwAudit]` recorded only a field the request named, so a caller sending no
+  `Selects` received every audited member of the row with nothing written down. Every audited member a projection
+  the caller did not name hands back is recorded for `Select` now, one event per query.
 - **Which fields exist:** Convenience answers a name that matches nothing with `ConditionMustHasValidFieldName`
   and a denied field with a refusal that names it and its source, so a caller can map the hidden columns one
   guess at a time. Strict answers both alike, with the clause's `FieldDeniedFor*` code, `FieldPath` `"*"` and
@@ -4229,6 +4705,11 @@ Read before generating policy attributes.
 5. **`[DwDenied]` on a navigation denies only that path; `Contact.Email` stays open.** Either decorate the
    members of the navigated type, which applies on every path reaching them (up to 4 segments), or deny
    each child path. A `"*"` rule denies every field of the entity, and `"Contact.*"` is not a wildcard.
+   The contrast is a member whose type the framework declares: `Salary.Value`, `Secret.Length`, `Born.Year`,
+   `Bag.Count`. Nothing can be decorated there, so since 3.3.0 such a path takes the policy of the member it
+   reads — its denials, operators, cost and audit, never its alias, required filter, forced scope or
+   description (section 14). A navigation into an application's own type is still a separate field, because its
+   members can carry attributes of their own.
 6. **The default token scope is the field path relative to the queried entity.** Equal member paths on
    two entities share tokens, while the same member reached through a navigation gets different tokens.
    Set `TokenScope` wherever tokens must or must not match.
@@ -4254,22 +4735,33 @@ Read before generating policy attributes.
     `[DwAudit]` either.
 15. **Aliases rename output columns only in dynamic filter results and summaries.** Typed results keep
     member names.
-16. **`[DwAudit]` records only fields the query uses by name: those the request names, and a `DefaultOrder`
-    field it orders by (3.1.0).** A request without `Selects` returns audited columns with no Select event, and a
-    default field left out for the caller records nothing.
+16. **`[DwAudit]` records what the request reads, not only what it names (3.3.0).** A field the request names
+    and a `DefaultOrder` field the query orders by (3.1.0), plus every audited member a projection the caller
+    did not name hands back, and every audited member the rows hand back where no path of the policy names it
+    (sections 14 and 22) — one event per path per query. A default field left out for the caller still records
+    nothing. Until 3.3.0 a request without `Selects` returned audited columns with no `Select` event at all, so a
+    deployment upgrading sees more events and can reach `Caps.MaxAuditEvents` where it did not.
 17. **`AmbiguousGroupKey` compares only the transformed keys.** A summary mixing untransformed and
     transformed keys can be refused even though its rows differ.
 18. **`[DwFormat]` ignores its format for a string value.** `[DwGeneralize(GeneralizeMode.Round, ...)]`
     plus `[DwFormat("C0")]` on a string member returns the plain rounded number.
 19. **The composable `Group` and `Summary` return a query you materialize yourself.** The floor and the forced
-    predicates are applied, but nothing transforms or renames those rows, and a type with any transform for
-    this caller refuses both with `TransformRequiresMaterialization`.
+    predicates are applied, but nothing transforms or renames those rows, and a type whose values are
+    transformed on the way out for this caller refuses both with `TransformRequiresMaterialization` — since
+    3.3.0 including a type whose only transform sits where the policy names no path, on a member a subtype
+    declares or five segments down (section 13).
 20. **`ValidateModel` does not catch a malformed `[DwAlias]` name.** A blank, dotted or `"*"` alias throws
     `ArgumentException` on every guarded query of the type, and of any type that navigates to it. Since 3.1.0
     it does report a malformed `[DwForceWhere]`.
-21. **Raising `Caps.MaxNavigationDepth` above 4 opens paths no attribute covers.**
-    `AttributePolicyProvider.MaxDepth` is a constant 4, so a member 5 or more segments deep is allowed
-    and untransformed.
+21. **Raising `Caps.MaxNavigationDepth` above 4 reaches past the attribute walk.**
+    `AttributePolicyProvider.MaxDepth` is a constant 4, so no fragment of the walk names a path of 5 or more
+    segments. Since 3.3.0 the attributes of the member at the end of such a path are read directly — the deny
+    family, `[DwOperators]`, the transform stages, `[DwCost]`, `[DwAudit]`, `[DwDescribe]` and allowed values —
+    by any resolver that reads attributes, and a transform declared there is applied wherever a row carries the
+    member (section 18), so `Selects` naming it returns it transformed, though it cannot be a grouping key or an
+    aggregated field. What is
+    declared about the queried entity itself is not read there, as it is not around a cycle: `[DwAlias]`,
+    `[DwRequireWhere]`, `[DwForceWhere]`. Until 3.3.0 such a member was allowed and untransformed.
 22. **A guarded query over an in-memory source masks your objects.** `list.ApplyPolicy(ctx).ToList(filter)` without
     `Selects` returns the list's own instances and transforms them in place, so the list stays masked afterwards.
     EF Core queries run `AsNoTracking` and are unaffected. Query a copy, or send `Selects`.
@@ -4346,6 +4838,9 @@ apply.
 - One cache per process, shared by every DbContext, request and thread.
 - It starts empty and is never shared between app instances.
 - `CacheExpose` is a static class, so there is nothing to inject.
+- A lookup takes no lock and a hit allocates nothing (3.3.0). The configuration in force is read with one
+  volatile read rather than locked and copied on every lookup; `GetCacheConfigOptions()` still returns a copy,
+  because an instance a caller edited would be the one in force.
 
 ```
 Store (CacheMemoryType)   Key              Value                              Holds
@@ -4473,7 +4968,9 @@ CacheExpose.WarmupCache(typeof(Customer), "Name");
 - These calls record an access before they look anything up: `GetTypeProperties`, `FindProperty`,
   `GetCollectionElementType` and `IsCollectionType`. `ValidatePropertyPath` records one only once the path has
   validated, so a path that fails validation records nothing (3.1.0). The query engine's own calls count too.
-- LRU writes `DateTime.UtcNow.Ticks`, LFU adds 1, and FIFO records nothing. Only `EvictionStrategy`
+- Under LRU a read refreshes the entry's last-access time, `DateTime.UtcNow.Ticks`, once it is a second old
+  rather than on every read (3.3.0): eviction only asks which entries are oldest, and an entry read a moment ago
+  is already among the newest. LFU adds 1 on every read, and FIFO records nothing. Only `EvictionStrategy`
   decides this; the `Enable*Tracking` flags have no runtime effect.
 - A record is written even when the key never enters the store, such as an internal field-type lookup.
   Eviction only deletes records of entries it removes, so `TrackingCounts` can exceed `CacheCounts`.
@@ -4774,6 +5271,235 @@ MemoryCalculationInput
 ### History
 
 ```
+3.3.0   A second host may configure the same posture, a path the query cannot compute is refused rather than run,
+        a path or a member the attribute walk cannot name is still policed, a malformed request is refused as one
+        rather than reaching the caller as a server error, a token vault can hold a key, and Clone is public on
+        Filter, Segment and Summary.
+        - New. DwPolicy.Configure, and AddDwPolicies with it, take a second call asking for the posture already in
+          force and do nothing. A different posture still throws. The check is inside the lock that configures, so a
+          caller needs no IsConfigured check of its own — that check is a check-then-act two hosts can both pass.
+          Compared: tier, DryRun, IncludeTraceInResult, AuditRefusals, HashSalt, StoreFailure, MaxSnapshotAge,
+          RefreshInterval, every cap value, the exposed catalogue with every name it answers to and the name each
+          type is reported under, and the provider types in order. The group floor and the tier's own answer for
+          IncludeTraceInResult are compared by the value that applies, not by whether somebody wrote them down;
+          every other cap is compared as written.
+          Not compared and not replaced: TokenVault, Services and the provider instances, so a second host runs with
+          the first host's vault, container and rule stores. AddDwPolicies registers the posture in force rather than
+          the instance it built.
+        - Behaviour change. Under Strict outside a dry run, a path that exists on the type and names no value the
+          query can compute — LocalizedText.IsEmpty over two columns, an unmapped getter on the entity — is refused
+          as an unknown name is, in every clause the database has to compute, where the provider used to throw and
+          the caller saw a five-hundred. Selects is not one of them: EF Core evaluates the last projection on the
+          client. Refused only where the producible members are known: the queried type's own model, and the
+          initializers of a projection EF Core ran before ApplyPolicy, including a member it copies from the entity.
+          Rows in memory, a framework member such as Length or Year, anything beneath a column, a query a provider
+          in front of EF Core translates — an expression expander, a decompiler — Convenience and a dry run are
+          unchanged. The refusal raises no [DwAudit] event, as an unknown name raises none; AuditRefusals and the
+          trace record it. A simulation has no source, so PolicySimulator and /simulate cannot refuse such a path.
+        - Behaviour change. LastTrace is assigned before a request is sanitized, so a refused request leaves its own
+          trace readable instead of the previous request's.
+        - Security fix and behaviour change. Under Strict outside a dry run, four refusals that named a field name
+          the clause instead. AmbiguousFieldName said the caller's name matched more than one field, and so at
+          least one; it is refused as an unknown name is now, with the trace keeping the ambiguity.
+          AmbiguousGroupKey reported the column behind the caller's alias and an origin saying its values are
+          transformed; TransformRequiresMaterialization listed every transformed column on the type;
+          MissingHashSalt and MissingTokenVault named the masked field a deployment had not configured for. The
+          three report "*" and no origin, and TransformRequiresMaterialization keeps an origin that names the
+          method rather than a field. Convenience and a dry run, either switch, are unchanged.
+        - Behaviour change and security fix. Under Strict outside a dry run, a query exhausting the audit buffer is
+          refused with the clause's own field refusal rather than with CapExceeded and an origin naming the cap. An
+          unknown name is never audited, so the two answers told a caller which names are real and audited.
+          Convenience and a dry run are unchanged.
+        - New. Clone() is public on Filter, Segment and Summary. A deep copy: the condition tree, the projection list,
+          each order, the page, and a summary's GroupBy and Having. Every node is new; a condition's values are the
+          caller's own objects, in a new list.
+        - Security fix and behaviour change. A path the attribute walk cannot name takes the policy of the
+          member it reads. The pipeline validates, and a provider translates, a path continuing beneath a member
+          whose type the framework declares: Salary.Value and Salary.HasValue on a decimal?, Secret.Length on a
+          string, Born.Year and Born.Date.Year on a DateTime, Bag.Count on a dictionary, Lines.Count on an
+          application's own collection class (the collection's own member, not an element's). No attribute can
+          be placed there and no fragment named such a path, so it resolved as allowed: a [DwDenied] decimal?
+          was filtered on, sorted by, grouped by with its values as the group keys, aggregated
+          (MAX(Salary.Value)) and handed back by a dynamic projection, under Strict; a transformed member gave
+          its stored value the same way; a [DwAudit] member was read with nothing recorded; a [DwCost] member
+          cost the default; and a [DwOperators] restriction did not hold. Such a path now takes every fragment
+          of the member it reads, whichever provider supplied it, an attribute and a store rule on Salary alike:
+          the deny effects per feature, the operator restriction (intersected), the cost weight and the audited
+          features. It does not take what is said to the caller about the member: the alias, the required filter
+          ([DwRequireWhere] on TenantId is not satisfied by a filter on TenantId.Value), the forced scope, and
+          the descriptive facts (label, description, group, order, allowed values). A rule naming the sub-path
+          itself still applies alongside. One feature is one feature: [DwNoWhere] Born refuses WHERE Born.Year
+          and still allows GROUP BY Born.Year, and a member nothing denies is read beneath exactly as before, so
+          Name.Length still runs. A member only a subtype of the navigated type declares is not such a path:
+          Zone.Parent, where a subclass of Zone's type declares Parent, is decided by the fragments naming it,
+          so a grant of Zone under a "*" deny does not grant it. Both tiers; present in 3.2.0 and earlier.
+        - Security fix and behaviour change. Past the attribute walk's depth, the member at the end of the path
+          is read directly. Caps.MaxNavigationDepth defaults to 4, the depth the walk reads to, and can be
+          raised; a request naming five or more segments then reached what no attribute fragment covered, and a
+          [DwDenied] member at segment five was filtered on, grouped by and returned, under Strict. Its
+          attributes are read now: the deny family, [DwOperators], the transform stages, [DwCost], [DwAudit],
+          [DwDescribe] and allowed values. What is declared about the queried entity itself is not read there,
+          as it is not around a cycle: [DwAlias], [DwRequireWhere], [DwForceWhere]. Only a resolver that reads
+          attributes does this, which every resolver DwPolicy.Configure builds does. Default configuration was
+          never exposed to this one.
+        - Behaviour change. Beneath a transformed member there is no member to apply the chain to, Bonus.Value
+          being a decimal where Bonus is what is rounded, so Select, Group and Aggregate on such a path are
+          refused: FieldDeniedForSelect, FieldDeniedForGroup and FieldDeniedForAggregate, with a Selects entry
+          dropped under Convenience as any field denied for Select is. A transformed member past the walk is
+          itself a member, so it comes back transformed where a row carries it, a typed projection and a
+          generated row alike: the chains of the members a projection names past the walk are handed to the
+          outbound walk beside the type's own list. Only Group and Aggregate are refused there, because a
+          summary's own transform finds a generated row's columns by the type's list, which stops at four
+          segments. Refusing Select there instead made the projection gate read a masked column five segments
+          down an Include chain as a denial and leave the whole included navigation out rather than mask the
+          column. Where and Order follow the member's own decision and run on stored values, as they do along a
+          named path.
+        - Security fix. A transform the outbound walk reached no path to is applied to the rows themselves. That
+          walk transformed along the paths the policy names, the declared types four segments deep, and a value
+          sitting elsewhere in the materialized rows came back exactly as stored: a [DwMask] member five
+          segments down an included or in-memory graph (B.C.D.E.Card, while B.C.D.Pin four segments down was
+          masked), a masked member only a subtype of the row's type declares (Dog.Chip on rows typed Animal, in
+          memory or in a TPH hierarchy), a masked member of an object a dictionary holds, and the far side of a
+          cycle, with no Selects, with a navigation named whole in Selects, and in a dynamic projection holding
+          a real object, at the default caps, under Strict. The rows are walked by run-time type as well now,
+          and a member that declares a transform attribute and was not transformed along a named path is
+          transformed by its own attributes, exactly once: an object reached both ways is not transformed twice.
+          Only members that declare a transform or can lead to one are read, so a navigation whose type can
+          reach neither a transform nor an audit for Select is never touched and a lazy loader behind it is not
+          woken, and a model that declares neither anywhere pays for no second pass. A transformed member with
+          no setter fails the query with InvalidOperationException, as one along a named path does; the trace
+          records the path with its stages and the note
+          "(declared on the member; no path of the policy names it)"; no rule can speak to such a
+          member, since no path names it; a resolver built over no AttributePolicyProvider reads no attribute
+          here either; and it runs in a dry run, as transforms always have. Default configuration, both tiers.
+          Still a limit: a member typed object, or a collection that is not generic, says nothing about what it
+          holds and is not read into.
+        - Security fix. The attribute walk returned at its depth limit with the type still marked as being
+          inside it, so a type first met at the fourth segment read as a cycle wherever it was met again in the
+          same walk, and what a cycle leaves out, [DwForceWhere], [DwRequireWhere] and [DwAlias], was left out
+          of a shorter path reaching that type directly. Which of two members was declared first decided whether
+          a forced tenant scope on a navigated type applied. The scope, the requirement and the alias now apply
+          on every path within four segments that is not around a cycle, as documented. A query that ran
+          unscoped is scoped, and a required filter may now be demanded.
+        - Fix. The page offset, (PageNumber - 1) * PageSize, was worked out in 32 bits and wrapped for a large
+          enough page number: a negative offset is an error on SQL Server and PostgreSQL, so the request became
+          a five-hundred, and the first page again on SQLite and in memory, so a page far past the last row
+          returned rows. It is worked out in 64 bits and held to int.MaxValue now, in Page and in the three
+          summary methods, guarded or not. A page past the last row is an empty page however far past it is,
+          as it always was for a page number that did not wrap. The policy layer caps PageSize (MaxPageSize) and
+          never PageNumber, so a guarded query took the same path.
+        - Security fix. The ASP.NET Core audit middleware drained a request's events with the request's own
+          abort token, so a client that closed the connection, as the rows arrived or the moment they had,
+          cancelled the write that follows the response: the sink threw, the middleware logged it, and the
+          events went with the context, an audited read with nothing written down. The drain has a budget of its
+          own now, thirty seconds, which the caller cannot cancel and a hung sink cannot outlast.
+        - Fix. RedisPolicyStore.UpsertAsync and DeleteAsync commit conditionally on the rule's owner entry.
+          Where a rule lives is read before the transaction that moves or deletes it, so two writers of one rule
+          could read the same answer: the slower one cleaned up after a copy the faster had already moved and
+          left that writer's copy behind, a rule applying to a caller nobody any longer wrote it for, with no
+          owner entry to find it by. The writer that loses the race gets the InvalidOperationException a failed
+          commit always raised, whose message now says another writer moved or removed the same rule and to
+          write it again, and should retry.
+        - Fix. DynamicWhere.ex names Microsoft.Extensions.Caching.Memory 6.0.2, the version patched for
+          CVE-2024-43483 (GHSA-qj66-m88j-hmgj). EF Core 6.0.22 asks for 6.0.1 or later and 6.0.1 is the last
+          version open to it, so a host on the EF Core 6 floor resolved a vulnerable version through all four
+          packages. A host on EF Core 8 or later already resolves a newer one and sees no change.
+        - Fix. A guarded Summary whose Having carried "conditions": null or "subConditionGroups": null failed
+          with a NullReferenceException wherever the group floor is on, Caps.MinGroupSize of 2 or more, which
+          the default of 5 is, although the same summary ran unguarded. A request body sending either overwrites
+          the list's initializer, and the floor's own walk over Having, which looks for its reserved alias, was
+          the one reader in the gate that did not check. It runs now, and the floor still applies.
+        - Performance. A property lookup takes no lock and allocates nothing on a hit. Every lookup of every
+          query, several per field, locked and copied the cache configuration, allocated an input object for the
+          tracking call and built a closure whether or not the entry was cached, and under LRU, the default,
+          wrote the entry's last-access time on every read. One million lookups of one cached member went from
+          152 ms to 35 ms on one thread and from 2697 ms to 108 ms on eight, and from 167 MB allocated to 22 MB.
+          A last-access time is refreshed once it is a second old instead (section 33); GetCacheConfigOptions()
+          still returns a copy.
+        - Security fix and behaviour change. SelectDynamic, Group, FilterDynamic and Summary on the guarded
+          handle hand back a query for the caller to run, which the library never sees materialized, so they are
+          refused with TransformRequiresMaterialization on a type whose values are transformed on the way out.
+          Whether a type is one was read from the paths the policy names, so a type whose only transforms sit
+          off them, on a member only a subtype declares, five segments down, or on an object a dictionary holds,
+          was handed the query and its rows came back exactly as stored: the same gap the outbound walk's second
+          pass closed for the terminals, one method call away from them. The refusal asks what a row of the type
+          can hold as well, any transform attribute anywhere in what the type can reach, read only by a resolver
+          that reads attributes. With no named column to list it names the clause, FieldPath "*", in both tiers,
+          where under Convenience it otherwise lists the transformed columns. A type nothing transforms anywhere
+          still gets its query.
+        - Security fix and behaviour change. [DwAudit] records a member no path of the policy names, once the
+          rows show it. The gate records a use by path, before the query runs, and a member only a subtype of
+          the row's type declares, or one past the four segments the attribute walk reads, has no path it could
+          ask about: handed back inside a row returned whole or a navigation kept whole, it was read with
+          nothing written down. The outbound walk's second pass reports each audited member it meets where no
+          path names it, and the terminal records it: one DwAuditEvent per path per query, not per row, Feature
+          Select, Effect Mask where the member is transformed as well and Allow otherwise, EntityType the
+          queried type's full name, and FieldPath the path through the rows. Only a member its own [DwAudit]
+          audits for Select, and only where the projection carries it, since a member the projection left out is
+          not a read. A member the declared types hold within four segments is the gate's and is left to it, and
+          so is a path the projection spells out however long it is, so neither is recorded twice. At
+          Caps.MaxAuditEvents it fails closed as the gate does and the rows are withheld: under Strict outside a
+          dry run the clause's own refusal with FieldPath "*", FieldDeniedForSegment inside a segment, and
+          CapExceeded otherwise. Recorded in a dry run too, read only by a resolver that reads attributes, and a
+          model that declares neither an audit for Select nor a transform anywhere pays for no second pass.
+          Default configuration, both tiers; a deployment already running the control sees more events for such
+          models.
+        - Docs. DwEntity(DefaultOrder)'s remarks said a projected query takes no default; it has since 3.2.0. The
+          aggregation sections now lead with Caps.MinGroupSize shipping on at 5.
+        - Fix and behaviour change. A DataType.Number value is read as the expression parser reads it, not as the
+          host's culture does. The builder writes a number into the expression unquoted, exactly as sent, while
+          validation checked it with byte/short/int/long/float/double/decimal TryParse in the host's culture, and
+          the two disagreed: "1,000", "5-", "+5", ".5", "5.", "-.5", "1.e5", "NaN", "Infinity", "-Infinity" and an
+          integer past UInt64, or below Int64 when negative, all passed validation and then threw the parser's own
+          ParseException, which a host maps to a server error; "1,5" passed on a de-DE host and was refused on an
+          en-US one; and "NaN" and "Infinity" were written into the expression as identifiers, so on a type with a
+          member of that name the condition compared two columns. A value is read in two steps now. First the
+          parser's own grammar, in the invariant culture and ASCII digits only: optional white space, an optional
+          minus, digits, an optional fraction with a digit on both sides of the point, an optional exponent; an
+          integer must fit UInt64, or Int64 when negative, and a real has no bound. Then, in a WHERE condition and
+          for the operators that write the value into a comparison, whether the literal compares with the member the
+          condition names — the parser itself is asked, against the member's declared type, a collection at the end
+          of the path standing for itself. Refused there, where the parser used to throw: a literal written with a
+          point and no exponent on a nullable integral member, an exponent form or a real longer than a decimal
+          holds on a decimal, an integer above Int64.MaxValue on a signed integral member, a negative number on
+          ulong, any number on a string, bool, Guid, DateTime or char member or on a collection of simple values,
+          and a nullable enum under an ordering operator. A HAVING condition reads the grammar and stops, since an
+          alias has no member type to ask about. Every refusal is a LogicException with InvalidFormat, the same in
+          both tiers under a policy, where the gate still answers first. Nothing that ran before is refused now:
+          every value refused is one the parser refused. Section 4.
+        - Fix and behaviour change. A null entry in a request's list is a malformed request, refused as one. A body
+          can say "conditions": [null], "subConditionGroups": [null], "conditionSets": [null], "orders": [null],
+          "aggregateBy": [null] or "selects": [null]. Nothing read a list expecting that, so the null surfaced
+          wherever it was first touched: a NullReferenceException from the sort-order check, from the ordering, or,
+          under a policy, from the copy the sanitizer takes before it reads anything, and an ArgumentNullException
+          from the name lookup — a server error for a request that was simply malformed. Every method that takes a
+          shape walks its lists before anything else reads them now, with or without a policy, in both tiers, sync
+          and async: the composables Where(ConditionGroup), Order(List<OrderBy>), Select, SelectDynamic, Group and
+          Summary, and every terminal for a Filter, a Segment and a Summary. Under a policy the walk runs at the top
+          of the sanitizer, before the caps and before the gate, because it is about the request's shape and not a
+          policy decision. A null condition, sub-group, condition set, order or aggregate is a LogicException naming
+          the list, ListOf[Conditions]MustNotHasNullEntry. A Selects entry that is null or blank is
+          ConditionMustHasValidFieldName, the refusal a null or blank GroupBy field has always had. A list that is
+          itself null still means what it meant; a ConditionSet whose ConditionGroup is null is still an
+          ArgumentNullException, as is a null Summary.GroupBy; and a null element inside Condition.Values still
+          reads as "". Clone copies a null entry as a null entry rather than failing on it, so the refusal is the
+          running method's and reads the same for a copy. Sections 2 and 8.
+        - New. A token vault can hold a key, so a copy of the store gives no value back. The key a vault stores a
+          mapping under is a plain SHA-256 of the value, and a tokenized column is nearly always drawn from a space
+          small enough to hash whole, so a backup, a replica or a dump of the store gives back every value in it,
+          and with them the value behind every token ever issued. DwToken.KeyFor(scope, value, key) is an HMAC-SHA256
+          under a key of at least DwToken.MinimumKeyLength, sixteen bytes, over the scope, one zero byte and the
+          value, written DwToken.KeyedPrefix + scope + ":" + 64 lowercase hex characters, so one value in two scopes
+          shares no digest; DwToken.RequireKey refuses a key that is null or short and returns a copy of it.
+          RedisTokenVault and EfTokenVault take the key in a constructor of their own, with a retireUnkeyed switch;
+          the existing constructors are unchanged and unkeyed, and the unkeyed KeyFor is unchanged.
+          InMemoryTokenVault draws a random 32-byte key of its own per instance, with nothing to configure and no
+          API change. A keyed vault adopts the token an unkeyed mapping already gave a value, so every token already
+          issued is kept, and the unkeyed mapping stays until retireUnkeyed is on: give every instance the key
+          first, because one still running without it mints a new token for a value whose unkeyed mapping is gone.
+          No schema change — a keyed key is at most 326 characters against the 512 the Key column holds — and one
+          more round trip or read for a value the store has not seen. Sections 24, 27 and 28.
+
 3.2.0   A projected row keeps its members, denials the gate could not see are enforced, a default order that
         reaches projected rows, and a CancellationToken on every async terminal. The security fixes refuse or
         withhold what 3.1.0 returned; the bullets marked "Behaviour change" also change what a correct query
@@ -5019,6 +5745,25 @@ MemoryCalculationInput
   `[Column]`. Reached through a navigation (`Owner.New`) it is an ordinary member.
 - A declared date format may not write text ISO 8601 or a year-first date already reads; `DwDates.Configure`
   refuses one (section 4). ISO 8601 and year-first dates are read on every deployment and cannot be turned off.
+- A shadow property cannot be named by any clause, guarded or not: a field path names CLR members, and a shadow
+  property has none, so the name matches nothing and is refused as an unknown name. Map it to a property, or reach
+  it through a projection that assigns it with `EF.Property`.
+- An alias spelled like another member of the same type is reported by `ValidateModel` (3.3.0). A generated row
+  cannot carry one name twice, so the rename is not applied there and both columns keep their own names.
+- A member no database can compute — a getter over columns, or an unmapped getter on an entity — cannot be
+  filtered, ordered, grouped or aggregated under `Strict` on a source the library can read (3.3.0, section 17). Map
+  it, or name the columns beneath it. A projection may still name it, because EF Core evaluates the last projection
+  on the client. Under `Convenience` every clause still reaches the provider and still throws there.
+- A column the model maps only on a subtype cannot be filtered, ordered, grouped or aggregated through the base type
+  (3.3.0, section 17). EF Core translates a member against the type the query is over, so it fails there too: query
+  the derived type, `Set<Merchant>()`.
+- A second host configuring the same posture runs with the first host's `TokenVault`, `Services` and rule store
+  instances (3.3.0, section 12). They are not compared and not replaced.
+- A simulation has no source, so `PolicySimulator` and `/simulate` cannot refuse a path no database can compute;
+  they show such a request running where the strict query refuses it (3.3.0, section 17).
+- A condition's values are read once to validate their format and again to build the predicate. A value whose
+  `ToString()` answers differently each time is validated as one value and queried as another; pass values that do
+  not change. No policy decision reads a value's content — only how many there are.
 - Summary rows flatten dotted group fields (`CategoryName`); `SelectDynamic` rows nest them (`Category.Name`).
 - `Filter` applies `Orders` and `Page` on T before the projection, so order fields need not be selected.
 - `getQueryString` needs an EF Core provider.
@@ -5076,6 +5821,19 @@ MemoryCalculationInput
   translate it.
 - A default order reaches a projected row only through columns of the entity its `Select` reads: a projection over
   an anonymous or other intermediate row takes no default.
+- A path beneath a member whose type the framework declares (`Salary.Value`, `Born.Year`) can carry no
+  attribute of its own. It takes that member's deny effects, operator restriction, cost and audit, and never its
+  alias, required filter, forced scope or description (3.3.0, section 14); a rule naming the path itself still
+  applies alongside. Where the member is transformed, such a path cannot be selected, grouped or aggregated at
+  all: there is no member beneath it to apply the chain to.
+- Past the attribute walk's four segments, which only a raised `Caps.MaxNavigationDepth` lets a request name, the
+  member at a path's end is read for its own attributes (3.3.0, section 14), and what is declared about the
+  queried entity itself is not read there, as it is not around a cycle: `[DwAlias]`, `[DwRequireWhere]`,
+  `[DwForceWhere]`. A transformed member there cannot be a grouping key or an aggregated field, because a
+  summary's own transform finds a generated row's columns by the type's list, which stops at four segments.
+- A transform the policy names no path to is applied to the rows by run-time type (3.3.0, section 18). A member
+  typed `object`, or a collection that is not generic, says nothing about what it holds and is not read into.
+  Type the member as what it holds.
 - A simulation reads T as a source it cannot see into (section 23): every denial beneath a member counts, and a
   synthesized `Clause.Selects` keeps only members holding a value.
 

@@ -39,38 +39,24 @@ public sealed class PolicyEndpointCollection
 /// </summary>
 internal static class PolicyEndpointHost
 {
-    internal const string Entity = "staff";
-
-    private static readonly object Bootstrap = new();
+    internal const string Entity = PolicyBootstrap.StaffName;
 
     /// <summary>
-    /// Configures the process-wide policy once, because the endpoints read <c>DwPolicy</c> rather
-    /// than taking a posture per call — which is the whole point of that type: a posture a caller
-    /// can forget to pass at one call site is not a posture.
+    /// Configures the process-wide policy, because the endpoints read <c>DwPolicy</c> rather than
+    /// taking a posture per call — which is the whole point of that type: a posture a caller can
+    /// forget to pass at one call site is not a posture.
     /// </summary>
-    internal static void Configure()
-    {
-        lock (Bootstrap)
-        {
-            if (DwPolicy.IsConfigured)
-            {
-                return;
-            }
-
-            DwPolicyOptions options = new();
-
-            // Employee belongs to the demo API rather than to this suite, and is exposed here
-            // because DwPolicy.Configure is refused after the first call: a second bootstrap for
-            // PolicyAdminControllerTests could not exist, and whichever suite ran first would
-            // decide what the other could resolve.
-            options.Entities
-                .Expose<Staff>(Entity)
-                .Expose<Person>()
-                .Expose<DynamicWhere.API.Models.Employee>("Employee");
-
-            DwPolicy.Configure(options);
-        }
-    }
+    /// <remarks>
+    /// No lock and no <c>IsConfigured</c> check. Since 3.3.0 a second call asking for the posture
+    /// already in force is a no-op, so every test that needs the endpoints can call this and the
+    /// package settles the race. Before that, this method held the check-then-act every integration
+    /// suite had to write for itself.
+    /// <para>
+    /// Employee belongs to the demo API rather than to this suite, and is exposed here because the
+    /// posture must be identical whichever suite calls first.
+    /// </para>
+    /// </remarks>
+    internal static void Configure() => PolicyBootstrap.Ensure();
 
     /// <summary>Signs every request in as whoever the test asked for.</summary>
     internal sealed class StubAuth : AuthenticationHandler<AuthenticationSchemeOptions>

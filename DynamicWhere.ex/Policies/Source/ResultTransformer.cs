@@ -26,14 +26,30 @@ namespace DynamicWhere.ex.Policies.Source;
 internal static class ResultTransformer
 {
     /// <summary>Transforms the rows of an entity or projection result.</summary>
-    internal static void Rows(
+    /// <param name="rows">The materialized rows.</param>
+    /// <param name="entityType">The type the query was written over, whose paths the policy names.</param>
+    /// <param name="policy">The type's policy.</param>
+    /// <param name="projected">The projection the rows were read through, or null for whole rows.</param>
+    /// <param name="context">The caller.</param>
+    /// <param name="options">The enforcement posture.</param>
+    /// <param name="trace">Collects what was transformed.</param>
+    /// <param name="attributes">False when the resolver in force reads no attributes at all.</param>
+    /// <param name="past">
+    /// The transforms of members the projection names past the attribute walk's depth, which the
+    /// type's own list does not hold, or null.
+    /// </param>
+    /// <returns>The audited members the rows hand back where no path names them, for the caller to record.</returns>
+    internal static IReadOnlyList<GraphWalker.UnnamedRead> Rows(
         IEnumerable rows,
+        Type entityType,
         TypePolicy policy,
         IReadOnlyCollection<string>? projected,
         DwPolicyContext context,
         DwPolicyOptions options,
-        PolicyTrace trace) =>
-        GraphWalker.Apply(rows, policy, projected, context, options, trace);
+        PolicyTrace trace,
+        bool attributes,
+        IReadOnlyDictionary<string, ValueTransform>? past = null) =>
+        GraphWalker.Apply(rows, entityType, policy, projected, context, options, trace, attributes, past);
 
     /// <summary>
     /// Rewrites the column names of generated rows into the caller's own vocabulary.
@@ -166,7 +182,14 @@ internal static class ResultTransformer
                 continue;
             }
 
-            string name = byColumn.TryGetValue(property.Key, out string? alias) ? alias : property.Key;
+            // Not onto a name the row already carries: writing there would emit one column under
+            // another's name and drop that other's value outright. The startup scan reports such an
+            // alias as an error; a deployment that runs without scanning keeps both columns.
+            string name = byColumn.TryGetValue(property.Key, out string? alias)
+                           && (string.Equals(alias, property.Key, StringComparison.OrdinalIgnoreCase)
+                               || !properties.ContainsKey(alias))
+                ? alias
+                : property.Key;
 
             if (!ReferenceEquals(name, property.Key) && !renamed.Contains(property.Key))
             {
@@ -312,7 +335,7 @@ internal static class ResultTransformer
 
         if (keys.Count > 0)
         {
-            RefuseCollisions(result.Data, keys, options);
+            RefuseCollisions(result.Data, keys, context, options);
         }
     }
 
@@ -423,7 +446,8 @@ internal static class ResultTransformer
     /// rows that look like duplicates and whose aggregates cannot be added together without
     /// inventing a figure the database never computed.
     /// </remarks>
-    private static void RefuseCollisions(List<dynamic> rows, List<Column> keys, DwPolicyOptions options)
+    private static void RefuseCollisions(
+        List<dynamic> rows, List<Column> keys, DwPolicyContext context, DwPolicyOptions options)
     {
         HashSet<string> seen = new(StringComparer.Ordinal);
 
@@ -435,22 +459,30 @@ internal static class ResultTransformer
             {
                 PropertyInfo property = CacheReflection.FindProperty(row.GetType(), key.Name)!;
 
-                parts.Add(MutatorCache.Read(property, row)?.ToString() ?? " ");
+                parts.Add(MutatorCache.Read(property, row)?.ToString() ?? "\0");
             }
 
-            string composite = string.Join('', parts);
+            string composite = string.Join('\u001f', parts);
 
             if (!seen.Add(composite))
             {
+                bool hides = options.Tier == DwTier.Strict && !options.DryRun && !context.DryRun;
+
+                // Under the strict tier the refusal names the clause rather than the grouping key:
+                // the key's canonical path is the column behind whatever alias the caller wrote, and
+                // the origin would say that its values are transformed. Both are answers about a
+                // field the caller never named.
                 throw new PolicyException(
                     PolicyErrorCode.AmbiguousGroupKey,
-                    string.Join(", ", keys.Select(k => k.Path)),
+                    hides ? "*" : string.Join(", ", keys.Select(k => k.Path)),
                     PolicyFeature.Group,
                     options.Tier)
                 {
-                    SourceOrigin =
-                        "two groups share a key once transformed, so their aggregates can no longer " +
-                        "be told apart"
+                    AuditPath = string.Join(", ", keys.Select(k => k.Path)),
+                    SourceOrigin = hides
+                        ? null
+                        : "two groups share a key once transformed, so their aggregates can no longer " +
+                          "be told apart"
                 };
             }
         }

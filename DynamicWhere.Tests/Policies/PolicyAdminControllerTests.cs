@@ -32,7 +32,7 @@ namespace DynamicWhere.Tests.Policies;
 public sealed class PolicyAdminControllerTests : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _server =
-        new PostgreSqlBuilder().WithImage("postgres:16-alpine").Build();
+        new PostgreSqlBuilder("postgres:16-alpine").Build();
 
     private IHost? _host;
 

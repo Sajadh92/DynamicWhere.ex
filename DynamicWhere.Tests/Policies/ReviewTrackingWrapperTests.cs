@@ -239,10 +239,10 @@ namespace DynamicWhere.Tests.Policies
             IQueryable<ZwShopper> source = new ZwAsyncQuery<ZwShopper>(_db.Shoppers);
 
             object? data = null;
-            string code = ZwKit.Code(() => data = ZwKit.Guard(source, tier).ToListAsync(new Filter()).GetAwaiter().GetResult().Data);
-            string async = ZwKit.Code(() => ZwKit.Guard(source, tier).ToListAsyncDynamic(new Filter()).GetAwaiter().GetResult());
-            string segment = ZwKit.Code(() => ZwKit.Guard(source, tier).ToListAsync(Union()).GetAwaiter().GetResult());
-            string summary = ZwKit.Code(() => ZwKit.Guard(source, tier).ToListAsync(CountByName()).GetAwaiter().GetResult());
+            string code = await ZwKit.CodeAsync(async () => data = (await ZwKit.Guard(source, tier).ToListAsync(new Filter())).Data);
+            string async = await ZwKit.CodeAsync(() => ZwKit.Guard(source, tier).ToListAsyncDynamic(new Filter()));
+            string segment = await ZwKit.CodeAsync(() => ZwKit.Guard(source, tier).ToListAsync(Union()));
+            string summary = await ZwKit.CodeAsync(() => ZwKit.Guard(source, tier).ToListAsync(CountByName()));
             int after = _db.ChangeTracker.Entries().Count();
 
             _out.WriteLine($"W1 {tier}: list={code} dynamic={async} segment={segment} summary={summary} tracked {before}->{after} sent={ZwKit.Json(data)}");

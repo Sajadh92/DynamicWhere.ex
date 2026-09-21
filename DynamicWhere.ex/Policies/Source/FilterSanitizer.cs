@@ -111,11 +111,14 @@ internal static class FilterSanitizer
             throw new ArgumentNullException(nameof(trace));
         }
 
+        // A malformed request is refused as one, before the copy reads a list entry by entry.
+        RequestShape.Refuse(filter);
+
         Filter working = filter.Clone();
 
         // The gate is built first now, because canonicalizing a name needs the type's alias map and
         // the gate is what carries it. Nothing the gate does depends on the paths being canonical.
-        Gate gate = new(typeof(T), resolver, context, options, trace);
+        Gate gate = new(typeof(T), resolver, context, options, trace) { Rows = rows ?? RowShape.Unknown };
 
         // Before any name is resolved. Counting needs no name, and resolving every name of an
         // oversized request is exactly the work the caps exist to refuse.
@@ -181,6 +184,7 @@ internal static class FilterSanitizer
     /// <param name="context">The caller.</param>
     /// <param name="options">The enforcement posture.</param>
     /// <param name="trace">Collects what was decided.</param>
+    /// <param name="rows">What the source produces, when it can be read.</param>
     /// <returns>A sanitized copy, safe to hand to the existing pipeline.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     /// <exception cref="PolicyException">Thrown when the policy refuses part of the summary.</exception>
@@ -195,7 +199,8 @@ internal static class FilterSanitizer
         PolicyResolver resolver,
         DwPolicyContext context,
         DwPolicyOptions options,
-        PolicyTrace trace)
+        PolicyTrace trace,
+        RowShape? rows = null)
         where T : class
     {
         if (summary is null)
@@ -223,9 +228,12 @@ internal static class FilterSanitizer
             throw new ArgumentNullException(nameof(trace));
         }
 
+        // A malformed request is refused as one, before the copy reads a list entry by entry.
+        RequestShape.Refuse(summary);
+
         Summary working = summary.Clone();
 
-        Gate gate = new(typeof(T), resolver, context, options, trace);
+        Gate gate = new(typeof(T), resolver, context, options, trace) { Rows = rows ?? RowShape.Unknown };
 
         EnforceCaps(working, gate);
 
@@ -313,6 +321,15 @@ internal static class FilterSanitizer
         {
             for (int i = 0; i < groupBy.Fields.Count; i++)
             {
+                // A blank key fails validation, as it does unguarded. Handing it to the resolver
+                // instead reaches Validate<T>'s argument check, and an ArgumentNullException is not
+                // the failure the endpoint turns into a four-hundred. A blank Selects entry reaches
+                // that same check guarded or not, so it is left as it is: the two answers agree.
+                if (string.IsNullOrWhiteSpace(groupBy.Fields[i]))
+                {
+                    throw new LogicException(ErrorCode.InvalidField);
+                }
+
                 groupBy.Fields[i] = ResolveName<T>(groupBy.Fields[i], gate);
             }
         }
@@ -667,9 +684,16 @@ internal static class FilterSanitizer
             throw new ArgumentNullException(nameof(trace));
         }
 
+        // A malformed request is refused as one, before the copy reads a list entry by entry.
+        RequestShape.Refuse(segment);
+
         Segment working = segment.Clone();
 
-        Gate gate = new(typeof(T), resolver, context, options, trace) { InSegment = true };
+        Gate gate = new(typeof(T), resolver, context, options, trace)
+        {
+            InSegment = true,
+            Rows = rows ?? RowShape.Unknown
+        };
 
         EnforceCaps(working, gate);
 
@@ -688,7 +712,7 @@ internal static class FilterSanitizer
         {
             for (int i = 0; i < working.Selects.Count; i++)
             {
-                working.Selects[i] = ResolveName<T>(working.Selects[i], gate);
+                working.Selects[i] = ResolveName<T>(working.Selects[i], gate, computed: false);
             }
         }
 
@@ -1061,7 +1085,7 @@ internal static class FilterSanitizer
     {
         foreach (string field in SegmentFields(segment))
         {
-            gate.CheckDepth(field);
+            gate.CheckDepth(field, PolicyFeature.Segment);
         }
     }
 
@@ -1130,7 +1154,7 @@ internal static class FilterSanitizer
         {
             foreach (string field in filter.Selects)
             {
-                gate.CheckDepth(field);
+                gate.CheckDepth(field, PolicyFeature.Select);
             }
         }
 
@@ -1138,7 +1162,7 @@ internal static class FilterSanitizer
         {
             foreach (OrderBy order in filter.Orders)
             {
-                gate.CheckDepth(order.Field);
+                gate.CheckDepth(order.Field, PolicyFeature.Order);
             }
         }
     }
@@ -1176,7 +1200,7 @@ internal static class FilterSanitizer
         {
             foreach (string field in summary.GroupBy.Fields)
             {
-                gate.CheckDepth(field);
+                gate.CheckDepth(field, PolicyFeature.Group);
             }
         }
 
@@ -1184,7 +1208,7 @@ internal static class FilterSanitizer
         {
             foreach (AggregateBy aggregate in summary.GroupBy.AggregateBy)
             {
-                gate.CheckDepth(aggregate.Field);
+                gate.CheckDepth(aggregate.Field, PolicyFeature.Aggregate);
             }
         }
     }
@@ -1458,7 +1482,7 @@ internal static class FilterSanitizer
         {
             foreach (Condition condition in group.Conditions)
             {
-                gate.CheckDepth(condition.Field);
+                gate.CheckDepth(condition.Field, PolicyFeature.Where);
             }
         }
 
@@ -1892,6 +1916,17 @@ internal static class FilterSanitizer
     private static List<string>? SynthesizedProjection(Gate gate, RowShape rows)
     {
         List<string> allowed = new();
+
+        // The caller named no projection, so what comes back comes back because they asked for the
+        // row. That is a read, and an audited field has to record it: recording only what a request
+        // spells out would leave an empty Selects as one token past [DwAudit] — the same value,
+        // returned, with nothing written down. Collected as the walk decides what reaches the
+        // caller, and recorded once it knows whether a projection is built at all.
+        List<string> readable = new();
+
+        // What comes back inside a member kept whole. An audited column of an owned type is read by
+        // whoever receives the object holding it, named or not.
+        List<string> inside = new();
         List<(string Member, string Reason)> uncarried = new();
         bool anyDenied = false;
         int recorded = gate.TraceCount;
@@ -1906,6 +1941,13 @@ internal static class FilterSanitizer
                 anyDenied = true;
 
                 gate.Record(name, PolicyFeature.Select, PolicyAction.Dropped, policy);
+
+                // A dry run drops nothing: the member comes back with the row, so an audited one is
+                // read, and the record says so with the effect the policy decided.
+                if (gate.IsDryRun)
+                {
+                    readable.Add(name);
+                }
 
                 continue;
             }
@@ -1932,6 +1974,14 @@ internal static class FilterSanitizer
                 if (assignable && rows.CarriesValue(name))
                 {
                     allowed.Add(name);
+                }
+
+                // What the caller receives: a value the source carries, and a getter the row
+                // computes from what it carries, which a projection could not have assigned and
+                // which comes back with the row when no projection is built.
+                if (rows.CarriesValue(name) || !assignable)
+                {
+                    readable.Add(name);
                 }
 
                 continue;
@@ -1975,6 +2025,11 @@ internal static class FilterSanitizer
                         : rows.Kind == RowKind.InMemory
                             ? "left out: a projection cannot keep an object a row in memory holds"
                             : "left out: it is a navigation, which projecting would load"));
+
+                    // A projection cannot keep it, and with no projection built the row hands it
+                    // back. A navigation nothing loads reaches nobody and is not a read.
+                    readable.Add(name);
+                    inside.AddRange(survivors);
                 }
 
                 continue;
@@ -1983,6 +2038,8 @@ internal static class FilterSanitizer
             if (reached.Count == 0 && !unnamed.Opaque && !forced && !gate.ReadOnlyTransformBeneath(name))
             {
                 allowed.Add(name);
+                readable.Add(name);
+                inside.AddRange(survivors);
 
                 continue;
             }
@@ -2020,6 +2077,19 @@ internal static class FilterSanitizer
 
                 gate.LeaveOut(name, "left out: a base type's member of this name, which the row's own member hides");
             }
+        }
+
+        // What the caller receives: the projection's own list where one is built, and every member
+        // they may select where none is, since the row then comes back whole. Both sets are paths
+        // whose policy is already resolved, so recording costs no resolution of its own.
+        //
+        // A dry run builds no projection, whatever is denied — it changes what the policy does, not
+        // what it saw — so the row comes back whole there and the whole row is what was read.
+        // Recording the projection's would-be list instead would hand a member back unrecorded,
+        // which is the gap this recording exists to close.
+        foreach (string path in (anyDenied && !gate.IsDryRun ? allowed : readable).Concat(inside))
+        {
+            gate.AuditUse(path, PolicyFeature.Select, gate.PolicyFor(path, PolicyFeature.None));
         }
 
         // A member that asks for nothing itself is still left out, or narrowed, as the projection would build
@@ -2365,16 +2435,23 @@ internal static class FilterSanitizer
     /// <typeparam name="T">The entity type being queried.</typeparam>
     /// <param name="name">The name as the caller wrote it.</param>
     /// <param name="gate">The per-query state, carrying the type's alias map.</param>
+    /// <param name="computed">
+    /// True when the clause needs the provider to compute the path — a filter, an order, a grouping
+    /// key, an aggregated field. False for a projection, which the provider evaluates on the client
+    /// when it cannot translate it, so a member no database can compute is still returned there.
+    /// </param>
     /// <returns>The canonical field path.</returns>
     /// <exception cref="PolicyException">Thrown when the name could mean more than one field.</exception>
     /// <exception cref="LogicException">Thrown when the name names nothing, outside the strict tier.</exception>
-    private static string ResolveName<T>(string name, Gate gate) where T : class
+    private static string ResolveName<T>(string name, Gate gate, bool computed = true) where T : class
     {
         // A type nobody has aliased takes the path it always did, with no extra reflection and no
         // behavioural difference from before this existed.
         if (gate.TypePolicy.Aliases.Count == 0)
         {
-            return gate.HidesExistence ? TryValidate<T>(name) ?? gate.Unknown(name) : name.Validate<T>();
+            return gate.HidesExistence
+                ? Expressible(TryValidate<T>(name), name, gate, computed) ?? gate.Unknown(name)
+                : name.Validate<T>();
         }
 
         string spoken = name.Trim();
@@ -2418,6 +2495,16 @@ internal static class FilterSanitizer
 
         if (candidates.Count > 1)
         {
+            if (gate.HidesExistence)
+            {
+                // A name matching two fields matches at least one, and answering that differently
+                // from a name matching none tells a caller their guess named something real. The
+                // trace keeps the ambiguity for the operator who has to fix the aliases.
+                gate.RecordAmbiguous(spoken, candidates);
+
+                return gate.Unknown(spoken);
+            }
+
             throw gate.Exception(spoken, PolicyFeature.None, PolicyErrorCode.AmbiguousFieldName, null);
         }
 
@@ -2430,7 +2517,72 @@ internal static class FilterSanitizer
 
         string canonical = candidates[0];
 
+        if (gate.HidesExistence && Expressible(canonical, spoken, gate, computed) is null)
+        {
+            return gate.Unknown(spoken);
+        }
+
         gate.RecordSpelling(canonical, spoken);
+
+        return canonical;
+    }
+
+    /// <summary>
+    /// The canonical path when the clause can be answered with it, and null when the source provably
+    /// cannot express it and the clause needs the provider to compute it.
+    /// </summary>
+    /// <remarks>
+    /// A member exists on the row's type and still has no value the provider can compute:
+    /// <c>Name.IsEmpty</c> over a localized text, a getter over two columns. Every check the policy
+    /// makes passes, and the query then fails inside the provider — a five-hundred where the strict
+    /// tier promises a refusal, and the one place the tier answers a caller with something other
+    /// than an answer or a refusal.
+    /// <para>
+    /// Only the strict tier reaches this, and only where <see cref="RowShape.Expresses"/> can prove
+    /// the path wrong. Elsewhere the name is returned unchanged and fails exactly as it does today,
+    /// which is what an unguarded query does with it.
+    /// </para>
+    /// <para>
+    /// A projection is exempt. With <paramref name="computed"/> false the canonical path is returned
+    /// even where <see cref="RowShape.Expresses"/> proves it wrong, because EF Core evaluates the
+    /// last projection on the client, so a member no database can compute is still one a caller can
+    /// select.
+    /// </para>
+    /// <para>
+    /// The refusal is the unknown-name one, so a caller cannot tell a member that does not exist
+    /// from one that exists and cannot be computed, any more than they can tell either from a field
+    /// they may not use.
+    /// </para>
+    /// </remarks>
+    /// <param name="canonical">The resolved path, or null when the name resolved to nothing.</param>
+    /// <param name="spoken">The name as the caller wrote it, for the trace.</param>
+    /// <param name="gate">The per-query state, carrying the shape of the rows.</param>
+    /// <param name="computed">
+    /// True when the clause needs the provider to compute the path, false for a projection.
+    /// </param>
+    /// <returns>The canonical path, or null when the strict tier is to refuse the name.</returns>
+    private static string? Expressible(string? canonical, string spoken, Gate gate, bool computed)
+    {
+        if (canonical is null)
+        {
+            return null;
+        }
+
+        if (!computed)
+        {
+            // A projection is the last thing the provider builds, and EF Core evaluates that one on
+            // the client when it cannot translate it. So a member no database can compute is still
+            // a member a caller can select, and refusing it here would take back a projection that
+            // has always worked.
+            return canonical;
+        }
+
+        if (gate.Rows.Expresses(canonical) == false)
+        {
+            gate.RecordUnexpressible(canonical, spoken);
+
+            return null;
+        }
 
         return canonical;
     }
@@ -2530,7 +2682,7 @@ internal static class FilterSanitizer
         {
             for (int i = 0; i < filter.Selects.Count; i++)
             {
-                filter.Selects[i] = ResolveName<T>(filter.Selects[i], gate);
+                filter.Selects[i] = ResolveName<T>(filter.Selects[i], gate, computed: false);
             }
         }
 
@@ -2648,6 +2800,12 @@ internal static class FilterSanitizer
         /// </summary>
         internal bool InSegment { get; init; }
 
+        /// <summary>
+        /// What the source produces, which decides whether a path the caller named is something the
+        /// query can express at all.
+        /// </summary>
+        internal RowShape Rows { get; init; } = RowShape.Unknown;
+
         /// <summary>The caller this query is being sanitized for.</summary>
         internal DwPolicyContext Context => _context;
 
@@ -2689,6 +2847,36 @@ internal static class FilterSanitizer
         /// still fails there as it would unguarded.
         /// </remarks>
         internal bool HidesExistence => IsStrict && !IsDryRun;
+
+        /// <summary>
+        /// Records that a path exists on the type and names no value the query can compute, before
+        /// it is refused as an unknown name would be.
+        /// </summary>
+        /// <remarks>
+        /// The refusal itself says nothing, on purpose, so the trace is where an operator reads what
+        /// happened. Without it, a filter on <c>Name.IsEmpty</c> would be refused with the same
+        /// wording as a misspelling and nothing anywhere would say which of the two it was.
+        /// </remarks>
+        internal void RecordUnexpressible(string canonicalPath, string spoken)
+        {
+            _trace.RecordSpelling(canonicalPath, spoken);
+
+            _trace.Add(new PolicyDecision(
+                canonicalPath,
+                PolicyFeature.None,
+                PolicyAction.Denied,
+                "the member exists on the type and the query cannot compute it, so it is refused as an unknown name is"));
+        }
+
+        /// <summary>Records a name that matches more than one field, before it is refused as an unknown name is.</summary>
+        internal void RecordAmbiguous(string spoken, IReadOnlyList<string> candidates)
+        {
+            _trace.Add(new PolicyDecision(
+                spoken,
+                PolicyFeature.None,
+                PolicyAction.Denied,
+                "the name matches " + string.Join(", ", candidates) + ", so it is refused as an unknown name is"));
+        }
 
         /// <summary>Remembers a name that matches nothing, and returns it for the gate to refuse.</summary>
         /// <remarks>
@@ -3805,7 +3993,7 @@ internal static class FilterSanitizer
         /// type otherwise lets a caller write a path of any length and make the provider emit one
         /// join per segment.
         /// </remarks>
-        internal void CheckDepth(string? fieldPath)
+        internal void CheckDepth(string? fieldPath, PolicyFeature feature)
         {
             if (string.IsNullOrEmpty(fieldPath))
             {
@@ -3826,7 +4014,23 @@ internal static class FilterSanitizer
 
             if (segments > _options.Caps.MaxNavigationDepth)
             {
-                Raise(Cap("MaxNavigationDepth", _options.Caps.MaxNavigationDepth, segments, fieldPath));
+                PolicyException? refusal =
+                    Cap("MaxNavigationDepth", _options.Caps.MaxNavigationDepth, segments, fieldPath);
+
+                if (refusal is not null
+                    && HidesExistence
+                    && !string.Equals(Spoken(fieldPath), fieldPath, StringComparison.Ordinal))
+                {
+                    // The caller wrote one token and the cap counted the path it stands for, so this
+                    // refusal would tell them their name resolved to something several navigations
+                    // deep — where a name matching nothing gets the clause's own refusal. It gets
+                    // that one too. A caller who wrote the path themselves already knows its depth,
+                    // and is answered by the cap, as every other over-long request is. The trace
+                    // above keeps the cap and the depth for the operator either way.
+                    refusal = Exception(fieldPath, feature, DenialFor(feature), null);
+                }
+
+                Raise(refusal);
             }
         }
 
@@ -4089,6 +4293,24 @@ internal static class FilterSanitizer
                 PolicyAction.Injected,
                 orNull ? $"forced predicate ({op}, or null)" : $"forced predicate ({op})"));
 
+        /// <summary>
+        /// Records one use of a field whose policy is already resolved, when the field is audited
+        /// for that feature.
+        /// </summary>
+        /// <remarks>
+        /// For a use the library works out rather than one a request names: the members a projection
+        /// synthesized for a caller who named none returns to them. <see cref="PolicyFor"/> records
+        /// the use itself for the feature it resolves; this is that recording, reached from a
+        /// decision that holds the policy already.
+        /// </remarks>
+        internal void AuditUse(string fieldPath, PolicyFeature feature, FieldPolicy policy)
+        {
+            if (feature != PolicyFeature.None && policy.IsAudited(feature))
+            {
+                Audit(fieldPath, feature, policy);
+            }
+        }
+
         /// <summary>Resolves one field's policy, once per query.</summary>
         internal FieldPolicy PolicyFor(string fieldPath, PolicyFeature feature)
         {
@@ -4126,6 +4348,14 @@ internal static class FilterSanitizer
         /// A dry run still records. It changes what the policy does, not what it saw, and a canary
         /// rollout with no evidence of what it was about to refuse is one nobody can evaluate.
         /// </para>
+        /// <para>
+        /// Where the tier hides existence the refusal is raised as the field refusal the caller
+        /// would have been given anyway. Answering with the cap's own code, and an origin naming the
+        /// cap, would tell a caller that the name they guessed is a real field and an audited one,
+        /// which is the inference the tier exists to prevent: a name matching nothing is never
+        /// audited and never reaches this. The request is refused either way, and the trace above
+        /// records which refusal it really was.
+        /// </para>
         /// </remarks>
         private void Audit(string fieldPath, PolicyFeature feature, FieldPolicy policy)
         {
@@ -4151,6 +4381,11 @@ internal static class FilterSanitizer
 
             _trace.Add(new PolicyDecision(fieldPath, feature, PolicyAction.Denied, origin));
 
+            if (HidesExistence)
+            {
+                throw Exception(fieldPath, feature, DenialFor(feature), null);
+            }
+
             throw new PolicyException(
                 PolicyErrorCode.CapExceeded, IsStrict ? WholeClause : fieldPath, feature, _options.Tier)
             {
@@ -4158,6 +4393,17 @@ internal static class FilterSanitizer
                 AuditPath = fieldPath
             };
         }
+
+        /// <summary>The code a field refused for one feature carries.</summary>
+        private static PolicyErrorCode DenialFor(PolicyFeature feature) => feature switch
+        {
+            PolicyFeature.Select => PolicyErrorCode.FieldDeniedForSelect,
+            PolicyFeature.Order => PolicyErrorCode.FieldDeniedForOrder,
+            PolicyFeature.Group => PolicyErrorCode.FieldDeniedForGroup,
+            PolicyFeature.Aggregate => PolicyErrorCode.FieldDeniedForAggregate,
+            PolicyFeature.Segment => PolicyErrorCode.FieldDeniedForSegment,
+            _ => PolicyErrorCode.FieldDeniedForWhere
+        };
 
         /// <summary>
         /// Applies a refusal for a feature that may be dropped: throws in the strict tier, records

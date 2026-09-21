@@ -171,7 +171,11 @@ public abstract class PolicyStoreConformanceTests
 
         long before = await store.GetVersionAsync(default);
 
-        using CancellationTokenSource cancel = new(TimeSpan.FromSeconds(10));
+        // Generous on purpose. The watch runs on the thread pool, and a suite of two thousand tests
+        // can leave it waiting behind work that has nothing to do with this store; a budget tight
+        // enough to catch a real hang is also tight enough to fail a healthy run under load. Only a
+        // store that never reports a change waits this long.
+        using CancellationTokenSource cancel = new(TimeSpan.FromSeconds(60));
 
         IAsyncEnumerable<long>? watch = store.WatchAsync(cancel.Token);
 
@@ -200,7 +204,9 @@ public abstract class PolicyStoreConformanceTests
         {
             await store.UpsertAsync(Rule(), cancel.Token);
 
-            await Task.Delay(25, cancel.Token);
+            // Waits on the watch itself rather than on the clock, so the loop ends as soon as the
+            // store reports and does not go on writing while the reader waits to be scheduled.
+            await Task.WhenAny(observed, Task.Delay(25, cancel.Token));
         }
 
         Assert.True(await observed > before);

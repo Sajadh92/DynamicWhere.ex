@@ -211,4 +211,19 @@ internal static class ErrorCode
     /// </returns>
     public static string StartsWithReservedName(string propertyPath) =>
         $"FieldPath[{propertyPath}]StartsWithReservedName";
+
+    /// <summary>
+    /// Indicates that a list in the request holds a null entry.
+    /// </summary>
+    /// <remarks>
+    /// A request body can say <c>"conditions": [null]</c>, and a list is read entry by entry by
+    /// everything that follows, so a null entry used to surface wherever it was first touched, as a
+    /// <see cref="NullReferenceException"/> or an <see cref="ArgumentNullException"/> from inside the
+    /// library rather than as a refusal of the request.
+    /// </remarks>
+    /// <param name="list">The name of the list, as the request shape declares it.</param>
+    /// <returns>
+    /// A formatted error message naming the list.
+    /// </returns>
+    public static string NullEntry(string list) => $"ListOf[{list}]MustNotHasNullEntry";
 }

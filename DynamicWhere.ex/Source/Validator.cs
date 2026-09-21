@@ -124,18 +124,11 @@ internal static class Validator
                 break;
 
             case DataType.Number:
-                // For numeric fields, each value must parse into a supported numeric type.
-                if (normalized.Any(value =>
-                    !byte.TryParse(value, out _) &&
-                    !short.TryParse(value, out _) &&
-                    !int.TryParse(value, out _) &&
-                    !long.TryParse(value, out _) &&
-                    !float.TryParse(value, out _) &&
-                    !double.TryParse(value, out _) &&
-                    !decimal.TryParse(value, out _)))
-                {
-                    throw new LogicException(ErrorCode.InvalidFormat);
-                }
+                // Read exactly as the predicate builder will write it — a literal of the expression
+                // parser, in the invariant culture, compared with the member's own type — so
+                // validation cannot accept a value the parser then refuses. This used to check the
+                // host's culture.
+                NumberValue.Read(normalized, typeof(T), condition.Field, condition.Operator);
                 break;
 
             case DataType.Boolean:
@@ -679,17 +672,9 @@ internal static class Validator
                 break;
 
             case DataType.Number:
-                if (normalized.Any(v =>
-                    !byte.TryParse(v, out _) &&
-                    !short.TryParse(v, out _) &&
-                    !int.TryParse(v, out _) &&
-                    !long.TryParse(v, out _) &&
-                    !float.TryParse(v, out _) &&
-                    !double.TryParse(v, out _) &&
-                    !decimal.TryParse(v, out _)))
-                {
-                    throw new LogicException(ErrorCode.InvalidFormat);
-                }
+                // The reader the WHERE clause uses. An alias carries no type a comparison could be
+                // asked about, so only the parser's grammar for a number is checked here.
+                NumberValue.Read(normalized);
                 break;
 
             case DataType.Boolean:

@@ -103,87 +103,26 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
         // back onto itself are meaningless.
         bool reflected = ancestors.Contains(type);
 
-        // Added once for this frame rather than per navigation, and removed only when this frame is
-        // the one that added it — otherwise a diamond (two properties of the same type) would clear
-        // a marker an outer frame is still standing on.
-        bool marked = ancestors.Add(type);
+        // Before the type is marked. A frame that returns here reads nothing, and one that had marked
+        // the type first left it marked for the rest of the walk: a type first met at the depth limit
+        // then read as a cycle wherever it was met again, and its forced scope, its required filter
+        // and its alias were dropped from a path that reaches it directly. Which of two members was
+        // declared first decided whether a tenant scope applied.
         if (depth >= MaxDepth)
         {
             return;
         }
 
+        // Added once for this frame rather than per navigation, and removed only when this frame is
+        // the one that added it — otherwise a diamond (two properties of the same type) would clear
+        // a marker an outer frame is still standing on.
+        bool marked = ancestors.Add(type);
+
         foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
             string path = prefix.Length == 0 ? property.Name : $"{prefix}.{property.Name}";
 
-            foreach (DwDenyAttribute attribute in property.GetCustomAttributes<DwDenyAttribute>(inherit: true))
-            {
-                fragments.Add(ToFragment(path, attribute));
-            }
-
-            foreach (DwDenyAttribute attribute in DenialsElsewhere(type, property))
-            {
-                fragments.Add(ToFragment(path, attribute));
-            }
-
-            foreach (DwOperatorsAttribute attribute in property.GetCustomAttributes<DwOperatorsAttribute>(inherit: true))
-            {
-                fragments.Add(ToFragment(path, attribute));
-            }
-
-            // An alias is a public *name*. Emitting "code" for StaffCode, Manager.StaffCode and
-            // Reports.StaffCode alike makes one declaration match many paths, and the sanitizer
-            // refuses the name as AmbiguousFieldName — so decorating a member of a self-referencing
-            // type made the alias unusable rather than convenient.
-            DwAliasAttribute? alias = reflected
-                ? null
-                : property.GetCustomAttribute<DwAliasAttribute>(inherit: true);
-
-            if (alias is not null)
-            {
-                fragments.Add(ToFragment(path, alias));
-            }
-
-            // A demand on the caller. "You must filter on Division" is a sentence about the
-            // query's subject; "you must also filter on Manager.Division" is not one anyone meant,
-            // and once the depth cap has produced Manager.Division, Reports.Division and
-            // Manager.Reports.Division, no caller can satisfy every copy.
-            DwRequireWhereAttribute? required = reflected
-                ? null
-                : property.GetCustomAttribute<DwRequireWhereAttribute>(inherit: true);
-
-            if (required is not null)
-            {
-                fragments.Add(ToFragment(path, required));
-            }
-
-            // A row-level scope on the entity being queried. This is the one that did not fail
-            // loudly: "only active employees" replicated into "and whose manager is active, and
-            // whose manager's manager is active" — a conjunction almost no row satisfies — so a
-            // perfectly good query came back EMPTY rather than refused. Fewer rows is technically
-            // fail-closed, which is why nothing caught it; silently returning nothing is still the
-            // worst way to be wrong.
-            if (!reflected)
-            {
-                foreach (DwForceWhereAttribute attribute in property.GetCustomAttributes<DwForceWhereAttribute>(inherit: true))
-                {
-                    fragments.Add(ToFragment(path, property, attribute));
-                }
-            }
-
-            foreach (TransformStage stage in TransformStagesOn(property))
-            {
-                fragments.Add(ToFragment(path, stage, StageAttributeOn(property, stage.Kind)));
-            }
-
-            // One fragment per attribute rather than one merged fragment for the member, because
-            // each attribute carries its own Overridable flag: [DwCost(10)] can be sealed while the
-            // [DwDescribe] beside it is replaceable, and merging them would force one ceiling on
-            // both.
-            foreach (PolicyFragment fragment in FactFragmentsOn(path, property))
-            {
-                fragments.Add(fragment);
-            }
+            Emit(type, property, path, reflected, fragments);
 
             Type? navigation = NavigationTypeOf(property.PropertyType);
 
@@ -197,6 +136,272 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
         {
             ancestors.Remove(type);
         }
+    }
+
+    /// <summary>
+    /// Adds the fragments one member's attributes declare, at the path that reaches it.
+    /// </summary>
+    /// <param name="type">The type the member was read from.</param>
+    /// <param name="property">The member.</param>
+    /// <param name="path">The dotted path that reaches it from the entity being queried.</param>
+    /// <param name="reflected">
+    /// True when the declarations about the queried entity itself, an alias, a required filter and a
+    /// forced scope, are left out: around a cycle, and on a path the walk does not reach.
+    /// </param>
+    /// <param name="fragments">The accumulator.</param>
+    private static void Emit(
+        Type type, PropertyInfo property, string path, bool reflected, List<PolicyFragment> fragments)
+    {
+
+        foreach (DwDenyAttribute attribute in property.GetCustomAttributes<DwDenyAttribute>(inherit: true))
+        {
+            fragments.Add(ToFragment(path, attribute));
+        }
+
+        foreach (DwDenyAttribute attribute in DenialsElsewhere(type, property))
+        {
+            fragments.Add(ToFragment(path, attribute));
+        }
+
+        foreach (DwOperatorsAttribute attribute in property.GetCustomAttributes<DwOperatorsAttribute>(inherit: true))
+        {
+            fragments.Add(ToFragment(path, attribute));
+        }
+
+        // An alias is a public *name*. Emitting "code" for StaffCode, Manager.StaffCode and
+        // Reports.StaffCode alike makes one declaration match many paths, and the sanitizer
+        // refuses the name as AmbiguousFieldName — so decorating a member of a self-referencing
+        // type made the alias unusable rather than convenient.
+        DwAliasAttribute? alias = reflected
+            ? null
+            : property.GetCustomAttribute<DwAliasAttribute>(inherit: true);
+
+        if (alias is not null)
+        {
+            fragments.Add(ToFragment(path, alias));
+        }
+
+        // A demand on the caller. "You must filter on Division" is a sentence about the
+        // query's subject; "you must also filter on Manager.Division" is not one anyone meant,
+        // and once the depth cap has produced Manager.Division, Reports.Division and
+        // Manager.Reports.Division, no caller can satisfy every copy.
+        DwRequireWhereAttribute? required = reflected
+            ? null
+            : property.GetCustomAttribute<DwRequireWhereAttribute>(inherit: true);
+
+        if (required is not null)
+        {
+            fragments.Add(ToFragment(path, required));
+        }
+
+        // A row-level scope on the entity being queried. This is the one that did not fail
+        // loudly: "only active employees" replicated into "and whose manager is active, and
+        // whose manager's manager is active" — a conjunction almost no row satisfies — so a
+        // perfectly good query came back EMPTY rather than refused. Fewer rows is technically
+        // fail-closed, which is why nothing caught it; silently returning nothing is still the
+        // worst way to be wrong.
+        if (!reflected)
+        {
+            foreach (DwForceWhereAttribute attribute in property.GetCustomAttributes<DwForceWhereAttribute>(inherit: true))
+            {
+                fragments.Add(ToFragment(path, property, attribute));
+            }
+        }
+
+        foreach (TransformStage stage in TransformStagesOn(property))
+        {
+            fragments.Add(ToFragment(path, stage, StageAttributeOn(property, stage.Kind)));
+        }
+
+        // One fragment per attribute rather than one merged fragment for the member, because
+        // each attribute carries its own Overridable flag: [DwCost(10)] can be sealed while the
+        // [DwDescribe] beside it is replaceable, and merging them would force one ceiling on
+        // both.
+        foreach (PolicyFragment fragment in FactFragmentsOn(path, property))
+        {
+            fragments.Add(fragment);
+        }
+    }
+
+    /// <summary>
+    /// The member whose policy decides a path that continues beneath it, or null when the path is one
+    /// the walk names or names nothing.
+    /// </summary>
+    /// <param name="entityType">The entity being queried.</param>
+    /// <param name="path">A normalized dotted path.</param>
+    /// <remarks>
+    /// The walk descends into an application's own types and nowhere else, so no attribute can be
+    /// placed beneath a member the framework declares the type of, and no fragment names such a path:
+    /// <c>Salary.Value</c> and <c>Salary.HasValue</c> on a <c>decimal?</c>, <c>Secret.Length</c> on a
+    /// <see cref="string"/>, <c>Born.Year</c> on a <see cref="DateTime"/>, <c>Bag.Count</c> on a
+    /// dictionary, or <c>Lines.Count</c> on an application's own collection class, where the member
+    /// named is the collection's and not the element's. The pipeline validates each of them, the
+    /// provider translates them, and each reads the member above it. Resolved on its own such a path
+    /// matched nothing and was allowed, so a denied, masked, audited or weighted member was one
+    /// segment away from having no policy at all. It takes the policy of the member it reads.
+    /// </remarks>
+    internal static string? Governing(Type entityType, string path)
+    {
+        // Asked of every path a query resolves, and nearly every one of them is a single member.
+        if (path.IndexOf('.') < 0)
+        {
+            return null;
+        }
+
+        string[] segments = path.Split('.');
+        Type type = entityType;
+
+        for (int i = 0; i < segments.Length - 1; i++)
+        {
+            PropertyInfo? property = Find(type, segments[i]);
+
+            if (property is null)
+            {
+                return null;
+            }
+
+            Type? navigation = NavigationTypeOf(property.PropertyType);
+
+            if (navigation is null)
+            {
+                return string.Join('.', segments, 0, i + 1);
+            }
+
+            if (Find(navigation, segments[i + 1]) is null)
+            {
+                // Not the element's member. The collection's own, Lines.Count on an application's
+                // collection class, reads the member above it. Anything else is a subtype's member or
+                // names nothing, and is decided as it always was: by the fragments naming it, so that a
+                // grant of Zone does not grant what a subtype of Zone declares.
+                Type container = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+
+                return container != navigation && Find(container, segments[i + 1]) is not null
+                    ? string.Join('.', segments, 0, i + 1)
+                    : null;
+            }
+
+            type = navigation;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The fragments a member's attributes declare on a path longer than the walk goes, or none when
+    /// the path is one the walk names or names nothing.
+    /// </summary>
+    /// <param name="entityType">The entity being queried.</param>
+    /// <param name="path">A normalized dotted path.</param>
+    /// <remarks>
+    /// The walk stops at <see cref="MaxDepth"/> segments because a connected model fans out at every
+    /// level, and the navigation-depth cap defaults to the same number. A host that raises the cap lets
+    /// a request name a longer path, which no fragment of the walk reaches, and a denial declared on the
+    /// member at its end did not apply. One path is cheap where every path is not, so the member is read
+    /// directly. What is declared about the queried entity itself is left out, as it is around a cycle.
+    /// </remarks>
+    internal static IReadOnlyList<PolicyFragment> Unwalked(Type entityType, string path)
+    {
+        // Counted before anything is split: only a path past the walk has anything to read here.
+        int separators = 0;
+
+        for (int i = 0; i < path.Length; i++)
+        {
+            if (path[i] == '.')
+            {
+                separators++;
+            }
+        }
+
+        if (separators < MaxDepth)
+        {
+            return Array.Empty<PolicyFragment>();
+        }
+
+        string[] segments = path.Split('.');
+
+        Type type = entityType;
+
+        for (int i = 0; i < segments.Length; i++)
+        {
+            PropertyInfo? property = Find(type, segments[i]);
+
+            if (property is null)
+            {
+                return Array.Empty<PolicyFragment>();
+            }
+
+            if (i == segments.Length - 1)
+            {
+                List<PolicyFragment> fragments = new();
+
+                Emit(type, property, path, reflected: true, fragments);
+
+                return fragments;
+            }
+
+            if (NavigationTypeOf(property.PropertyType) is not { } navigation)
+            {
+                return Array.Empty<PolicyFragment>();
+            }
+
+            type = navigation;
+        }
+
+        return Array.Empty<PolicyFragment>();
+    }
+
+    /// <summary>
+    /// The chain a member's own attributes declare, or null when it declares none.
+    /// </summary>
+    /// <remarks>
+    /// For a member no path of the walk reaches: one a subtype declares, one past the walk's depth, one
+    /// on an object a framework collection holds. No fragment names it, so no election is held over
+    /// it and no rule can speak to it; its attributes are all there is, and a member carries at most
+    /// one of each kind. Read once per member.
+    /// </remarks>
+    internal static ValueTransform? TransformOn(PropertyInfo property) =>
+        TransformsByMember.GetOrAdd(property, static member =>
+        {
+            MutateStage? mutate = null;
+            GeneralizeStage? generalize = null;
+            FormatStage? format = null;
+            MaskStage? mask = null;
+            TruncateStage? truncate = null;
+            DefaultStage? replacement = null;
+
+            foreach (TransformStage stage in TransformStagesOn(member))
+            {
+                switch (stage)
+                {
+                    case MutateStage found: mutate = found; break;
+                    case GeneralizeStage found: generalize = found; break;
+                    case FormatStage found: format = found; break;
+                    case MaskStage found: mask = found; break;
+                    case TruncateStage found: truncate = found; break;
+                    case DefaultStage found: replacement = found; break;
+                }
+            }
+
+            ValueTransform chain = new(mutate, generalize, format, mask, truncate, replacement);
+
+            return chain.IsEmpty ? null : chain;
+        });
+
+    private static readonly ConcurrentDictionary<PropertyInfo, ValueTransform?> TransformsByMember = new();
+
+    /// <summary>A public instance property by name, whatever its letter case, as a path names one.</summary>
+    private static PropertyInfo? Find(Type type, string name)
+    {
+        foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.GetIndexParameters().Length == 0
+                && string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return property;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

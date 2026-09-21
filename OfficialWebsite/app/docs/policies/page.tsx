@@ -57,8 +57,9 @@ PolicyTrace                what the policy did: always on LastTrace, and on
                            (off under the strict tier by default)`}</Code>
 
       <h2 id="start">The whole thing in one screen</h2>
-      <Code lang="csharp">{`// Once, at startup. A second call is refused: the tier is read by every
-// request thread, and a posture that can change mid-flight can be relaxed.
+      <Code lang="csharp">{`// At startup. A second call asking for the same posture does nothing; a
+// different one is refused, because the tier is read by every request thread
+// and a posture that can change mid-flight can be relaxed.
 DwPolicy.Configure(new DwPolicyOptions
 {
     Tier = DwTier.Convenience,
@@ -155,7 +156,7 @@ var result = await db.Employees.ApplyPolicy(caller).ToListAsync(filter, cancella
         <li><Link href="/docs/policies/store">Dynamic store</Link> — rules without a redeploy</li>
         <li><Link href="/docs/policies/providers">Store providers</Link> — Redis and Entity Framework Core</li>
         <li><Link href="/docs/policies/admin">Admin API</Link> — schema, rules, explain, simulate, health</li>
-        <li><Link href="/docs/policies/security">Security &amp; k-anonymity</Link> — the eight inference channels</li>
+        <li><Link href="/docs/policies/security">Security &amp; k-anonymity</Link> — eight inference channels and three bypasses</li>
         <li><Link href="/docs/policies/configuration">Configuration</Link> — options, caps and defaults</li>
       </ul>
 

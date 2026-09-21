@@ -5,8 +5,8 @@ import { Code } from "@/components/Code";
 import Callout from "@/components/Callout";
 
 export const metadata: Metadata = {
-  title: "Security & k-anonymity — the eight inference channels",
-  description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own — set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, SQL leakage, and schema probing through refusals — and the denials the gate could not see until 3.2.0.",
+  title: "Security & k-anonymity — eight inference channels and five bypasses",
+  description: "How DynamicWhere.ex closes the disclosure channels no per-field rule closes on its own — set-operation reconstruction, singleton-group aggregates, cardinality probes, sort-and-page binary search, SQL leakage, and schema probing through refusals — and the denials and transforms the gate could not see until 3.2.0 and 3.3.0.",
   keywords: ["k-anonymity", "MinGroupSize", "inference attack", "data disclosure", "aggregate disclosure", "EF Core security"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/security/" },
 };
@@ -17,10 +17,13 @@ export default function Page() {
       <h1>Security &amp; k-anonymity</h1>
       <p>
         Denying a field is easy. The hard part is the set of ways a caller can
-        learn a value <em>without</em> reading it. Six such channels follow, then
-        two bypasses that are not channels, then the requests that, until
-        3.2.0, carried out a denied value the gate could not see; each has a
-        test that reproduces the attack and goes red if the control is removed.
+        learn a value <em>without</em> reading it. Eight such channels follow,
+        then five bypasses that are not channels, then a path the query cannot compute
+        — not a channel either, but the one request the tier used to answer with
+        neither an answer nor a refusal — then the requests that, until 3.2.0 and
+        3.3.0, carried out a denied or untransformed value the gate could not
+        see; each has a test that reproduces the attack and goes red if the
+        control is removed.
       </p>
 
       <Callout tone="warn" title="MinGroupSize ships on, at 5">
@@ -184,7 +187,49 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         together describe how the rows are partitioned.
       </p>
 
-      <h2 id="two-more">7 and 8. The two that are not channels</h2>
+      <h2 id="audit-cap">7. The audit cap answers differently for a real field</h2>
+      <p>
+        An audited field records an event per use, and the query is refused
+        rather than the record dropped when <code>DwCaps.MaxAuditEvents</code>{" "}
+        is reached. Until 3.3.0 that refusal carried <code>CapExceeded</code>{" "}
+        and a <code>SourceOrigin</code> naming the cap, where a name matching
+        nothing carried the ordinary field refusal and no origin. One guess per
+        request therefore told a caller which names are real and audited — which
+        is to say, exactly the fields <code>[DwAudit]</code> is put on, since an
+        unknown name is never audited and never reaches the cap.
+      </p>
+      <p>
+        <strong>Closed by:</strong> under <code>Strict</code>, outside a dry
+        run, the cap refuses with the clause&apos;s own field refusal — same
+        code, <code>FieldPath</code> <code>&quot;*&quot;</code>, no origin. The
+        request still fails, so the buffer still fails closed, and the trace
+        still records which refusal it really was.
+      </p>
+
+      <h2 id="names-the-clause">8. Four refusals that named a field</h2>
+      <p>
+        A strict refusal names no field, so that a denied field, a misspelling
+        and a field that does not exist cannot be told apart. Four refusals
+        named one anyway: an ambiguous name said the caller&apos;s guess matched
+        more than one field, and so at least one; an ambiguous grouping key
+        reported the column behind the caller&apos;s alias and said its values
+        are transformed; the refusal for a clause that cannot be transformed
+        listed every transformed column on the type — masked, generalized,
+        truncated or formatted; and a deployment with no hash salt or token
+        vault named the masked field it could not write.
+      </p>
+      <p>
+        <strong>Closed by:</strong> under <code>Strict</code>, outside a dry
+        run, an ambiguous name is refused exactly as an unknown name is. The
+        grouping key, the hash salt and the token vault name the clause and
+        carry no origin; the clause that cannot be transformed names the clause
+        and keeps an origin, which names the method and what to call instead
+        rather than any field. The trace keeps the real reason for the operator.{" "}
+        <code>Convenience</code> and a dry run — the posture&apos;s switch or the
+        caller&apos;s — are unchanged.
+      </p>
+
+      <h2 id="two-more">9 to 13. The five that are not channels</h2>
       <table>
         <thead><tr><th>Attack</th><th>Control</th></tr></thead>
         <tbody>
@@ -196,16 +241,105 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
             <td>An empty policy store</td>
             <td>Attributes still enforce; an empty store never resolves to Allow</td>
           </tr>
+          <tr>
+            <td>Reading an audited field by sending no <code>Selects</code></td>
+            <td>
+              A use is what the request reads, not only what it spells out. Until
+              3.3.0 only a field the request named was recorded, so a caller who
+              named none received every audited member of the row with nothing
+              written down — one token past <code>[DwAudit]</code>. Every audited
+              member a projection the caller did not name hands back is recorded
+              for <code>Select</code>, one event per query rather than per row.
+            </td>
+          </tr>
+          <tr>
+            <td>Read an audited member no path of the policy names: one only a subtype of the row&apos;s type declares, or one past the four segments the attribute walk reads, inside a row or a navigation returned whole</td>
+            <td>
+              The gate records a use by path, before the query runs, and such a
+              member has no path it could ask about, so it came back with
+              nothing written down. Since 3.3.0 the outbound walk&apos;s second
+              pass reports each one it meets and the terminal records it: one
+              event per path per query, for <code>Select</code>, with{" "}
+              <code>Effect</code> <code>Mask</code> where the member is
+              transformed as well. At <code>MaxAuditEvents</code> it fails
+              closed as the gate does and the rows are withheld.
+            </td>
+          </tr>
+          <tr>
+            <td>Close the connection as the rows arrive, so the record of what was read is never written</td>
+            <td>
+              The audit middleware drained a request&apos;s events with the
+              request&apos;s own abort token, so a client that hung up cancelled
+              the write that follows the response: the sink threw, the middleware
+              logged it, and the events went with the context — an audited read
+              with nothing written down, for the price of a socket. Since 3.3.0
+              the drain has a budget of its own, thirty seconds, which the caller
+              cannot cancel and a hung sink cannot outlast.
+            </td>
+          </tr>
         </tbody>
       </table>
+
+      <h2 id="unexpressible">A path the query cannot compute</h2>
+      <p>
+        A member of a row&apos;s type is not always a value a database can
+        produce. A shared kernel type carrying two columns and a getter over
+        them gives <code>Name.Ar</code> and <code>Name.En</code>, which
+        translate, and <code>Name.IsEmpty</code>, which does not. The policy has
+        nothing to say about the third — <code>[DwNoWhere]</code> on{" "}
+        <code>Name</code> matches that path and not the ones beneath it — so
+        until <strong>3.3.0</strong> every check passed and EF Core threw. The
+        caller got a five-hundred where the strict tier promises a refusal.
+      </p>
+      <p>
+        Such a path is now refused as an unknown name is: the clause&apos;s own
+        code, <code>FieldPath</code> <code>&quot;*&quot;</code>, so it cannot be
+        told from a misspelling or from a field the caller may not use. It
+        applies to every clause the database has to compute, and not to{" "}
+        <code>Selects</code>, which EF Core evaluates on the client when it
+        cannot translate it. It is refused only where the whole set of members a
+        container can produce is known — an entity&apos;s own EF Core model, and the initializers of a
+        projection composed before <code>ApplyPolicy</code>, including a member
+        that projection copies from the entity. A projection that builds its
+        rows any other way — an anonymous type, a constructor with arguments —
+        says nothing about which member each value sets, so no member of such a
+        row is refused here. Rows in memory, a framework
+        member the provider translates such as <code>Length</code> or{" "}
+        <code>Year</code>, anything beneath a column, the convenience tier and a
+        dry run are all unchanged: the path is left alone, and behaves exactly
+        as it does unguarded — which for rows in memory and a framework member
+        means it runs and returns rows, and beneath a converted column means the
+        provider decides.
+        So is a query a provider in front of EF Core translates — LinqKit&apos;s{" "}
+        <code>AsExpandable()</code>, DelegateDecompiler&apos;s{" "}
+        <code>Decompile()</code>, or a host&apos;s own registered through{" "}
+        <code>ReplaceService&lt;IAsyncQueryProvider, …&gt;</code> — since such a
+        provider may rewrite what EF Core cannot, and the library cannot tell
+        one that does from one that passes straight through. The test is EF
+        Core&apos;s own provider type, from EF Core&apos;s own assembly.
+      </p>
+      <p>
+        The refusal raises no <code>[DwAudit]</code> event, for the reason an
+        unknown name raises none: no field was read, and the refusal names none.{" "}
+        <code>AuditRefusals</code> records it, and the trace carries the real
+        path. A simulation is handed no source, so it cannot refuse such a path
+        at all.
+      </p>
+      <p>
+        This closes no leak: the query failed, it did not answer. It removes a
+        way of telling one member from another by the shape of the failure, and
+        it keeps the tier&apos;s promise that a guarded request is answered or
+        refused. The trace records the reason.
+      </p>
 
       <h2 id="beneath">Denials the gate could not see</h2>
       <p>
         A denied field often sits on a type the query reaches through a member:
         a secret on each line of an order, a code inside a nested object. The
         denial holds on every path that reaches it, and it has to hold whether
-        or not the caller names the member. Until 3.2.0 each request below
-        carried a denied value out. All are closed.
+        or not the caller names the member. Each request below carried a denied
+        or untransformed value out, until 3.2.0 or, where the row says so,
+        until 3.3.0. All are closed.
       </p>
       <table>
         <thead><tr><th>Attack</th><th>Control</th></tr></thead>
@@ -330,6 +464,74 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
             </td>
           </tr>
           <tr>
+            <td>Name a path one segment beneath a denied member whose type the framework declares: <code>Salary.Value</code> on a <code>decimal?</code>, <code>Secret.Length</code>, <code>Born.Year</code>, <code>Bag.Count</code>, <code>Lines.Count</code> on an application&apos;s own collection class</td>
+            <td>
+              Such a path takes the policy of the member it reads since{" "}
+              <strong>3.3.0</strong>: the deny effects per feature, the{" "}
+              <code>[DwOperators]</code> restriction, the <code>[DwCost]</code>{" "}
+              weight and the audited features, from whichever provider supplied
+              them. No attribute can be placed there and no fragment named it,
+              so it resolved as allowed: a <code>[DwDenied] decimal?</code> was
+              filtered on, sorted by, grouped by with its values as the group
+              keys, aggregated and handed back by a dynamic projection, under{" "}
+              <code>Strict</code>. A transformed member gave its stored value the
+              same way, an audited one was read with nothing recorded, and a
+              weighted one cost the default. What is said to the caller about the
+              member stays the member&apos;s: the alias, the required filter, the
+              forced scope and the description.
+            </td>
+          </tr>
+          <tr>
+            <td>Raise <code>Caps.MaxNavigationDepth</code> above 4 and name a denied member five or more segments out</td>
+            <td>
+              The attributes of the member at the end of such a path are read
+              directly since <strong>3.3.0</strong>. No fragment of the attribute
+              walk, which stops at four segments, reached it, so the member was
+              filtered on, grouped by and returned under <code>Strict</code>.
+              Default configuration was never exposed to this one.
+            </td>
+          </tr>
+          <tr>
+            <td>Read a masked member the policy names no path to: five segments down an included or in-memory graph, one only a subtype of the row&apos;s type declares, one on an object a dictionary holds, one on the far side of a cycle</td>
+            <td>
+              The rows are walked by run-time type as well since{" "}
+              <strong>3.3.0</strong>, and a member that declares a transform and
+              was not transformed along a named path is transformed by its own
+              attributes, once. The outbound walk transformed along the named
+              paths only, so each of these came back exactly as stored — at the
+              default caps, under <code>Strict</code>, with no{" "}
+              <code>Selects</code>, with the navigation named whole in{" "}
+              <code>Selects</code>, and in a dynamic projection holding a real
+              object.
+            </td>
+          </tr>
+          <tr>
+            <td>Compose <code>SelectDynamic</code>, <code>Group</code>, <code>FilterDynamic</code> or <code>Summary</code> on a type whose only transformed member sits where the policy names no path</td>
+            <td>
+              Refused with{" "}
+              <code>TransformRequiresMaterialization</code> since{" "}
+              <strong>3.3.0</strong>. The four hand back a query the library
+              never sees materialized, and whether the type is transformed was
+              read from the named paths alone, so such a type got its query and
+              its rows exactly as stored — the same gap, one method call away
+              from the terminals. The refusal asks what a row of the type can
+              hold as well, and names the clause when it has no column to list.
+            </td>
+          </tr>
+          <tr>
+            <td>Declare a <code>[DwForceWhere]</code> on a type first met at the walk&apos;s fourth segment, then reach that type by a shorter path</td>
+            <td>
+              The walk returned at its depth limit with the type still marked as
+              being inside it, so the type read as a cycle wherever it was met
+              again — and what a cycle leaves out, the forced scope, the{" "}
+              <code>[DwRequireWhere]</code> and the <code>[DwAlias]</code>, was
+              left out of the shorter path. Which of two members was declared
+              first decided whether a tenant scope applied. Since{" "}
+              <strong>3.3.0</strong> all three apply on every path within four
+              segments that is not around a cycle.
+            </td>
+          </tr>
+          <tr>
             <td>Put the policed type in an application namespace that starts with <code>System</code>, such as <code>SystemsCorp.Payroll</code></td>
             <td>
               Policed. The walker read any namespace starting with{" "}
@@ -372,6 +574,7 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         <li>Turn on <code>AuditRefusals</code> once an <code>IDwAuditSink</code> is registered, so a probe for hidden columns leaves a record.</li>
         <li>Leave <code>MinGroupSize</code> alone unless you have a reason; setting it to 1 is a decision, not a default.</li>
         <li>Prefer <code>Tokenize</code> over <code>Hash</code> where you can run a durable vault: neither hides equality, but only one of them can be undone by a leaked constant.</li>
+        <li>Give a durable token vault a key (3.3.0), and hold it where the store is not. Unkeyed, a mapping is stored under a plain digest of the value, and a tokenized column is nearly always drawn from a space small enough to hash whole — so a backup, a replica or a dump of the vault gives back every value in it, and with them the value behind every token ever issued. See <Link href="/docs/policies/transforms#vault-key">Transforms</Link>.</li>
         <li>Run <code>DwPolicy.ValidateModel(...)</code> at startup and treat its warnings as a checklist.</li>
         <li>Put <code>[DwEntity(RequirePolicy = true)]</code> on anything sensitive, so a DynamicWhere call that forgets <code>ApplyPolicy</code> fails loudly.</li>
         <li>Prefer <code>[DwOperators]</code> over allowing free filtering on a protected field.</li>

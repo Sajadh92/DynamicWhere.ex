@@ -30,6 +30,10 @@
     <!-- Lazy-loading proxies, for the test that a navigation a proxy can fill after the query counts as
          loaded. Same version as EF Core, on both legs. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(DwEfCoreVersion)" />
+    <!-- EF Core's own in-memory provider, for the probe that the refusal fires there too: it is EF
+         Core's provider, so the rows are EF Core's to speak for, and the getter fails there as it
+         fails in SQLite. Same version as EF Core, on both legs. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="$(DwEfCoreVersion)" />
     <!-- ConfigurationBuilder, for the posture-binding tests. In the always-on group rather
          than beside Npgsql, because binding is a core feature and the floor leg has to run
          its tests too. An Extensions package at 6.0.0 pulls no EF Core graph with it. -->
@@ -37,6 +41,18 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+
+    <!-- Not used directly. Each names the patched version of a package the graph above resolved to
+         a version with an open advisory: System.Net.Http 4.3.0 (GHSA-7jgj-8wvc-jh57) and
+         System.Text.RegularExpressions 4.3.0 (GHSA-cmhx-cq75-c4mj), both through xunit's
+         NETStandard.Library graph, and the native SQLite build EF Core's provider asks for,
+         SQLitePCLRaw.lib.e_sqlite3 2.1.6 on the 8 leg and 2.0.6 on the floor leg
+         (GHSA-2m69-gcr7-jv3q, every version up to 2.1.11). Nothing here ships: the four packable
+         projects were already clean, and this keeps the test project's own restore clean too, so a
+         new advisory is not lost among old ones. -->
+    <PackageReference Include="System.Net.Http" Version="4.3.4" />
+    <PackageReference Include="System.Text.RegularExpressions" Version="4.3.1" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
   </ItemGroup>
 
   <!-- Npgsql 8 and Mvc.Testing 8 both depend on EF Core 8, so leaving them referenced on the floor
@@ -54,8 +70,8 @@
          API's design-time tooling compiles that project against; left to resolve on their own,
          Npgsql pulls 8.0.11 and the assembly versions cannot be unified (MSB3277). -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.21" />
-    <PackageReference Include="Testcontainers.PostgreSql" Version="4.0.0" />
-    <PackageReference Include="Testcontainers.Redis" Version="4.0.0" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
+    <PackageReference Include="Testcontainers.Redis" Version="4.15.0" />
     <!-- Drives the administrative endpoints through a real request pipeline: routing,
          authorization and model binding all take part, and a test that mounted the handlers
          directly would prove none of them. -->
@@ -73,6 +89,10 @@
        where the expression-tree differences between EF Core 6 and 8 would surface. The sales
        fixture is excluded because it maps DateOnly/TimeOnly, which EF Core 6 cannot. -->
   <ItemGroup Condition="'$(DwFloorLeg)' == 'true'">
+    <!-- Not used directly. EF Core 6's SQLite provider asks for System.Text.Json 6.0.0 through
+         Microsoft.Extensions.DependencyModel, which has an open advisory (GHSA-8g4q-xg66-9fp4);
+         6.0.10 is the patched version. The 8 leg resolves a patched one on its own. -->
+    <PackageReference Include="System.Text.Json" Version="6.0.10" />
     <Compile Remove="*.cs" />
     <Compile Remove="Domain/**/*.cs" />
     <!-- Kept: AttributeProviderTests reflects over the Blog graph declared here, and it carries no
@@ -97,6 +117,14 @@
     <Compile Remove="Policies/PolicyEndpointTests.cs" />
     <Compile Remove="Policies/PolicyEndpointHardeningTests.cs" />
     <Compile Remove="Policies/PolicyAdminControllerTests.cs" />
+    <!-- Kept off the floor leg: the mapping probes map an owned type with ToJson and a primitive
+         collection, neither of which EF Core 6 has. What they rule out — that the refusal reads no
+         mapping shape wrongly — is an EF Core 8 question in the first place. -->
+    <Compile Remove="Policies/ReviewMappingProbes.cs" />
+    <!-- Same reason: the complex-type probes map complex properties, which EF Core 6 does not have. -->
+    <Compile Remove="Policies/Ob4ComplexProbes.cs" />
+    <!-- Same reason: the mapping probes map ToJson, a complex property and a primitive collection. -->
+    <Compile Remove="Policies/Pr6MappingProbes.cs" />
   </ItemGroup>
 
   <ItemGroup>

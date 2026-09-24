@@ -106,6 +106,12 @@ internal static class Converter
             var navType = navProp.PropertyType;
             if (navType == typeof(string) || navType.IsValueType)
             {
+                // A path beneath a struct, a string or a date: ValueMembers decides what the row carries.
+                if (ValueMembers.Bind(navProp, instance, childNode, BuildTypedMemberInitExpression) is { } bound)
+                {
+                    bindings.Add(bound);
+                }
+
                 continue;
             }
 

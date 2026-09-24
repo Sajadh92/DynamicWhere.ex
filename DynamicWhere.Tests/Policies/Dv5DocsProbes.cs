@@ -331,17 +331,19 @@ namespace DynamicWhere.Tests.Policies
         // =========================================================================================
         // Dv5-E. Which projected rows the refusal reads.
         //
-        // Claim: "A projection that does not build its rows with an object initializer — an
-        // anonymous type, a constructor with arguments — has no member refused here. A member
-        // assigned from a subquery is left alone."
+        // Claim, since 3.4.0: "An anonymous type has no member refused here, and neither does a
+        // member assigned from a subquery. A row or a member an application type's constructor builds
+        // with arguments has every member the constructor leaves unbound refused: EF Core follows a
+        // member only through an initializer's binding." (3.3.0 left the constructor alone, and every
+        // clause on such a member went on to fail inside the provider.)
         // =========================================================================================
 
         [Fact]
-        public void Dv5_E_A_row_no_object_initializer_builds_has_no_member_refused()
+        public void Dv5_E_An_anonymous_row_has_no_member_refused_and_a_constructed_one_has_what_it_leaves_unbound()
         {
             List<string> wrong = new();
 
-            // 1. An anonymous type. Nothing says which member each value sets.
+            // 1. An anonymous type. EF Core follows each member to its argument, so nothing is refused.
             var anonymous = _orders.Orders.Select(o => new { o.Id, o.Total });
 
             Report("anonymous row, Total.IsZero", RowShape.Of(anonymous).Expresses("Total.IsZero"));
@@ -351,18 +353,19 @@ namespace DynamicWhere.Tests.Policies
                 wrong.Add("an anonymous row had a member refused");
             }
 
-            // 2. A constructor with arguments, and no initializer at all.
+            // 2. A constructor with arguments, and no initializer at all: nothing is bound, so every
+            //    member is out of EF Core's reach, and the strict tier refuses where the provider threw.
             IQueryable<Dv5Row> built = _orders.Orders.Select(o => new Dv5Row(o.Id));
 
-            foreach (string path in new[] { "Nest.Blank", "Money.IsZero", "Code" })
+            foreach (string path in new[] { "Nest.Blank", "Money.IsZero", "Code", "Id" })
             {
                 bool? answer = RowShape.Of(built).Expresses(path);
 
                 Report($"new Dv5Row(o.Id), {path}", answer);
 
-                if (answer == false)
+                if (answer != false)
                 {
-                    wrong.Add($"a constructor-built row had {path} refused");
+                    wrong.Add($"a constructor-built row answered {answer} for {path} rather than false");
                 }
             }
 
@@ -373,27 +376,40 @@ namespace DynamicWhere.Tests.Policies
             _out.WriteLine($"new Dv5Row(o.Id) Nest.Blank unguarded -> {builtRaw}");
             _out.WriteLine($"new Dv5Row(o.Id) Nest.Blank guarded   -> {builtGuarded}");
 
-            if (builtRaw != builtGuarded)
+            if (!builtRaw.StartsWith("InvalidOperationException", StringComparison.Ordinal))
             {
-                wrong.Add($"guarded and unguarded differ: {builtRaw} vs {builtGuarded}");
+                wrong.Add($"the unguarded query no longer fails in the provider: {builtRaw}");
             }
 
-            // 3. A constructor with arguments that DOES carry an object initializer. Recorded, and
-            //    reported, because the text reads two ways.
+            if (!builtGuarded.StartsWith("PolicyException FieldDeniedForWhere path=*", StringComparison.Ordinal))
+            {
+                wrong.Add($"the guarded query was not refused: {builtGuarded}");
+            }
+
+            // 3. A constructor with arguments that carries an object initializer: what the initializer
+            //    binds is read as any initializer is, and what it leaves to the constructor is refused.
             IQueryable<Dv5Row> mixed = _orders.Orders.Select(o => new Dv5Row(o.Id)
             {
                 Nest = new Dv5Nest { A = o.Code }
             });
 
             bool? mixedNested = RowShape.Of(mixed).Expresses("Nest.Blank");
+            bool? mixedBound = RowShape.Of(mixed).Expresses("Nest.A");
             bool? mixedTop = RowShape.Of(mixed).Expresses("Money");
 
             Report("new Dv5Row(o.Id) { Nest = new Dv5Nest { A = … } }, Nest.Blank", mixedNested);
+            Report("new Dv5Row(o.Id) { Nest = new Dv5Nest { A = … } }, Nest.A", mixedBound);
             Report("new Dv5Row(o.Id) { Nest = new Dv5Nest { A = … } }, Money", mixedTop);
 
-            _out.WriteLine(mixedNested == false
-                ? "NOTE: a row built by a constructor WITH an initializer does have a member refused"
-                : "a row built by a constructor with an initializer has no member refused");
+            if (mixedNested != false || mixedTop != false)
+            {
+                wrong.Add($"a constructor with an initializer answered {mixedNested} and {mixedTop} rather than false");
+            }
+
+            if (mixedBound != true)
+            {
+                wrong.Add($"a member the initializer binds answered {mixedBound} rather than true");
+            }
 
             // 4. A member assigned from a subquery is left alone, and one copied from the entity is
             //    not — which is the contrast the sentence draws.

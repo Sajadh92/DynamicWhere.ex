@@ -4,6 +4,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using DynamicWhere.ex.Optimization.Cache.Source;
+using DynamicWhere.ex.Policies.Resolution;
 using DynamicWhere.ex.Source;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -61,6 +62,9 @@ internal sealed class RowShape
     /// <summary>The complex properties of each entity type, read once per entity type.</summary>
     private static readonly ConditionalWeakTable<IEntityType, HashSet<string>> ComplexByType = new();
 
+    /// <summary>The types a model stores as a column somewhere, read once per model.</summary>
+    private static readonly ConditionalWeakTable<IModel, HashSet<Type>> ColumnTypesByModel = new();
+
     private readonly HashSet<string>? _assigned;
 
     // What a projection's initializer assigns beneath a member, by the member's path from the row.
@@ -71,6 +75,13 @@ internal sealed class RowShape
     // A member a projection copies from the query's own entity, by the member's path from the row:
     // Name = x.Name records ("Name", the entity, "Name"), so what is beneath it is read from the model.
     private readonly Dictionary<string, (IEntityType Entity, string Member)>? _copied;
+
+    // A member a projection builds by calling an application type's constructor with arguments, by the
+    // member's path from the row ("" for the row itself), with the members an initializer beside the
+    // constructor binds. "Name" -> { } for Name = new LocalizedText(x.NameAr, x.NameEn). EF Core follows
+    // a member only through a binding, so a path through any other member of what the constructor
+    // builds is one no translated clause can reach, whatever else builds the same member.
+    private readonly Dictionary<string, HashSet<string>>? _constructed;
 
     // The paths whose value this shape could not read: a method call, a captured value, a subquery,
     // two branches building the member two ways. The row carries the member; whether the query can
@@ -100,13 +111,15 @@ internal sealed class RowShape
         Dictionary<string, HashSet<string>>? initialized = null,
         Dictionary<string, (IEntityType Entity, string Member)>? copied = null,
         bool translated = false,
-        HashSet<string>? opaque = null)
+        HashSet<string>? opaque = null,
+        Dictionary<string, HashSet<string>>? constructed = null)
         : this(kind)
     {
         _assigned = assigned;
         _initialized = initialized;
         _copied = copied;
         _opaque = opaque;
+        _constructed = constructed;
         _translated = translated;
         _narrowable.UnionWith(narrowable);
         Built = built;
@@ -300,11 +313,14 @@ internal sealed class RowShape
     /// <para>
     /// False is only ever returned where the shape knows the whole set of members a container can
     /// produce: the entity type the query is over, a complex or owned type, or an initializer in the
-    /// projection itself. Anywhere else the answer is null and the path is left alone — beneath a
-    /// column, where a converter decides; on a framework type, where <c>Length</c>, <c>Year</c> and
-    /// <c>HasValue</c> are translated by the provider and are not members of any model; on rows in
-    /// memory, which run the getter; behind a provider that is not EF Core's own, which may rewrite
-    /// the member before EF Core ever sees it; and on a source this library cannot read.
+    /// projection itself — or where it knows EF Core cannot follow a member at all: through an
+    /// application type's constructor called with arguments, <c>new LocalizedText(x.NameAr, x.NameEn)</c>,
+    /// which the row carries and no clause reaches. Anywhere else the answer is null and the path is
+    /// left alone — beneath a column, where a converter decides; on a framework type, where
+    /// <c>Length</c>, <c>Year</c> and <c>HasValue</c> are translated by the provider and are not members
+    /// of any model; on rows in memory, which run the getter; behind a provider that is not EF Core's
+    /// own, which may rewrite the member before EF Core ever sees it; and on a source this library
+    /// cannot read.
     /// </para>
     /// <para>
     /// The cost of being wrong is not symmetric. A path wrongly refused is a query that worked and
@@ -346,6 +362,21 @@ internal sealed class RowShape
             // Another provider decides what it can compute, and its rules are not EF Core's. A
             // provider that evaluates in memory runs the getter, as rows in memory do.
             return null;
+        }
+
+        if (_constructed is { Count: > 0 })
+        {
+            // Asked first, at every level from the row down: whatever else builds the member, a
+            // constructor building it in one place is where EF Core stops.
+            for (int i = 0; i < segments.Length; i++)
+            {
+                string level = string.Join(".", segments, 0, i);
+
+                if (_constructed.TryGetValue(level, out HashSet<string>? bound) && !bound.Contains(segments[i]))
+                {
+                    return false;
+                }
+            }
         }
 
         if (_opaque is not null && _opaque.Contains(string.Join(".", segments)))
@@ -795,20 +826,28 @@ internal sealed class RowShape
         Expression body = DefaultOrder.StripConversions(selector.Body);
         Dictionary<string, Type> built = new(StringComparer.OrdinalIgnoreCase);
 
-        if (body is not MemberInitExpression initializer)
-        {
-            // A constructor with arguments says nothing about which member each argument sets: every
-            // member counts as assigned, and none can be narrowed.
-            return new RowShape(
-                RowKind.Projected, null, Array.Empty<string>(), body.Type, built,
-                translated: EfCoreOwns(source.Provider));
-        }
-
-        List<string> narrowable = new();
-
         ParameterExpression row = selector.Parameters[0];
         bool efCore = source.Provider is IAsyncQueryProvider;
         IEntityType? rowSource = efCore ? QueryRoot.EntityType(source.Expression, row.Type) : null;
+        Dictionary<string, HashSet<string>> constructed = new(StringComparer.OrdinalIgnoreCase);
+
+        if (body is not MemberInitExpression initializer)
+        {
+            // A constructor with arguments says nothing about which member each argument sets: every
+            // member counts as assigned, and none can be narrowed. Nor can EF Core follow one to the
+            // argument that set it, so none of them is a value a clause can compute: a row built as
+            // new TenantRow(t.Code, t.NameAr) is filtered on nothing.
+            if (body is NewExpression created && Constructs(created, rowSource))
+            {
+                RecordConstructed(constructed, string.Empty, Array.Empty<string>());
+            }
+
+            return new RowShape(
+                RowKind.Projected, null, Array.Empty<string>(), body.Type, built,
+                translated: EfCoreOwns(source.Provider), constructed: constructed);
+        }
+
+        List<string> narrowable = new();
         HashSet<string>? assigned = initializer.NewExpression.Arguments.Count > 0
             ? null
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -817,7 +856,7 @@ internal sealed class RowShape
         Dictionary<string, (IEntityType Entity, string Member)> copied = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> opaque = new(StringComparer.OrdinalIgnoreCase);
 
-        ReadAssignments(initializer, string.Empty, row, rowSource, initialized, copied, opaque, depth: 0);
+        ReadAssignments(initializer, string.Empty, row, rowSource, initialized, copied, opaque, constructed, depth: 0);
         Forget(initialized, copied, opaque);
 
         foreach (MemberBinding binding in initializer.Bindings)
@@ -845,7 +884,7 @@ internal sealed class RowShape
 
         return new RowShape(
             RowKind.Projected, assigned, narrowable, initializer.Type, built, initialized, copied,
-            EfCoreOwns(source.Provider), opaque);
+            EfCoreOwns(source.Provider), opaque, constructed);
     }
 
     /// <summary>
@@ -858,7 +897,9 @@ internal sealed class RowShape
     /// captured value — records nothing, and a path beneath it is one this shape cannot speak for.
     /// <para>
     /// A constructor with arguments says nothing about which member each argument sets, so the level
-    /// it builds is left unrecorded rather than recorded as incomplete.
+    /// it builds is left unrecorded rather than recorded as incomplete. What it does say is where EF
+    /// Core stops: a member the initializer binds is one it follows, and any other member of an
+    /// application type built that way is recorded as one no clause reaches.
     /// </para>
     /// </remarks>
     private static void ReadAssignments(
@@ -869,6 +910,7 @@ internal sealed class RowShape
         Dictionary<string, HashSet<string>> initialized,
         Dictionary<string, (IEntityType Entity, string Member)> copied,
         HashSet<string> opaque,
+        Dictionary<string, HashSet<string>> constructed,
         int depth)
     {
         if (depth > MaxComplexDepth)
@@ -889,7 +931,7 @@ internal sealed class RowShape
 
             string path = prefix.Length == 0 ? binding.Member.Name : $"{prefix}.{binding.Member.Name}";
 
-            if (!ReadValue(assignment.Expression, path, row, rowSource, initialized, copied, opaque, depth))
+            if (!ReadValue(assignment.Expression, path, row, rowSource, initialized, copied, opaque, constructed, depth))
             {
                 opaque.Add(path);
             }
@@ -898,6 +940,10 @@ internal sealed class RowShape
         if (initializer.NewExpression.Arguments.Count == 0)
         {
             Record(initialized, prefix, members);
+        }
+        else if (Constructs(initializer.NewExpression, rowSource))
+        {
+            RecordConstructed(constructed, prefix, members);
         }
     }
 
@@ -922,6 +968,7 @@ internal sealed class RowShape
         Dictionary<string, HashSet<string>> initialized,
         Dictionary<string, (IEntityType Entity, string Member)> copied,
         HashSet<string> opaque,
+        Dictionary<string, HashSet<string>> constructed,
         int depth)
     {
         Expression assigned = DefaultOrder.StripConversions(value);
@@ -929,12 +976,21 @@ internal sealed class RowShape
         switch (assigned)
         {
             case MemberInitExpression nested:
-                ReadAssignments(nested, path, row, rowSource, initialized, copied, opaque, depth + 1);
+                ReadAssignments(nested, path, row, rowSource, initialized, copied, opaque, constructed, depth + 1);
 
                 return true;
 
             case NewExpression created when created.Arguments.Count == 0:
                 Record(initialized, path, Array.Empty<string>());
+
+                return true;
+
+            case NewExpression created when Constructs(created, rowSource):
+                // Name = new LocalizedText(x.NameAr, x.NameEn). The row carries both halves and EF Core
+                // can reach neither: it follows a member through an initializer's binding, never
+                // through a constructor's argument. new LocalizedText { Ar = x.NameAr } is the form
+                // it follows.
+                RecordConstructed(constructed, path, Array.Empty<string>());
 
                 return true;
 
@@ -946,8 +1002,8 @@ internal sealed class RowShape
             case ConditionalExpression choice:
                 // Both branches, and neither short-circuited: a branch left unread is a member this
                 // shape would then speak for on half of what builds it.
-                return ReadValue(choice.IfTrue, path, row, rowSource, initialized, copied, opaque, depth)
-                       & ReadValue(choice.IfFalse, path, row, rowSource, initialized, copied, opaque, depth);
+                return ReadValue(choice.IfTrue, path, row, rowSource, initialized, copied, opaque, constructed, depth)
+                       & ReadValue(choice.IfFalse, path, row, rowSource, initialized, copied, opaque, constructed, depth);
 
             default:
                 if (rowSource is null || MemberChain(assigned, row, operators: false) is not { } chain)
@@ -981,6 +1037,77 @@ internal sealed class RowShape
 
         initialized[path] = new HashSet<string>(members, StringComparer.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Records a level a constructor builds, with the members an initializer beside it binds, kept to
+    /// those every constructing branch of the member binds.
+    /// </summary>
+    /// <remarks>
+    /// Intersected where <see cref="Record"/> unions. EF Core reads a member of a conditional through
+    /// both branches, so a member one constructing branch leaves to its constructor is out of reach
+    /// however the other branch sets it.
+    /// </remarks>
+    private static void RecordConstructed(
+        Dictionary<string, HashSet<string>> constructed, string path, IEnumerable<string> bound)
+    {
+        if (constructed.TryGetValue(path, out HashSet<string>? already))
+        {
+            already.IntersectWith(bound);
+
+            return;
+        }
+
+        constructed[path] = new HashSet<string>(bound, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// True when a projection builds a value by calling an application type's constructor with
+    /// arguments, in a query over a model that never stores that type as a column.
+    /// </summary>
+    /// <remarks>
+    /// Each condition is a way the answer could be wrong, and each is kept out:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     With <see cref="NewExpression.Members"/> set, as an anonymous type's constructor has, EF Core
+    ///     does follow each member to its argument.
+    ///   </description></item>
+    ///   <item><description>
+    ///     The framework's own types, <c>new DateTime(y, m, 1)</c>, are ones a provider translates,
+    ///     constructor and members alike; so is a collection, which is not a value with members.
+    ///   </description></item>
+    ///   <item><description>
+    ///     A type the model stores as a column somewhere, a spatial point or a range, has a mapping the
+    ///     provider may translate a constructor of. Only a type the model never stores is certainly
+    ///     one only C# builds.
+    ///   </description></item>
+    ///   <item><description>
+    ///     Without the entity the projection reads, there is no model to ask, and nothing is said.
+    ///   </description></item>
+    /// </list>
+    /// </remarks>
+    private static bool Constructs(NewExpression created, IEntityType? rowSource) =>
+        created.Arguments.Count > 0
+        && created.Members is null
+        && rowSource is not null
+        && AttributePolicyProvider.NavigationTypeOf(created.Type) == created.Type
+        && !ColumnTypes(rowSource.Model).Contains(created.Type);
+
+    /// <summary>Every type the model stores as a column, underlying types of nullable ones included.</summary>
+    private static HashSet<Type> ColumnTypes(IModel model) =>
+        ColumnTypesByModel.GetValue(model, static read =>
+        {
+            HashSet<Type> types = new();
+
+            foreach (IEntityType entity in read.GetEntityTypes())
+            {
+                foreach (IProperty property in entity.GetProperties())
+                {
+                    types.Add(Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType);
+                }
+            }
+
+            return types;
+        });
 
     /// <summary>
     /// Drops every path an assignment this shape could not read reaches, so that what is left is read

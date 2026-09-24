@@ -105,8 +105,8 @@ public sealed class PolicyResolver
                 "A policy lookup requires a field path with at least one segment.", nameof(fieldPath));
         }
 
-        (List<PolicyFragment> candidates, List<PolicyFragment> named, bool beneath, bool past) =
-            Candidates(entityType, path, context);
+        (List<PolicyFragment> candidates, List<PolicyFragment> named, List<PolicyFragment> own,
+            List<PolicyFragment> above, bool beneath, bool past) = Candidates(entityType, path, context);
 
         Dictionary<PolicyFeature, PolicyEffect> effects = new();
         List<PolicySource> sources = new();
@@ -152,9 +152,11 @@ public sealed class PolicyResolver
         // A transform is applied to a member, by the outbound walk, which reads the type's transforms by
         // the paths the attribute walk names. Two kinds of path stand outside that list.
         //
-        // One continues beneath the member: Bonus.Value is a decimal where Bonus is what is rounded,
-        // so there is no member to apply the chain to, and every way the path hands a value back would
-        // hand back the stored one. Select, Group and Aggregate are refused.
+        // One continues beneath a member that is transformed: Bonus.Value is a decimal where Bonus is
+        // what is rounded, and Price.Amount is part of a Price struct that is masked whole, so the chain
+        // has no member of the path's to apply to, and every way the path hands a value back would hand
+        // back the stored one. Select, Group and Aggregate are refused. A chain the path's own member
+        // declares, on Price.Amount itself, is applied to that member as any other is.
         //
         // The other is the member itself, past the walk's depth. A row carries it as a member, so the
         // outbound walk transforms it there as it does anywhere else, and Select stays what the
@@ -162,15 +164,20 @@ public sealed class PolicyResolver
         // summary's own transform finds by the type's list and would not find: those two are refused.
         // Filtering and ordering run on stored values wherever a member is reached from, so they
         // follow the member's own decision on both kinds of path.
-        if ((beneath || past) && transform is not null && !transform.IsEmpty)
+        ValueTransform? over = beneath ? ElectTransform(above) : null;
+        ValueTransform? mine = ElectTransform(own);
+
+        if (over is { IsEmpty: false })
         {
             effects[PolicyFeature.Group] = PolicyEffect.Deny;
             effects[PolicyFeature.Aggregate] = PolicyEffect.Deny;
+            effects[PolicyFeature.Select] = PolicyEffect.Deny;
+        }
 
-            if (beneath)
-            {
-                effects[PolicyFeature.Select] = PolicyEffect.Deny;
-            }
+        if (past && mine is { IsEmpty: false })
+        {
+            effects[PolicyFeature.Group] = PolicyEffect.Deny;
+            effects[PolicyFeature.Aggregate] = PolicyEffect.Deny;
         }
 
         // What is said about the member decides every path that reads it. What is said to the caller
@@ -185,40 +192,45 @@ public sealed class PolicyResolver
             ElectAlias(named),
             CollectForced(named),
             ElectRequired(named),
-            beneath ? ElectTransform(named) : transform,
-            beneath ? Carried(ElectFacts(named), candidates) : ElectFacts(candidates));
+            beneath ? mine : transform,
+            beneath ? Carried(ElectFacts(own), candidates) : ElectFacts(candidates));
     }
 
     /// <summary>
-    /// The fragments that decide one path: those naming it, and, where the walk that produces them
-    /// cannot name it, those of the member it reads.
+    /// The fragments that decide one path: those naming it, and those of every member above it whose
+    /// policy decides what is beneath it.
     /// </summary>
     /// <param name="entityType">The entity being queried.</param>
     /// <param name="path">The normalized path.</param>
     /// <param name="context">The caller.</param>
     /// <returns>
-    /// Every fragment that decides the path; the ones naming it exactly, a <c>"*"</c> rule included;
-    /// whether the path continues beneath a member it reads; and whether the attributes of a member
-    /// past the walk's depth were read for it.
+    /// Every fragment that decides the path; the ones naming it exactly, a <c>"*"</c> rule included; the
+    /// path's own, which adds what its member declares past the walk's depth; those of the members above
+    /// it; whether the path continues beneath such a member; and whether the attributes of a member past
+    /// the walk's depth were read for it.
     /// </returns>
     /// <remarks>
-    /// A fragment that does not match is a field left allowed, and two kinds of path matched nothing
+    /// A fragment that does not match is a field left allowed, and three kinds of path matched nothing
     /// though a member above them was denied. One continues beneath a member whose type the framework
     /// declares, <c>Salary.Value</c> or <c>Secret.Length</c>, where no attribute can be placed: every
     /// fragment of that member applies, whichever provider supplied it, so a store's denial of
-    /// <c>Salary</c> covers <c>Salary.Value</c> as an attribute's does. The other is longer than the
-    /// attribute walk goes, which a request can only name once a host raises the navigation-depth cap:
-    /// the attributes of the member at its end are read directly, by a resolver that reads attributes
-    /// at all. The first is about which fragments match and not where they came from, so it holds for
-    /// every resolver.
+    /// <c>Salary</c> covers <c>Salary.Value</c> as an attribute's does. One continues beneath an
+    /// application's own struct, <c>Iban.Number</c>, which is part of the value above it: every fragment
+    /// of that member applies too, beside the path's own (3.4.0). The last is longer than the attribute
+    /// walk goes, which a request can only name once a host raises the navigation-depth cap: the
+    /// attributes of the member at its end, and of each struct it passes through, are read directly, by
+    /// a resolver that reads attributes at all. The first two are about which fragments match and not
+    /// where they came from, so they hold for every resolver.
     /// </remarks>
-    private (List<PolicyFragment> All, List<PolicyFragment> Named, bool Beneath, bool Past) Candidates(
+    private (List<PolicyFragment> All, List<PolicyFragment> Named, List<PolicyFragment> Own,
+        List<PolicyFragment> Above, bool Beneath, bool Past) Candidates(
         Type entityType, string path, DwPolicyContext context)
     {
-        string? governing = AttributePolicyProvider.Governing(entityType, path);
+        (IReadOnlyList<string> governing, string? reads) = AttributePolicyProvider.Governing(entityType, path);
 
         List<PolicyFragment> all = new();
         List<PolicyFragment> named = new();
+        List<PolicyFragment> above = new();
 
         foreach (PolicyFragment fragment in Sweep(entityType, context))
         {
@@ -227,25 +239,55 @@ public sealed class PolicyResolver
                 all.Add(fragment);
                 named.Add(fragment);
             }
-            else if (governing is not null && fragment.Matches(governing))
+            else if (MatchesAny(fragment, governing))
             {
                 all.Add(fragment);
+                above.Add(fragment);
             }
         }
 
+        List<PolicyFragment> own = new(named);
         bool past = false;
 
         if (ReadsAttributes)
         {
             // Of the member the path reads, where there is one: B.C.D.E.Born.Year is decided by Born.
-            IReadOnlyList<PolicyFragment> declared = AttributePolicyProvider.Unwalked(entityType, governing ?? path);
+            IReadOnlyList<PolicyFragment> declared = AttributePolicyProvider.Unwalked(entityType, reads ?? path);
 
             past = declared.Count > 0;
 
             all.AddRange(declared);
+            (reads is null ? own : above).AddRange(declared);
+
+            // And of every struct the path passes through past the walk's depth: A.B.C.D.Price.Amount is
+            // part of Price as much as Price.Amount is.
+            foreach (string value in governing)
+            {
+                if (!string.Equals(value, reads, StringComparison.Ordinal))
+                {
+                    IReadOnlyList<PolicyFragment> held = AttributePolicyProvider.Unwalked(entityType, value);
+
+                    all.AddRange(held);
+                    above.AddRange(held);
+                }
+            }
         }
 
-        return (all, named, governing is not null, past);
+        return (all, named, own, above, governing.Count > 0, past);
+    }
+
+    /// <summary>True when a fragment names one of the paths given.</summary>
+    private static bool MatchesAny(PolicyFragment fragment, IReadOnlyList<string> paths)
+    {
+        for (int i = 0; i < paths.Count; i++)
+        {
+            if (fragment.Matches(paths[i]))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>True when attributes are among the sources this resolver was built over.</summary>

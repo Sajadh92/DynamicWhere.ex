@@ -344,18 +344,25 @@ namespace DynamicWhere.Tests.Policies
         [Fact]
         public void The_member_a_path_reads()
         {
-            Assert.Equal("Salary", AttributePolicyProvider.Governing(typeof(Rd8Row), "Salary.Value"));
-            Assert.Equal("Born", AttributePolicyProvider.Governing(typeof(Rd8Row), "Born.Date.Year"));
-            Assert.Equal("Lines", AttributePolicyProvider.Governing(typeof(Rd8Row), "Lines.Count"));
+            Assert.Equal("Salary", Reads("Salary.Value"));
+            Assert.Equal("Born", Reads("Born.Date.Year"));
+            Assert.Equal("Lines", Reads("Lines.Count"));
 
             // An element's member is the walk's to name, and so is a member on its own.
-            Assert.Null(AttributePolicyProvider.Governing(typeof(Rd8Row), "Lines.Id"));
-            Assert.Null(AttributePolicyProvider.Governing(typeof(Rd8Row), "Salary"));
+            Assert.Null(Reads("Lines.Id"));
+            Assert.Null(Reads("Salary"));
 
             // A name that matches nothing is refused as one, elsewhere.
-            Assert.Null(AttributePolicyProvider.Governing(typeof(Rd8Row), "Nothing.Value"));
-            Assert.Null(AttributePolicyProvider.Governing(typeof(Rd8Row), "Lines.Nothing"));
+            Assert.Null(Reads("Nothing.Value"));
+            Assert.Null(Reads("Lines.Nothing"));
+
+            // Each governs what is beneath it, and none of the walk's own paths has anything above it.
+            Assert.Equal(new[] { "Salary" }, AttributePolicyProvider.Governing(typeof(Rd8Row), "Salary.Value").Above);
+            Assert.Empty(AttributePolicyProvider.Governing(typeof(Rd8Row), "Lines.Id").Above);
+            Assert.Empty(AttributePolicyProvider.Governing(typeof(Rd8Row), "Nothing.Value").Above);
         }
+
+        private static string? Reads(string path) => AttributePolicyProvider.Governing(typeof(Rd8Row), path).Reads;
     }
 
     public class Rd8A { public int Id { get; set; } public Rd8B? B { get; set; } }

@@ -224,32 +224,45 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     }
 
     /// <summary>
-    /// The member whose policy decides a path that continues beneath it, or null when the path is one
-    /// the walk names or names nothing.
+    /// The members whose policy decides a path that continues beneath them, outermost first, and the one
+    /// among them the path reads, when the path goes beneath a member the framework declares.
     /// </summary>
     /// <param name="entityType">The entity being queried.</param>
     /// <param name="path">A normalized dotted path.</param>
     /// <remarks>
-    /// The walk descends into an application's own types and nowhere else, so no attribute can be
-    /// placed beneath a member the framework declares the type of, and no fragment names such a path:
-    /// <c>Salary.Value</c> and <c>Salary.HasValue</c> on a <c>decimal?</c>, <c>Secret.Length</c> on a
-    /// <see cref="string"/>, <c>Born.Year</c> on a <see cref="DateTime"/>, <c>Bag.Count</c> on a
-    /// dictionary, or <c>Lines.Count</c> on an application's own collection class, where the member
-    /// named is the collection's and not the element's. The pipeline validates each of them, the
-    /// provider translates them, and each reads the member above it. Resolved on its own such a path
-    /// matched nothing and was allowed, so a denied, masked, audited or weighted member was one
-    /// segment away from having no policy at all. It takes the policy of the member it reads.
+    /// Two kinds of member decide the paths beneath them.
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     A member the framework declares the type of, where no attribute can be placed beneath it:
+    ///     <c>Salary.Value</c> and <c>Salary.HasValue</c> on a <c>decimal?</c>, <c>Secret.Length</c> on a
+    ///     <see cref="string"/>, <c>Born.Year</c> on a <see cref="DateTime"/>, <c>Bag.Count</c> on a
+    ///     dictionary, or <c>Lines.Count</c> on an application's own collection class, where the member
+    ///     named is the collection's and not the element's. The path reads that member, which is
+    ///     <c>Reads</c>, and nothing beneath it is walked.
+    ///   </description></item>
+    ///   <item><description>
+    ///     A member holding an application's own struct, or a collection of them (3.4.0). A struct is a
+    ///     value, not a navigation: <c>Iban.Number</c> is part of the <c>Iban</c>, and a
+    ///     <c>[DwDenied]</c> on the <c>Iban</c> that left <c>Iban.Number</c> to be filtered on and
+    ///     selected was a sealed field one segment away from having no policy at all. Its members are
+    ///     still walked, since they can carry attributes of their own, and both decide.
+    ///   </description></item>
+    /// </list>
+    /// A class is still a navigation, whose members are separate fields: a denial of <c>Customer</c> does
+    /// not deny <c>Customer.Name</c>. A member only a subtype declares is decided by the fragments naming
+    /// it, so that a grant of <c>Zone</c> does not grant what a subtype of <c>Zone</c> declares.
     /// </remarks>
-    internal static string? Governing(Type entityType, string path)
+    internal static (IReadOnlyList<string> Above, string? Reads) Governing(Type entityType, string path)
     {
         // Asked of every path a query resolves, and nearly every one of them is a single member.
         if (path.IndexOf('.') < 0)
         {
-            return null;
+            return (Array.Empty<string>(), null);
         }
 
         string[] segments = path.Split('.');
         Type type = entityType;
+        List<string>? above = null;
 
         for (int i = 0; i < segments.Length - 1; i++)
         {
@@ -257,33 +270,48 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
 
             if (property is null)
             {
-                return null;
+                break;
             }
 
             Type? navigation = NavigationTypeOf(property.PropertyType);
 
             if (navigation is null)
             {
-                return string.Join('.', segments, 0, i + 1);
+                string reads = string.Join('.', segments, 0, i + 1);
+
+                (above ??= new List<string>()).Add(reads);
+
+                return (above, reads);
             }
 
             if (Find(navigation, segments[i + 1]) is null)
             {
                 // Not the element's member. The collection's own, Lines.Count on an application's
                 // collection class, reads the member above it. Anything else is a subtype's member or
-                // names nothing, and is decided as it always was: by the fragments naming it, so that a
-                // grant of Zone does not grant what a subtype of Zone declares.
+                // names nothing, and is decided as it always was: by the fragments naming it.
                 Type container = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
 
-                return container != navigation && Find(container, segments[i + 1]) is not null
-                    ? string.Join('.', segments, 0, i + 1)
-                    : null;
+                if (container != navigation && Find(container, segments[i + 1]) is not null)
+                {
+                    string reads = string.Join('.', segments, 0, i + 1);
+
+                    (above ??= new List<string>()).Add(reads);
+
+                    return (above, reads);
+                }
+
+                break;
+            }
+
+            if (navigation.IsValueType)
+            {
+                (above ??= new List<string>()).Add(string.Join('.', segments, 0, i + 1));
             }
 
             type = navigation;
         }
 
-        return null;
+        return (above ?? (IReadOnlyList<string>)Array.Empty<string>(), null);
     }
 
     /// <summary>

@@ -77,6 +77,15 @@ namespace DynamicWhere.Tests.Policies
                 copy.Caps.MinGroupSize = inForce.Caps.MinGroupSize;
             }
 
+            foreach (KeyValuePair<string, DwPageCaps> purpose in inForce.Caps.Purposes)
+            {
+                copy.Caps.Purposes[purpose.Key] = new DwPageCaps
+                {
+                    MaxPageSize = purpose.Value.MaxPageSize,
+                    DefaultPageSize = purpose.Value.DefaultPageSize
+                };
+            }
+
             foreach (KeyValuePair<Type, string> exposed in inForce.Entities.Entities)
             {
                 copy.Entities.Expose(exposed.Key, exposed.Value);
@@ -443,6 +452,83 @@ namespace DynamicWhere.Tests.Policies
             if (declaring == typeof(DwPolicyOptions))
             {
                 Assert.Empty(notCompared);
+            }
+        }
+
+        [Fact]
+        public void A_purpose_whose_page_caps_are_the_deployment_ones_is_the_same_posture()
+        {
+            // Compared by the caps that apply: a purpose writing out the deployment's numbers enforces
+            // what no entry enforces.
+            DwPolicyOptions same = Copy();
+
+            same.Caps.Purposes["zz-same"] = new DwPageCaps
+            {
+                MaxPageSize = DwPolicy.Options.Caps.MaxPageSize,
+                DefaultPageSize = DwPolicy.Options.Caps.DefaultPageSize == 0 ? null : DwPolicy.Options.Caps.DefaultPageSize
+            };
+
+            DwPolicyOptions inForce = DwPolicy.Options;
+
+            DwPolicy.Configure(same);
+
+            Assert.Same(inForce, DwPolicy.Options);
+        }
+
+        [Fact]
+        public void A_purpose_with_other_page_caps_is_a_different_posture()
+        {
+            DwPolicyOptions larger = Copy();
+            larger.Caps.Purposes["zz-export"] = new DwPageCaps { MaxPageSize = DwPolicy.Options.Caps.MaxPageSize + 1 };
+
+            Refused(larger);
+
+            DwPolicyOptions defaulted = Copy();
+            defaulted.Caps.Purposes["zz-export"] = new DwPageCaps { DefaultPageSize = DwPolicy.Options.Caps.DefaultPageSize + 1 };
+
+            Refused(defaulted);
+        }
+
+        /// <summary>
+        /// Every property of the caps either sets a value the comparison walks above, or is one of the
+        /// two named here; and every value a purpose holds is compared.
+        /// </summary>
+        /// <remarks>
+        /// The reflection walk above reads settable properties, and the purposes are a collection with no
+        /// setter, so this is what keeps a later collection on the caps from being forgotten the same way.
+        /// </remarks>
+        [Fact]
+        public void Every_page_cap_a_purpose_holds_is_compared()
+        {
+            List<string> unsettable = typeof(DwCaps)
+                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(property => property.GetSetMethod() is null)
+                .Select(property => property.Name)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToList();
+
+            Assert.Equal(new[] { nameof(DwCaps.IsMinGroupSizeSet), nameof(DwCaps.Purposes) }, unsettable);
+
+            List<PropertyInfo> held = typeof(DwPageCaps)
+                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(property => property.GetSetMethod() is not null)
+                .ToList();
+
+            Assert.NotEmpty(held);
+
+            foreach (PropertyInfo property in held)
+            {
+                DwPolicyOptions different = Copy();
+                DwPageCaps caps = new();
+
+                property.SetValue(caps, 7);
+                different.Caps.Purposes["zz-" + property.Name] = caps;
+
+                // Seven differs from both deployment caps the bootstrap posture holds.
+                Assert.NotEqual(7, DwPolicy.Options.Caps.MaxPageSize);
+                Assert.NotEqual(7, DwPolicy.Options.Caps.DefaultPageSize);
+
+                Refused(different);
             }
         }
 

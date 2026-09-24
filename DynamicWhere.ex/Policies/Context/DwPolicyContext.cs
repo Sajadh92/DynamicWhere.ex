@@ -67,9 +67,22 @@ public sealed class DwPolicyContext
     internal void MarkPrepared() => IsPrepared = true;
 
     /// <summary>
-    /// An optional declared purpose for the query, for purpose-bound rules.
+    /// An optional declared purpose for the query, for purpose-bound rules and for the page caps
+    /// <c>DwCaps.Purposes</c> gives that purpose.
     /// </summary>
-    public string? Purpose { get; set; }
+    /// <remarks>
+    /// The host's statement about why it reads, never the caller's: a request that could name its own
+    /// purpose could name its own caps, and whichever purpose-bound grants exist. Stored trimmed, and a
+    /// blank value is none, so <c>" excel"</c> means to a rule what it means to a cap. A rule's purpose is
+    /// trimmed where the rule is built and both compare without regard to letter case.
+    /// </remarks>
+    public string? Purpose
+    {
+        get => _purpose;
+        set => _purpose = string.IsNullOrWhiteSpace(value) ? null : value!.Trim();
+    }
+
+    private string? _purpose;
 
     /// <summary>
     /// Adds a subject. Adding the same kind and identity twice is a no-op.

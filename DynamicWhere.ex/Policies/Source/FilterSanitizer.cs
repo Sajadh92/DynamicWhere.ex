@@ -130,7 +130,7 @@ internal static class FilterSanitizer
 
         // After the caps, so a page the caller did write is still refused when it is too large,
         // and a page the caller did not write is bounded rather than unbounded.
-        working.Page = DefaultPage(working.Page, options);
+        working.Page = DefaultPage(working.Page, options, context);
 
         long cost = Cost(working, gate);
 
@@ -248,7 +248,7 @@ internal static class FilterSanitizer
 
         // After the caps, so a page the caller did write is still refused when it is too large,
         // and a page the caller did not write is bounded rather than unbounded.
-        working.Page = DefaultPage(working.Page, options);
+        working.Page = DefaultPage(working.Page, options, context);
 
         long cost = Cost(working, gate);
 
@@ -728,7 +728,7 @@ internal static class FilterSanitizer
 
         // After the caps, so a page the caller did write is still refused when it is too large,
         // and a page the caller did not write is bounded rather than unbounded.
-        working.Page = DefaultPage(working.Page, options);
+        working.Page = DefaultPage(working.Page, options, context);
 
         long cost = Cost(working, gate);
 
@@ -1101,10 +1101,16 @@ internal static class FilterSanitizer
     /// Bounded by <c>MaxPageSize</c>, so the two cannot be configured into contradicting each other:
     /// a default above the maximum would hand out a page the same query could not have asked for.
     /// </para>
+    /// <para>
+    /// Both are the caps of the purpose the context declares, where <see cref="DwCaps.Purposes"/> has
+    /// any for it, and the deployment's otherwise.
+    /// </para>
     /// </remarks>
-    private static PageBy? DefaultPage(PageBy? page, DwPolicyOptions options)
+    private static PageBy? DefaultPage(PageBy? page, DwPolicyOptions options, DwPolicyContext context)
     {
-        if (page is not null || options.Caps.DefaultPageSize == 0)
+        int size = options.Caps.DefaultPageSizeFor(context.Purpose);
+
+        if (page is not null || size == 0)
         {
             return page;
         }
@@ -1112,7 +1118,7 @@ internal static class FilterSanitizer
         return new PageBy
         {
             PageNumber = 1,
-            PageSize = Math.Min(options.Caps.DefaultPageSize, options.Caps.MaxPageSize)
+            PageSize = Math.Min(size, options.Caps.MaxPageSizeFor(context.Purpose))
         };
     }
 
@@ -3975,12 +3981,14 @@ internal static class FilterSanitizer
             }
         }
 
-        /// <summary>Refuses a page larger than the budget allows.</summary>
+        /// <summary>Refuses a page larger than the budget allows, the declared purpose's where it has one.</summary>
         internal void CheckPage(PageBy? page)
         {
-            if (page is not null && page.PageSize > _options.Caps.MaxPageSize)
+            int limit = _options.Caps.MaxPageSizeFor(_context.Purpose);
+
+            if (page is not null && page.PageSize > limit)
             {
-                Raise(Cap("MaxPageSize", _options.Caps.MaxPageSize, page.PageSize, WholeClause));
+                Raise(Cap("MaxPageSize", limit, page.PageSize, WholeClause));
             }
         }
 

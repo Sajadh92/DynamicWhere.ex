@@ -76,7 +76,8 @@ public static class DwPolicy
     /// <para>
     /// The comparison covers everything that decides what a query is permitted to do: the tier, the
     /// dry-run and trace flags, refusal auditing, the hash salt, the store-failure mode, both
-    /// intervals, every cap, the exposed entity catalogue, and the provider types supplied. It does
+    /// intervals, every cap and every purpose's page caps, the exposed entity catalogue, and the
+    /// provider types supplied. It does
     /// not cover the objects a host builds for itself — the token vault, the service provider and
     /// the provider instances — because a second host builds its own and comparing them by
     /// reference would make every second call a refusal. Those stay as the first call left them,
@@ -204,7 +205,31 @@ public static class DwPolicy
         && inForce.MinGroupSize == asked.MinGroupSize
         && inForce.SchemaDepth == asked.SchemaDepth
         && inForce.SchemaCycleLimit == asked.SchemaCycleLimit
-        && inForce.MaxSchemaFields == asked.MaxSchemaFields;
+        && inForce.MaxSchemaFields == asked.MaxSchemaFields
+        && SamePurposes(inForce, asked);
+
+    /// <summary>
+    /// True when every purpose either set names runs under the same page caps in both.
+    /// </summary>
+    /// <remarks>
+    /// By the caps that apply, as above: a purpose left null takes the deployment's own cap, so one set
+    /// writing that cap out and the other leaving it null enforce the same page, and a purpose whose
+    /// caps equal the deployment's is the same as no entry. The names of both sets are walked, so a
+    /// purpose only the second call declares is compared too.
+    /// </remarks>
+    private static bool SamePurposes(DwCaps inForce, DwCaps asked)
+    {
+        foreach (string purpose in inForce.Purposes.Keys.Concat(asked.Purposes.Keys))
+        {
+            if (inForce.MaxPageSizeFor(purpose) != asked.MaxPageSizeFor(purpose)
+                || inForce.DefaultPageSizeFor(purpose) != asked.DefaultPageSizeFor(purpose))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     /// <summary>True when both catalogues expose the same types and answer to the same names.</summary>
     /// <remarks>

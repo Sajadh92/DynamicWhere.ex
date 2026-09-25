@@ -2858,12 +2858,13 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
     cannot narrow it (a column, complex or JSON member at the top of T, or a member of a row in memory) it is
     refused in both tiers.
   - A narrowing that cannot be built as gated is refused with `FieldDeniedForSelect`, in both tiers (3.2.0). The
-    core's typed projection adds the key (`Id`) of every nested node it builds, so a narrowing whose nodes carry a
-    denied key would return it; a path through a collection the core does not unwrap fails its validation; and a
+    core's typed projection adds the key (`Id`) of every nested class it builds (never of a struct, which it builds
+    with exactly what was named, 3.4.0), so a narrowing whose nodes carry a denied key would return it; a path through a collection the core does not unwrap fails its validation; and a
     column, complex property or JSON-stored member, a member of a row in memory, or one a projection builds some way
     the core cannot narrow, cannot be narrowed at all.
   - A navigation named through another, `Main.Lead`, gates the key of every node it passes through, which the
-    builder adds, as a dotted path to a value always did (3.2.0). A denied one refuses the projection.
+    builder adds, as a dotted path to a value always did (3.2.0). A denied one refuses the projection. Only a
+    class's key: a struct's is neither added nor gated, since no builder adds it (3.4.0).
 - "allowed members" (3.2.0; "allowed scalars" before) applies when `Selects` is null or empty and a field is denied
   for Select where its value can reach the result. It runs for a whole-`Filter` terminal and for a Segment, not for a
   single-clause composable call.
@@ -5651,6 +5652,12 @@ MemoryCalculationInput
           it has one. Still unbound: a class navigation inside a struct, a struct in which nothing named can be set,
           and a path beneath a framework-typed member (Born.Year), which a typed row cannot hold apart from the
           date; the dynamic terminals carry that as it is named. Section 6.
+        - Behaviour change. A guarded selection through a struct carries only what was named. The gate added the
+          key (Id) of every node a selected path passes through, since the builder adds a class's key, and read a
+          struct as one: DeniedBy.Value.Why came back with the struct's Id beside it, typed and dynamic, and a
+          struct whose Id is denied had a selection of its other members refused and was left out of a
+          synthesized projection. Neither builder adds a struct's key, so the gate adds and gates a class's key
+          only. Section 17.
         - Security fix. A typed selection beneath a collection of structs carries only what it names. The typed
           projection bound every collection of values whole, so Pairs.Shown over a List<Pair> handed back each
           element whole, a [DwDenied] member included, in both tiers, while the policy had approved only

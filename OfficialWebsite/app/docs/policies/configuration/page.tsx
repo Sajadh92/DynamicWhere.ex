@@ -101,7 +101,8 @@ export default function Page() {
         <li>
           A narrowing that cannot be built as it was gated is refused in both
           tiers (3.2.0). The core&apos;s typed projection adds the key,{" "}
-          <code>Id</code>, of every nested node it builds, so a navigation
+          <code>Id</code>, of every nested class it builds (never of a struct,
+          which it builds with exactly what was named, 3.4.0), so a navigation
           narrowed around its own denied key would get the key back. The core
           reads a path only through an array, <code>List&lt;T&gt;</code>,{" "}
           <code>IList&lt;T&gt;</code>, <code>ICollection&lt;T&gt;</code>,{" "}
@@ -141,7 +142,9 @@ export default function Page() {
           A navigation named through another, <code>Main.Lead</code>, gates the
           key of every node it passes through, which the core&apos;s projection
           adds, as a dotted path to a value always did (3.2.0). A denied key
-          refuses the projection. Naming a field beside a denied key,{" "}
+          refuses the projection. Only a class&apos;s key: a struct&apos;s is
+          neither added nor gated, since no builder adds it (3.4.0). Naming a
+          field beside a denied key,{" "}
           <code>Lines.Name</code> when <code>Lines.Id</code> is denied, was
           already refused in both tiers.
         </li>

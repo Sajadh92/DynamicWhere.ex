@@ -2516,10 +2516,22 @@ public LocalizedText Name { get; set; }`}</Code>
         </li>
       </ul>
       <p>
+        A guarded selection through a struct carries only what was named. The
+        gate added the key, <code>Id</code>, of every node a selected path
+        passes through, since the builder adds a class&apos;s key, and read a
+        struct as one: <code>DeniedBy.Value.Why</code> came back with the
+        struct&apos;s <code>Id</code> beside it, typed and dynamic, and a struct
+        whose <code>Id</code> is denied had a selection of its other members
+        refused and was left out of a synthesized projection. Neither builder
+        adds a struct&apos;s key, so neither does the gate.
+      </p>
+      <p>
         <strong>Who is affected:</strong> a typed query naming a path beneath a
-        struct receives the values instead of defaults, and a guarded query with
+        struct receives the values instead of defaults, a guarded query with
         no <code>Selects</code> over a row holding such a struct receives its
-        allowed members instead of an empty struct.
+        allowed members instead of an empty struct, and a guarded selection
+        through a struct holding an <code>Id</code> no longer receives that key
+        unless it names it.
       </p>
 
       <h2 id="struct-collection-select">51. A Typed Selection Beneath a Collection of Structs Carries Only What It Names</h2>

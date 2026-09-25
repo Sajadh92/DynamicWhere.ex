@@ -246,7 +246,7 @@ internal static class GraphWalker
     /// <summary>Transforms one member on every owner a path reached.</summary>
     private static void Transform(
         IReadOnlyCollection<object> owners,
-        string memberName,
+        string member,
         string path,
         ValueTransform chain,
         DwPolicyContext context,
@@ -254,8 +254,6 @@ internal static class GraphWalker
         PolicyTrace trace,
         HashSet<(object Owner, string Member)>? done)
     {
-        string member = memberName;
-
         bool transformed = false;
 
         // One entry, not a dictionary. A materialized result is one runtime type in every case that

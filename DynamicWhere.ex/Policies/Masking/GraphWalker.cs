@@ -98,6 +98,10 @@ internal static class GraphWalker
             return Array.Empty<UnnamedRead>();
         }
 
+        // As the policy names each path, which is how the transforms are keyed: a projection naming
+        // Pair.Value.Code carries the member the type's list calls Pair.Code.
+        projected = projected?.Select(path => AttributePolicyProvider.PolicyPath(entityType, path)).ToList();
+
         // Reference identity, not equality. Two rows can share one referenced object, and
         // transforming it twice would hash a hash or truncate a truncation.
         //
@@ -235,7 +239,7 @@ internal static class GraphWalker
                 }
             }
 
-            Transform(owners, segments[^1], path, chain, context, options, trace, done);
+            Transform(owners, segments[^1], path, chain, context, options, trace, done, ref writeBacks);
         }
         finally
         {
@@ -252,7 +256,8 @@ internal static class GraphWalker
         DwPolicyContext context,
         DwPolicyOptions options,
         PolicyTrace trace,
-        HashSet<(object Owner, string Member)>? done)
+        HashSet<(object Owner, string Member)>? done,
+        ref List<Action>? writeBacks)
     {
         bool transformed = false;
 
@@ -263,8 +268,13 @@ internal static class GraphWalker
         Type? resolvedFor = null;
         Accessors accessors = default;
 
-        foreach (object owner in owners)
+        foreach (object reached in owners)
         {
+            if (Through(reached, member, path, ref writeBacks) is not { } owner)
+            {
+                continue;
+            }
+
             Type type = owner.GetType();
 
             if (!ReferenceEquals(type, resolvedFor))
@@ -317,8 +327,13 @@ internal static class GraphWalker
         Type? resolvedFor = null;
         Accessors accessors = default;
 
-        foreach (object owner in owners)
+        foreach (object reached in owners)
         {
+            if (Through(reached, segment, path, ref writeBacks) is not { } owner)
+            {
+                continue;
+            }
+
             Type type = owner.GetType();
 
             if (!ReferenceEquals(type, resolvedFor))
@@ -350,6 +365,38 @@ internal static class GraphWalker
         }
 
         return next;
+    }
+
+    /// <summary>
+    /// The object to read a segment from: the owner, or what a generated row holds under <c>Value</c>
+    /// when that is where the segment is; null when that is nothing.
+    /// </summary>
+    /// <remarks>
+    /// The policy names a nullable struct's members without the nullable, <c>Pair.Code</c>. A typed row
+    /// reads the same way, since the nullable arrives as the struct in a box. A dynamic projection builds
+    /// what the query spelled, <c>Pair.Value.Code</c>, so its generated row holds the member one object
+    /// further down, and the walk steps through <c>Value</c> to reach it: skipping it would leave the
+    /// member exactly as stored.
+    /// </remarks>
+    private static object? Through(object owner, string segment, string path, ref List<Action>? writeBacks)
+    {
+        Type type = owner.GetType();
+
+        if (!typeof(DynamicClass).IsAssignableFrom(type)
+            || CacheReflection.FindProperty(type, segment) is not null
+            || CacheReflection.FindProperty(type, nameof(Nullable<int>.Value)) is not { } wrapped)
+        {
+            return owner;
+        }
+
+        object? held = MutatorCache.Getter(wrapped)(owner);
+
+        if (held is not null && held.GetType().IsValueType)
+        {
+            (writeBacks ??= new List<Action>()).Add(Into(owner, held, MutatorCache.Setter(wrapped), path));
+        }
+
+        return held;
     }
 
     /// <summary>

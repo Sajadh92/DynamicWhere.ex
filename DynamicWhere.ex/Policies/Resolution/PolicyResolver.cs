@@ -105,6 +105,9 @@ public sealed class PolicyResolver
                 "A policy lookup requires a field path with at least one segment.", nameof(fieldPath));
         }
 
+        // As the policy names it: Iban.Value.Number is the member the attribute walk calls Iban.Number.
+        path = AttributePolicyProvider.PolicyPath(entityType, path);
+
         (List<PolicyFragment> candidates, List<PolicyFragment> named, List<PolicyFragment> own,
             List<PolicyFragment> above, bool beneath, bool past) = Candidates(entityType, path, context);
 
@@ -357,7 +360,7 @@ public sealed class PolicyResolver
     {
         FieldPolicy policy = Resolve(entityType, fieldPath, context);
 
-        string path = PolicyFragment.NormalizePath(fieldPath);
+        string path = AttributePolicyProvider.PolicyPath(entityType, PolicyFragment.NormalizePath(fieldPath));
 
         // The same fragments Resolve decided from, so the explanation names the denial a path beneath
         // a member inherits rather than reporting a refusal with no source.

@@ -291,7 +291,7 @@ internal static class FilterSanitizer
         try
         {
             GroupFloor.Inject(
-                working, GroupFloor.For(working, gate.TypePolicy, gate.Options), gate.IsDryRun, trace);
+                working, GroupFloor.For(working, typeof(T), gate.TypePolicy, gate.Options), gate.IsDryRun, trace);
         }
         catch (ArgumentException taken)
         {

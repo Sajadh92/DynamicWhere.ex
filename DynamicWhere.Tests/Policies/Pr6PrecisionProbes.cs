@@ -155,7 +155,7 @@ namespace DynamicWhere.Tests.Policies
             try
             {
                 ResultTransformer.Summary(
-                    result, summary, KeyPolicy(), Caller(contextDryRun), options,
+                    result, summary, typeof(Pr6KeyRow), KeyPolicy(), Caller(contextDryRun), options,
                     new PolicyTrace(tier, optionsDryRun || contextDryRun));
 
                 return "OK";

@@ -2,6 +2,7 @@
 using System.Collections.ObjectModel;
 using System.Reflection;
 using DynamicWhere.ex.Enums;
+using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Policies.Attributes;
 using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
@@ -224,6 +225,63 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
     }
 
     /// <summary>
+    /// A path as the policy names it: without the <c>Value</c> a query writes after a nullable struct.
+    /// </summary>
+    /// <param name="entityType">The entity being queried.</param>
+    /// <param name="path">A dotted path, as the path validator accepts it.</param>
+    /// <remarks>
+    /// A query reaches a member of an <c>Iban?</c> through the nullable, <c>Iban.Value.Number</c>, because
+    /// that is the member it compiles. The attribute walk looks through the nullable and names the same
+    /// member <c>Iban.Number</c>, and so do the type's transforms, audits and fragments. Looked up as the
+    /// query spells it, the path matched none of them: a <c>[DwDenied]</c> on the <c>Iban</c>, or on a
+    /// member of the struct, and a mask on one, did not reach it. So a <c>Value</c> after a nullable
+    /// struct of the application's is dropped, before a member of it or at the end, where it names the
+    /// struct whole. <c>HasValue</c> stays: it is the nullable's own, and <see cref="Governing"/> reads it
+    /// as the nullable member. A framework nullable, <c>Salary.Value</c>, is left as it is.
+    /// </remarks>
+    internal static string PolicyPath(Type entityType, string path)
+    {
+        if (path.IndexOf('.') < 0 || path.IndexOf(nameof(Nullable<int>.Value), StringComparison.OrdinalIgnoreCase) < 0)
+        {
+            return path;
+        }
+
+        string[] segments = path.Split('.');
+        List<string>? kept = null;
+        Type type = entityType;
+
+        for (int i = 0; i < segments.Length; i++)
+        {
+            Type? underlying = Nullable.GetUnderlyingType(type);
+
+            if (i > 0
+                && underlying is not null
+                && NavigationTypeOf(underlying) == underlying
+                && string.Equals(segments[i], nameof(Nullable<int>.Value), StringComparison.OrdinalIgnoreCase))
+            {
+                kept ??= segments.Take(i).ToList();
+                type = underlying;
+
+                continue;
+            }
+
+            kept?.Add(segments[i]);
+
+            PropertyInfo? property = Find(underlying ?? type, segments[i]) ?? Find(type, segments[i]);
+
+            if (property is null)
+            {
+                return kept is null ? path : string.Join('.', kept.Concat(segments.Skip(i + 1)));
+            }
+
+            Type next = property.PropertyType;
+            type = CacheReflection.GetCollectionElementType(next) ?? next;
+        }
+
+        return kept is null ? path : string.Join('.', kept);
+    }
+
+    /// <summary>
     /// The members whose policy decides a path that continues beneath them, outermost first, and the one
     /// among them the path reads, when the path goes beneath a member the framework declares.
     /// </summary>
@@ -287,11 +345,13 @@ public sealed class AttributePolicyProvider : IDwPolicyProvider
             if (Find(navigation, segments[i + 1]) is null)
             {
                 // Not the element's member. The collection's own, Lines.Count on an application's
-                // collection class, reads the member above it. Anything else is a subtype's member or
-                // names nothing, and is decided as it always was: by the fragments naming it.
+                // collection class, reads the member above it, and so does a nullable's own, HasValue on
+                // an Iban?. Anything else is a subtype's member or names nothing, and is decided as it
+                // always was: by the fragments naming it.
                 Type container = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+                bool nullables = container != property.PropertyType && Find(property.PropertyType, segments[i + 1]) is not null;
 
-                if (container != navigation && Find(container, segments[i + 1]) is not null)
+                if (nullables || (container != navigation && Find(container, segments[i + 1]) is not null))
                 {
                     string reads = string.Join('.', segments, 0, i + 1);
 

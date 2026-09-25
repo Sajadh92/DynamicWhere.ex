@@ -122,12 +122,17 @@ public class PolicyConfigurationTests
         Assert.IsAssignableFrom<ArgumentException>(salt.InnerException);
 
         // A snapshot age that is not a positive interval.
-        Assert.Throws<InvalidOperationException>(
+        InvalidOperationException age = Assert.Throws<InvalidOperationException>(
             () => new DwPolicyOptions().Bind(Section(("MaxSnapshotAge", "00:00:00"))));
 
-        // A purpose's page cap below one.
-        Assert.Throws<InvalidOperationException>(
+        Assert.IsAssignableFrom<ArgumentException>(age.InnerException);
+
+        // A purpose's page cap below one: a newer binder wraps a value inside a dictionary once more.
+        InvalidOperationException purpose = Assert.Throws<InvalidOperationException>(
             () => new DwPolicyOptions().Bind(Section(("Caps:Purposes:excel:MaxPageSize", "0"))));
+
+        Assert.IsType<ArgumentOutOfRangeException>(purpose.InnerException);
+        Assert.StartsWith("A configured policy value was refused", purpose.Message, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -59,7 +59,8 @@ public static class DwPolicyConfiguration
     /// <para>
     /// Every setter's own validation still applies: a cap below one, a snapshot age that is not a
     /// positive interval, and a hash salt shorter than the minimum are all refused here exactly as
-    /// they are refused in code.
+    /// they are refused in code, as an <see cref="InvalidOperationException"/> whose inner exception
+    /// is the property's own, however deep the binder wrapped it.
     /// </para>
     /// <para>
     /// The group floor's opt-out survives this unchanged, because it lives in the setter rather
@@ -89,16 +90,31 @@ public static class DwPolicyConfiguration
         {
             section.Bind(options, binder => binder.ErrorOnUnknownConfiguration = true);
         }
-        catch (TargetInvocationException refused) when (refused.InnerException is { } setter)
+        catch (Exception failure) when (Refusal(failure) is { } setter)
         {
-            // The binder calls each setter by reflection, so a value the property refuses arrived wrapped:
-            // a cap below one as a TargetInvocationException, the same cap inside a purpose as an
-            // InvalidOperationException. Reported one way, with the property's own reason inside.
+            // The binder calls each setter by reflection, so a value the property refuses arrives wrapped
+            // in a TargetInvocationException, and a newer binder wraps that again in its own
+            // InvalidOperationException for a value inside a dictionary, such as a purpose's cap.
+            // Reported one way, with the property's own reason inside.
             throw new InvalidOperationException(
                 $"A configured policy value was refused: {setter.Message}", setter);
         }
 
         return options;
+    }
+
+    /// <summary>The exception a setter threw, wherever in the chain the binder put it; null when none did.</summary>
+    private static Exception? Refusal(Exception failure)
+    {
+        for (Exception? current = failure; current is not null; current = current.InnerException)
+        {
+            if (current is TargetInvocationException { InnerException: { } setter })
+            {
+                return setter;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

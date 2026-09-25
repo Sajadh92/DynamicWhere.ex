@@ -3262,6 +3262,11 @@ internal static class FilterSanitizer
         /// construct, an interface, an abstract class or one without a public parameterless constructor,
         /// which it skips; null when it can build them all.
         /// </summary>
+        /// <remarks>
+        /// An application's own struct needs no constructor: since 3.4.0 the typed projection builds one
+        /// member by member, held directly or in a list or an array, as it builds a class. A nullable one,
+        /// or one in a collection of another shape, it leaves unbound, so those still count as unbuilt.
+        /// </remarks>
         internal Type? Unbuildable(string member, IEnumerable<string> paths)
         {
             HashSet<string> nodes = new(StringComparer.OrdinalIgnoreCase) { member };
@@ -3278,6 +3283,7 @@ internal static class FilterSanitizer
             {
                 if (DeclaredType(node) is { } declared
                     && AttributePolicyProvider.NavigationTypeOf(declared) is { } type
+                    && !BuildsStruct(declared, type)
                     && (type.IsAbstract || type.GetConstructor(Type.EmptyTypes) is null))
                 {
                     return type;
@@ -3286,6 +3292,14 @@ internal static class FilterSanitizer
 
             return null;
         }
+
+        /// <summary>True when the typed projection builds this struct member by member where it is declared.</summary>
+        private static bool BuildsStruct(Type declared, Type type) =>
+            type.IsValueType
+            && (declared == type
+                || declared == type.MakeArrayType()
+                || (CacheReflection.GetCollectionElementType(declared) == type
+                    && declared.IsAssignableFrom(typeof(List<>).MakeGenericType(type))));
 
         /// <summary>Every fragment the providers hold for this type and caller, read once per query.</summary>
         private IReadOnlyList<PolicyFragment> Fragments => _fragments ??= _resolver.Fragments(_entityType, _context);

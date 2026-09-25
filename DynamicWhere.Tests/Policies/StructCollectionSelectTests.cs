@@ -27,6 +27,8 @@ namespace DynamicWhere.Tests.Policies
 
         public List<ZlPair> Pairs { get; set; } = new();
 
+        public ZlPair One { get; set; }
+
         public ZlPair[] Array { get; set; } = System.Array.Empty<ZlPair>();
 
         public List<ZlPair?> Maybe { get; set; } = new();
@@ -168,6 +170,33 @@ namespace DynamicWhere.Tests.Policies
             FilterResult<ZlRow> result = Guard(Source().AsQueryable(), DwTier.Strict).ToList(Selecting("Numbers"));
 
             Assert.Equal(new[] { 1, 2, 3 }, result.Data[0].Numbers);
+        }
+
+        [Theory]
+        [InlineData(DwTier.Strict)]
+        [InlineData(DwTier.Convenience)]
+        public void With_no_selection_the_policy_narrows_a_struct_rather_than_leaving_it_out(DwTier tier)
+        {
+            // The gate read a struct as a type the core could not build, and left it out whole; the core
+            // builds one member by member now, so the allowed part comes back and the denied one does not.
+            IQueryable<ZlRow> rows = _db.Orders.Select(order => new ZlRow
+            {
+                Id = order.Id,
+                One = new ZlPair { Shown = "one", Hidden = "SECRET-ONE" },
+                Pairs = order.Lines.OrderBy(line => line.Id)
+                    .Select(line => new ZlPair { Shown = line.Code, Hidden = line.Secret })
+                    .ToList()
+            });
+
+            PolicyQueryable<ZlRow> guarded = Guard(rows, tier);
+            ZlRow row = guarded.ToList(new Filter()).Data[0];
+
+            Assert.Equal("one", row.One.Shown);
+            Assert.Null(row.One.Hidden);
+            Assert.Equal(new[] { "A", "B" }, row.Pairs.Select(pair => pair.Shown));
+            Assert.All(row.Pairs, pair => Assert.Null(pair.Hidden));
+            Assert.DoesNotContain(guarded.LastTrace!.Decisions, decision =>
+                decision.Reason is { } reason && reason.Contains("cannot build", StringComparison.Ordinal));
         }
 
         [Fact]

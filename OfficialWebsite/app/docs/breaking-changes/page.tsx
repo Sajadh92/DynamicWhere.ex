@@ -1557,7 +1557,8 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         members to its argument, so no member of such a row is refused here.
         Since <strong>3.4.0</strong> a row or a member an application type&apos;s
         constructor builds with arguments has every member the constructor
-        leaves unbound refused, because EF Core follows a member only through an
+        leaves unbound refused, and a clause on the member itself, because EF
+        Core follows a member only through an
         initializer&apos;s binding; 3.3.0 left such a projection alone, and every
         clause on one failed inside the provider (point&nbsp;49). A projection is
         otherwise read only as far as its initializer can be read. An entity query names every
@@ -2433,6 +2434,12 @@ public LocalizedText Name { get; set; }`}</Code>
           (<code>Select(t =&gt; new TenantRecord(t.Id, t.NameAr))</code>), has
           every member a clause names refused; an unfiltered, unsorted read of it
           still works.
+        </li>
+        <li>
+          A clause on the constructed member itself,{" "}
+          <code>ORDER BY Name</code>, is refused too: EF Core can neither order
+          by nor compare a value it would have to build on the client. It can
+          still be selected.
         </li>
         <li>
           A constructor with an initializer beside it

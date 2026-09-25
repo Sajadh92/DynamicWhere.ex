@@ -2745,6 +2745,8 @@ a projection another provider ran                    nothing; its rules are its 
   member with an initializer. The trace records the reason given below.
   - A row built by its own constructor, a positional record row (`Select(t => new TenantRecord(t.Id, t.NameAr))`),
     has every member a clause names refused. An unfiltered, unsorted read of it still works.
+  - A clause on the constructed member itself is refused too (`ORDER BY Name`, `Label IsNotNull`): EF Core can
+    neither order by nor compare a value it would have to build on the client. Selecting it still works.
   - A constructor with an initializer beside it (`new Money(t.Amount) { Currency = t.Currency }`): a member the
     initializer binds (`Money.Currency`) stays usable, and a member left to the constructor (`Money.Amount`) is
     refused.
@@ -5637,9 +5639,9 @@ MemoryCalculationInput
           FieldPath "*"), where EF Core threw "could not be translated" and the caller saw a five-hundred. EF Core
           follows a member only through an initializer's binding: new LocalizedText(t.NameAr, t.NameEn).Ar cannot
           be translated, and new LocalizedText { Ar = t.NameAr, En = t.NameEn }.Ar is the column. A row built by its
-          own constructor has every member a clause names refused; a member an initializer beside the constructor
-          binds stays usable; a constructor in either branch of a conditional refuses what that branch leaves
-          unbound. Left alone: an anonymous type, the framework's own types, a collection, a type the model stores
+          own constructor has every member a clause names refused, and so is a clause on the constructed member
+          itself; a member an initializer beside the constructor binds stays usable; a constructor in either
+          branch of a conditional refuses what that branch leaves unbound. Left alone: an anonymous type, the framework's own types, a collection, a type the model stores
           as a column, a projection with no EF Core entity behind it, a provider that is not EF Core's own, rows in
           memory, Convenience and a dry run. A selection through such a member still works. This replaces the
           3.3.0 statement that such a projection has no member refused. Section 17.
@@ -6258,6 +6260,9 @@ MemoryCalculationInput
   queried entity itself is not read there, as it is not around a cycle: `[DwAlias]`, `[DwRequireWhere]`,
   `[DwForceWhere]`. A transformed member there cannot be a grouping key or an aggregated field, because a
   summary's own transform finds a generated row's columns by the type's list, which stops at four segments.
+- A sort on a whole struct-typed member fails on EF Core however the projection builds it, since EF Core cannot
+  order by a composite value; under `Strict` a constructor-built one is refused first (3.4.0). `[DwNoOrder]` on the
+  member keeps it out of the query in both tiers.
 - A transform the policy names no path to is applied to the rows by run-time type (3.3.0, section 18). A member
   typed `object`, or a collection that is not generic, says nothing about what it holds and is not read into.
   Type the member as what it holds.

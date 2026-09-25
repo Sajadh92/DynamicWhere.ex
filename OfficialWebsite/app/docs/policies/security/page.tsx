@@ -304,7 +304,8 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         alone: EF Core follows each of its members to its argument. Since{" "}
         <strong>3.4.0</strong> a member or a row an application type&apos;s
         constructor builds with arguments is refused through every member the
-        constructor leaves unbound, because EF Core follows a member only
+        constructor leaves unbound, and as a clause on the member itself,
+        because EF Core follows a member only
         through an initializer&apos;s binding: <code>new LocalizedText(t.NameAr,
         t.NameEn).Ar</code> cannot be translated, where{" "}
         <code>new LocalizedText &#123; Ar = t.NameAr, En = t.NameEn &#125;.Ar</code>{" "}

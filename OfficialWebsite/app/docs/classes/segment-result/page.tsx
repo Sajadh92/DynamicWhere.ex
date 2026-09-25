@@ -142,7 +142,8 @@ export default function Page() {
         <code>PageNumber</code> and <code>PageSize</code> still report{" "}
         <code>0</code> when no page was sent. The exception is a guarded query
         when the deployment sets{" "}
-        <Link href="/docs/policies/configuration#caps"><code>DwCaps.DefaultPageSize</code></Link>:
+        <Link href="/docs/policies/configuration#caps"><code>DwCaps.DefaultPageSize</code></Link>,
+        or the context declares a purpose with a default page of its own (3.4.0):
         the query is given page <code>1</code> at that size, and reports it.
       </Callout>
 

@@ -47,13 +47,13 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 ## Install
 
 ```bash
-dotnet add package DynamicWhere.ex --version 3.3.0
+dotnet add package DynamicWhere.ex --version 3.4.0
 ```
 
 Or via Package Manager:
 
 ```powershell
-Install-Package DynamicWhere.ex -Version 3.3.0
+Install-Package DynamicWhere.ex -Version 3.4.0
 ```
 
 Dependencies (restored automatically):
@@ -375,6 +375,21 @@ The complete reference — every enum, class, extension method, validation rule,
 | [Breaking Changes](https://doc.dynamicwhere.com/docs/breaking-changes) | Known limits and migration notes |
 
 ---
+
+## Version 3.4.0 highlights
+
+**Upgrade note — four security fixes, and changes that refuse or fail what used to run, beside a new way to give an export its own page. Read these before bumping.**
+
+- **New: page caps per declared purpose.** `MaxPageSize` and `DefaultPageSize` bound what one response carries, and a deployment sets them for its screens, so an export or a report reading the same rows under the same field policy stopped at the first page or walked the rest one page at a time — a statement and a count per page, and no single snapshot. `DwCaps.Purposes` gives a declared purpose page caps of its own: `options.Caps.Purposes["excel"] = new DwPageCaps { MaxPageSize = 10_000, DefaultPageSize = 10_000 }`, or `Caps:Purposes:excel:MaxPageSize` in configuration, and a query whose `DwPolicyContext.Purpose` is `"excel"` runs under them. A purpose no entry names, or none, runs under the deployment's caps; a value left null takes the deployment's; a value set is at least 1, so no purpose can switch a bound off; only the two page caps are replaced; and a page past a purpose's maximum is refused, never trimmed. The purpose is the host's statement, never the caller's: set it in the endpoint that serves the export, never from a header or a body.
+- **Changed: a context stores its purpose trimmed.** `DwPolicyContext.Purpose` trims what it is given and stores a blank value as null, so `" export "` now matches a purpose-bound rule for `export`, which it used to miss, and means to a rule what it means to a purpose's caps.
+- **Fixed (security): the parts of a struct took nothing from the struct.** A path beneath a member holding an application's own struct had no policy of its own, so with `[DwDenied]` on an `Iban` struct, `Iban.Number` was filtered on, sorted by, grouped by and handed back by a dynamic projection, under `Strict`. A struct is a value, not a navigation: such a path now takes the struct member's denials, operators, cost and audit, beside its own attributes, and never its alias, required filter, forced scope or description. A class navigation is unchanged — a denial of `Customer` still denies only that path.
+- **Fixed (security): a member of a nullable struct had no policy at all.** A query reaches a member of an `Iban?` through the nullable, `Iban.Value.Number`, while the policy names it `Iban.Number`, so the lookup matched nothing: a `[DwDenied]` on the member, or on a member of the struct, did not stop a filter, a sort, a grouping key or a selection of it, typed or dynamic, `Iban.HasValue` was open, and a mask on a member of the struct was not applied when a selection named it through `Value` — in every release since 3.0.0, and this release's typed selection change had widened it before it shipped. The policy now reads such a path as it names it, dropping the `Value`, and reads `HasValue` as the nullable member itself; a framework nullable such as `Salary.Value` is unchanged.
+- **Fixed (security): a typed selection beneath a collection of structs returned each element whole.** `Pairs.Shown` over a `List<Pair>` handed back every `Pair`, a `[DwDenied]` member included, in both tiers, in every release since the policy layer shipped. Each element is now built with what was named and nothing beside it, into a list or an array. On EF Core a list a projection builds with a collection initializer cannot be selected from again, so a typed selection beneath one now fails, as the dynamic one always did.
+- **Changed: under `Strict`, a path through a member a constructor builds is refused rather than run.** EF Core follows a member only through an initializer's binding, so `new LocalizedText(t.NameAr, t.NameEn).Ar` could not be translated and every clause on it reached the caller as a five-hundred. It is refused now as an unknown name is. Build such a member with an initializer, `new LocalizedText { Ar = t.NameAr, En = t.NameEn }`, and its parts filter and sort on the columns; a selection through it works either way.
+- **Fixed: a typed selection through a struct returned its default.** `Select(["Name.Ar"])` over a `LocalizedText` struct came back as an empty name, guarded or not. An application's own struct is built member by member now, and a nullable one through `Value`. A path beneath a framework type (`Born.Year`) stays unbound. A projection the policy synthesizes for a request with no `Selects` now narrows a struct holding a denied member, as it narrows a class, where it left the struct out whole and its allowed members came back empty.
+- **Fixed (security): a transform on a struct's member was never applied.** A struct is read as a copy, and the setter the outbound walk used wrote the masked value into a second copy, so `[DwMask]` — `Hash` and `Tokenize` included — `[DwGeneralize]`, `[DwFormat]`, `[DwTruncate]`, `[DwDefault]` and `[DwMutate]` on a member of an application's own struct emitted the stored value wherever the struct came back whole, typed or dynamic, in both tiers, in memory and from EF Core, since the policy layer shipped. Each changed struct is now written back where it was read from: the member that held it, its position in a list or an array, or the outer struct. **Fail-closed:** a changed struct that cannot be written back — held by a member with no setter, in a collection that cannot be written by position such as a `HashSet`, or as a dictionary's value — fails the query with `InvalidOperationException` rather than hand back the stored value.
+- **Changed: `Bind` reports a refused value as the `InvalidOperationException` it documents.** A cap below 1, a purpose's page cap below 1, a salt too short or a snapshot age that is not positive arrived as the binder's `TargetInvocationException`; `Bind` and `AddDwPolicies` now throw `InvalidOperationException`, with the property's own exception inside however deep the binder wrapped it.
+- **Known limit:** a filter on a whole struct-typed member — a condition whose field is the struct itself — throws `InvalidOperationException` from the builder, guarded or not. Put `[DwNoWhere]` on such a member.
 
 ## Version 3.3.0 highlights
 

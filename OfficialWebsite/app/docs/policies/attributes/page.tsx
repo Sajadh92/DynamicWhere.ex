@@ -233,8 +233,8 @@ public string EmployeeCode { get; set; }`}</Code>
         query project the allowed members instead. See{" "}
         <Link href="/docs/policies/configuration#no-selects">A request that sends no Selects</Link>.
       </Callout>
-      <Callout tone="note" title="A navigation is a separate field; a framework-typed member is not (3.3.0)">
-        A denial on a navigation covers that path alone: <code>Contact</code> is
+      <Callout tone="note" title="A class navigation is a separate field; a framework-typed member is not (3.3.0)">
+        A denial on a class navigation covers that path alone: <code>Contact</code> is
         denied and <code>Contact.Email</code> is a field of its own, because it
         is declared by an application&apos;s own type and can carry an attribute.
         Decorate it, or deny its path. Nothing can be decorated beneath a member
@@ -254,6 +254,51 @@ public string EmployeeCode { get; set; }`}</Code>
         navigated type declares is not such a path, and is still decided by the
         rules naming it. Until 3.3.0 no fragment named such a path, so it
         resolved as allowed.
+      </Callout>
+      <Callout tone="note" title="A struct's parts take the struct member's policy (3.4.0)">
+        A struct is a value, not a navigation. A path beneath a member whose
+        type is an application&apos;s own struct — a value type outside the{" "}
+        <code>System</code> namespaces — or a collection of them takes that
+        member&apos;s policy beside its own: its deny effects, its{" "}
+        <code>[DwOperators]</code> restriction (intersected with the
+        path&apos;s own), its <code>[DwCost]</code> weight and its audited
+        features, from whichever provider supplied them, and never its alias,
+        required filter, forced scope or description. The part&apos;s own
+        attributes still apply, and precedence decides as usual: a sealed
+        attribute beats every rule, so no rule reopens a part of a sealed{" "}
+        <code>[DwDenied]</code> struct, and a rule beats an overridable
+        attribute. Every struct on the path decides it, and a struct inside a
+        class navigation counts where the class itself does not. A struct
+        member that is itself transformed refuses <code>Select</code>,{" "}
+        <code>Group</code> and <code>Aggregate</code> on its parts. Until 3.4.0
+        a <code>[DwDenied]</code> struct&apos;s parts were filtered on, sorted
+        by, grouped by and handed back by a dynamic projection.
+      </Callout>
+      <Code lang="csharp">{`public readonly record struct LocalizedText(string Ar, string En);
+public readonly record struct Iban(string Country, string Number);
+
+public class TenantRow
+{
+    // Name.Ar and Name.En: refused as filters and sorts, still selectable.
+    [DwNoWhere, DwNoOrder]
+    public LocalizedText Name { get; set; }
+
+    // Iban.Number: refused in every clause, as Iban is.
+    [DwDenied]
+    public Iban Iban { get; set; }
+}`}</Code>
+      <Callout tone="note" title="A nullable struct member is covered too (3.4.0)">
+        A query names a part of an <code>Iban?</code> through the nullable,{" "}
+        <code>Iban.Value.Number</code>, where the attribute walk names it{" "}
+        <code>Iban.Number</code>, so the policy reads such a path as the walk
+        names it: the <code>Value</code> is dropped, and the nullable&apos;s own{" "}
+        <code>Iban.HasValue</code> is read as the member <code>Iban</code>.
+        With <code>[DwDenied]</code> on an <code>Iban?</code>, both are
+        refused as <code>Iban</code> is, a <code>[DwDenied]</code> member inside
+        a nullable struct is refused, and a mask on one is applied where a
+        selection names it through <code>Value</code>. A framework nullable,{" "}
+        <code>Salary.Value</code>, is unchanged. Until 3.4.0 such a path matched
+        no rule and was allowed, in every clause and both terminals.
       </Callout>
       <Callout tone="note" title="A denial on an override or an implementation (3.2.0)">
         An access-control attribute on another declaration of a member applies
@@ -305,7 +350,9 @@ public string Department { get; set; }`}</Code>
         query that ran unscoped is scoped, and a required filter may now be
         demanded. A path beneath a member whose type the framework declares
         takes none of the three: a filter on <code>TenantId.Value</code> does not
-        satisfy a <code>[DwRequireWhere]</code> on <code>TenantId</code>.
+        satisfy a <code>[DwRequireWhere]</code> on <code>TenantId</code>. Nor does
+        a part of an application&apos;s struct take any of them from its struct
+        member (3.4.0).
       </Callout>
 
       <h2 id="allow-null">A forced predicate that lets null through</h2>

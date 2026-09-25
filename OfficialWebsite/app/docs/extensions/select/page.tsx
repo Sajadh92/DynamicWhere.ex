@@ -107,6 +107,31 @@ export default function Page() {
               <code>{`Category: { Vendors: [{ Product: { Name: "…" } }] }`}</code>
             </td>
           </tr>
+          <tr>
+            <td>Dotted through an application&apos;s own struct (3.4.0)</td>
+            <td>Built member by member</td>
+            <td><code>"Name.Ar"</code></td>
+            <td>
+              <code>{`Name: { Ar: "…", En: null }`}</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Dotted through a collection of structs (3.4.0)</td>
+            <td>
+              Per-element <code>Select().ToList()</code>, or{" "}
+              <code>ToArray()</code> for an array
+            </td>
+            <td><code>"Pairs.Shown"</code></td>
+            <td>
+              <code>{`Pairs: [{ Shown: "…", Hidden: null }, …]`}</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Dotted beneath a value type the framework declares</td>
+            <td>Left unbound</td>
+            <td><code>"CreatedAt.Year"</code></td>
+            <td><code>CreatedAt</code> keeps its default</td>
+          </tr>
         </tbody>
       </table>
 
@@ -115,6 +140,52 @@ export default function Page() {
         property is automatically included alongside any requested sub-fields —
         but only when the nested type actually declares an <code>Id</code>.
       </Callout>
+
+      <h2 id="structs">Structs (3.4.0)</h2>
+      <p>
+        An application&apos;s own struct — a value type outside the{" "}
+        <code>System</code> namespaces — is built with exactly what was named,
+        and no <code>Id</code> is added: <code>Name.En</code> keeps its default
+        when only <code>Name.Ar</code> is named. Nested structs are built level
+        by level, a collection inside a struct is carried, and the struct is
+        read with a plain member access, so it works on EF Core and in memory.
+        Until 3.4.0 every value-typed member a path went beneath was skipped, so{" "}
+        <code>Select([&quot;Name.Ar&quot;])</code> returned the struct&apos;s
+        default, an empty name.
+      </p>
+      <ul>
+        <li>
+          A nullable struct is named through <code>Value</code>:{" "}
+          <code>&quot;Alias.Value.Ar&quot;</code> builds it where it has a value
+          and leaves it null where it has none. <code>&quot;Alias.Value&quot;</code>{" "}
+          whole, or <code>&quot;Alias.HasValue&quot;</code> alone, leaves it
+          unbound.
+        </li>
+        <li>
+          A collection of structs is built element by element, into a{" "}
+          <code>List&lt;T&gt;</code>, any member type a list can be assigned to,
+          or a <code>T[]</code>. A null collection stays null, and a collection
+          of scalars is still bound whole. Until 3.4.0 the collection was bound
+          whole, so each element came back with every member.
+        </li>
+        <li>
+          Left unbound: a class navigation inside a struct (its siblings are
+          built), a struct or an element in which nothing named can be set, a
+          collection of nullable structs, and a path beneath a framework value
+          type such as <code>&quot;CreatedAt.Year&quot;</code> — a typed row
+          cannot hold the year apart from the date.{" "}
+          <Link href="/docs/extensions/select-dynamic"><code>SelectDynamic</code></Link>{" "}
+          carries such a path as it is named.
+        </li>
+        <li>
+          On EF Core, a list of structs the source projection builds with a
+          collection initializer, <code>new List&lt;Pair&gt; &#123; new Pair &#123; … &#125; &#125;</code>,
+          cannot be selected from again: a path beneath it fails with{" "}
+          <code>InvalidOperationException</code> (&quot;could not be
+          translated&quot;), as it always did for <code>SelectDynamic</code>. A
+          list the projection reads from a query is built as named.
+        </li>
+      </ul>
 
       <h2 id="validations">Validations</h2>
       <ul>

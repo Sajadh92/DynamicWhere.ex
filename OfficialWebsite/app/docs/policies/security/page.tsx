@@ -300,10 +300,15 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         cannot translate it. It is refused only where the whole set of members a
         container can produce is known — an entity&apos;s own EF Core model, and the initializers of a
         projection composed before <code>ApplyPolicy</code>, including a member
-        that projection copies from the entity. A projection that builds its
-        rows any other way — an anonymous type, a constructor with arguments —
-        says nothing about which member each value sets, so no member of such a
-        row is refused here. Rows in memory, a framework
+        that projection copies from the entity. An anonymous type is left
+        alone: EF Core follows each of its members to its argument. Since{" "}
+        <strong>3.4.0</strong> a member or a row an application type&apos;s
+        constructor builds with arguments is refused through every member the
+        constructor leaves unbound, because EF Core follows a member only
+        through an initializer&apos;s binding: <code>new LocalizedText(t.NameAr,
+        t.NameEn).Ar</code> cannot be translated, where{" "}
+        <code>new LocalizedText &#123; Ar = t.NameAr, En = t.NameEn &#125;.Ar</code>{" "}
+        is the column. Rows in memory, a framework
         member the provider translates such as <code>Length</code> or{" "}
         <code>Year</code>, anything beneath a column, the convenience tier and a
         dry run are all unchanged: the path is left alone, and behaves exactly
@@ -339,7 +344,7 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         denial holds on every path that reaches it, and it has to hold whether
         or not the caller names the member. Each request below carried a denied
         or untransformed value out, until 3.2.0 or, where the row says so,
-        until 3.3.0. All are closed.
+        until 3.3.0 or 3.4.0. All are closed.
       </p>
       <table>
         <thead><tr><th>Attack</th><th>Control</th></tr></thead>
@@ -482,6 +487,54 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
             </td>
           </tr>
           <tr>
+            <td>Name a path beneath a denied member holding an application&apos;s own struct: <code>Iban.Number</code> beneath a <code>[DwDenied] Iban</code></td>
+            <td>
+              Such a path takes the struct member&apos;s policy since{" "}
+              <strong>3.4.0</strong>, beside its own: its deny effects, its{" "}
+              <code>[DwOperators]</code> restriction, its <code>[DwCost]</code>{" "}
+              weight and its audited features. A struct is a value, and it was
+              read as a navigation whose members are separate fields, so{" "}
+              <code>Iban.Number</code> was filtered on — a test for a guessed
+              value — sorted by, grouped by with its values as the group keys and
+              handed back by a dynamic projection, under <code>Strict</code>.
+            </td>
+          </tr>
+          <tr>
+            <td>Name a member of a nullable struct through <code>Value</code>: <code>Iban.Value.Number</code> or <code>Iban.HasValue</code> beneath a <code>[DwDenied] Iban?</code>, a <code>[DwDenied]</code> <code>Pair.Value.Hidden</code>, a masked <code>Pair.Value.Code</code></td>
+            <td>
+              Policed since <strong>3.4.0</strong>. The query spells the path
+              through the nullable where the policy names it without, so the
+              lookup matched nothing: each was filtered on, sorted by, grouped by
+              and selected, typed and dynamic, and a mask was not applied. The
+              policy now drops the <code>Value</code> after a nullable struct of
+              the application&apos;s and reads <code>HasValue</code> as the member
+              itself. Present since the policy layer shipped.
+            </td>
+          </tr>
+          <tr>
+            <td>Name one member of each struct in a collection in a typed selection: <code>Pairs.Shown</code> over a <code>List&lt;Pair&gt;</code> whose <code>Pair.Hidden</code> is denied</td>
+            <td>
+              Each element is built with what was named since{" "}
+              <strong>3.4.0</strong>. The typed projection bound a collection of
+              values whole, so every <code>Pair</code> came back whole, the denied
+              member included, in both tiers, while the policy had approved only{" "}
+              <code>Pairs.Shown</code>. Present since the policy layer shipped; the
+              dynamic terminals were never affected.
+            </td>
+          </tr>
+          <tr>
+            <td>Read a masked member of an application&apos;s own struct: <code>[DwMask]</code> on <code>LocalizedText.Code</code>, in a whole row or with the struct selected whole</td>
+            <td>
+              Transformed since <strong>3.4.0</strong>. The struct was read as a
+              copy and the setter wrote into a second one, so every transform on a
+              struct&apos;s member landed on a temporary and the stored value came
+              back, typed and dynamic, in both tiers. Each changed struct is now
+              written back where it was read from, and one that cannot be — held
+              by a member with no setter, in a set, as a dictionary&apos;s value —
+              fails the query instead.
+            </td>
+          </tr>
+          <tr>
             <td>Raise <code>Caps.MaxNavigationDepth</code> above 4 and name a denied member five or more segments out</td>
             <td>
               The attributes of the member at the end of such a path are read
@@ -581,6 +634,7 @@ true order. Add [DwNoOrder] unless that is intended.`}</Code>
         <li>Hold a policed type in a list, never in a dictionary, another framework generic or a member typed <code>object</code>. The policy has no paths into any of them.</li>
         <li>Scope a list&apos;s elements where the row is built. A forced scope on the element type filters the rows that hold the list, never the elements.</li>
         <li>Set <code>DwCaps.DefaultPageSize</code> if the API does not page for itself. It ships off, and the request <code>MaxPageSize</code> never bounded is the one that sent no page at all.</li>
+        <li>Give an export or a report a purpose of its own in <code>DwCaps.Purposes</code> (3.4.0) rather than raising the screens&apos; <code>MaxPageSize</code>, and set <code>DwPolicyContext.Purpose</code> in the endpoint that serves it. Never bind the purpose from a request: a caller who could name it could name its caps, and whatever purpose-bound grants exist.</li>
         <li>Keep <code>DwCaps.MaxConditionSets</code> near the number of sets your clients really send. A set with no conditions passes every other cap, and every set adds a condition or a subquery to the statement a segment becomes.</li>
       </ul>
     </DocPage>

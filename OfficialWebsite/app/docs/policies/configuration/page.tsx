@@ -7,7 +7,7 @@ import Callout from "@/components/Callout";
 export const metadata: Metadata = {
   title: "Policy Configuration — options, caps, tiers and defaults",
   description: "Every DynamicWhere.ex policy option and cap with its default: tiers, what a denied field does to a projection, dry run, the trace on a result, refusal auditing, hash salt, store failure modes, query cost budget, MinGroupSize, plus startup validation and the twenty-two error codes.",
-  keywords: ["DwPolicyOptions", "DwCaps", "MaxQueryCost", "MinGroupSize", "policy configuration"],
+  keywords: ["DwPolicyOptions", "DwCaps", "DwPageCaps", "MaxQueryCost", "MinGroupSize", "policy configuration"],
   alternates: { canonical: "https://doc.dynamicwhere.com/docs/policies/configuration/" },
 };
 
@@ -356,6 +356,17 @@ left out whole: it can hold what the policy cannot name`}</Code>
         The last one is recorded on the field beneath the member that the
         narrowing leaves out.
       </p>
+      <Callout tone="note" title="A struct is narrowed as a class is (3.4.0)">
+        A member holding an application&apos;s own struct with a denied member
+        in it — held directly, or in a list, any type a list can be assigned
+        to, or an array — is narrowed: the typed projection builds a struct
+        member by member, so its allowed members come back and the denied one
+        does not. Until 3.4.0 the gate read a struct as a type the core cannot
+        build and left it out whole, with{" "}
+        <code>left out whole: the core cannot build &apos;…&apos;, which it narrows into</code>,
+        so its allowed members came back empty. A nullable struct, or structs in
+        a collection of another shape, are still left out whole.
+      </Callout>
 
       <h3 id="no-selects-never">Never kept</h3>
       <ul>
@@ -584,6 +595,7 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
         <tbody>
           <tr><td><code>MaxPageSize</code></td><td>1000</td><td>Largest page a caller may request.</td></tr>
           <tr><td><code>DefaultPageSize</code></td><td><strong>0</strong></td><td>Page given to a guarded query that asked for none. Zero, the default, leaves it unpaged.</td></tr>
+          <tr><td><code>Purposes</code></td><td>empty</td><td>Page caps per declared purpose (3.4.0), which replace the two above for a query whose context names that purpose. See <a href="#purposes">Page caps per purpose</a>.</td></tr>
           <tr><td><code>MaxConditions</code></td><td>50</td><td>Conditions in one filter.</td></tr>
           <tr><td><code>MaxConditionDepth</code></td><td>10</td><td>How deep a filter may nest its condition groups, counting the root group as one.</td></tr>
           <tr><td><code>MaxConditionSets</code></td><td>10</td><td>Condition sets in one segment. Each set adds to the one statement a segment becomes.</td></tr>
@@ -746,6 +758,114 @@ PolicyTrace? trace = guarded.LastTrace;`}</Code>
         from a deployment that never configured anything.{" "}
         <code>IsMinGroupSizeSet</code> reports which of the two happened.
       </p>
+
+      <h3 id="purposes">Page caps per purpose (3.4.0)</h3>
+      <p>
+        <code>MaxPageSize</code> and <code>DefaultPageSize</code> bound what
+        one response carries, and a deployment sets them for its screens. An
+        export or a report reads the same rows under the same field policy and
+        was held to the same page: it stopped at the first page, or walked the
+        rest one page at a time — a statement and a count per page, and no
+        single snapshot of the data. <code>DwCaps.Purposes</code> gives such a
+        read page caps of its own without raising the screens&apos;.
+      </p>
+      <Code lang="json">{`"Caps": {
+  "MaxPageSize": 1000,
+  "DefaultPageSize": 100,
+  "Purposes": {
+    "excel": { "MaxPageSize": 10000, "DefaultPageSize": 10000 },
+    "audit-logs": { "MaxPageSize": 5000 }
+  }
+}`}</Code>
+      <Code lang="csharp">{`// or in code, before Configure
+options.Caps.Purposes["excel"] = new DwPageCaps { MaxPageSize = 10_000, DefaultPageSize = 10_000 };
+
+// the export handler: the host declares the purpose, the caller never does
+context.Purpose = "excel";                       // before the read
+FilterResult<TenantRow> file = await rows
+    .ApplyPolicy(context)
+    .ToListAsync(filter, cancellationToken);     // one statement, up to 10,000 rows
+bool truncated = file.TotalCount > file.Data.Count;`}</Code>
+      <p>
+        <code>DwCaps.Purposes</code> is a <code>DwPurposeCaps</code>, an{" "}
+        <code>IDictionary&lt;string, DwPageCaps&gt;</code>, and a{" "}
+        <code>DwPageCaps</code> holds <code>int? MaxPageSize</code> and{" "}
+        <code>int? DefaultPageSize</code>.
+      </p>
+      <ul>
+        <li>
+          A query runs under a purpose&apos;s page caps when its{" "}
+          <code>DwPolicyContext.Purpose</code> names that purpose. The name is
+          trimmed and compared without regard to letter case, the way a
+          purpose-bound rule matches. A context naming no purpose, or one no
+          entry names, runs under the deployment&apos;s caps, so a read that
+          forgets to declare itself is bounded like a screen&apos;s.
+        </li>
+        <li>
+          The context stores its purpose trimmed since 3.4.0, and a null,
+          empty or blank value as null, so <code>&quot; export &quot;</code>{" "}
+          means to a purpose-bound rule what it means to a purpose&apos;s caps;
+          it used to match no rule.
+        </li>
+        <li>
+          A value left null takes the deployment&apos;s cap. A value set must be
+          at least 1 — <code>ArgumentOutOfRangeException</code> otherwise — so
+          no purpose can switch a bound off. The default page a purpose runs
+          under is bounded by the maximum it runs under, as the deployment&apos;s
+          is by its own, and a purpose may lower the caps as well as raise them. With the
+          deployment&apos;s <code>DefaultPageSize</code> at 0, a purpose that sets
+          only <code>MaxPageSize</code> leaves a request with no page unpaged,
+          as the deployment does.
+        </li>
+        <li>
+          Only the two page caps are replaced. Every other cap applies to every
+          purpose alike.
+        </li>
+        <li>
+          A page above the purpose&apos;s maximum is refused, never trimmed:{" "}
+          <code>CapExceeded</code>, <code>SourceOrigin</code>{" "}
+          <code>&quot;MaxPageSize cap (10000), request had 10001&quot;</code>, in
+          both tiers. It applies to <code>ToList</code> and{" "}
+          <code>ToListAsync</code>, typed and dynamic, a{" "}
+          <code>Summary</code>&apos;s page, a <code>Segment</code>&apos;s page, and
+          the composable <code>Page(PageBy)</code>.
+        </li>
+        <li>
+          Any name, and as many as a deployment has — <code>excel</code>,{" "}
+          <code>csv</code>, <code>pdf</code>, <code>audit-logs</code> — and
+          several names may share one <code>DwPageCaps</code>. A null or blank
+          name is refused with <code>ArgumentException</code> and a null value
+          with <code>ArgumentNullException</code>; <code>TryGetValue</code> and{" "}
+          <code>ContainsKey</code> answer false for a null or blank name. Keys
+          are stored trimmed.
+        </li>
+        <li>
+          It binds from <code>Caps:Purposes:&lt;name&gt;:MaxPageSize</code> and{" "}
+          <code>Caps:Purposes:&lt;name&gt;:DefaultPageSize</code>, or, for a
+          section at <code>DynamicWhere:Policies</code>, from the environment
+          variable{" "}
+          <code>DynamicWhere__Policies__Caps__Purposes__excel__MaxPageSize=10000</code>.
+          A misspelt key inside a purpose, or any other cap there such as{" "}
+          <code>MaxConditions</code>, refuses to start, and so does a value
+          below 1.
+        </li>
+        <li>
+          It freezes with the posture: after startup, adding, replacing,
+          removing or clearing a purpose, and setting a value on any{" "}
+          <code>DwPageCaps</code> it holds, throws{" "}
+          <code>InvalidOperationException</code>, and <code>IsReadOnly</code> is
+          true. A second <code>DwPolicy.Configure</code> compares purposes by
+          the caps that apply — see{" "}
+          <a href="#configuring-twice">Configuring twice</a>.
+        </li>
+      </ul>
+      <Callout tone="danger" title="The purpose is the host's statement, never the caller's">
+        A request that could name its own purpose could name its own page caps,
+        and whatever purpose-bound grants exist. Set it in the endpoint that
+        serves the export; never bind it from a request header, a query string
+        or a body. A purpose no entry names runs under the deployment&apos;s caps
+        with nothing said, so a misspelt name bounds the export like a screen.
+      </Callout>
 
       <h2 id="dryrun">Dry run</h2>
       <p>
@@ -953,7 +1073,7 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
             <td><code>Services</code></td>
           </tr>
           <tr>
-            <td>Every value on <code>Caps</code> — the floor that applies, not whether it was written down</td>
+            <td>Every value on <code>Caps</code> — the floor that applies, not whether it was written down — and every purpose&apos;s page caps, by the caps that apply (3.4.0)</td>
             <td>The provider <em>instances</em></td>
           </tr>
           <tr>
@@ -974,7 +1094,12 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
         caller the same result. The catalogue is stricter — a type exposed under
         two names is reported under the last one it was given, so two catalogues
         that resolve every name alike still answer a schema request differently,
-        and the second posture is refused.
+        and the second posture is refused. Purposes are compared over the names
+        either side declares, by the <code>MaxPageSize</code> and{" "}
+        <code>DefaultPageSize</code> each name runs under, a value left null
+        reading as the deployment&apos;s own: a purpose whose caps equal the
+        deployment&apos;s is the same posture as no entry, and one with any other
+        page cap is refused (3.4.0).
       </p>
       <Callout tone="warn" title="A second host runs with the first host's vault, container and rule stores">
         The three on the right are objects a host builds for itself, and a
@@ -1016,7 +1141,8 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
         "DefaultPageSize": 100,
         "MinGroupSize": 5,
         "SchemaDepth": 2,
-        "MaxSchemaFields": 2000
+        "MaxSchemaFields": 2000,
+        "Purposes": { "excel": { "MaxPageSize": 10000, "DefaultPageSize": 10000 } }
       }
     }
   }
@@ -1039,7 +1165,22 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
         sixteen characters are all refused exactly as they are in code. The group
         floor&apos;s opt-out survives unchanged, because it lives in the setter:
         saying nothing leaves it unset, writing <code>1</code> records a
-        deliberate choice.
+        deliberate choice. A purpose&apos;s page caps bind the same way (3.4.0):
+        inside <code>Caps:Purposes:&lt;name&gt;</code> only{" "}
+        <code>MaxPageSize</code> and <code>DefaultPageSize</code> answer, so a
+        misspelt key there, or another cap, refuses to start, and so does a
+        value below one.
+      </p>
+      <p>
+        Since 3.4.0 a value a property refuses is reported as the{" "}
+        <code>InvalidOperationException</code> <code>Bind</code> documents: the
+        message starts{" "}
+        <code>A configured policy value was refused:</code> and{" "}
+        <code>InnerException</code> is the property&apos;s own exception,
+        however deep the binder wrapped it, a purpose&apos;s page cap inside its
+        dictionary included. It used to arrive as the binder&apos;s{" "}
+        <code>TargetInvocationException</code>. See{" "}
+        <Link href="/docs/breaking-changes#bind-refusal">breaking point 54</Link>.
       </p>
       <Callout tone="danger" title="A salt in appsettings.json is not a salt">
         <code>HashSalt</code> binds like anything else, and configuration is the

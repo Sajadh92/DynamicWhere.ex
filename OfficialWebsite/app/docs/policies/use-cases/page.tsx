@@ -382,6 +382,83 @@ public string FullTextNotes { get; set; } = string.Empty;`}</Code>
         <code>ErrorCode</code>.
       </p>
 
+      {/* ----------------------------------------------------------------- 10 */}
+      <h2 id="export">10. An export needs every match in one read; a screen needs a page</h2>
+      <p>
+        <code>MaxPageSize</code> and <code>DefaultPageSize</code> are set for the
+        screens. Raising them for an export raises them for every caller, and
+        leaving them makes the export stop at the first page, or walk the rest a
+        page at a time: a statement and a count per page, and no single snapshot
+        of the data. A declared purpose (3.4.0) gives the export its own two page
+        caps and leaves the screens&apos; alone.
+      </p>
+      <Code lang="csharp">{`// once, before Configure (or Caps:Purposes:excel:MaxPageSize in configuration)
+options.Caps.Purposes["excel"] = new DwPageCaps { MaxPageSize = 10_000, DefaultPageSize = 10_000 };
+
+// in the export endpoint, and nowhere else
+context.Purpose = "excel";
+FilterResult<TenantRow> file = await rows.ApplyPolicy(context).ToListAsync(filter, cancellationToken);
+bool truncated = file.TotalCount > file.Data.Count;`}</Code>
+      <p>
+        <strong>What the caller gets.</strong> Every match up to 10,000 in one
+        statement, under the same field policy as the screen: the same denials,
+        masks, forced scopes and group floor. A page past 10,000 is refused with{" "}
+        <code>CapExceeded</code>, never trimmed, and a screen that declares no
+        purpose keeps its own caps.
+      </p>
+      <Callout tone="danger" title="Let the request name the purpose and it names its own caps">
+        The purpose is the host&apos;s statement about why it reads. Bound from a
+        header, a query string or a body, it lets any caller ask for the largest
+        page any purpose allows, and for whatever a purpose-bound rule grants.
+        Set it in the endpoint that serves the export. A purpose no entry names
+        runs under the deployment&apos;s caps with nothing said, so a misspelt name
+        bounds the export like a screen.
+      </Callout>
+
+      {/* ----------------------------------------------------------------- 11 */}
+      <h2 id="composed">11. A value composed over two columns</h2>
+      <p>
+        A shared kernel type pairs two columns, an Arabic and an English name,
+        into one value the row carries. How the projection builds it decides
+        what a caller can do with its halves, and the struct member&apos;s
+        attributes decide what the policy lets them do (3.4.0).
+      </p>
+      <Code lang="csharp">{`public readonly record struct LocalizedText(string Ar, string En);
+
+public class TenantRow
+{
+    public int Id { get; set; }
+
+    [DwNoWhere, DwNoOrder]
+    public LocalizedText Name { get; set; }
+}
+
+// An initializer: EF Core follows Name.Ar to the NameAr column.
+IQueryable<TenantRow> rows = db.Tenants.Select(t => new TenantRow
+{
+    Id = t.Id,
+    Name = new LocalizedText { Ar = t.NameAr, En = t.NameEn }
+});`}</Code>
+      <p>
+        <strong>What the caller gets.</strong> <code>Name.Ar</code> and{" "}
+        <code>Name.En</code> can be selected, and come back with their values. A
+        filter on either is refused with <code>FieldDeniedForWhere</code> and a
+        sort with <code>FieldDeniedForOrder</code> under <code>Strict</code>,
+        because the parts of a struct take the struct member&apos;s denials. Drop
+        the two attributes and both halves filter and sort on their columns.
+      </p>
+      <Callout tone="warn" title="Build it with a constructor and no clause can reach its halves">
+        <code>new LocalizedText(t.NameAr, t.NameEn)</code> hands EF Core a
+        constructor, and EF Core follows a member only through an
+        initializer&apos;s binding. Under <code>Strict</code> every filter, sort,
+        grouping or aggregate on <code>Name.Ar</code> is then refused as an
+        unknown name is, and elsewhere EF Core throws; a selection still works.
+        Keep <code>[DwNoWhere]</code> on the member either way: a filter on{" "}
+        <code>Name</code> itself, the whole struct, fails in the builder with{" "}
+        <code>InvalidOperationException</code>, and the attribute turns that
+        into a refusal.
+      </Callout>
+
       {/* --------------------------------------------------------------- recap */}
       <h2 id="pairs">The pairs, in one table</h2>
       <p>
@@ -436,6 +513,16 @@ public string FullTextNotes { get; set; } = string.Empty;`}</Code>
             <td>any policy at all</td>
             <td><code>[DwEntity(RequirePolicy)]</code></td>
             <td>a path that forgets <code>ApplyPolicy</code> returns everything</td>
+          </tr>
+          <tr>
+            <td>a purpose&apos;s page caps (3.4.0)</td>
+            <td>the purpose set by the host</td>
+            <td>a caller picks its own caps, and whatever purpose-bound rules grant</td>
+          </tr>
+          <tr>
+            <td>a composed value&apos;s halves in a clause</td>
+            <td>an initializer, not a constructor</td>
+            <td>every filter, sort or grouping on a half is refused under <code>Strict</code>, and fails in the provider elsewhere</td>
           </tr>
         </tbody>
       </table>

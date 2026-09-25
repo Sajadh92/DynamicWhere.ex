@@ -17,10 +17,30 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The forty-five points below cover constraints, surprises, and corner cases —
+        The fifty-four points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
+      <Callout tone="danger" title="Behaviour changes in 3.4.0">
+        Points&nbsp;46 to 54 changed in <strong>3.4.0</strong>. A declared purpose
+        can carry page caps of its own, so an export reads every match in one
+        statement while a screen keeps its page (point&nbsp;46), and a context
+        stores its purpose trimmed (point&nbsp;47). Four security fixes: the
+        parts of a struct take the struct member&apos;s policy, where a denied
+        struct&apos;s parts were filtered on and returned (point&nbsp;48); a typed
+        selection beneath a collection of structs carries only what it names,
+        where each element came back whole (point&nbsp;51); a transform on a
+        struct&apos;s member is applied, where every one was skipped, with a
+        struct that cannot be written back now failing the query
+        (point&nbsp;52); and a member of a nullable struct is policed as the
+        policy names it, where a path through <code>Value</code> matched
+        nothing (point&nbsp;53). Under <code>Strict</code>, a path through a
+        member a constructor builds is refused rather than failing in the
+        provider (point&nbsp;49), and a typed selection through a struct returns
+        its values rather than its default (point&nbsp;50). And{" "}
+        <code>Bind</code> reports a value a property refuses as the{" "}
+        <code>InvalidOperationException</code> it documents (point&nbsp;54).
+      </Callout>
       <Callout tone="danger" title="Behaviour changes in 3.3.0">
         Points&nbsp;30 to 45 changed in <strong>3.3.0</strong>. Under{" "}
         <code>Strict</code>, a path that exists on the type and names no value
@@ -1533,11 +1553,14 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         </tbody>
       </table>
       <p>
-        A projection that does not build its rows with an object initializer is
-        left alone whole: an anonymous type, and a constructor with arguments,
-        say nothing about which member each value sets, so no member of such a
-        row is refused here and none is claimed. A projection is otherwise read
-        only as far as its initializer can be read. An entity query names every
+        An anonymous type is left alone whole: EF Core follows each of its
+        members to its argument, so no member of such a row is refused here.
+        Since <strong>3.4.0</strong> a row or a member an application type&apos;s
+        constructor builds with arguments has every member the constructor
+        leaves unbound refused, because EF Core follows a member only through an
+        initializer&apos;s binding; 3.3.0 left such a projection alone, and every
+        clause on one failed inside the provider (point&nbsp;49). A projection is
+        otherwise read only as far as its initializer can be read. An entity query names every
         producible member from the model; a projection
         names them only where each assignment is a nested initializer, a member
         copied from the entity, a value built and left empty, or a conditional
@@ -2214,6 +2237,490 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         <Link href="/docs/errors">Error Codes Reference</Link>.
       </p>
 
+      <h2 id="purpose-page-caps">46. A Declared Purpose Can Carry Page Caps of Its Own</h2>
+      <p>
+        <code>MaxPageSize</code> and <code>DefaultPageSize</code> bound what one
+        response carries, and a deployment sets them for its screens. An export
+        or a report read the same rows under the same field policy and was held
+        to the same page: it stopped at the first page, or walked the rest one
+        page at a time — a statement and a count per page, and no single
+        snapshot of the data.
+      </p>
+      <p>
+        Since <strong>3.4.0</strong>{" "}
+        <Link href="/docs/policies/configuration#purposes"><code>DwCaps.Purposes</code></Link>{" "}
+        gives a declared purpose page caps of its own. It is a{" "}
+        <code>DwPurposeCaps</code>, an{" "}
+        <code>IDictionary&lt;string, DwPageCaps&gt;</code>, and a{" "}
+        <code>DwPageCaps</code> holds <code>int? MaxPageSize</code> and{" "}
+        <code>int? DefaultPageSize</code>. A query runs under them when its{" "}
+        <code>DwPolicyContext.Purpose</code> names that purpose, trimmed and
+        compared without regard to letter case, as a purpose-bound rule matches.
+      </p>
+      <Code lang="csharp">{`// appsettings: "Caps": { "MaxPageSize": 1000, "DefaultPageSize": 100,
+//   "Purposes": { "excel": { "MaxPageSize": 10000, "DefaultPageSize": 10000 } } }
+
+context.Purpose = "excel";                       // before the read, set by the host
+FilterResult<TenantRow> file = await rows
+    .ApplyPolicy(context)
+    .ToListAsync(filter, cancellationToken);     // one statement, up to 10,000 rows
+bool truncated = file.TotalCount > file.Data.Count;`}</Code>
+      <ul>
+        <li>
+          A context naming no purpose, or one no entry names, runs under the
+          deployment&apos;s caps, so a read that forgets to declare itself is
+          bounded like a screen&apos;s.
+        </li>
+        <li>
+          A value left null takes the deployment&apos;s cap. A value set is at
+          least 1, so no purpose can switch a bound off, and the default page
+          a purpose runs under is bounded by the maximum it runs under.
+        </li>
+        <li>
+          Only the two page caps are replaced. A page above the purpose&apos;s
+          maximum is refused with <code>CapExceeded</code>, in both tiers, never
+          trimmed: <code>ToList</code> and <code>ToListAsync</code>, typed and
+          dynamic, a <code>Summary</code>&apos;s page, a <code>Segment</code>&apos;s
+          page and the composable <code>Page(PageBy)</code>.
+        </li>
+        <li>
+          It binds from <code>Caps:Purposes:&lt;name&gt;:MaxPageSize</code> and{" "}
+          <code>:DefaultPageSize</code>, where any other key refuses to start,
+          freezes with the posture, and is compared by the caps that apply when{" "}
+          <code>DwPolicy.Configure</code> is called again.
+        </li>
+      </ul>
+      <Callout tone="warn" title="The purpose is the host's statement, never the caller's">
+        A request that could name its own purpose could name its own page caps,
+        and whatever purpose-bound grants exist. Set it in the endpoint that
+        serves the export; never bind it from a request header, a query string
+        or a body.
+      </Callout>
+      <p>
+        <strong>Who is affected:</strong> nobody who declares no purpose. A
+        second <code>DwPolicy.Configure</code> declaring a purpose the first did
+        not, with caps that differ from the deployment&apos;s, asks for a
+        different posture and is refused.
+      </p>
+
+      <h2 id="purpose-trimmed">47. A Context Stores Its Purpose Trimmed</h2>
+      <p>
+        Setting <code>DwPolicyContext.Purpose</code> stores the value trimmed,
+        and a null, empty or blank value is stored as null. A rule&apos;s purpose
+        was already trimmed where the rule is built, and both compare without
+        regard to letter case, so a context declaring{" "}
+        <code>&quot; export &quot;</code> now matches a purpose-bound rule for{" "}
+        <code>export</code> — it used to match none — and means to a rule what it
+        means to a purpose&apos;s page caps (point&nbsp;46).
+      </p>
+      <p>
+        <strong>Who is affected:</strong> a host that set a purpose with
+        surrounding spaces: its purpose-bound rules apply to it now. A blank
+        purpose reads back as null.
+      </p>
+
+      <h2 id="struct-parts">48. The Parts of a Struct Take the Struct Member&apos;s Policy</h2>
+      <p>
+        A path beneath a member whose type is an application&apos;s own struct —
+        a value type outside the <code>System</code> namespaces — or a
+        collection of them takes that member&apos;s policy, as a path beneath a
+        framework-typed member has since 3.3.0 (point&nbsp;37). A struct is a
+        value, not a navigation. The attribute walk read one as a navigation
+        whose members are separate fields, so a denial of the struct reached
+        none of them.
+      </p>
+      <Callout tone="danger" title="Fixed (security): a denied struct's parts had no policy">
+        With <code>[DwDenied]</code> on an <code>Iban</code> struct,{" "}
+        <code>Iban.Number</code> was filtered on — a test for a guessed value —
+        sorted by, grouped by with its values as the group keys and handed back
+        by a dynamic projection, under <code>Strict</code>. Until{" "}
+        <strong>3.4.0</strong>, in both tiers.
+      </Callout>
+      <ul>
+        <li>
+          Taken from the struct member, from every provider, attributes and rules
+          alike: its deny effects per feature, its <code>[DwOperators]</code>{" "}
+          restriction (intersected with the path&apos;s own), its{" "}
+          <code>[DwCost]</code> weight and its audited features. Not taken: its
+          alias, required filter, forced scope and descriptive facts, which come
+          from the path&apos;s own member.
+        </li>
+        <li>
+          The path&apos;s own attributes still apply beside the struct
+          member&apos;s (<code>[DwNoOrder]</code> on <code>LocalizedText.En</code>),
+          and precedence decides as usual: a rule allowing{" "}
+          <code>Soft.Number</code> replaces an overridable deny on{" "}
+          <code>Soft</code>, and no rule replaces a sealed{" "}
+          <code>[DwDenied]</code> on the struct.
+        </li>
+        <li>
+          Every struct on the path decides it: <code>Card.Inner.Ar</code> takes{" "}
+          <code>Card</code>&apos;s and <code>Inner</code>&apos;s policy. A struct
+          inside a class navigation counts (<code>Owner.Name.Ar</code> takes{" "}
+          <code>Owner.Name</code>&apos;s); the class itself does not, so a denial
+          of <code>Customer</code> still denies only that path.
+        </li>
+        <li>
+          A struct member that is itself transformed refuses <code>Select</code>,{" "}
+          <code>Group</code> and <code>Aggregate</code> on its parts; a part that
+          declares its own transform is transformed as any member is.
+        </li>
+        <li>
+          Past the attribute walk&apos;s depth the attributes of each struct the
+          path passes through, and of the path&apos;s own member, are read
+          directly.
+        </li>
+        <li>
+          <code>PolicyResolver.Explain</code> names the struct member&apos;s
+          attribute as <code>DecidedBy</code>, and{" "}
+          <code>PolicySchemaBuilder.Describe</code> (<code>POST /schema</code>)
+          reports each part with its struct member&apos;s denials.
+        </li>
+      </ul>
+      <Code lang="csharp">{`// Name.Ar and Name.En: FieldDeniedForWhere, and FieldDeniedForOrder under Strict; still selectable
+[DwNoWhere, DwNoOrder]
+public LocalizedText Name { get; set; }`}</Code>
+      <Callout tone="note" title="A nullable struct too">
+        A member declared <code>Iban?</code> is named through{" "}
+        <code>Value</code> — <code>Iban.Value.Number</code> — and since 3.4.0
+        the policy reads such a path as it names it, <code>Iban.Number</code>,
+        so the same rules hold there (point&nbsp;53).
+      </Callout>
+      <Callout tone="warn" title="A filter on the whole struct fails in the builder">
+        A condition whose field is the struct itself — <code>Name</code>, not{" "}
+        <code>Name.Ar</code> — fails with <code>InvalidOperationException</code>{" "}
+        (&quot;The binary operator NotEqual is not defined for the types
+        &apos;…&apos; and &apos;System.Object&apos;.&quot;), guarded or not, in
+        both tiers. <code>[DwNoWhere]</code> on the member turns it into a
+        refusal.
+      </Callout>
+      <p>
+        <strong>Who is affected:</strong> a caller that filtered, sorted, grouped
+        or selected a part of a denied, restricted, weighted or audited struct
+        member is refused, dropped, charged or recorded now, as for the member
+        itself: a filter, a grouping or an aggregate on a denied part is refused
+        in both tiers, and a select or an order is refused under{" "}
+        <code>Strict</code> and dropped under <code>Convenience</code>.
+      </p>
+
+      <h2 id="constructed-member">49. Under <code>Strict</code>, a Path Through a Member a Constructor Builds Is Refused</h2>
+      <p>
+        EF Core follows a member only through an initializer&apos;s binding.{" "}
+        <code>new LocalizedText(t.NameAr, t.NameEn).Ar</code> cannot be
+        translated, while{" "}
+        <code>new LocalizedText &#123; Ar = t.NameAr, En = t.NameEn &#125;.Ar</code>{" "}
+        is <code>t.NameAr</code> and translates to the column. Point&nbsp;30 left a
+        projection built with a constructor with arguments alone, reading it as
+        saying nothing about which member each value sets.
+      </p>
+      <Callout tone="danger" title="Fixed: a five-hundred where the strict tier promises a refusal">
+        A filter, an order, a grouping key, an aggregated field or a segment
+        condition naming <code>Name.Ar</code> over{" "}
+        <code>new LocalizedText(t.NameAr, t.NameEn)</code> passed every check the
+        policy made, and EF Core threw <code>InvalidOperationException</code>{" "}
+        (&quot;could not be translated&quot;). Until <strong>3.4.0</strong>.
+      </Callout>
+      <p>
+        Under <code>Strict</code>, outside a dry run, such a path is now refused
+        as an unknown name is: the clause&apos;s own <code>FieldDeniedFor*</code>{" "}
+        code and <code>FieldPath</code> <code>&quot;*&quot;</code>, and the trace
+        records{" "}
+        <code>the member exists on the type and the query cannot compute it, so it is refused as an unknown name is</code>.
+      </p>
+      <ul>
+        <li>
+          A row built by its own constructor, a positional record row
+          (<code>Select(t =&gt; new TenantRecord(t.Id, t.NameAr))</code>), has
+          every member a clause names refused; an unfiltered, unsorted read of it
+          still works.
+        </li>
+        <li>
+          A constructor with an initializer beside it
+          (<code>new Money(t.Amount) &#123; Currency = t.Currency &#125;</code>): a
+          member the initializer binds (<code>Money.Currency</code>) stays usable,
+          and a member left to the constructor (<code>Money.Amount</code>) is
+          refused.
+        </li>
+        <li>
+          A conditional: a constructor in either branch refuses what that branch
+          leaves unbound, whatever the other branch binds, because EF Core reads
+          the member through both.
+        </li>
+        <li>
+          Left alone, as before: an anonymous type, whose constructor names its
+          members; the framework&apos;s own types
+          (<code>new DateTime(y, 1, 1)</code>), which a provider may translate; a
+          collection; a type the EF Core model stores as a column on any entity,
+          through a value converter or as a spatial point; a projection with no EF
+          Core entity behind it; a provider that is not EF Core&apos;s own; rows
+          in memory; the convenience tier and a dry run, which fail as the
+          unguarded query does.
+        </li>
+        <li>
+          A selection through such a member still works: EF Core evaluates the
+          last projection on the client.
+        </li>
+      </ul>
+      <p>
+        <strong>Who is affected:</strong> no query that ran — each refused
+        request failed inside the provider before. To make the parts usable,
+        build the member with an initializer.
+      </p>
+
+      <h2 id="typed-struct-select">50. A Typed Selection Through a Struct Returns Its Values</h2>
+      <p>
+        The typed projection —{" "}
+        <Link href="/docs/extensions/select"><code>Select&lt;T&gt;</code></Link>, and
+        a <code>Filter</code>&apos;s or a <code>Segment</code>&apos;s{" "}
+        <code>Selects</code> on the typed terminals — skipped every value-typed
+        member a path went beneath.
+      </p>
+      <Callout tone="danger" title="Fixed: a struct's part came back as its default">
+        <code>Select([&quot;Name.Ar&quot;])</code> over a{" "}
+        <code>LocalizedText</code> struct returned the struct&apos;s default, an
+        empty name, with nothing refused, guarded or not. Until{" "}
+        <strong>3.4.0</strong>.
+      </Callout>
+      <p>
+        An application&apos;s own struct is built member by member now, as a
+        class navigation is: the row carries what was named and nothing beside
+        it, so <code>Name.En</code> keeps its default when only{" "}
+        <code>Name.Ar</code> is named. Nested structs are built level by level, a
+        collection inside a struct is carried, and the struct is read with a
+        plain member access, so it works on EF Core, through the
+        projection&apos;s initializer or evaluated on the client, and in memory.
+        A nullable struct is named through <code>Value</code>{" "}
+        (<code>Alias.Value.Ar</code>), as the path validator reads it, and built
+        where it has a value; <code>Alias.Value</code> named whole, or{" "}
+        <code>Alias.HasValue</code> alone, leaves it unbound.
+      </p>
+      <ul>
+        <li>
+          Still unbound: a class navigation inside a struct, whose siblings are
+          built; a struct in which nothing named can be set; and a path beneath a
+          framework-typed member (<code>Born.Year</code>,{" "}
+          <code>Code.Length</code>) — a typed row cannot hold the year apart from
+          the date, and binding the date whole would return more than the path
+          names. The dynamic terminals carry such a path as it is named.
+        </li>
+        <li>
+          A projection the policy synthesizes for a request with no{" "}
+          <code>Selects</code> narrows a member holding an application&apos;s own
+          struct with a denied member, held directly or in a list, any type a list
+          can be assigned to, or an array, as it narrows a class: the allowed
+          members come back and the denied one does not. It used to read a struct
+          as a type the core cannot build and leave it out whole —{" "}
+          <code>left out whole: the core cannot build &apos;…&apos;, which it narrows into</code>{" "}
+          — so the allowed members came back empty. A nullable struct, or structs
+          in a collection of another shape, are still left out whole.
+        </li>
+      </ul>
+      <p>
+        <strong>Who is affected:</strong> a typed query naming a path beneath a
+        struct receives the values instead of defaults, and a guarded query with
+        no <code>Selects</code> over a row holding such a struct receives its
+        allowed members instead of an empty struct.
+      </p>
+
+      <h2 id="struct-collection-select">51. A Typed Selection Beneath a Collection of Structs Carries Only What It Names</h2>
+      <p>
+        The typed projection bound every collection of values whole. That is
+        right for strings, numbers and dates, which have no member a policy
+        names. A struct has.
+      </p>
+      <Callout tone="danger" title="Fixed (security): each element came back whole, a denied member included">
+        <code>Pairs.Shown</code> over a <code>List&lt;Pair&gt;</code> handed back
+        every <code>Pair</code> whole, a <code>[DwDenied]</code> member included,
+        in both tiers, while the policy had approved only{" "}
+        <code>Pairs.Shown</code>. Selecting <code>Pairs</code> whole was, and is,
+        refused when an element member is denied, and the dynamic terminals were
+        never affected: they project{" "}
+        <code>Pairs.Select(v =&gt; new(v.Shown))</code>. Present since the policy
+        layer shipped in 3.0.0.
+      </Callout>
+      <p>
+        Each element of a collection of an application&apos;s own structs is
+        built member by member now,{" "}
+        <code>Pairs.Select(v =&gt; new Pair &#123; Shown = v.Shown &#125;).ToList()</code>,
+        into a <code>List&lt;T&gt;</code>, any member type a{" "}
+        <code>List&lt;T&gt;</code> can be assigned to, or a <code>T[]</code>. It
+        works on EF Core, where the projection reads the list from a query, and in
+        memory.
+      </p>
+      <ul>
+        <li>A null collection stays null.</li>
+        <li>
+          A collection of nullable structs, a collection of another shape, and an
+          element in which nothing named can be set are left unbound: nothing is
+          carried rather than everything.
+        </li>
+        <li>
+          A collection of scalars — strings, numbers, dates — is still bound
+          whole.
+        </li>
+      </ul>
+      <Callout tone="warn" title="Changed beside it: a list a projection builds with a collection initializer">
+        <code>Pairs = new List&lt;Pair&gt; &#123; new Pair &#123; … &#125; &#125;</code>{" "}
+        in the source projection is a list EF Core cannot select from again, so a
+        typed selection beneath it now fails with{" "}
+        <code>InvalidOperationException</code> (&quot;could not be
+        translated&quot;), guarded or not, as the dynamic terminals always did; it
+        used to return each element whole. Build such a list from a query,{" "}
+        <code>o.Lines.Select(l =&gt; new Pair &#123; … &#125;).ToList()</code>, or
+        name the collection whole where nothing in it is denied.
+      </Callout>
+      <p>
+        <strong>Who is affected:</strong> a typed selection naming a member
+        beneath a collection of structs receives that member and nothing beside
+        it. One over a list a projection builds with a collection initializer, on
+        EF Core, fails until the list is built from a query.
+      </p>
+
+      <h2 id="struct-transforms">52. A Transform on a Member of a Struct Is Applied</h2>
+      <p>
+        The outbound walk read a struct as a boxed copy, and the compiled setter
+        unboxed a second copy to write into, so a transform declared on a member
+        of an application&apos;s own struct landed on a temporary.
+      </p>
+      <Callout tone="danger" title="Fixed (security): every transform on a struct's member was skipped">
+        <code>[DwMask]</code> with any strategy — <code>Hash</code> and{" "}
+        <code>Tokenize</code> included — <code>[DwGeneralize]</code>,{" "}
+        <code>[DwFormat]</code>, <code>[DwTruncate]</code>,{" "}
+        <code>[DwDefault]</code> and <code>[DwMutate]</code> on a struct&apos;s
+        member emitted the stored value: in both tiers, from rows in memory and
+        from EF Core, typed and dynamic, wherever the struct came back in a whole
+        row or was selected whole. A class member was never affected, nor a
+        dynamic selection of a path beneath the struct, which builds an object of
+        its own. Present since the policy layer shipped in 3.0.0.
+      </Callout>
+      <p>
+        The setter writes into the box in place now, and both passes of the walk
+        write each changed struct back where it was read from, innermost first:
+        into the member that held it, into its position in a list or an array, or
+        into the outer struct that held it. Nullable structs returned whole, lists
+        and arrays of structs, structs inside structs, a struct inside a class
+        navigation and a struct past the attribute walk&apos;s depth are all
+        transformed, and a member the policy names is transformed once, by the
+        pass along its path. A source of rows in memory is still transformed in
+        place, its structs included, as class members are.
+      </p>
+      <Callout tone="warn" title="Behaviour change (fail-closed): a struct that cannot be written back fails the query">
+        A struct a transform changed that cannot be written back now fails the
+        query with <code>InvalidOperationException</code> rather than emit the
+        stored value: a struct held by a member with no setter (the message says
+        it passes through a struct held by a member with no setter), structs
+        held in a collection that cannot be written by position such as a{" "}
+        <code>HashSet&lt;T&gt;</code> (the message asks to hold the structs in a
+        list or an array), and a struct that is a dictionary&apos;s value (the
+        message says it cannot be written back where it was read from).
+      </Callout>
+      <p>
+        <strong>Who is affected:</strong> every deployment with a transform on a
+        struct&apos;s member returns the transformed value where it returned the
+        stored one. One that holds such a struct where it cannot be written back
+        sees the query fail until the member gets a setter or the structs move
+        into a list or an array. A member inside a nullable struct that a
+        selection names through <code>Value</code> is transformed as well
+        (point&nbsp;53). See{" "}
+        <Link href="/docs/policies/transforms#graph">Transforms</Link>.
+      </p>
+
+      <h2 id="nullable-struct-parts">53. A Member of a Nullable Struct Is Policed as the Policy Names It</h2>
+      <p>
+        A query reaches a member of an <code>Iban?</code> through the nullable,{" "}
+        <code>Iban.Value.Number</code>, because that is the member it compiles.
+        The attribute walk looks through the nullable and names the same member{" "}
+        <code>Iban.Number</code>, and so do the type&apos;s transforms, audits
+        and fragments. Looked up as the query spells it, the path matched none of
+        them.
+      </p>
+      <Callout tone="danger" title="Fixed (security): a nullable struct's members had no policy">
+        A <code>[DwDenied]</code> on the nullable member, or on a member of the
+        struct, did not stop a filter, a sort, a grouping key or a selection of
+        that member, typed or dynamic, under <code>Strict</code>;{" "}
+        <code>Iban.HasValue</code> was open; and a mask on a member of the struct
+        was not applied when a selection named it through <code>Value</code>, as
+        a result column or as a group key. Present since the policy layer shipped
+        in 3.0.0; the typed selection change of this release (point&nbsp;50) had
+        widened it to the typed terminal before release.
+      </Callout>
+      <p>
+        A <code>Value</code> after a nullable struct of the application&apos;s is
+        now dropped wherever the policy reads a path — the resolver, the outbound
+        walk, the summary&apos;s key and aggregate transforms, the group floor and
+        the past-depth transforms — so <code>Iban.Value.Number</code> is decided
+        as <code>Iban.Number</code> and <code>Iban.Value</code> as{" "}
+        <code>Iban</code>, and the nullable&apos;s own members,{" "}
+        <code>HasValue</code> included, are read as the nullable member. A
+        framework nullable, <code>Salary.Value</code>, is unchanged.
+      </p>
+      <ul>
+        <li>
+          With <code>[DwDenied] Iban? Iban</code>,{" "}
+          <code>Iban.Value.Number</code> and <code>Iban.HasValue</code> are
+          refused as <code>Iban</code> is: in every clause under{" "}
+          <code>Strict</code>, and as a filter, a group or an aggregate under{" "}
+          <code>Convenience</code>.
+        </li>
+        <li>
+          A <code>[DwDenied]</code> member inside a nullable struct
+          (<code>Pair.Value.Hidden</code>) is refused, and an allowed one
+          (<code>Pair.Value.Shown</code>) stays usable.
+        </li>
+        <li>
+          A mask on a member inside a nullable struct
+          (<code>Pair.Value.Code</code>) is applied where a selection names it
+          through <code>Value</code>: on the typed terminal, on the dynamic one —
+          the walk steps through <code>Value</code> on the generated row — as a
+          group key (<code>PairValueCode</code>) and past the walk&apos;s depth.
+          The group floor a masked member declares applies.
+        </li>
+        <li>
+          <code>PolicyResolver.Resolve</code> and <code>Explain</code> report the
+          path as the policy names it, <code>Iban.Number</code>; the trace keeps
+          the caller&apos;s spelling.
+        </li>
+      </ul>
+      <p>
+        <strong>Who is affected:</strong> a caller that reached a denied, masked,
+        restricted or audited member of a nullable struct through{" "}
+        <code>Value</code> is refused, dropped, masked or recorded now, as
+        through the member itself.
+      </p>
+
+      <h2 id="bind-refusal">54. <code>Bind</code> Reports a Refused Value as <code>InvalidOperationException</code></h2>
+      <p>
+        <code>DwPolicyConfiguration.Bind</code> documents{" "}
+        <code>InvalidOperationException</code> for a value a property refuses: a
+        cap below one, a purpose&apos;s page cap below one, a hash salt too short,
+        a snapshot age or refresh interval that is not positive. The binder calls
+        each setter by reflection, so such a value arrived as a{" "}
+        <code>TargetInvocationException</code> instead. Changed in{" "}
+        <strong>3.4.0</strong>.
+      </p>
+      <p>
+        It arrives as the documented <code>InvalidOperationException</code> now.
+        The message starts{" "}
+        <code>A configured policy value was refused:</code> and{" "}
+        <code>InnerException</code> is the property&apos;s own exception
+        (<code>ArgumentOutOfRangeException</code>,{" "}
+        <code>ArgumentException</code>), however deep the binder wrapped it. A
+        purpose&apos;s page cap is bound inside a dictionary, where
+        Microsoft.Extensions.Configuration.Binder 8 adds an{" "}
+        <code>InvalidOperationException</code> of its own around the{" "}
+        <code>TargetInvocationException</code>; it is reported the same way.{" "}
+        <code>AddDwPolicies</code> binds
+        through <code>Bind</code>, so a host that starts with such a value fails
+        the same way.
+      </p>
+      <p>
+        <strong>Who is affected:</strong> code that caught{" "}
+        <code>TargetInvocationException</code> around <code>Bind</code> or{" "}
+        <code>AddDwPolicies</code> catches <code>InvalidOperationException</code>{" "}
+        instead. A host that let startup fail sees a different exception type.
+        See <Link href="/docs/policies/configuration#from-a-file">Configuration from a file</Link>.
+      </p>
+
       <h2 id="next">See also</h2>
       <ul>
         <li>
@@ -2263,6 +2770,30 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         <li>
           <Link href="/docs/extensions#materialization">Materialization →</Link>{" "}
           context for point 28: every async terminal and its overloads.
+        </li>
+        <li>
+          <Link href="/docs/policies/configuration#purposes">Page caps per purpose →</Link>{" "}
+          context for points 46 and 47.
+        </li>
+        <li>
+          <Link href="/docs/policies/attributes#access">Access control →</Link>{" "}
+          context for point 48: the parts of a struct.
+        </li>
+        <li>
+          <Link href="/docs/extensions/select#structs"><code>Select&lt;T&gt;</code> → structs</Link>{" "}
+          context for points 50 and 51.
+        </li>
+        <li>
+          <Link href="/docs/policies/transforms#graph">Transforms → through the graph</Link>{" "}
+          context for point 52.
+        </li>
+        <li>
+          <Link href="/docs/policies/attributes#access">Access control → a nullable struct</Link>{" "}
+          context for point 53.
+        </li>
+        <li>
+          <Link href="/docs/policies/configuration#from-a-file">Configuration from a file →</Link>{" "}
+          context for point 54.
         </li>
       </ul>
     </DocPage>

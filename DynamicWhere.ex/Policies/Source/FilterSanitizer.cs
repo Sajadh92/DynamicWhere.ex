@@ -1824,8 +1824,9 @@ internal static class FilterSanitizer
     /// Gates the key of every nested node a path passes through, and keeps the ones that survive.
     /// </summary>
     /// <remarks>
-    /// The projection builder adds the key of each nested node whether the caller named it or not,
-    /// so the key is in the result whatever this decides. Naming it here is what lets the outbound
+    /// The projection builder adds the key of each nested class it builds whether the caller named it
+    /// or not, so the key is in the result whatever this decides. A struct's is never added, and is
+    /// neither kept nor gated here (see <c>Gate.HasKey</c>). Naming it here is what lets the outbound
     /// transform see it as carried — without that a masked nested key leaves unmasked, because the
     /// walker matches a carried path against the projection and the caller never wrote this one.
     /// <para>
@@ -2132,7 +2133,7 @@ internal static class FilterSanitizer
     /// <remarks>
     /// A field whose type can hold what the policy cannot name, a framework collection of a policed
     /// type or a member typed <see cref="object"/>, is left out of the narrowing: the core projects it
-    /// whole. The builder adds the key of every node it narrows, so a denied key leaves the member out,
+    /// whole. The builder adds the key of every class it narrows, so a denied key leaves the member out,
     /// and so does a path the core cannot project.
     /// </remarks>
     private static string? Narrowed(string member, List<string> survivors, Gate gate, RowShape rows, List<string> allowed)
@@ -3065,11 +3066,18 @@ internal static class FilterSanitizer
         /// <summary>
         /// True when the type a path names carries a key the projection builder will add.
         /// </summary>
+        /// <remarks>
+        /// The builder adds the key of a class it builds and never of a struct: a struct is built with
+        /// exactly what was named, in memory and on EF Core, typed and dynamic. Read as a class, a struct
+        /// holding an <c>Id</c> had that key added to every selection through it, so a caller naming
+        /// <c>DeniedBy.Value.Why</c> received <c>Id</c> beside it, and one whose <c>Id</c> is denied had the
+        /// selection of every other member refused for a key no builder would have carried.
+        /// </remarks>
         internal bool HasKey(string path)
         {
             Type? type = TypeAt(path);
 
-            return type is not null && CacheReflection.FindProperty(type, "Id") is not null;
+            return type is not null && !type.IsValueType && CacheReflection.FindProperty(type, "Id") is not null;
         }
 
         /// <summary>
@@ -3833,8 +3841,10 @@ internal static class FilterSanitizer
                 {
                     string node = path[..cut];
 
+                    // A struct is built with what was named and no key beside it (see HasKey).
                     if (!nodes.Add(node)
                         || TypeAt(_entityType, node) is not { } type
+                        || type.IsValueType
                         || CacheReflection.FindProperty(type, "Id") is not { } key)
                     {
                         continue;

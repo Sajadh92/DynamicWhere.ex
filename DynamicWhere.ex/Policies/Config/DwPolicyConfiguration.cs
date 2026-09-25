@@ -1,3 +1,4 @@
+using System.Reflection;
 using DynamicWhere.ex.Policies.Resolution;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -84,7 +85,18 @@ public static class DwPolicyConfiguration
             throw new ArgumentNullException(nameof(section));
         }
 
-        section.Bind(options, binder => binder.ErrorOnUnknownConfiguration = true);
+        try
+        {
+            section.Bind(options, binder => binder.ErrorOnUnknownConfiguration = true);
+        }
+        catch (TargetInvocationException refused) when (refused.InnerException is { } setter)
+        {
+            // The binder calls each setter by reflection, so a value the property refuses arrived wrapped:
+            // a cap below one as a TargetInvocationException, the same cap inside a purpose as an
+            // InvalidOperationException. Reported one way, with the property's own reason inside.
+            throw new InvalidOperationException(
+                $"A configured policy value was refused: {setter.Message}", setter);
+        }
 
         return options;
     }

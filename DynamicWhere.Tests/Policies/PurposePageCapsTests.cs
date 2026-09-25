@@ -302,7 +302,7 @@ public class PurposePageCapsTests
     [Fact]
     public void A_purpose_cap_configured_below_one_refuses_to_start()
     {
-        Assert.ThrowsAny<Exception>(() => new DwPolicyOptions().Bind(Section(("Caps:Purposes:excel:MaxPageSize", "0"))));
+        Assert.Throws<InvalidOperationException>(() => new DwPolicyOptions().Bind(Section(("Caps:Purposes:excel:MaxPageSize", "0"))));
     }
 
     // ---- the purpose itself ----------------------------------------------------------------------

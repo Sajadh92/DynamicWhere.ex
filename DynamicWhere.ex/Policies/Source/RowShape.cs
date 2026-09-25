@@ -377,6 +377,14 @@ internal sealed class RowShape
                     return false;
                 }
             }
+
+            // The member itself as well: EF Core can neither compare nor order a value it would have to
+            // build on the client, so ORDER BY Name over new LocalizedText(...) fails in the provider as
+            // Name.Ar does.
+            if (_constructed.ContainsKey(string.Join(".", segments)))
+            {
+                return false;
+            }
         }
 
         if (_opaque is not null && _opaque.Contains(string.Join(".", segments)))

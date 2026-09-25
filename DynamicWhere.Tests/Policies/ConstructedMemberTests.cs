@@ -237,6 +237,41 @@ namespace DynamicWhere.Tests.Policies
         }
 
         [Fact]
+        public void A_clause_on_the_constructed_member_itself_is_refused_under_the_strict_tier()
+        {
+            // EF Core can no more order by, or test for null, a value it would build on the client than it
+            // can read a member of one.
+            PolicyException order = Assert.Throws<PolicyException>(
+                () => Guard(Constructed(), DwTier.Strict).ToList(OrderBy("Name")));
+
+            Assert.Equal(PolicyErrorCode.FieldDeniedForOrder, order.ErrorCode);
+            Assert.Equal("*", order.FieldPath);
+
+            IQueryable<ZcRow> rows = _db.Tenants.Select(t => new ZcRow { Id = t.Id, Label = new ZcClassText(t.NameAr, t.NameEn) });
+            Condition present = new() { Field = "Label", DataType = DataType.Text, Operator = Operator.IsNotNull };
+
+            PolicyException where = Assert.Throws<PolicyException>(() => Guard(rows, DwTier.Strict)
+                .ToList(new Filter { ConditionGroup = new ConditionGroup { Conditions = { present } } }));
+
+            Assert.Equal(PolicyErrorCode.FieldDeniedForWhere, where.ErrorCode);
+        }
+
+        [Fact]
+        public void The_constructed_member_itself_can_still_be_selected()
+        {
+            var result = Guard(Constructed(), DwTier.Strict).ToList(new Filter { Selects = new List<string> { "Id", "Name" } });
+
+            Assert.Equal(2, result.Data.Count);
+            Assert.All(result.Data, row => Assert.False(row.Name.IsEmpty));
+        }
+
+        [Fact]
+        public void The_convenience_tier_leaves_a_clause_on_the_constructed_member_to_the_provider()
+        {
+            Assert.Throws<InvalidOperationException>(() => Guard(Constructed(), DwTier.Convenience).ToList(OrderBy("Name")));
+        }
+
+        [Fact]
         public void A_group_and_a_segment_through_a_constructed_member_are_refused()
         {
             Summary summary = new() { GroupBy = new GroupBy { Fields = { "Name.Ar" } } };

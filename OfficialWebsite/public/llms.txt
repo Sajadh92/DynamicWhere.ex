@@ -4,7 +4,7 @@
 > opt-in field-level policy layer that decides what each caller may filter, sort, select, group,
 > aggregate and see, and a reflection cache that needs no setup.
 >
-> Version 3.3.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
+> Version 3.4.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
 > Docs: https://doc.dynamicwhere.com · Source: https://github.com/Sajadh92/DynamicWhere.ex
 
 This file is the whole library in one pass: every public type and member of the four packages, the
@@ -14,7 +14,7 @@ library. No other page is needed; where another page disagrees with this file, t
 Where a name is not in this file, it does not exist — do not invent members.
 
 ```
-dotnet add package DynamicWhere.ex --version 3.3.0
+dotnet add package DynamicWhere.ex --version 3.4.0
 dotnet add package DynamicWhere.ex.Policies.Redis                 # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.EntityFrameworkCore   # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.AspNetCore            # optional, same version as the core
@@ -111,6 +111,7 @@ DynamicWhere.ex.Exceptions                LogicException PolicyException
 
 DynamicWhere.ex.Policies.Source           PolicyExtensions (ApplyPolicy) PolicyQueryable<T>
 DynamicWhere.ex.Policies.Config           DwPolicy DwPolicyOptions DwCaps DwPolicyConfiguration (AddDwPolicies, Bind)
+                                          DwPurposeCaps DwPageCaps (3.4.0)
 DynamicWhere.ex.Policies.Context          DwPolicyContext DwSubject
 DynamicWhere.ex.Policies.Attributes       DwPolicyAttribute and the 22 Dw*Attribute types
 DynamicWhere.ex.Policies.Enums            PolicyFeature PolicyEffect PolicyAction PolicyLevel PolicyErrorCode
@@ -240,7 +241,8 @@ PageCount     (int)Math.Ceiling((double)TotalCount / PageSize), or 1 when no Pag
               on FilterResult, SummaryResult and SegmentResult alike. Before 3.1.0 an unpaged Filter or Summary
               reported PageCount = TotalCount (one page per row) and an unpaged Segment with sets reported 0.
               Unpaged, PageNumber and PageSize stay 0 — except on a guarded query when DwCaps.DefaultPageSize is
-              set, which gives it page 1 at min(DefaultPageSize, MaxPageSize) (section 12)
+              set, which gives it page 1 at min(DefaultPageSize, MaxPageSize); a context declaring a purpose that
+              DwCaps.Purposes names takes both caps from that purpose where it sets them (3.4.0, section 12)
 Data          the page. Typed rows are whole T objects even with Selects: unselected members keep constructor defaults
 QueryString   with getQueryString: true, EF Core ToQueryString() of the data query (after order, page and projection;
               never the count query), otherwise null. Always null for Segment, which has no such parameter.
@@ -766,7 +768,36 @@ products.Select(["Id", "Name", "Category.Name", "OrderItems.Quantity"]) builds
   collection gives an empty list. Deeper paths recurse the same way.
 - Skipped silently, keeping the constructor default: members without a public setter; collections whose element
   type has no parameterless constructor; collection members whose declared type cannot hold a `List<TElement>`
-  (`HashSet<>`, `ISet<>`, arrays); a dotted path into a string or struct member (`"CreatedAt.Year"`).
+  (`HashSet<>`, `ISet<>`, arrays); a dotted path beneath a string or a value type the framework declares
+  (`"CreatedAt.Year"`, `"Code.Length"`). A typed row cannot hold the year apart from the date, and binding the
+  date whole would return more than the path names: a policy allowing `CreatedAt.Year` alone would hand back the
+  whole date. `SelectDynamic` and `ToListDynamic` carry such a path as it is named.
+- A dotted path beneath an application's own struct (a value type outside the `System` namespaces), `"Name.Ar"` on
+  a `LocalizedText Name`, builds the struct member by member, as a class navigation is (3.4.0). The row carries
+  what was named and nothing beside it: `Name.En` keeps its default when only `Name.Ar` is named, and no `Id` is
+  added. A struct inside a struct is built level by level (`"Card.Title.En"`), and a collection inside one is
+  carried (`"Card.Tags"`). The struct is read with a plain member access, so it works on EF Core, through the
+  projection's initializer or evaluated on the client, and in memory. The same holds for a `Filter`'s or a
+  `Segment`'s `Selects` on the typed terminals. Until 3.4.0 every value-typed member a path went beneath was
+  skipped, so `Select(["Name.Ar"])` returned the struct's default, an empty name, with nothing refused, guarded or
+  not.
+  - A nullable struct is named through `Value`, as the path validator reads it: `"Alias.Value.Ar"` builds the
+    struct where it has a value and leaves the member null where it has none. `"Alias.Value"` named whole, or
+    `"Alias.HasValue"` alone, leaves the member unbound, as before.
+  - Still unbound: a class navigation inside a struct, whose siblings are built; and a struct in which nothing
+    named can be set, which is left unbound rather than built empty.
+  - A collection of an application's own structs is built element by element the same way (3.4.0):
+    `"Pairs.Shown"` on a `List<Pair>` builds `Pairs.Select(v => new Pair { Shown = v.Shown }).ToList()`, into a
+    `List<T>`, any member type a `List<T>` can be assigned to, or a `T[]`. A null collection stays null. A
+    collection of nullable structs, a collection of another shape, and an element in which nothing named can be
+    set are left unbound: nothing is carried rather than everything. A collection of scalars (strings, numbers,
+    dates) is still bound whole. Until 3.4.0 the collection was bound whole, so each element came back with every
+    member.
+  - On EF Core that works where the projection reads the list from a query,
+    `o.Lines.Select(l => new Pair { … }).ToList()`, and in memory. A list the projection builds with a collection
+    initializer, `new List<Pair> { new Pair { … } }`, is one EF Core cannot select from again: a selection beneath
+    it fails with `InvalidOperationException` ("could not be translated"), as the dynamic terminals always did
+    (section 34, limits).
 - If `"Category"` and `"Category.Name"` are both listed, the dotted projection wins. Duplicate paths collapse.
 - **EF Core only for reference navigations:** a dotted reference-navigation path reads `EF.Property<T>`, so on an
   in-memory source it throws `InvalidOperationException("The EF.Property<T> method may only be used within Entity
@@ -1200,7 +1231,8 @@ and enum-typed members and group keys in `data`.
 
 ```jsonc
 {
-  "pageNumber": 1,      // 0 when the request had no page, unless DwCaps.DefaultPageSize gave a guarded query one
+  "pageNumber": 1,      // 0 when the request had no page, unless DwCaps.DefaultPageSize, or the DefaultPageSize of
+                        // the purpose the context declares (3.4.0), gave a guarded query one
   "pageSize": 10,       // 0 when the request had no page, with the same exception
   "pageCount": 5,       // no page: 1, or 0 with no rows
   "totalCount": 42,     // before paging
@@ -1446,6 +1478,13 @@ Each of these compiles, passes validation, and returns something other than what
     refused only after the database has been hit: `ToListDynamic` / `ToListAsyncDynamic` run the `COUNT` query before
     `Orders`, `Page` and `Selects` are validated. The `LogicException` is the same one either way; the round trip is
     not undone.
+17. **A filter on a whole struct-typed member throws in the builder.** A condition whose `Field` is the struct itself
+    (`"Name"` on a `LocalizedText` struct, not `"Name.Ar"`) fails with `InvalidOperationException` ("The binary
+    operator NotEqual is not defined for the types '<the struct>' and 'System.Object'."): the null guard compares
+    the struct with null. Guarded or not, in both tiers, in memory and on EF Core. Filter on the struct's members.
+    Under a policy `[DwNoWhere]` on the member turns the error into a refusal, and since 3.4.0 it refuses a filter
+    on the parts too (section 14); to keep the parts filterable, deny the member with
+    `[DwDeny(PolicyFeature.Where, Overridable = true)]` and allow each part with a rule.
 
 ---
 
@@ -1549,14 +1588,18 @@ DwPolicy                                                                    stat
   hosts starting at once can both pass. This is what lets an integration suite start several
   `WebApplicationFactory<Program>` hosts over one composition root.
   - Compared: `Tier`, `DryRun`, `IncludeTraceInResult`, `AuditRefusals`, `HashSalt`, `StoreFailure`,
-    `MaxSnapshotAge`, `RefreshInterval`, every `DwCaps` value, the exposed catalogue — the same types under the same
-    names, every name each type answers to, and the name each type is reported under — and the provider **types**,
-    in the order supplied, with `AttributePolicyProvider` left out of both sides. `IsMinGroupSizeSet` is not
-    compared: nothing in enforcement reads it, so writing `MinGroupSize = 5` and leaving it unset are the same
-    posture. `IncludeTraceInResult` is compared by the value that applies, not by whether it was written down: it
-    defaults to the tier's own answer, so writing that answer out is the same posture. A type exposed under two
-    names is reported under the last one, so two catalogues resolving every name alike are still refused when the
-    order differs.
+    `MaxSnapshotAge`, `RefreshInterval`, every `DwCaps` value and every purpose's page caps (3.4.0), the exposed
+    catalogue — the same types under the same names, every name each type answers to, and the name each type is
+    reported under — and the provider **types**, in the order supplied, with `AttributePolicyProvider` left out of
+    both sides. `IsMinGroupSizeSet` is not compared: nothing in enforcement reads it, so writing `MinGroupSize = 5`
+    and leaving it unset are the same posture. `IncludeTraceInResult` is compared by the value that applies, not by
+    whether it was written down: it defaults to the tier's own answer, so writing that answer out is the same
+    posture. A type exposed under two names is reported under the last one, so two catalogues resolving every name
+    alike are still refused when the order differs.
+  - Purposes (3.4.0) are compared by the caps that apply, over the names either side declares: for each name, the
+    `MaxPageSize` and the `DefaultPageSize` that name runs under, a value left null reading as the deployment's
+    own. A purpose whose caps equal the deployment's is the same posture as no entry; a purpose with any other page
+    cap is a different posture and is refused.
   - Not compared, and not replaced: `TokenVault`, `Services`, and the provider **instances**. A second host builds
     its own and no two are ever the same reference, so they stay as the first call left them — a second host runs
     with the first host's vault, container and rule stores.
@@ -1618,10 +1661,17 @@ builder.Services.AddSingleton(options);
 - `options.Bind(section)` is the DynamicWhere extension and binds with `ErrorOnUnknownConfiguration = true`.
   - `section.Bind(options)` is Microsoft's binder and silently ignores unknown keys. Do not use it.
 - A key that no property answers to (`Caps:MinGropSize`, `Teir`) → `InvalidOperationException` at bind time.
-- A value its setter refuses also fails the bind:
-  - a cap below its minimum;
+  - Inside a purpose (3.4.0) only `MaxPageSize` and `DefaultPageSize` answer: a misspelt key there, or any other
+    cap (`Caps:Purposes:excel:MaxConditions`, which no purpose replaces), refuses to start the same way.
+- A value its setter refuses also fails the bind, as `InvalidOperationException` (3.4.0):
+  - a cap below its minimum, a purpose's page cap below 1 included (3.4.0);
   - a `HashSalt` of 1–15 characters;
   - a non-positive `MaxSnapshotAge` or `RefreshInterval`.
+  - The message starts `A configured policy value was refused:` and `InnerException` is the setter's own
+    exception (`ArgumentOutOfRangeException`, `ArgumentException`), however deep the binder wrapped it: a
+    purpose's page cap is bound inside a dictionary, where Microsoft.Extensions.Configuration.Binder 8 adds an
+    `InvalidOperationException` of its own, and is reported the same way. Until 3.4.0 it arrived as the
+    binder's `TargetInvocationException`.
 - Binding onto frozen options fails.
 - An empty or missing section leaves every default in place, and `Caps.IsMinGroupSizeSet` stays false.
 - `TokenVault`, `Services` and `Entities` are objects, not values. They cannot come from configuration; set them in `configure`.
@@ -1641,6 +1691,7 @@ Caps:MaxPageSize  Caps:DefaultPageSize  Caps:MaxConditions  Caps:MaxConditionDep
 Caps:MaxConditionValues  Caps:MaxAggregates  Caps:MaxOrderFields  Caps:MaxNavigationDepth  Caps:MaxQueryCost
 Caps:DefaultFieldCost  Caps:MaxAuditEvents  Caps:MinGroupSize  Caps:SchemaDepth  Caps:SchemaCycleLimit
 Caps:MaxSchemaFields                                                                        integers
+Caps:Purposes:<name>:MaxPageSize  Caps:Purposes:<name>:DefaultPageSize   3.4.0; integers >= 1; <name> is any purpose
 ```
 
 ```jsonc
@@ -1734,6 +1785,9 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
                                      composable Filter, FilterDynamic and Summary return the query already
                                      paged, so page through the request's Page, not a chained Page(). Where,
                                      Order, Select and Group take no page and are never given one.
+  Purposes             empty    -    3.4.0. DwPurposeCaps, get-only: the page caps of each declared purpose,
+                                     which replace MaxPageSize and DefaultPageSize for a query whose context
+                                     names that purpose (below); every other cap applies to all alike   as the two above
   MaxConditions        50       1    conditions at every nesting depth; Summary: ConditionGroup + Having;
                                      Segment: all condition sets together                               CapExceeded (9)
   MaxConditionDepth    10       1    3.1.0. How deep SubConditionGroups nest, root group = depth 1. Summary:
@@ -1799,6 +1853,87 @@ DwCaps     sealed class; DwPolicyOptions.Caps. Setters: frozen → InvalidOperat
   - Every guarded grouping path applies it: `ToList` / `ToListAsync(Summary)` and the composable `Group` and `Summary`.
 - `MinGroupSize = 1` switches the floor off with no warning. `IsMinGroupSizeSet` distinguishes that from a deployment that never set it.
 
+### Page caps per purpose — DwCaps.Purposes (3.4.0)
+
+`MaxPageSize` and `DefaultPageSize` bound what one response carries, and a deployment sets them for its screens. An
+export or a report reads the same rows under the same field policy and was held to the same page: it stopped at the
+first page, or walked the rest one page at a time, a statement and a count per page and no single snapshot of the
+data. A purpose gives such a read page caps of its own without raising the screens'.
+
+```
+DwPurposeCaps : IDictionary<string, DwPageCaps>             sealed class, DynamicWhere.ex.Policies.Config; DwCaps.Purposes
+  this[string purpose] : DwPageCaps                         get: a name with none → KeyNotFoundException;
+                                                            set: a null value → ArgumentNullException
+  Add(string key, DwPageCaps value)                         a name already there, in any case → ArgumentException
+  Add(KeyValuePair<string, DwPageCaps> item)
+  Remove(string key) -> bool
+  Remove(KeyValuePair<string, DwPageCaps> item) -> bool     only where that name holds that instance
+  Clear()
+  TryGetValue(string key, out DwPageCaps value) -> bool     a null or blank name → false
+  ContainsKey(string key) -> bool                           a null or blank name → false
+  Contains(KeyValuePair<string, DwPageCaps> item) -> bool   that name holds that instance
+  Keys : ICollection<string>                                trimmed, casing as first written
+  Values : ICollection<DwPageCaps>    Count : int
+  IsReadOnly : bool                                         true once frozen
+  CopyTo(KeyValuePair<string, DwPageCaps>[] array, int arrayIndex)    GetEnumerator()
+  a null or blank name → ArgumentException (the indexer, Add, Remove);
+  once frozen → InvalidOperationException (the indexer's set, Add, Remove, Clear)
+
+DwPageCaps                                                  sealed class, DynamicWhere.ex.Policies.Config
+  DwPageCaps()
+  MaxPageSize : int? { get; set; }                          null = DwCaps.MaxPageSize; below 1 → ArgumentOutOfRangeException
+  DefaultPageSize : int? { get; set; }                      null = DwCaps.DefaultPageSize; below 1 → ArgumentOutOfRangeException
+  a set once the posture is frozen → InvalidOperationException, for an instance assigned before startup too
+```
+
+```csharp
+// appsettings: "Caps": { "MaxPageSize": 1000, "DefaultPageSize": 100,
+//   "Purposes": { "excel": { "MaxPageSize": 10000, "DefaultPageSize": 10000 } } }
+// or in code, before Configure:
+options.Caps.Purposes["excel"] = new DwPageCaps { MaxPageSize = 10_000, DefaultPageSize = 10_000 };
+options.Caps.Purposes["audit-logs"] = new DwPageCaps { MaxPageSize = 5000 };   // default page: the deployment's
+
+// The export handler.
+context.Purpose = "excel";                       // before the read, set by the host
+FilterResult<TenantRow> file = await rows
+    .ApplyPolicy(context)
+    .ToListAsync(filter, cancellationToken);     // one statement, up to 10,000 rows
+bool truncated = file.TotalCount > file.Data.Count;
+```
+
+- A query runs under a purpose's page caps when its `DwPolicyContext.Purpose` names that purpose. The name is
+  trimmed and compared without regard to letter case, the way a purpose-bound rule matches (section 25). A context
+  naming no purpose, or one no entry names, runs under the deployment's caps, so a read that forgets to declare
+  itself is bounded like a screen's.
+- Only the two page caps are replaced. Every other cap, the cost budget, the field policy and the group floor apply
+  to every purpose alike.
+- A value left null takes the deployment's cap. A value set is at least 1, so a purpose bounds a read differently
+  and cannot switch a bound off. The default page a purpose runs under is bounded by the maximum it runs under, as
+  the deployment's is by its own: page 1 at min(DefaultPageSize, MaxPageSize), each the purpose's where it sets one, so
+  a default above the maximum is applied as the maximum. A purpose may lower the caps as well as raise them.
+  - With the deployment's `DefaultPageSize` at 0 (off), a purpose that sets only `MaxPageSize` leaves a request with
+    no page unpaged, as the deployment does. Give the purpose a `DefaultPageSize` to bound one.
+- A page above the purpose's maximum is refused, never trimmed: `CapExceeded` (9), `SourceOrigin`
+  `"MaxPageSize cap (10000), request had 10001"`, `FieldPath` `"*"`, in both tiers. The
+  purpose's caps apply wherever the deployment's do: `ToList`, `ToListAsync` and the dynamic pair with a `Filter`, a
+  `Summary`'s page, a `Segment`'s page, and the composable `Page(PageBy)`, `Filter`, `FilterDynamic` and `Summary`.
+- A simulation copies the context's purpose, so `PolicySimulator` and `/simulate` answer under the same caps.
+- Names: any, and as many as a deployment has (`excel`, `csv`, `pdf`, `audit-logs`). Several names may share one
+  `DwPageCaps` instance. Keys are stored trimmed.
+- Configuration: `Caps:Purposes:<name>:MaxPageSize` and `Caps:Purposes:<name>:DefaultPageSize`, bound by `Bind` and
+  `AddDwPolicies` with `ErrorOnUnknownConfiguration`. A misspelt key inside a purpose, or any other cap there
+  (`MaxConditions`), refuses to start with `InvalidOperationException`, and so does a value below 1.
+  Environment variables, for a section at `DynamicWhere:Policies`:
+  `DynamicWhere__Policies__Caps__Purposes__excel__MaxPageSize=10000`.
+- Frozen with the posture: after startup, adding, replacing, removing or clearing a purpose, and setting a value on
+  any `DwPageCaps` it holds, one assigned before startup included, throws `InvalidOperationException`, and
+  `IsReadOnly` is true.
+- A second `DwPolicy.Configure` compares purposes by the caps that apply (above).
+- **The purpose is the host's statement, never the caller's.** A request that could name its own purpose could name
+  its own page caps, and whatever purpose-bound grants exist. Set it in the endpoint that serves the read; never
+  bind it from a request header, a query string or a body. `DwClaimsOptions.Purpose` is a constant for the same
+  reason (section 29).
+
 ### DwPolicyContext and DwSubject
 
 ```
@@ -1809,7 +1944,9 @@ DwPolicyContext                                     sealed class
   IsPrepared          : bool     { get; }                3.1.0. True once DwPolicy.PrepareAsync has run against it,
                                                          with or without a store. ApplyPolicy(ctx) refuses a
                                                          context where this is false
-  Purpose             : string?  { get; set; }           matched by purpose-bound rules; copied into audit events
+  Purpose             : string?  { get; set; }           stored trimmed, a blank value as null (3.4.0); matched by
+                                                         purpose-bound rules and by DwCaps.Purposes; copied into
+                                                         audit events
   PendingAuditEvents  : IReadOnlyList<DwAuditEvent>      a copy of the undrained buffer
   WithSubject(DwSubjectKind kind, string identity)       -> DwPolicyContext    mutates this instance, returns this
   WithValue(string key, object? value)                   -> DwPolicyContext    mutates this instance, returns this
@@ -1839,6 +1976,10 @@ DwSubjectKind   Global=0  Tenant=1  Role=2  User=3  Custom=4
   - Calling `PrepareAsync` again replaces what was pinned.
 - A context serves the one snapshot pinned at `PrepareAsync`. Once it is older than `MaxSnapshotAge`, store-backed queries throw `StoreUnavailable`, so never cache contexts across requests.
 - Queries may share one context concurrently, because the audit buffer is locked. Subjects and values are not synchronized: finish building before querying.
+- `Purpose` is stored trimmed, and a null, empty or blank value is stored as null (3.4.0). A rule's purpose was
+  already trimmed where the rule is built, so `" export "` on a context now means to a purpose-bound rule what it
+  means to a purpose's page caps; it used to match no rule. The host sets it, never the caller (page caps per
+  purpose, above).
 - There is no public correlation id or attachment API; `IsPrepared` (3.1.0) says only that `PrepareAsync` ran.
 
 ---
@@ -2058,7 +2199,8 @@ AttributeUsage (every attribute: Inherited = true)
   queried entity itself is left out there, as it is around a cycle: `[DwAlias]`, `[DwRequireWhere]`,
   `[DwForceWhere]`. Only a resolver that reads attributes does this, which every resolver `DwPolicy.Configure`
   builds does. Until 3.3.0 no fragment reached such a path, so a `[DwDenied]` member at segment five was filtered
-  on, grouped by and returned, under `Strict`.
+  on, grouped by and returned, under `Strict`. Since 3.4.0 the attributes of each application struct such a path
+  passes through are read the same way, so `A.B.C.D.Price.Amount` takes `Price`'s policy as `Price.Amount` does.
 - A type first met at the fourth segment used to read as a type reached from itself wherever it was met again in
   the same walk, so what a cycle leaves out — `[DwForceWhere]`, `[DwRequireWhere]`, `[DwAlias]` — was left out of a
   shorter path reaching that type directly, and which of two members was declared first decided whether a forced
@@ -2124,8 +2266,9 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 ### DwDeny family
 
 - Each attribute refuses its features on that exact path. Several on one member all apply.
-- A denial on a navigation (`Contact`) covers only `Contact`. `Contact.Email` is a separate field: it is declared
-  by an application's own type, so an attribute can be placed on it. Decorate it, or deny its path.
+- A denial on a class navigation (`Contact`) covers only `Contact`. `Contact.Email` is a separate field: it is
+  declared by an application's own type, so an attribute can be placed on it. Decorate it, or deny its path. A
+  struct is not a navigation: a denial on one covers its parts (3.4.0, below).
 - A path that continues beneath a member whose type the framework declares is not a separate field (3.3.0). No
   attribute can be placed on `Salary.Value` or `Salary.HasValue` on a `decimal?`, `Secret.Length` on a `string`,
   `Born.Year` or `Born.Date.Year` on a `DateTime`, `Bag.Count` on a dictionary, or `Lines.Count` on an
@@ -2146,6 +2289,45 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   - A member only a subtype of the navigated type declares is not such a path: `Zone.Parent`, where a subclass of
     Zone's type declares `Parent`, is decided by the fragments naming it, as before, so a grant of `Zone` under a
     `"*"` deny does not grant it.
+- A path beneath a member whose type is an application's own struct — a value type outside the `System`
+  namespaces, nullable or not — or a collection of them takes that member's policy as well (3.4.0). A struct is a
+  value, not a navigation: with `[DwDenied]` on an `Iban` struct, `Iban.Number` was filtered on (a test for a
+  guessed value), sorted by, grouped by with its values as the group keys and handed back by a dynamic projection,
+  under `Strict`.
+  - Taken from the struct member, from every provider, attributes and rules alike: its deny effects per feature,
+    its `[DwOperators]` restriction (intersected with the path's own), its `[DwCost]` weight and its audited
+    features. Not taken: its alias, required filter, forced scope and descriptive facts (label, description,
+    group, order, allowed values), which come from the path's own member.
+  - The path's own attributes still apply beside the struct member's (`[DwNoOrder]` on `LocalizedText.En`), and
+    precedence decides between them as usual: a sealed attribute beats every rule and a rule beats an overridable
+    attribute, so a rule allowing `Soft.Number` replaces an overridable deny on `Soft`, and no rule replaces a
+    sealed `[DwDenied]` on the struct.
+  - Every struct on the path decides it: `Card.Inner.Ar` takes both `Card`'s and `Inner`'s policy. A struct inside
+    a class navigation counts (`Owner.Name.Ar` takes `Owner.Name`'s); the class itself does not.
+  - A struct member that is itself transformed (`[DwMask]` on `Price`) refuses `Select`, `Group` and `Aggregate`
+    on its parts: its chain has no member of theirs to apply to. A part that declares its own transform is
+    transformed as any member is and stays selectable (section 18).
+  - Past the attribute walk's depth the attributes of each struct the path passes through, and of the path's own
+    member, are read directly.
+  - `Explain` names the struct member's attribute as `DecidedBy`, and `PolicySchemaBuilder.Describe`
+    (`POST /schema`) reports each part with its struct member's denials.
+  - A member declared as a nullable struct (`Iban?`) is covered too (3.4.0). A query names its parts through
+    `Value` (`Iban.Value.Number`), where the attribute walk, the transforms and the fragments name them without it
+    (`Iban.Number`), so the policy reads such a path as the walk names it: a `Value` after a nullable struct of
+    the application's is dropped, `Iban.Value.Number` is decided as `Iban.Number` and `Iban.Value` as `Iban`, and
+    the nullable's own members, `Iban.HasValue` among them, are read as the nullable member `Iban`. A framework
+    nullable is unchanged: `Salary.Value` reads `Salary`, as in 3.3.0. With `[DwDenied] Iban? Iban`,
+    `Iban.Value.Number` and `Iban.HasValue` are decided as `Iban` is, typed and dynamic: refused in every clause
+    under `Strict`, and under `Convenience` refused as a filter, a group or an aggregate and dropped as a select
+    or a sort. A `[DwDenied]` member inside a nullable struct (`Pair.Value.Hidden`) is decided the same way, an
+    allowed one (`Pair.Value.Shown`) stays usable, and a mask on a member inside one is applied where a selection
+    names it through `Value` (section 18). `Resolve` and `Explain` report the path as the policy names it, `FieldPath` `Iban.Number`; the trace
+    keeps the caller's spelling. Until 3.4.0 such a path matched no fragment and was allowed, in every clause and
+    both terminals; the typed selection change of this release (section 6) had widened it to the typed terminal
+    before it was fixed.
+  - `[DwNoWhere, DwNoOrder] public LocalizedText Name { get; set; }` on a row refuses `Name.Ar` and `Name.En` as
+    filters (`FieldDeniedForWhere`, both tiers) and as sorts (`FieldDeniedForOrder` under `Strict`; dropped under
+    `Convenience`), and both can still be selected.
 - `[DwDeny(PolicyFeature.None)]` refuses nothing, and nothing reports it.
 - `[DwNoSelect]` leaves the field filterable, sortable, groupable and aggregatable, so it can still be
   counted.
@@ -2167,7 +2349,8 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - Every restriction matching the field is intersected: repeated attributes, rules at any level, and `"*"`
   rules. A rule can only narrow the set, so `Overridable` changes nothing. A path beneath a member whose type the
   framework declares intersects that member's restriction too (3.3.0), so a restriction on `Salary` holds for
-  `Salary.Value`.
+  `Salary.Value`, and so does a part of an application's struct with its struct member's (3.4.0): a restriction
+  on `Iban` holds for `Iban.Number`, intersected with any on `Number`.
 - It is checked on every WHERE condition at any depth and in every Segment set. It is also checked on a
   `Having` condition that reaches the field through a group key or an aggregate alias.
 - A failure throws `OperatorNotAllowed` in both tiers. If the field is also denied for Where,
@@ -2201,7 +2384,8 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   at the fourth segment counted as reached from itself wherever it was met again in the same walk, which dropped
   the alias from a shorter path reaching that type directly.
 - A path beneath a member whose type the framework declares does not take that member's alias (3.3.0): an alias
-  is a public name for the member, and `Salary.Value` is not the member.
+  is a public name for the member, and `Salary.Value` is not the member. Nor does a part of an application's
+  struct take its struct member's alias (3.4.0).
 
 ### DwForceWhere
 
@@ -2263,7 +2447,8 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
     of two members was declared first decided whether the scope applied. It applies on every path within 4
     segments that is not around a cycle now. A query that ran unscoped is scoped.
   - A path beneath a member whose type the framework declares takes no forced scope from that member (3.3.0): the
-    scope is about the rows, not about the value one segment down.
+    scope is about the rows, not about the value one segment down. Nor does a part of an application's struct
+    take one from its struct member (3.4.0).
 
 ### DwRequireWhere
 
@@ -2287,7 +2472,8 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   met at the fourth segment no longer drops it from a shorter path. A requirement a caller was never asked for
   may now be demanded.
 - A filter on a path beneath the member does not satisfy it (3.3.0): `[DwRequireWhere]` on `TenantId` asks for a
-  filter on `TenantId`, which `TenantId.Value` is not.
+  filter on `TenantId`, which `TenantId.Value` is not. A part of a struct takes no requirement from its struct
+  member either (3.4.0).
 - It is elected: a rule cannot lift a sealed requirement but may add one where none exists. A `"*"` rule
   cannot carry one.
 
@@ -2316,7 +2502,8 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   count.
 - An unweighted field costs `Caps.DefaultFieldCost` (default 1, may be 0).
 - A path beneath a member whose type the framework declares costs that member's weight (3.3.0): `Notes.Length`
-  costs what `Notes` costs, where it used to cost the default.
+  costs what `Notes` costs, where it used to cost the default. A part of an application's struct takes its struct
+  member's weight beside its own (3.4.0), elected as below: of two sealed attribute weights, the larger.
 - A total above `Caps.MaxQueryCost` (default 1000) throws `QueryCostExceeded` in both tiers. In dry run
   it is only recorded.
   - The Convenience tier checks the total before gating. The Strict tier checks it after every field gate
@@ -2348,7 +2535,8 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
   every audited member a projection the caller did not name hands back, recorded for `Select`. One event per query,
   not per row. Until 3.3.0 an empty `Selects` returned the value with nothing written down.
 - A path beneath a member whose type the framework declares is audited as that member is (3.3.0): reading
-  `Salary.Value` records what reading `Salary` records, where it used to record nothing.
+  `Salary.Value` records what reading `Salary` records, where it used to record nothing. A part of an
+  application's struct is audited as its struct member is, beside its own `[DwAudit]` (3.4.0).
 - A member the rows hand back where no path of the policy names it is recorded once the rows show it (3.3.0).
   The gate records a use by path, before the query runs, and a member only a subtype of the row's type declares,
   or one past the four segments the attribute walk reads, has no path it could ask about: handed back inside a
@@ -2498,7 +2686,9 @@ The resolver, fragment and provider types are listed in section 21.
 
 Under `Strict` outside a dry run, a path that exists on the type but names no value the query can compute is refused
 as an unknown name is (3.3.0), with the clause's own code and `FieldPath` `"*"`, in every clause the database has to
-compute: a filter, an order, a grouping key, an aggregated field, and a filter or an order inside a `Segment`.
+compute: a filter, an order, a grouping key, an aggregated field, and a filter or an order inside a `Segment`. Since
+3.4.0 that includes a path through a member the projection builds by calling an application type's constructor with
+arguments, which EF Core cannot follow (below).
 
 `Selects` is not one of them. A projection is the last thing the provider builds, and EF Core evaluates that one on
 the client when it cannot translate it, so `Selects` naming such a member returns its value exactly as before.
@@ -2515,6 +2705,9 @@ Select(...) before ApplyPolicy building the row      that initializer's assignme
       method call, a captured value, a subquery,     reads
       two branches building it two ways                                                                left alone
   ... a member it copies whole: Name = role.Name     the model, beneath the copied member              refused
+  ... a member or a row it builds by calling an      the members an initializer beside the
+      application type's constructor with            constructor binds; EF Core follows no other
+      arguments (3.4.0)                                                                                refused
 rows in memory (EnumerableQuery)                     nothing; the getter runs                          runs
 beneath a column, converted or not                   nothing; the converter decides                    left alone
 a framework member: Length, Year, HasValue           nothing; the provider translates it               runs
@@ -2543,8 +2736,30 @@ a projection another provider ran                    nothing; its rules are its 
   cannot tell one that rewrites from one that passes straight through, and refusing on that guess would take back a
   query the rewriting host answers today. A rewrite inside EF Core's own pipeline — a member-translator plugin, a
   replaced query preprocessor — leaves EF Core's own provider in place, so such a member is refused.
-- A projection that does not build its rows with an object initializer — an anonymous type, a constructor with
-  arguments — says nothing about which member each value sets, so no member of such a row is refused here.
+- An anonymous type has no member refused here, and neither does a member assigned from a subquery (below): EF Core
+  follows each member of an anonymous type to its argument.
+- A row or a member an application type's constructor builds with arguments has every member the constructor leaves
+  unbound refused (3.4.0): EF Core follows a member only through an initializer's binding. So
+  `new LocalizedText(t.NameAr, t.NameEn).Ar` cannot be translated, while
+  `new LocalizedText { Ar = t.NameAr, En = t.NameEn }.Ar` is `t.NameAr` and translates to the column. Build such a
+  member with an initializer. The trace records the reason given below.
+  - A row built by its own constructor, a positional record row (`Select(t => new TenantRecord(t.Id, t.NameAr))`),
+    has every member a clause names refused. An unfiltered, unsorted read of it still works.
+  - A clause on the constructed member itself is refused too (`ORDER BY Name`, `Label IsNotNull`): EF Core can
+    neither order by nor compare a value it would have to build on the client. Selecting it still works.
+  - A constructor with an initializer beside it (`new Money(t.Amount) { Currency = t.Currency }`): a member the
+    initializer binds (`Money.Currency`) stays usable, and a member left to the constructor (`Money.Amount`) is
+    refused.
+  - A conditional: a constructor in either branch refuses what that branch leaves unbound, whatever the other
+    branch binds, because EF Core reads the member through both branches.
+  - Left alone, as before: an anonymous type, whose constructor names its members; the framework's own types
+    (`new DateTime(y, 1, 1)`), which a provider may translate; a collection; a type the EF Core model stores as a
+    column on any entity, through a value converter or as a spatial point; a projection with no EF Core entity
+    behind it; a provider that is not EF Core's own; rows in memory. `Convenience` and a dry run fail as the
+    unguarded query does.
+  - A selection through such a member still works: EF Core evaluates the last projection on the client.
+  - 3.3.0 read a constructor with arguments as saying nothing about which member each value sets and refused no
+    member of such a row, so every clause on one went on to fail inside the provider: a five-hundred.
 - A member assigned through a sequence operator — `Lines = o.Lines.ToList()`, `o.Lines.Where(…).ToList()`, a
   subquery building rows of its own — is left alone as well: what the row holds is not what the navigation holds,
   and reading it as the navigation would refuse a member the row carries.
@@ -2588,8 +2803,15 @@ any clause on a path the attribute walk cannot name:
   path past four segments with MaxNavigationDepth
   raised (3.3.0)                                             the member's      same     the member's own code
                                                              own decision
+any clause on a part of an application's struct,
+  Iban.Number, or of a struct in a collection (3.4.0)        the struct        same     the struct member's or the
+                                                             member's and its           part's own code
+                                                             own decision
+WHERE, ORDER, GROUP or AGGREGATE on a path through a
+  member a projection builds by constructor (3.4.0)          provider throws   throw    that clause's FieldDeniedFor*
 SELECT a path beneath a transformed member, Bonus.Value:
-  no member there to apply the chain to (3.3.0)              drop              throw    FieldDeniedForSelect
+  no member there to apply the chain to (3.3.0), or a
+  part of a transformed struct member (3.4.0)                drop              throw    FieldDeniedForSelect
 SELECT a transformed member past four segments (3.3.0)       transformed       transformed
 GROUP BY or AGGREGATE a path of either kind whose member
   is transformed (3.3.0)                                     throw             throw    FieldDeniedForGroup /
@@ -2638,12 +2860,13 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
     cannot narrow it (a column, complex or JSON member at the top of T, or a member of a row in memory) it is
     refused in both tiers.
   - A narrowing that cannot be built as gated is refused with `FieldDeniedForSelect`, in both tiers (3.2.0). The
-    core's typed projection adds the key (`Id`) of every nested node it builds, so a narrowing whose nodes carry a
-    denied key would return it; a path through a collection the core does not unwrap fails its validation; and a
+    core's typed projection adds the key (`Id`) of every nested class it builds (never of a struct, which it builds
+    with exactly what was named, 3.4.0), so a narrowing whose nodes carry a denied key would return it; a path through a collection the core does not unwrap fails its validation; and a
     column, complex property or JSON-stored member, a member of a row in memory, or one a projection builds some way
     the core cannot narrow, cannot be narrowed at all.
   - A navigation named through another, `Main.Lead`, gates the key of every node it passes through, which the
-    builder adds, as a dotted path to a value always did (3.2.0). A denied one refuses the projection.
+    builder adds, as a dotted path to a value always did (3.2.0). A denied one refuses the projection. Only a
+    class's key: a struct's is neither added nor gated, since no builder adds it (3.4.0).
 - "allowed members" (3.2.0; "allowed scalars" before) applies when `Selects` is null or empty and a field is denied
   for Select where its value can reach the result. It runs for a whole-`Filter` terminal and for a Segment, not for a
   single-clause composable call.
@@ -2719,6 +2942,12 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
       denied key the core's projection would add back; a path the core cannot project; a node type the core cannot
       construct (an interface, an abstract class, one with no public parameterless constructor); nothing beneath it
       left to select;
+    - an application's own struct holding a denied member is narrowed as a class is (3.4.0): the typed projection
+      builds one member by member, held directly or in a list, any type a list can be assigned to, or an array, so
+      its allowed members come back and the denied one does not. Until 3.4.0 the gate read a struct as a type the
+      core cannot build and left it out whole (`left out whole: the core cannot build '…', which it narrows into`),
+      so its allowed members came back empty. A nullable struct, or structs in a collection of another shape, are
+      still left out whole;
   - Never kept: an entity's navigation, included or not, since projecting it would load it (under Convenience, name
     it in `Selects` to get it narrowed; under Strict, name its allowed fields); an object held by a row in memory,
     since a kept object is the caller's own and a transform would change it in place; a member with no setter; a
@@ -2755,6 +2984,11 @@ DefaultOrder field denied for Segment, in a Segment (3.1.0)  left out          l
     naming it, as before.
   - The member a path reads is found whatever the providers are, an attribute and a store rule alike. The
     attributes past the walk's depth are read only by a resolver that reads attributes.
+- A part of an application's struct takes the policy of every struct member above it, beside its own (3.4.0,
+  section 14): `Iban.Number` beneath a `[DwDenied] Iban` is refused in every clause, as `Iban` is, and so is
+  `Iban.Value.Number` beneath a `[DwDenied] Iban?`, which the policy reads as `Iban.Number`. The same split
+  as above holds: the deny effects, operators, cost and audit come from the struct member, and its alias, required
+  filter, forced scope and descriptive facts do not.
 - A path that matches nothing on `T` (3.1.0):
   - Convenience, and dry run in either tier: validation throws `LogicException`
     `ConditionMustHasValidFieldName` before any policy decision, as it does unguarded.
@@ -2865,6 +3099,9 @@ alone  Default        [DwDefault]     constant or type default, converted to mem
   where `Bonus` is the member that is rounded — so there is no member to apply the chain to, and `Select`, `Group`
   and `Aggregate` on such a path are refused (3.3.0): `FieldDeniedForSelect`, `FieldDeniedForGroup`,
   `FieldDeniedForAggregate`, with a `Selects` entry dropped under `Convenience` as any field denied for Select is.
+  So is a part of a struct member that is itself transformed (3.4.0): `Price.Amount`, with `[DwMask]` on `Price`.
+  A part that declares its own transform (`[DwMask]` on `Price.Amount` itself) is transformed as any member is and
+  stays selectable (below).
 - A transformed member past the walk's depth is itself a member, so a row that carries it carries it transformed
   (3.3.0). `Selects` naming it returns it transformed, in a typed projection and in a generated row alike: the
   chains of the members a projection names past the walk are handed to the outbound walk beside the type's own
@@ -2875,6 +3112,28 @@ alone  Default        [DwDefault]     constant or type default, converted to mem
   follow the member's own decision, as they do along a named path.
 - A transformed member with no setter, or a path missing on the runtime type, throws
   `InvalidOperationException`.
+- A transform declared on a member of an application's own struct is applied to the row (3.4.0). A struct is read
+  as a copy, and the compiled setter used to unbox a second copy and write into that, so every mask,
+  generalization, format, truncation, default or mutation on a struct's member, `Hash` and `Tokenize` included,
+  landed on a temporary and the stored value was emitted: in both tiers, from rows in memory and from EF Core,
+  typed and dynamic, whether the struct came back in a whole row or was selected whole. (A dynamic selection of a
+  path beneath it builds an object of its own, and that one was transformed already.) The setter writes into the
+  box in place now, and both passes of the walk write each changed struct back where it was read from, innermost
+  first: into the member that held it, into its position in a list or an array, or into the outer struct that held
+  it. A struct in a whole row or selected whole, nullable or not, a list or an array of structs, a struct inside a
+  struct or inside a class navigation, and a struct past the walk's depth are all transformed, and a member the
+  policy names is transformed once, by the pass along its path. A class member was never affected.
+  - Fail-closed: a struct a transform changed that cannot be written back fails the query with
+    `InvalidOperationException` rather than hand back the stored value. A struct held by a member with no setter
+    ("…passes through a struct held by a member with no setter…"), structs in a collection that cannot be written
+    by position, such as a `HashSet<T>` ("…Hold the structs in a list or an array."), and a struct that is a
+    dictionary's value ("…cannot be written back where it was read from…").
+  - A source of rows in memory is still transformed in place, its structs included (section 32, trap 22).
+  - A member inside a nullable struct is transformed where a selection names it through `Value`
+    (`Pair.Value.Code`) as well (3.4.0): on the typed terminal; on the dynamic one, whose generated row holds the
+    member under `Value` and which the walk steps through; as a group key (the `PairValueCode` column); and past
+    the walk's depth. The group floor a masked member declares applies to an aggregate over it. Until 3.4.0 the
+    path was looked up as the query spells it, matched no transform, and the value came back as stored.
 - Segment results are transformed like Filter results.
 - In a summary, each transformed grouping-key column and each aliased aggregate of a transformed field
   gets that field's chain.
@@ -3283,6 +3542,9 @@ PolicyExplanation why = DwPolicy.Resolver.Explain(typeof(Employee), "Salary", ca
 - `PolicyResolver.Explain` is the only explain API in the core package.
 - `new PolicyResolver(...)` does not add `AttributePolicyProvider`; only `DwPolicy.Configure` does. Include it yourself, or attributes are ignored.
 - `fieldPath` must be the canonical property path. It is trimmed, empty segments are dropped, and matching is case-insensitive.
+  - A `Value` after a nullable struct of the application's is dropped (3.4.0), so `Iban.Value.Number` resolves and
+    explains as `Iban.Number`, and the `FieldPath` of the `FieldPolicy` and of the `PolicyExplanation` is that
+    spelling. A framework nullable, `Salary.Value`, is left as written.
   - An alias is not translated, and the path is not checked for existence.
   - Either mistake explains as Allow for every feature, because only wildcard fragments match.
 - Errors:
@@ -3291,6 +3553,9 @@ PolicyExplanation why = DwPolicy.Resolver.Explain(typeof(Employee), "Salary", ca
   - a provider returning null or a null fragment → `InvalidOperationException` naming the provider.
 - Resolution uses the context: with a store configured, an unprepared context throws `PolicyContextNotPrepared`.
 - Explaining records no audit events.
+- A path beneath a framework-typed member (3.3.0) or a part of an application's struct (3.4.0) is explained from the
+  same fragments `Resolve` decides it from, so `DecidedBy` names the member above it where that member decided:
+  `DwDeniedAttribute` on `Iban` for `Iban.Number`.
 
 ```
 PolicyExplanation                                   sealed class, DynamicWhere.ex.Policies.DTOs
@@ -3612,6 +3877,9 @@ PolicySchemaNode                                    sealed class
   - its type maps to a `DataType`, and
   - the caller may use it for at least one feature.
 - A fully denied field (`[DwDenied]`) never appears. Audited fields are not marked.
+- A part of an application's struct is described as its struct member's policy leaves it (3.4.0):
+  `[DwNoWhere, DwNoOrder]` on `LocalizedText Name` lists `Name.Ar` with `CanWhere` and `CanOrder` false and
+  `CanSelect` true.
 - The entity is level 1; a root path of n segments is level n + 1. A root at level L walks to `min(L + Depth - 1, MaxNavigationDepth)`.
   - A larger `Depth` is clamped, never refused; read `Depth` and `MaxDepth` back.
   - `Depth < 1` → `ArgumentException`.
@@ -3809,6 +4077,9 @@ How a rule applies, evaluated on every query:
   - A rule on a navigation does not cover the fields beneath it.
 - **Subject:** a Custom identity carries no dimension name, so every Custom subject with the same value matches.
 - **Purpose:** a rule with a purpose never applies to a caller whose `Purpose` is null. Write a denial that must always hold without a purpose.
+  Both sides are trimmed and compared ignoring case: the rule where it is built, the context where `Purpose` is set
+  (3.4.0), so `" Export "` on a context matches a rule for `export`; it used to match nothing. The same name selects
+  the purpose's page caps (section 12).
 - **Validity window:** tested against UtcNow on each query, never at load.
 - **Disabled rules** never reach a snapshot.
 - **Transform stages** elect one winner per stage. A rule can add a stage on top of a sealed chain but cannot replace a sealed stage.
@@ -4410,7 +4681,8 @@ DwClaimsOptions
   IDictionary<string, DwSubjectKind> SubjectClaimTypes     claim type -> kind; empty; keys case-insensitive
   IDictionary<string, string>        ValueClaimTypes       context key -> claim type; empty; keys case-insensitive
   bool                               AllowAnonymous = false
-  string?                            Purpose        = null           copied to DwPolicyContext.Purpose
+  string?                            Purpose        = null           copied to DwPolicyContext.Purpose, which stores
+                                                                     it trimmed (3.4.0); a constant, never a claim
 ```
 - **Two builders:** `CreateContextAsync` is `FromClaims` followed by `DwPolicy.PrepareAsync`. A `FromClaims` context is unprepared, and since 3.1.0 `ApplyPolicy(context)` refuses it with `PolicyContextNotPrepared` whether or not a store is configured: prepare it before querying, or use `CreateContextAsync`. `FromClaims` is for adding to the context before preparing it.
 - **Refusals:**
@@ -4492,8 +4764,9 @@ through `PolicySimulator` or in dry run to see the decisions).
                                       every other field refusal inside a Segment, codes 1–5 included
 7   AllSelectsDenied                  Convenience dropped every requested select (FieldPath "*")                recorded
 8   OperatorNotAllowed                an operator outside the field's allowed set ([DwOperators], rules)        recorded
-9   CapExceeded                       MaxPageSize, MaxConditions, MaxConditionDepth, MaxConditionSets,          recorded, except the
-                                      MaxConditionValues, MaxAggregates, MaxOrderFields or MaxNavigationDepth   audit buffer: throws
+9   CapExceeded                       MaxPageSize (the declared purpose's, where DwCaps.Purposes has one,       recorded, except the
+                                      3.4.0), MaxConditions, MaxConditionDepth, MaxConditionSets,               audit buffer: throws
+                                      MaxConditionValues, MaxAggregates, MaxOrderFields or MaxNavigationDepth
                                       exceeded; or the context already holds MaxAuditEvents undrained events,
                                       which under Strict outside a dry run is refused as a field instead. The
                                       buffer is also reached on the way out, by an audited member no path names
@@ -4616,6 +4889,16 @@ catch (LogicException ex)
   `[DwAllowedValues("Active", "Suspended", "Closed")]`.
 - **Refuse unscoped scans, allow scoped ones:** `[DwRequireWhere]` on `Department`.
 - **Expensive, sensitive field:** `[DwCost(10)]` + `[DwAudit(PolicyFeature.Select | PolicyFeature.Where)]`.
+- **An export larger than a screen's page** (3.4.0):
+  `options.Caps.Purposes["excel"] = new DwPageCaps { MaxPageSize = 10_000, DefaultPageSize = 10_000 }`, and
+  `context.Purpose = "excel"` in the export endpoint alone. The screens keep their page; the export reads every match
+  up to 10,000 in one statement, and a page past that is refused. `TotalCount` above `Data.Count` says the file was
+  cut short.
+- **A value composed over two columns** (3.4.0): project it with an initializer,
+  `Name = new LocalizedText { Ar = t.NameAr, En = t.NameEn }`, so `Name.Ar` and `Name.En` filter and sort on the
+  columns. A constructor, `new LocalizedText(t.NameAr, t.NameEn)`, leaves every clause on them refused under
+  `Strict`. `[DwNoWhere, DwNoOrder]` on the member refuses the value and its parts as filters and sorts and keeps
+  them selectable.
 
 ```
 This                        needs                              or else
@@ -4626,6 +4909,8 @@ MaskStrategy.Hash           HashSalt of 16+ characters         MissingHashSalt
 MaskStrategy.Tokenize       TokenVault                         MissingTokenVault
 tokens that must match      one explicit TokenScope            the scope follows each field path
 any policy                  [DwEntity(RequirePolicy = true)]   a DynamicWhere call without ApplyPolicy reads all
+a purpose's page caps       the purpose set by the host        a caller picks its own caps and purpose-bound grants
+a composed value's parts    an initializer, not a constructor  every clause on a part is refused under Strict
 ```
 
 ### Inference channels
@@ -4702,14 +4987,16 @@ Read before generating policy attributes.
    and `In`, so a caller can confirm a known value but cannot sweep for one.
 4. **A forced predicate wraps the caller's group; it never merges into it.** The result is
    `(A OR B) AND TenantId = 5`. Do not hand-build the equivalent.
-5. **`[DwDenied]` on a navigation denies only that path; `Contact.Email` stays open.** Either decorate the
+5. **`[DwDenied]` on a class navigation denies only that path; `Contact.Email` stays open.** Either decorate the
    members of the navigated type, which applies on every path reaching them (up to 4 segments), or deny
    each child path. A `"*"` rule denies every field of the entity, and `"Contact.*"` is not a wildcard.
-   The contrast is a member whose type the framework declares: `Salary.Value`, `Secret.Length`, `Born.Year`,
-   `Bag.Count`. Nothing can be decorated there, so since 3.3.0 such a path takes the policy of the member it
-   reads — its denials, operators, cost and audit, never its alias, required filter, forced scope or
-   description (section 14). A navigation into an application's own type is still a separate field, because its
-   members can carry attributes of their own.
+   A class is a navigation whose members are separate fields. Two kinds of member are not, and a path beneath
+   them takes their policy: one whose type the framework declares (`Salary.Value`, `Secret.Length`,
+   `Born.Year`, `Bag.Count`, since 3.3.0), where nothing can be decorated, and one holding an application's own
+   struct or a collection of them (`Iban.Number`, since 3.4.0), because a struct is a value. Either takes the
+   member's denials, operators, cost and audit, never its alias, required filter, forced scope or description,
+   and a struct's parts keep their own attributes beside it (section 14). A member declared as a nullable
+   struct is covered too, its parts named through `Value` (trap 41).
 6. **The default token scope is the field path relative to the queried entity.** Equal member paths on
    two entities share tokens, while the same member reached through a navigation gets different tokens.
    Set `TokenScope` wherever tokens must or must not match.
@@ -4761,7 +5048,8 @@ Read before generating policy attributes.
     member (section 18), so `Selects` naming it returns it transformed, though it cannot be a grouping key or an
     aggregated field. What is
     declared about the queried entity itself is not read there, as it is not around a cycle: `[DwAlias]`,
-    `[DwRequireWhere]`, `[DwForceWhere]`. Until 3.3.0 such a member was allowed and untransformed.
+    `[DwRequireWhere]`, `[DwForceWhere]`. Until 3.3.0 such a member was allowed and untransformed. Since 3.4.0 the
+    attributes of each application struct such a path passes through are read the same way.
 22. **A guarded query over an in-memory source masks your objects.** `list.ApplyPolicy(ctx).ToList(filter)` without
     `Selects` returns the list's own instances and transforms them in place, so the list stays masked afterwards.
     EF Core queries run `AsNoTracking` and are unaffected. Query a copy, or send `Selects`.
@@ -4825,6 +5113,26 @@ Read before generating policy attributes.
     `DefaultOrder` are gone rather than merged. `[DwEntity(DefaultOrder = "Id")]` on a subclass of a
     `RequirePolicy` type lets a DynamicWhere call on the subclass run without `ApplyPolicy`. Repeat every setting on
     the derived type.
+39. **The purpose is the host's, never the caller's (3.4.0).** `DwPolicyContext.Purpose` selects a purpose's page
+    caps in `DwCaps.Purposes` and every purpose-bound rule. Bound from a request header, a query string or a body, it
+    lets a caller pick the largest page any purpose allows, and whatever a purpose-bound rule grants. Set it in the
+    endpoint that serves the export. A purpose no entry names runs under the deployment's caps with nothing said,
+    so a misspelt name, in the configuration or in code, bounds the export like a screen.
+40. **A projection built with a constructor hides its members from every clause (3.4.0).** EF Core follows a member
+    only through an initializer's binding, so `Select(t => new Row { Name = new LocalizedText(t.NameAr, t.NameEn) })`
+    leaves `Name.Ar` impossible to filter, order, group or aggregate: under `Strict` it is refused as an unknown name
+    is, and elsewhere EF Core throws. Write `new LocalizedText { Ar = t.NameAr, En = t.NameEn }`. `Selects` is
+    unaffected.
+41. **A struct's parts share its denial, a nullable struct's included (3.4.0).** `[DwNoWhere]` on a
+    `LocalizedText Name` refuses a filter on `Name.Ar` too, where a class navigation's denial would not. On a
+    `LocalizedText? Alias` it refuses `Alias.Value.Ar`, which the policy reads as `Alias.Ar`, and `Alias.HasValue`.
+    To keep one part filterable, deny the member with `Overridable = true` and allow the part with a rule.
+42. **A struct a transform changes must be writable where it is held (3.4.0).** A struct is a copy, so a masked
+    member of one is written back into the member, list position or outer struct that held it. A struct held by a
+    member with no setter, structs in a collection that cannot be written by position (a `HashSet<T>`), and a
+    struct that is a dictionary's value cannot be, and the query fails with `InvalidOperationException` rather than
+    return the stored value. Give such a member a setter and hold such structs in a list or an array. Until 3.4.0
+    no transform on a struct's member was applied at all (section 18).
 
 ---
 
@@ -5271,6 +5579,127 @@ MemoryCalculationInput
 ### History
 
 ```
+3.4.0   Page caps per declared purpose; the parts of a struct, a nullable one's included, policed as the struct is,
+        and a transform on a struct's member applied; a path through a member a constructor builds refused under
+        Strict rather than failing in the provider; and a typed selection through a struct, or beneath a collection of
+        them, that carries what it names and nothing beside it.
+        - New. DwCaps.Purposes, a DwPurposeCaps (IDictionary<string, DwPageCaps>), gives a declared purpose page caps
+          of its own: DwPageCaps.MaxPageSize and DefaultPageSize, each an int? whose null takes the deployment's
+          cap. MaxPageSize and DefaultPageSize bound what one response carries and are set for screens; an export
+          or a report read the same rows under the same field policy and was held to the same page, so it stopped
+          at the first page or walked the rest one page at a time, a statement and a count per page and no single
+          snapshot. A query runs under a purpose's caps when its DwPolicyContext.Purpose names that purpose,
+          trimmed and compared without regard to letter case as a purpose-bound rule is; a context naming no
+          purpose, or one no entry names, runs under the deployment's caps. A value set is at least 1
+          (ArgumentOutOfRangeException), so no purpose can switch a bound off, and the default page a purpose runs
+          under is bounded by the maximum it runs under. Only the two page caps are replaced. A page above the purpose's maximum is
+          refused with CapExceeded, in both tiers, never trimmed, wherever a guarded call takes a page: the Filter
+          terminals, a Summary's page, a Segment's page and the composable Page. Any name and as many as a
+          deployment has; several names may share one DwPageCaps; a null or blank name → ArgumentException, a null
+          value → ArgumentNullException, and TryGetValue and ContainsKey answer false for one. It binds from
+          Caps:Purposes:<name>:MaxPageSize and :DefaultPageSize, where any other key refuses to start; it freezes
+          with the posture, each DwPageCaps it holds included; and a second Configure compares purposes by the
+          caps that apply. The purpose is the host's statement, never the caller's: a request that could name its
+          own purpose could name its own caps. Section 12.
+        - Behaviour change. DwPolicyContext.Purpose is stored trimmed, and a null, empty or blank value as null. A
+          rule's purpose was already trimmed where the rule is built, so " export " on a context now matches a
+          purpose-bound rule for export, which it used to miss, and means to a rule what it means to a purpose's
+          page caps.
+        - Security fix and behaviour change. A path beneath a member whose type is an application's own struct, or
+          a collection of them, takes that member's policy, as a path beneath a framework-typed member has since
+          3.3.0. A struct is a value, not a navigation: with [DwDenied] on an Iban struct, Iban.Number was filtered
+          on (a test for a guessed value), sorted by, grouped by with its values as the group keys and handed back
+          by a dynamic projection, under Strict. Taken from the struct member, from every provider: its denials,
+          its operators (intersected with the path's own), its cost and its audit; not its alias, required filter,
+          forced scope or descriptive facts, which come from the path's own member. The path's own attributes still
+          apply beside the struct member's, and precedence decides as usual: a rule allowing Soft.Number replaces
+          an overridable deny on Soft, and no rule replaces a sealed [DwDenied] on the struct. Every struct on the
+          path decides it (Card.Inner.Ar), a struct inside a class navigation counts (Owner.Name.Ar), and the class
+          itself does not: a denial of Customer still denies only that path. A transformed struct member refuses
+          Select, Group and Aggregate on its parts. Past the walk's depth the attributes of each struct the path
+          passes through are read directly. Explain names the struct member's attribute, and the schema reports
+          the parts with its denials. A nullable struct's parts are covered by the next bullet. Both tiers; present
+          in 3.3.0 and earlier.
+        - Security fix. A member of a nullable struct is policed as the policy names it. A query reaches a member of
+          an Iban? through the nullable, Iban.Value.Number, while the attribute walk, the transforms and the
+          fragments name it Iban.Number, so a lookup by the query's spelling matched none of them: a [DwDenied] on
+          the nullable member or on a member of the struct did not stop a filter, a sort, a grouping key or a
+          selection of that member, Iban.HasValue was open, and a mask on a member of the struct was not applied
+          when a selection named it through Value, as a result column or as a group key. Present since the policy
+          layer shipped in 3.0.0; this release's typed selection change had widened it to the typed terminal before
+          release. A Value after a nullable struct of the application's is dropped now wherever the policy reads a
+          path — the resolver, the outbound walk, the summary's key and aggregate transforms, the group floor and
+          the past-depth transforms — so Iban.Value.Number is decided as Iban.Number and Iban.Value as Iban; a
+          nullable's own members, HasValue included, are read as the nullable member; and the walk steps through
+          Value on a dynamic projection's generated row. A framework nullable, Salary.Value, is unchanged. Resolve
+          and Explain report the path as the policy names it. Section 14.
+        - Behaviour change. Under Strict outside a dry run, a filter, an order, a grouping key, an aggregated field
+          or a segment condition naming a path through a member the projection builds by calling an application
+          type's constructor with arguments is refused as an unknown name is (the clause's FieldDeniedFor* code,
+          FieldPath "*"), where EF Core threw "could not be translated" and the caller saw a five-hundred. EF Core
+          follows a member only through an initializer's binding: new LocalizedText(t.NameAr, t.NameEn).Ar cannot
+          be translated, and new LocalizedText { Ar = t.NameAr, En = t.NameEn }.Ar is the column. A row built by its
+          own constructor has every member a clause names refused, and so is a clause on the constructed member
+          itself; a member an initializer beside the constructor binds stays usable; a constructor in either
+          branch of a conditional refuses what that branch leaves unbound. Left alone: an anonymous type, the framework's own types, a collection, a type the model stores
+          as a column, a projection with no EF Core entity behind it, a provider that is not EF Core's own, rows in
+          memory, Convenience and a dry run. A selection through such a member still works. This replaces the
+          3.3.0 statement that such a projection has no member refused. Section 17.
+        - Fix. A typed selection through a struct returns its values. Select(List<string>), and a Filter's or a
+          Segment's Selects on the typed terminals, skipped every value-typed member a path went beneath, so
+          Select(["Name.Ar"]) over a LocalizedText struct returned the struct's default, an empty name, with
+          nothing refused, guarded or not. An application's own struct is built member by member now, as a class
+          navigation is: the row carries what was named and nothing beside it, nested structs are built level by
+          level, a collection inside one is carried, and a nullable struct is named through Value and built where
+          it has one. Still unbound: a class navigation inside a struct, a struct in which nothing named can be set,
+          and a path beneath a framework-typed member (Born.Year), which a typed row cannot hold apart from the
+          date; the dynamic terminals carry that as it is named. Section 6.
+        - Behaviour change. A guarded selection through a struct carries only what was named. The gate added the
+          key (Id) of every node a selected path passes through, since the builder adds a class's key, and read a
+          struct as one: DeniedBy.Value.Why came back with the struct's Id beside it, typed and dynamic, and a
+          struct whose Id is denied had a selection of its other members refused and was left out of a
+          synthesized projection. Neither builder adds a struct's key, so the gate adds and gates a class's key
+          only. Section 17.
+        - Security fix. A typed selection beneath a collection of structs carries only what it names. The typed
+          projection bound every collection of values whole, so Pairs.Shown over a List<Pair> handed back each
+          element whole, a [DwDenied] member included, in both tiers, while the policy had approved only
+          Pairs.Shown. Selecting Pairs whole was, and is, refused when an element member is denied, and the dynamic
+          terminals were never affected: they project Pairs.Select(v => new(v.Shown)). Each element of a
+          collection of an application's own structs is built member by member now,
+          Pairs.Select(v => new Pair { Shown = v.Shown }).ToList(), into a List<T>, any member type a List<T> can
+          be assigned to, or a T[]. A null collection stays null; a collection of nullable structs, one of another
+          shape, and an element in which nothing named can be set are left unbound, carrying nothing rather than
+          everything; a collection of scalars is still bound whole. It works on EF Core where the projection reads
+          the list from a query, and in memory. Behaviour change beside it: a typed selection beneath a list a
+          projection builds with a collection initializer now fails on EF Core as the dynamic one always did
+          (limits, below). Present since the policy layer shipped in 3.0.0. Section 6.
+        - Fix. A projection the policy synthesizes for a request with no Selects narrows a member holding an
+          application's own struct that has a denied member, held directly or in a list, any type a list can be
+          assigned to, or an array, as it narrows a class: the allowed members come back and the denied one does
+          not. The gate read a struct as a type the core could not build and left it out whole ("left out whole:
+          the core cannot build '…', which it narrows into"), so its allowed members came back empty. A nullable
+          struct, or structs in a collection of another shape, are still left out whole. Section 17.
+        - Security fix and behaviour change. A transform declared on a member of an application's own struct is
+          applied. The outbound walk read the struct as a boxed copy and the compiled setter unboxed a second copy
+          to write into, so [DwMask] (Hash and Tokenize included), [DwGeneralize], [DwFormat], [DwTruncate],
+          [DwDefault] and [DwMutate] on a struct's member landed on a temporary and the stored value was emitted: in
+          both tiers, from rows in memory and from EF Core, typed and dynamic, whether the struct came back in a
+          whole row or was selected whole. A class member was never affected, nor a dynamic selection of a path
+          beneath the struct, which builds an object of its own. The setter writes into the box in
+          place now, and both passes of the walk write each changed struct back where it was read from, innermost
+          first: into the member that held it, into its position in a list or an array, or into the outer struct
+          that held it. A member the policy names is transformed once, by the pass along its path. Fail-closed: a
+          changed struct that cannot be written back — held by a member with no setter, in a collection that
+          cannot be written by position such as a HashSet, or as a dictionary's value — fails the query with
+          InvalidOperationException rather than emit the stored value. Present since the policy layer shipped in
+          3.0.0. Section 18.
+        - Behaviour change. Bind reports a value a property refuses — a cap below 1, a purpose's page cap below 1, a
+          hash salt too short, a snapshot age or refresh interval that is not positive — as the
+          InvalidOperationException it documents, with the property's own exception as InnerException however
+          deep the binder wrapped it. The binder calls each setter by reflection, so such a value arrived as a
+          TargetInvocationException. Section 12.
+        - Docs. A filter on a whole struct-typed member throws InvalidOperationException from the builder,
+          guarded or not (section 11, trap 17).
 3.3.0   A second host may configure the same posture, a path the query cannot compute is refused rather than run,
         a path or a member the attribute walk cannot name is still policed, a malformed request is refused as one
         rather than reaching the caller as a server error, a token vault can hold a key, and Clone is public on
@@ -5831,11 +6260,33 @@ MemoryCalculationInput
   queried entity itself is not read there, as it is not around a cycle: `[DwAlias]`, `[DwRequireWhere]`,
   `[DwForceWhere]`. A transformed member there cannot be a grouping key or an aggregated field, because a
   summary's own transform finds a generated row's columns by the type's list, which stops at four segments.
+- A sort on a whole struct-typed member fails on EF Core however the projection builds it, since EF Core cannot
+  order by a composite value; under `Strict` a constructor-built one is refused first (3.4.0). `[DwNoOrder]` on the
+  member keeps it out of the query in both tiers.
 - A transform the policy names no path to is applied to the rows by run-time type (3.3.0, section 18). A member
   typed `object`, or a collection that is not generic, says nothing about what it holds and is not read into.
   Type the member as what it holds.
 - A simulation reads T as a source it cannot see into (section 23): every denial beneath a member counts, and a
   synthesized `Clause.Selects` keeps only members holding a value.
+- A filter on a whole struct-typed member throws `InvalidOperationException` from the builder, guarded or not, in
+  both tiers (section 11, trap 17). Filter on its members; under a policy `[DwNoWhere]` on the member makes it a
+  refusal.
+- A path through a member an application type's constructor builds with arguments cannot be filtered, ordered,
+  grouped or aggregated on EF Core: under `Strict` it is refused (3.4.0, section 17), and elsewhere EF Core throws.
+  Build the member with an initializer, which EF Core follows to the column.
+- A typed selection leaves unbound a class navigation inside a struct, and a path beneath a framework-typed member
+  (`Born.Year`, `Code.Length`), which a typed row cannot hold apart from the value above it (section 6). The dynamic
+  terminals carry both as they are named.
+- A struct a transform changed is written back where it was read from (3.4.0, section 18), so one that cannot be
+  fails the query with `InvalidOperationException`: a struct held by a member with no setter, structs in a
+  collection that cannot be written by position (`HashSet<T>`), a struct that is a dictionary's value. Give the
+  member a setter, and hold such structs in a list or an array.
+- A selection beneath a collection of structs that a projection builds with a collection initializer
+  (`Pairs = new List<Pair> { new Pair { Shown = t.A, Hidden = t.B } }`) fails on EF Core with
+  `InvalidOperationException` ("could not be translated"), guarded or not: the dynamic terminals always did, and
+  since 3.4.0 the typed ones do too, where they returned each element whole (section 6). A list the projection
+  reads from a query (`o.Lines.Select(l => new Pair { … }).ToList()`) is narrowed as named. Build the list from a
+  query, or name the collection whole where nothing in it is denied.
 
 ---
 
@@ -6025,5 +6476,28 @@ app.MapPost("/employees/search", async (Filter filter, HttpContext http, AppDbCo
     }
     catch (PolicyException ex) { return Results.Json(new { error = ex.Code, field = ex.FieldPath }, statusCode: 403); }
     catch (LogicException ex)  { return Results.BadRequest(new { error = ex.Message }); }
+});
+```
+
+### An export under a purpose (3.4.0)
+
+```csharp
+// Program.cs — the screens' caps come from configuration; the export declares a purpose of its own
+builder.Services.AddDwPolicies(builder.Configuration.GetSection("DynamicWhere:Policies"), options =>
+{
+    options.Entities.Expose<Tenant>("Tenant");
+    options.Caps.Purposes["excel"] = new DwPageCaps { MaxPageSize = 10_000, DefaultPageSize = 10_000 };
+});
+
+// the export endpoint: the host names the purpose, never the request
+app.MapPost("/tenants/export", async (Filter filter, HttpContext http, AppDbContext db, CancellationToken ct) =>
+{
+    DwPolicyContext caller = await DwPolicy.PrepareAsync(new DwPolicyContext { Purpose = "excel" }
+        .WithSubject(DwSubjectKind.User, http.User.FindFirstValue(ClaimTypes.NameIdentifier)!));
+
+    FilterResult<Tenant> file = await db.Tenants.ApplyPolicy(caller).ToListAsync(filter, ct);   // one statement
+    bool truncated = file.TotalCount > file.Data.Count;                                          // cut at 10,000
+
+    return Results.Ok(new { file.Data, file.TotalCount, truncated });
 });
 ```

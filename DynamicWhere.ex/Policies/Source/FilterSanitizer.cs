@@ -130,7 +130,7 @@ internal static class FilterSanitizer
 
         // After the caps, so a page the caller did write is still refused when it is too large,
         // and a page the caller did not write is bounded rather than unbounded.
-        working.Page = DefaultPage(working.Page, options);
+        working.Page = DefaultPage(working.Page, options, context);
 
         long cost = Cost(working, gate);
 
@@ -248,7 +248,7 @@ internal static class FilterSanitizer
 
         // After the caps, so a page the caller did write is still refused when it is too large,
         // and a page the caller did not write is bounded rather than unbounded.
-        working.Page = DefaultPage(working.Page, options);
+        working.Page = DefaultPage(working.Page, options, context);
 
         long cost = Cost(working, gate);
 
@@ -291,7 +291,7 @@ internal static class FilterSanitizer
         try
         {
             GroupFloor.Inject(
-                working, GroupFloor.For(working, gate.TypePolicy, gate.Options), gate.IsDryRun, trace);
+                working, GroupFloor.For(working, typeof(T), gate.TypePolicy, gate.Options), gate.IsDryRun, trace);
         }
         catch (ArgumentException taken)
         {
@@ -728,7 +728,7 @@ internal static class FilterSanitizer
 
         // After the caps, so a page the caller did write is still refused when it is too large,
         // and a page the caller did not write is bounded rather than unbounded.
-        working.Page = DefaultPage(working.Page, options);
+        working.Page = DefaultPage(working.Page, options, context);
 
         long cost = Cost(working, gate);
 
@@ -1101,10 +1101,16 @@ internal static class FilterSanitizer
     /// Bounded by <c>MaxPageSize</c>, so the two cannot be configured into contradicting each other:
     /// a default above the maximum would hand out a page the same query could not have asked for.
     /// </para>
+    /// <para>
+    /// Both are the caps of the purpose the context declares, where <see cref="DwCaps.Purposes"/> has
+    /// any for it, and the deployment's otherwise.
+    /// </para>
     /// </remarks>
-    private static PageBy? DefaultPage(PageBy? page, DwPolicyOptions options)
+    private static PageBy? DefaultPage(PageBy? page, DwPolicyOptions options, DwPolicyContext context)
     {
-        if (page is not null || options.Caps.DefaultPageSize == 0)
+        int size = options.Caps.DefaultPageSizeFor(context.Purpose);
+
+        if (page is not null || size == 0)
         {
             return page;
         }
@@ -1112,7 +1118,7 @@ internal static class FilterSanitizer
         return new PageBy
         {
             PageNumber = 1,
-            PageSize = Math.Min(options.Caps.DefaultPageSize, options.Caps.MaxPageSize)
+            PageSize = Math.Min(size, options.Caps.MaxPageSizeFor(context.Purpose))
         };
     }
 
@@ -1818,8 +1824,9 @@ internal static class FilterSanitizer
     /// Gates the key of every nested node a path passes through, and keeps the ones that survive.
     /// </summary>
     /// <remarks>
-    /// The projection builder adds the key of each nested node whether the caller named it or not,
-    /// so the key is in the result whatever this decides. Naming it here is what lets the outbound
+    /// The projection builder adds the key of each nested class it builds whether the caller named it
+    /// or not, so the key is in the result whatever this decides. A struct's is never added, and is
+    /// neither kept nor gated here (see <c>Gate.HasKey</c>). Naming it here is what lets the outbound
     /// transform see it as carried — without that a masked nested key leaves unmasked, because the
     /// walker matches a carried path against the projection and the caller never wrote this one.
     /// <para>
@@ -2126,7 +2133,7 @@ internal static class FilterSanitizer
     /// <remarks>
     /// A field whose type can hold what the policy cannot name, a framework collection of a policed
     /// type or a member typed <see cref="object"/>, is left out of the narrowing: the core projects it
-    /// whole. The builder adds the key of every node it narrows, so a denied key leaves the member out,
+    /// whole. The builder adds the key of every class it narrows, so a denied key leaves the member out,
     /// and so does a path the core cannot project.
     /// </remarks>
     private static string? Narrowed(string member, List<string> survivors, Gate gate, RowShape rows, List<string> allowed)
@@ -3059,11 +3066,18 @@ internal static class FilterSanitizer
         /// <summary>
         /// True when the type a path names carries a key the projection builder will add.
         /// </summary>
+        /// <remarks>
+        /// The builder adds the key of a class it builds and never of a struct: a struct is built with
+        /// exactly what was named, in memory and on EF Core, typed and dynamic. Read as a class, a struct
+        /// holding an <c>Id</c> had that key added to every selection through it, so a caller naming
+        /// <c>DeniedBy.Value.Why</c> received <c>Id</c> beside it, and one whose <c>Id</c> is denied had the
+        /// selection of every other member refused for a key no builder would have carried.
+        /// </remarks>
         internal bool HasKey(string path)
         {
             Type? type = TypeAt(path);
 
-            return type is not null && CacheReflection.FindProperty(type, "Id") is not null;
+            return type is not null && !type.IsValueType && CacheReflection.FindProperty(type, "Id") is not null;
         }
 
         /// <summary>
@@ -3256,6 +3270,11 @@ internal static class FilterSanitizer
         /// construct, an interface, an abstract class or one without a public parameterless constructor,
         /// which it skips; null when it can build them all.
         /// </summary>
+        /// <remarks>
+        /// An application's own struct needs no constructor: since 3.4.0 the typed projection builds one
+        /// member by member, held directly or in a list or an array, as it builds a class. A nullable one,
+        /// or one in a collection of another shape, it leaves unbound, so those still count as unbuilt.
+        /// </remarks>
         internal Type? Unbuildable(string member, IEnumerable<string> paths)
         {
             HashSet<string> nodes = new(StringComparer.OrdinalIgnoreCase) { member };
@@ -3272,6 +3291,7 @@ internal static class FilterSanitizer
             {
                 if (DeclaredType(node) is { } declared
                     && AttributePolicyProvider.NavigationTypeOf(declared) is { } type
+                    && !BuildsStruct(declared, type)
                     && (type.IsAbstract || type.GetConstructor(Type.EmptyTypes) is null))
                 {
                     return type;
@@ -3280,6 +3300,14 @@ internal static class FilterSanitizer
 
             return null;
         }
+
+        /// <summary>True when the typed projection builds this struct member by member where it is declared.</summary>
+        private static bool BuildsStruct(Type declared, Type type) =>
+            type.IsValueType
+            && (declared == type
+                || declared == type.MakeArrayType()
+                || (CacheReflection.GetCollectionElementType(declared) == type
+                    && declared.IsAssignableFrom(typeof(List<>).MakeGenericType(type))));
 
         /// <summary>Every fragment the providers hold for this type and caller, read once per query.</summary>
         private IReadOnlyList<PolicyFragment> Fragments => _fragments ??= _resolver.Fragments(_entityType, _context);
@@ -3813,8 +3841,10 @@ internal static class FilterSanitizer
                 {
                     string node = path[..cut];
 
+                    // A struct is built with what was named and no key beside it (see HasKey).
                     if (!nodes.Add(node)
                         || TypeAt(_entityType, node) is not { } type
+                        || type.IsValueType
                         || CacheReflection.FindProperty(type, "Id") is not { } key)
                     {
                         continue;
@@ -3975,12 +4005,14 @@ internal static class FilterSanitizer
             }
         }
 
-        /// <summary>Refuses a page larger than the budget allows.</summary>
+        /// <summary>Refuses a page larger than the budget allows, the declared purpose's where it has one.</summary>
         internal void CheckPage(PageBy? page)
         {
-            if (page is not null && page.PageSize > _options.Caps.MaxPageSize)
+            int limit = _options.Caps.MaxPageSizeFor(_context.Purpose);
+
+            if (page is not null && page.PageSize > limit)
             {
-                Raise(Cap("MaxPageSize", _options.Caps.MaxPageSize, page.PageSize, WholeClause));
+                Raise(Cap("MaxPageSize", limit, page.PageSize, WholeClause));
             }
         }
 

@@ -102,20 +102,37 @@ public class PolicyConfigurationTests
     }
 
     /// <summary>Every setter's own validation still applies to a value that arrived from a file.</summary>
+    /// <remarks>
+    /// As the documented InvalidOperationException, with the property's refusal inside: the binder calls
+    /// each setter by reflection, and a refusal used to arrive wrapped as a TargetInvocationException.
+    /// </remarks>
     [Fact]
     public void A_value_the_property_refuses_is_refused_here_too()
     {
         // A cap below one.
-        Assert.ThrowsAny<Exception>(
+        InvalidOperationException cap = Assert.Throws<InvalidOperationException>(
             () => new DwPolicyOptions().Bind(Section(("Caps:MaxPageSize", "0"))));
 
+        Assert.IsType<ArgumentOutOfRangeException>(cap.InnerException);
+
         // A salt short enough to be brute-forced offline.
-        Assert.ThrowsAny<Exception>(
+        InvalidOperationException salt = Assert.Throws<InvalidOperationException>(
             () => new DwPolicyOptions().Bind(Section(("HashSalt", "pepper"))));
 
+        Assert.IsAssignableFrom<ArgumentException>(salt.InnerException);
+
         // A snapshot age that is not a positive interval.
-        Assert.ThrowsAny<Exception>(
+        InvalidOperationException age = Assert.Throws<InvalidOperationException>(
             () => new DwPolicyOptions().Bind(Section(("MaxSnapshotAge", "00:00:00"))));
+
+        Assert.IsAssignableFrom<ArgumentException>(age.InnerException);
+
+        // A purpose's page cap below one: a newer binder wraps a value inside a dictionary once more.
+        InvalidOperationException purpose = Assert.Throws<InvalidOperationException>(
+            () => new DwPolicyOptions().Bind(Section(("Caps:Purposes:excel:MaxPageSize", "0"))));
+
+        Assert.IsType<ArgumentOutOfRangeException>(purpose.InnerException);
+        Assert.StartsWith("A configured policy value was refused", purpose.Message, StringComparison.Ordinal);
     }
 
     [Fact]

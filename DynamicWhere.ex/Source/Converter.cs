@@ -106,6 +106,12 @@ internal static class Converter
             var navType = navProp.PropertyType;
             if (navType == typeof(string) || navType.IsValueType)
             {
+                // A path beneath a struct, a string or a date: ValueMembers decides what the row carries.
+                if (ValueMembers.Bind(navProp, instance, childNode, BuildTypedMemberInitExpression) is { } bound)
+                {
+                    bindings.Add(bound);
+                }
+
                 continue;
             }
 
@@ -120,7 +126,12 @@ internal static class Converter
                 // Scalar collections (e.g., List<string>) can be bound directly.
                 if (elementType.IsValueType || elementType == typeof(string))
                 {
-                    bindings.Add(Expression.Bind(navProp, Expression.Property(instance, navProp)));
+                    // Scalars whole, and a collection of structs element by element: ValueMembers decides.
+                    if (ValueMembers.BindElements(navProp, instance, childNode, elementType, BuildTypedMemberInitExpression) is { } elements)
+                    {
+                        bindings.Add(elements);
+                    }
+
                     continue;
                 }
 

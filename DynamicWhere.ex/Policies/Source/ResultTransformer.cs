@@ -310,6 +310,7 @@ internal static class ResultTransformer
     internal static void Summary(
         SummaryResult result,
         Summary summary,
+        Type entityType,
         TypePolicy policy,
         DwPolicyContext context,
         DwPolicyOptions options,
@@ -320,8 +321,8 @@ internal static class ResultTransformer
             return;
         }
 
-        List<Column> keys = KeyColumns(summary, policy);
-        List<Column> aggregates = AggregateColumns(summary, policy);
+        List<Column> keys = KeyColumns(summary, entityType, policy);
+        List<Column> aggregates = AggregateColumns(summary, entityType, policy);
 
         if (keys.Count == 0 && aggregates.Count == 0)
         {
@@ -347,7 +348,7 @@ internal static class ResultTransformer
     /// <c>ContactPhone</c> — which is the third spelling of a field this library accepts and the one
     /// a previous phase missed. The column is found by that name and the policy by the path.
     /// </remarks>
-    private static List<Column> KeyColumns(Summary summary, TypePolicy policy)
+    private static List<Column> KeyColumns(Summary summary, Type entityType, TypePolicy policy)
     {
         List<Column> columns = new();
 
@@ -358,7 +359,7 @@ internal static class ResultTransformer
 
         foreach (string field in summary.GroupBy.Fields)
         {
-            if (policy.Transforms.TryGetValue(field, out ValueTransform? chain))
+            if (policy.Transforms.TryGetValue(Resolution.AttributePolicyProvider.PolicyPath(entityType, field), out ValueTransform? chain))
             {
                 columns.Add(new Column(field.Replace(".", string.Empty), field, chain));
             }
@@ -375,7 +376,7 @@ internal static class ResultTransformer
     /// stays useful when summed; a masked one becomes a mask, which is the honest rendering of a
     /// number the caller may not see. A count carries no field and so inherits nothing.
     /// </remarks>
-    private static List<Column> AggregateColumns(Summary summary, TypePolicy policy)
+    private static List<Column> AggregateColumns(Summary summary, Type entityType, TypePolicy policy)
     {
         List<Column> columns = new();
 
@@ -388,7 +389,7 @@ internal static class ResultTransformer
         {
             if (!string.IsNullOrWhiteSpace(aggregate.Field)
                 && !string.IsNullOrWhiteSpace(aggregate.Alias)
-                && policy.Transforms.TryGetValue(aggregate.Field!, out ValueTransform? chain))
+                && policy.Transforms.TryGetValue(Resolution.AttributePolicyProvider.PolicyPath(entityType, aggregate.Field!), out ValueTransform? chain))
             {
                 columns.Add(new Column(aggregate.Alias!, aggregate.Field!, chain));
             }

@@ -35,6 +35,7 @@ internal static class GroupFloor
     /// The smallest group this summary may report.
     /// </summary>
     /// <param name="summary">The summary, after grouping has been canonicalized.</param>
+    /// <param name="entityType">The type the summary is over, which says how the policy names each field.</param>
     /// <param name="policy">The type's policy, which carries each field's own floor.</param>
     /// <param name="options">The posture, which carries the global floor.</param>
     /// <returns>The effective floor, or one when nothing sets one.</returns>
@@ -47,7 +48,7 @@ internal static class GroupFloor
     /// transforms sets no floor of its own and leaves the global setting to decide.
     /// </para>
     /// </remarks>
-    internal static int For(Summary summary, TypePolicy policy, DwPolicyOptions options)
+    internal static int For(Summary summary, Type entityType, TypePolicy policy, DwPolicyOptions options)
     {
         int floor = options.Caps.MinGroupSize;
 
@@ -63,7 +64,8 @@ internal static class GroupFloor
                 continue;
             }
 
-            if (policy.Transforms.TryGetValue(aggregate.Field!, out ValueTransform? transform)
+            if (policy.Transforms.TryGetValue(
+                    Resolution.AttributePolicyProvider.PolicyPath(entityType, aggregate.Field!), out ValueTransform? transform)
                 && transform.MinGroupSize > floor)
             {
                 floor = transform.MinGroupSize;

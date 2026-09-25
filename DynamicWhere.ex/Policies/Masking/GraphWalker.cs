@@ -98,6 +98,10 @@ internal static class GraphWalker
             return Array.Empty<UnnamedRead>();
         }
 
+        // As the policy names each path, which is how the transforms are keyed: a projection naming
+        // Pair.Value.Code carries the member the type's list calls Pair.Code.
+        projected = projected?.Select(path => AttributePolicyProvider.PolicyPath(entityType, path)).ToList();
+
         // Reference identity, not equality. Two rows can share one referenced object, and
         // transforming it twice would hash a hash or truncate a truncation.
         //
@@ -219,17 +223,42 @@ internal static class GraphWalker
 
         IReadOnlyCollection<object> owners = roots;
 
-        for (int i = 0; i < segments.Length - 1; i++)
+        // A struct on the way down is a copy in a box, so what is written into it has to be written
+        // back into whatever held it, innermost first, once the leaf is done.
+        List<Action>? writeBacks = null;
+
+        try
         {
-            owners = Descend(owners, segments[i], path);
-
-            if (owners.Count == 0)
+            for (int i = 0; i < segments.Length - 1; i++)
             {
-                return;
-            }
-        }
+                owners = Descend(owners, segments[i], path, ref writeBacks);
 
-        string member = segments[^1];
+                if (owners.Count == 0)
+                {
+                    return;
+                }
+            }
+
+            Transform(owners, segments[^1], path, chain, context, options, trace, done, ref writeBacks);
+        }
+        finally
+        {
+            WriteBack(writeBacks);
+        }
+    }
+
+    /// <summary>Transforms one member on every owner a path reached.</summary>
+    private static void Transform(
+        IReadOnlyCollection<object> owners,
+        string member,
+        string path,
+        ValueTransform chain,
+        DwPolicyContext context,
+        DwPolicyOptions options,
+        PolicyTrace trace,
+        HashSet<(object Owner, string Member)>? done,
+        ref List<Action>? writeBacks)
+    {
         bool transformed = false;
 
         // One entry, not a dictionary. A materialized result is one runtime type in every case that
@@ -239,8 +268,13 @@ internal static class GraphWalker
         Type? resolvedFor = null;
         Accessors accessors = default;
 
-        foreach (object owner in owners)
+        foreach (object reached in owners)
         {
+            if (Through(reached, member, path, ref writeBacks) is not { } owner)
+            {
+                continue;
+            }
+
             Type type = owner.GetType();
 
             if (!ReferenceEquals(type, resolvedFor))
@@ -286,15 +320,20 @@ internal static class GraphWalker
     /// it means the result is not the shape the policy was resolved against.
     /// </remarks>
     private static HashSet<object> Descend(
-        IReadOnlyCollection<object> owners, string segment, string path)
+        IReadOnlyCollection<object> owners, string segment, string path, ref List<Action>? writeBacks)
     {
         HashSet<object> next = new(ReferenceComparer.Instance);
 
         Type? resolvedFor = null;
         Accessors accessors = default;
 
-        foreach (object owner in owners)
+        foreach (object reached in owners)
         {
+            if (Through(reached, segment, path, ref writeBacks) is not { } owner)
+            {
+                continue;
+            }
+
             Type type = owner.GetType();
 
             if (!ReferenceEquals(type, resolvedFor))
@@ -312,21 +351,130 @@ internal static class GraphWalker
 
             if (value is IEnumerable collection and not string)
             {
-                foreach (object? element in collection)
-                {
-                    if (element is not null)
-                    {
-                        next.Add(element);
-                    }
-                }
+                Elements(collection, path, next, ref writeBacks);
 
                 continue;
+            }
+
+            if (value.GetType().IsValueType)
+            {
+                (writeBacks ??= new List<Action>()).Add(Into(owner, value, accessors.Set, path));
             }
 
             next.Add(value);
         }
 
         return next;
+    }
+
+    /// <summary>
+    /// The object to read a segment from: the owner, or what a generated row holds under <c>Value</c>
+    /// when that is where the segment is; null when that is nothing.
+    /// </summary>
+    /// <remarks>
+    /// The policy names a nullable struct's members without the nullable, <c>Pair.Code</c>. A typed row
+    /// reads the same way, since the nullable arrives as the struct in a box. A dynamic projection builds
+    /// what the query spelled, <c>Pair.Value.Code</c>, so its generated row holds the member one object
+    /// further down, and the walk steps through <c>Value</c> to reach it: skipping it would leave the
+    /// member exactly as stored.
+    /// </remarks>
+    private static object? Through(object owner, string segment, string path, ref List<Action>? writeBacks)
+    {
+        Type type = owner.GetType();
+
+        if (!typeof(DynamicClass).IsAssignableFrom(type)
+            || CacheReflection.FindProperty(type, segment) is not null
+            || CacheReflection.FindProperty(type, nameof(Nullable<int>.Value)) is not { } wrapped)
+        {
+            return owner;
+        }
+
+        object? held = MutatorCache.Getter(wrapped)(owner);
+
+        if (held is not null && held.GetType().IsValueType)
+        {
+            (writeBacks ??= new List<Action>()).Add(Into(owner, held, MutatorCache.Setter(wrapped), path));
+        }
+
+        return held;
+    }
+
+    /// <summary>
+    /// Adds a collection's elements to the next level, each struct among them with the write that puts
+    /// it back where it was read from.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when a collection holds structs and cannot be written by position. The transform would
+    /// otherwise land in copies and every element would be emitted as stored.
+    /// </exception>
+    private static void Elements(IEnumerable collection, string path, HashSet<object> next, ref List<Action>? writeBacks)
+    {
+        IList? positions = collection as IList;
+
+        int index = -1;
+
+        foreach (object? element in collection)
+        {
+            index++;
+
+            if (element is null)
+            {
+                continue;
+            }
+
+            if (element.GetType().IsValueType)
+            {
+                if (positions is null || positions.IsReadOnly)
+                {
+                    throw new InvalidOperationException(
+                        $"'{path}' is transformed by policy and passes through a collection of structs " +
+                        $"({collection.GetType().Name}) that cannot be written by position, so the transformed " +
+                        "values cannot replace the real ones. Hold the structs in a list or an array.");
+                }
+
+                int at = index;
+
+                (writeBacks ??= new List<Action>()).Add(() => positions[at] = element);
+            }
+
+            next.Add(element);
+        }
+    }
+
+    /// <summary>The write that puts a struct, changed in its box, back into the member it was read from.</summary>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the member has no setter. The transform would land in a copy and the struct would be
+    /// emitted as stored.
+    /// </exception>
+    private static Action Into(object owner, object box, Action<object, object?>? set, string path)
+    {
+        if (set is null)
+        {
+            throw new InvalidOperationException(
+                $"'{path}' is transformed by policy and passes through a struct held by a member with no " +
+                "setter, so the transformed value cannot replace the real one. Give the member a setter, or " +
+                "project into a type that has one.");
+        }
+
+        return () => set(owner, box);
+    }
+
+    /// <summary>Runs the write-backs a walk collected, innermost first.</summary>
+    /// <remarks>
+    /// A struct inside a struct is written into its outer box before that box is written into what held
+    /// it, so the outermost write carries every change beneath it.
+    /// </remarks>
+    private static void WriteBack(List<Action>? writeBacks)
+    {
+        if (writeBacks is null)
+        {
+            return;
+        }
+
+        for (int i = writeBacks.Count - 1; i >= 0; i--)
+        {
+            writeBacks[i]();
+        }
     }
 
     /// <summary>
@@ -371,10 +519,14 @@ internal static class GraphWalker
         Dictionary<string, ValueTransform> recorded = new(StringComparer.Ordinal);
         Dictionary<string, Enums.PolicyEffect> read = new(StringComparer.Ordinal);
 
+        // Every struct the walk read into, in the order it was met, so the ones a transform changed are
+        // written back innermost first once the walk is done.
+        List<Carry> carries = new();
+
         foreach (object root in roots)
         {
             seen.Add(root);
-            pending.Push(new Visit(root, entityType, 0, string.Empty));
+            pending.Push(new Visit(root, entityType, 0, string.Empty, null));
         }
 
         while (pending.Count > 0)
@@ -396,7 +548,11 @@ internal static class GraphWalker
 
                 bool carried = IsCarried(path, projected);
 
-                if (member.Transform is { } chain && carried && done.Add((visit.Node, member.Property.Name)))
+                // A struct is a fresh box on every read, so what the pass above did to it is not in done.
+                // A member the policy names on one was transformed there, along its path, and written back.
+                bool handled = visit.Carry is not null && named is not null;
+
+                if (member.Transform is { } chain && carried && !handled && done.Add((visit.Node, member.Property.Name)))
                 {
                     if (member.Set is null)
                     {
@@ -409,6 +565,11 @@ internal static class GraphWalker
                     member.Set(visit.Node, TransformPipeline.Apply(
                         chain, member.Get(visit.Node), member.Property.PropertyType,
                         new DwTransformContext(visit.Node, path, context), options));
+
+                    if (visit.Carry is not null)
+                    {
+                        visit.Carry.Changed = true;
+                    }
 
                     recorded[path] = chain;
                 }
@@ -430,14 +591,31 @@ internal static class GraphWalker
                     ? null
                     : AttributePolicyProvider.NavigationTypeOf(named.PropertyType);
 
-                foreach (object held in Held(member.Get(visit.Node)))
+                object? value = member.Get(visit.Node);
+
+                foreach ((object held, int position) in Held(value))
                 {
-                    if (seen.Add(held))
+                    if (!seen.Add(held))
                     {
-                        pending.Push(new Visit(held, beneath, visit.Depth + 1, path));
+                        continue;
                     }
+
+                    Carry? carry = null;
+
+                    if (held.GetType().IsValueType)
+                    {
+                        carry = new Carry(visit.Carry, path, WriteFor(visit.Node, member.Set, value, held, position));
+                        carries.Add(carry);
+                    }
+
+                    pending.Push(new Visit(held, beneath, visit.Depth + 1, path, carry));
                 }
             }
+        }
+
+        for (int i = carries.Count - 1; i >= 0; i--)
+        {
+            carries[i].Settle();
         }
 
         foreach (KeyValuePair<string, ValueTransform> entry in recorded)
@@ -463,8 +641,85 @@ internal static class GraphWalker
         return reads;
     }
 
-    /// <summary>One object of the result, where it stands, and the declared type the policy read it as.</summary>
-    private readonly record struct Visit(object Node, Type? Declared, int Depth, string Path);
+    /// <summary>
+    /// One object of the result, where it stands, the declared type the policy read it as, and, for a
+    /// struct, what writes it back.
+    /// </summary>
+    private readonly record struct Visit(object Node, Type? Declared, int Depth, string Path, Carry? Carry);
+
+    /// <summary>
+    /// A struct the walk read into, changed or not, and the write that puts it back where it was read
+    /// from.
+    /// </summary>
+    /// <remarks>
+    /// Written back only when something inside it changed, so a struct no transform touched is never
+    /// written, and one held where it cannot be written back fails only when a transform landed in it.
+    /// </remarks>
+    private sealed class Carry
+    {
+        private readonly Carry? _outer;
+        private readonly string _path;
+        private readonly Action? _write;
+
+        internal Carry(Carry? outer, string path, Action? write)
+        {
+            _outer = outer;
+            _path = path;
+            _write = write;
+        }
+
+        /// <summary>True once a transform landed in this struct, or in one it holds.</summary>
+        internal bool Changed { get; set; }
+
+        /// <summary>Writes the struct back when it changed, and marks the struct holding it as changed.</summary>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when it changed and cannot be written back: the transformed value would be dropped with
+        /// the copy and the stored one emitted.
+        /// </exception>
+        internal void Settle()
+        {
+            if (!Changed)
+            {
+                return;
+            }
+
+            if (_write is null)
+            {
+                throw new InvalidOperationException(
+                    $"'{_path}' holds a struct whose member is transformed by policy, and it cannot be " +
+                    "written back where it was read from, so the transformed value cannot replace the real " +
+                    "one. Give the member a setter, and hold structs in a list or an array.");
+            }
+
+            _write();
+
+            if (_outer is not null)
+            {
+                _outer.Changed = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The write that puts a struct read from a member back into it: into the member itself, or into the
+    /// position of the collection it was read from. Null when neither can be written.
+    /// </summary>
+    /// <param name="owner">The object the member was read from.</param>
+    /// <param name="set">The member's setter, or null when it has none.</param>
+    /// <param name="value">What the member held.</param>
+    /// <param name="held">The struct, in its box.</param>
+    /// <param name="position">The struct's position in the collection the member held, or -1 for the member's own value.</param>
+    private static Action? WriteFor(object owner, Action<object, object?>? set, object? value, object held, int position)
+    {
+        if (position < 0)
+        {
+            return set is null ? null : () => set(owner, held);
+        }
+
+        return value is IList positions && !positions.IsReadOnly
+            ? () => positions[position] = held
+            : null;
+    }
 
     /// <summary>One readable member of a run-time type that transforms or is audited, or can lead to one.</summary>
     private sealed record Member(
@@ -531,8 +786,11 @@ internal static class GraphWalker
         || typeof(DynamicClass).IsAssignableFrom(type)
         || (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(KeyValuePair<,>));
 
-    /// <summary>The objects a value holds: itself, or each element when it is a collection.</summary>
-    private static IEnumerable<object> Held(object? value)
+    /// <summary>
+    /// The objects a value holds, each with its position in the collection it came from: itself, at -1,
+    /// or each element when it is a collection.
+    /// </summary>
+    private static IEnumerable<(object Held, int Position)> Held(object? value)
     {
         if (value is null or string)
         {
@@ -541,11 +799,15 @@ internal static class GraphWalker
 
         if (value is IEnumerable collection)
         {
+            int position = -1;
+
             foreach (object? element in collection)
             {
+                position++;
+
                 if (element is not null and not string && !element.GetType().IsPrimitive)
                 {
-                    yield return element;
+                    yield return (element, position);
                 }
             }
 
@@ -556,7 +818,7 @@ internal static class GraphWalker
             }
         }
 
-        yield return value;
+        yield return (value, -1);
     }
 
     /// <summary>

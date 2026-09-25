@@ -86,6 +86,46 @@ public sealed class DwCaps
         }
     }
 
+    /// <summary>
+    /// The page caps of each declared purpose, which replace <see cref="MaxPageSize"/> and
+    /// <see cref="DefaultPageSize"/> for a query whose context names that purpose.
+    /// </summary>
+    /// <remarks>
+    /// The two page caps bound what one response carries, and a deployment sets them for its screens.
+    /// An export, a report or a feed reads the same rows under the same field policy and needs more of
+    /// them in one statement. Declaring it a purpose gives it its own page caps and leaves the screens'
+    /// alone:
+    /// <code>
+    /// "Caps": {
+    ///   "MaxPageSize": 1000,
+    ///   "DefaultPageSize": 100,
+    ///   "Purposes": {
+    ///     "excel": { "MaxPageSize": 10000, "DefaultPageSize": 10000 },
+    ///     "audit-logs": { "MaxPageSize": 5000 }
+    ///   }
+    /// }
+    /// </code>
+    /// <para>
+    /// The purpose is <c>DwPolicyContext.Purpose</c>, which the host sets and a caller never can: a
+    /// request that could name its own purpose could name its own caps. A context naming a purpose not
+    /// listed here, or none, runs under the deployment's caps, so a read that forgets to declare itself
+    /// is bounded like a screen's rather than left unbounded. Only the page caps are replaced; every
+    /// other cap applies to every purpose alike.
+    /// </para>
+    /// </remarks>
+    public DwPurposeCaps Purposes { get; } = new();
+
+    /// <summary>The largest page a query may request under a purpose, or under none.</summary>
+    internal int MaxPageSizeFor(string? purpose) =>
+        PageCapsFor(purpose)?.MaxPageSize ?? MaxPageSize;
+
+    /// <summary>The page a query is given when it asks for none, under a purpose or under none.</summary>
+    internal int DefaultPageSizeFor(string? purpose) =>
+        PageCapsFor(purpose)?.DefaultPageSize ?? DefaultPageSize;
+
+    private DwPageCaps? PageCapsFor(string? purpose) =>
+        purpose is not null && Purposes.TryGetValue(purpose, out DwPageCaps? caps) ? caps : null;
+
     /// <summary>The most conditions one filter may contain, counted across every nested group.</summary>
     public int MaxConditions
     {
@@ -358,8 +398,12 @@ public sealed class DwCaps
         set => _maxSchemaFields = Set(value);
     }
 
-    /// <summary>Prevents any further change.</summary>
-    internal void Freeze() => _frozen = true;
+    /// <summary>Prevents any further change, to these caps and to every purpose's.</summary>
+    internal void Freeze()
+    {
+        _frozen = true;
+        Purposes.Freeze();
+    }
 
     /// <summary>
     /// Guards a setter against post-startup mutation and against a nonsensical limit.

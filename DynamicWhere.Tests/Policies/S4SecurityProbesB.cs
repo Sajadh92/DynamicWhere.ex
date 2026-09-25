@@ -331,6 +331,7 @@ namespace DynamicWhere.Tests.Policies
             Differs("RefreshInterval", o => o.RefreshInterval = TimeSpan.FromSeconds(31));
             Differs("Caps.MaxPageSize", o => o.Caps.MaxPageSize = 17);
             Differs("Caps.DefaultPageSize", o => o.Caps.DefaultPageSize = 17);
+            Differs("Caps.Purposes", o => o.Caps.Purposes["s4-export"] = new DwPageCaps { MaxPageSize = 17 });
             Differs("Caps.MaxConditions", o => o.Caps.MaxConditions = 17);
             Differs("Caps.MaxConditionDepth", o => o.Caps.MaxConditionDepth = 17);
             Differs("Caps.MaxConditionSets", o => o.Caps.MaxConditionSets = 17);
@@ -563,6 +564,15 @@ namespace DynamicWhere.Tests.Policies
             if (inForce.Caps.IsMinGroupSizeSet)
             {
                 copy.Caps.MinGroupSize = inForce.Caps.MinGroupSize;
+            }
+
+            foreach (KeyValuePair<string, DwPageCaps> purpose in inForce.Caps.Purposes)
+            {
+                copy.Caps.Purposes[purpose.Key] = new DwPageCaps
+                {
+                    MaxPageSize = purpose.Value.MaxPageSize,
+                    DefaultPageSize = purpose.Value.DefaultPageSize
+                };
             }
 
             foreach (KeyValuePair<Type, string> exposed in inForce.Entities.Entities)

@@ -138,7 +138,10 @@ export default function Page() {
         gives a request with no <code>Page</code> page <code>1</code> at that size,
         capped at <code>MaxPageSize</code>, so{" "}
         <code>PageNumber</code>, <code>PageSize</code> and <code>PageCount</code> come
-        back as for any paged request. It never replaces a page the caller sent.
+        back as for any paged request. It never replaces a page the caller sent. A
+        context declaring a purpose with page caps of its own in{" "}
+        <Link href="/docs/policies/configuration#purposes"><code>DwCaps.Purposes</code></Link>{" "}
+        takes each of the two caps that purpose sets from it instead (3.4.0).
       </Callout>
 
       <h2 id="csharp-example">C# usage</h2>

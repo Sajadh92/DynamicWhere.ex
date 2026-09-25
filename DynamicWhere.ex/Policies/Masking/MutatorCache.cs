@@ -89,6 +89,12 @@ internal static class MutatorCache
     /// Compiles <c>(instance, value) =&gt; ((T)instance).Property = (TValue)value</c>, or null when
     /// the property cannot be written.
     /// </summary>
+    /// <remarks>
+    /// A struct is written through the box it arrives in. A conversion unboxes a copy, and a property
+    /// set on the copy changed nothing the caller holds: a mask applied to a struct's member was
+    /// applied to a temporary and the row kept the stored value. <see cref="Expression.Unbox"/> reads
+    /// the box in place, so the write lands in it, and the walker writes the box back to its owner.
+    /// </remarks>
     private static Action<object, object?>? BuildSetter(PropertyInfo property)
     {
         if (!property.CanWrite || property.SetMethod is null)
@@ -99,7 +105,9 @@ internal static class MutatorCache
         ParameterExpression instance = Expression.Parameter(typeof(object), "instance");
         ParameterExpression value = Expression.Parameter(typeof(object), "value");
 
-        UnaryExpression typedInstance = Expression.Convert(instance, property.DeclaringType!);
+        Expression typedInstance = property.DeclaringType!.IsValueType
+            ? Expression.Unbox(instance, property.DeclaringType)
+            : Expression.Convert(instance, property.DeclaringType);
         UnaryExpression typedValue = Expression.Convert(value, property.PropertyType);
 
         BinaryExpression assign = Expression.Assign(

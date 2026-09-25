@@ -180,8 +180,11 @@ public sealed class PolicyQueryable<T> where T : class
 
         Dictionary<string, ValueTransform>? found = null;
 
-        foreach (string path in projected)
+        foreach (string spelled in projected)
         {
+            // Keyed as the policy names the path, which is how the outbound walk navigates the rows.
+            string path = AttributePolicyProvider.PolicyPath(typeof(T), spelled);
+
             if (path.Count(character => character == '.') < AttributePolicyProvider.MaxDepth
                 || TypePolicy.Transforms.ContainsKey(path))
             {
@@ -411,12 +414,12 @@ public sealed class PolicyQueryable<T> where T : class
                 //
                 // It reads a column this library added and nothing has transformed, so running first
                 // costs it nothing.
-                int floor = GroupFloor.For(sanitized, TypePolicy, _options);
+                int floor = GroupFloor.For(sanitized, typeof(T), TypePolicy, _options);
 
                 ResultTransformer.Suppress(
                     result, floor, _options.DryRun || _context.DryRun, trace);
 
-                ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
+                ResultTransformer.Summary(result, sanitized, typeof(T), TypePolicy, _context, _options, trace);
 
                 // After the collision check, which reads the real column names. A summary key is a
                 // generated column like any other, so it follows the same vocabulary the schema
@@ -480,12 +483,12 @@ public sealed class PolicyQueryable<T> where T : class
                 //
                 // It reads a column this library added and nothing has transformed, so running first
                 // costs it nothing.
-                int floor = GroupFloor.For(sanitized, TypePolicy, _options);
+                int floor = GroupFloor.For(sanitized, typeof(T), TypePolicy, _options);
 
                 ResultTransformer.Suppress(
                     result, floor, _options.DryRun || _context.DryRun, trace);
 
-                ResultTransformer.Summary(result, sanitized, TypePolicy, _context, _options, trace);
+                ResultTransformer.Summary(result, sanitized, typeof(T), TypePolicy, _context, _options, trace);
 
                 // After the collision check, which reads the real column names. A summary key is a
                 // generated column like any other, so it follows the same vocabulary the schema

@@ -254,6 +254,42 @@ public string SalaryBand { get; set; } = string.Empty;`}</Code>
         types, four segments deep — which is what makes it incapable of missing
         a path because it failed to recognise a navigation.
       </p>
+      <Callout tone="danger" title="Fixed (security) in 3.4.0: a transform on a struct's member is applied">
+        A struct is read as a copy, and the setter the walk used unboxed a
+        second copy to write into, so a mask, generalization, format,
+        truncation, default or mutation declared on a member of an
+        application&apos;s own struct — <code>Hash</code> and{" "}
+        <code>Tokenize</code> included — landed on a temporary and the stored
+        value was emitted: in both tiers, from rows in memory and from EF Core,
+        typed and dynamic, wherever the struct came back in a whole row or was
+        selected whole, since the policy layer shipped. A class member was
+        never affected. The setter writes into the box in place now, and both
+        passes of the walk write each changed struct back where it was read
+        from, innermost first: into the member that held it, into its position
+        in a list or an array, or into the outer struct that held it. A
+        member the policy names is transformed once, by the pass along its
+        path.
+      </Callout>
+      <Callout tone="warn" title="A struct that cannot be written back fails the query">
+        A struct a transform changed that cannot be written back where it was
+        read from fails the query with <code>InvalidOperationException</code>{" "}
+        rather than hand back the stored value: a struct held by a member with
+        no setter, structs in a collection that cannot be written by position
+        such as a <code>HashSet&lt;T&gt;</code>, and a struct that is a
+        dictionary&apos;s value. Give the member a setter, and hold such structs
+        in a list or an array.
+      </Callout>
+      <Callout tone="note" title="A member of a nullable struct, named through Value (3.4.0)">
+        A selection naming a member inside a nullable struct through{" "}
+        <code>Value</code>, <code>Pair.Value.Code</code>, is transformed: on the
+        typed terminal, on the dynamic one — whose generated row holds the
+        member under <code>Value</code>, and the walk steps through it — as a
+        group key, and past the walk&apos;s depth, and the group floor a masked
+        member declares applies to an aggregate over it. Until 3.4.0 the path
+        was looked up as the query spells it, matched no transform, and the
+        value came back as stored. See{" "}
+        <Link href="/docs/policies/attributes#access">Access control</Link>.
+      </Callout>
 
       <h2 id="unnamed">A value no path of the policy names</h2>
       <p>
@@ -314,7 +350,10 @@ public string SalaryBand { get; set; } = string.Empty;`}</Code>
         <code>Bonus</code> is what is rounded — is refused for{" "}
         <code>Select</code>, <code>Group</code> and <code>Aggregate</code>{" "}
         instead: there is no member there to apply the chain to, and the value it
-        would hand back is the stored one. A transformed member past four
+        would hand back is the stored one. So, since 3.4.0, is a part of a
+        struct member that is itself transformed — <code>Price.Amount</code>{" "}
+        with <code>[DwMask]</code> on <code>Price</code>; a part that declares
+        its own transform is transformed as any member is. A transformed member past four
         segments, which only a raised{" "}
         <Link href="/docs/policies/configuration#caps"><code>MaxNavigationDepth</code></Link>{" "}
         lets a request name, is a member, so naming it in <code>Selects</code>{" "}

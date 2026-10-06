@@ -183,8 +183,9 @@ public static class Extension
             return query;
         }
 
-        // Apply the filter to the query and return the result.
-        return query.Where(DynamicLinq.Config, where);
+        // Apply the filter to the query and return the result, its pattern operators matched by ILIKE when
+        // the process chose TextMatching.ILike and EF Core translates the query.
+        return InsensitiveLike.Apply(query.Where(DynamicLinq.Config, where));
     }
 
     /// <summary>
@@ -223,8 +224,9 @@ public static class Extension
             return query;
         }
 
-        // Apply the filter to the query and return the result.
-        return query.Where(DynamicLinq.Config, where);
+        // Apply the filter to the query and return the result, its pattern operators matched by ILIKE when
+        // the process chose TextMatching.ILike and EF Core translates the query.
+        return InsensitiveLike.Apply(query.Where(DynamicLinq.Config, where));
     }
 
     /// <summary>

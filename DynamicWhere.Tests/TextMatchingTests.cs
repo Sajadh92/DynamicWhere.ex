@@ -36,6 +36,14 @@ public class TmTag
     public int TmItemId { get; set; }
 }
 
+/// <summary>A row projected from <see cref="TmItem"/>, which the model does not map and so has no key.</summary>
+public class TmRow
+{
+    public int Id { get; set; }
+
+    public string? Name { get; set; }
+}
+
 public sealed class TmContext : DbContext
 {
     public TmContext(DbContextOptions<TmContext> options) : base(options)
@@ -252,6 +260,41 @@ public class TextMatchingTests
         Assert.Contains(""""i."Name" ILIKE '%ab%' ESCAPE '\'"""", sql);
         Assert.Contains(""""."Label" ILIKE 'x%' ESCAPE '\'"""", sql);
         Assert.Contains(""""lower(i."Code") = 'k-1'"""", sql);
+    }
+
+    [Fact]
+    public void A_segment_rewrites_every_set_whether_it_combines_by_key_or_by_row()
+    {
+        using TmContext db = Npgsql();
+        using DwText.Scope scope = DwText.Use(ILike());
+
+        Condition first = On("Name", Operator.IContains, "ab");
+        Condition second = On("Name", Operator.IEndsWith, "cd");
+
+        first.Sort = 1;
+        second.Sort = 1;
+
+        List<ConditionSet> sets = new()
+        {
+            new() { Sort = 1, ConditionGroup = new ConditionGroup { Connector = Connector.And, Conditions = new List<Condition> { first } } },
+            new() { Sort = 2, Intersection = Intersection.Union, ConditionGroup = new ConditionGroup { Connector = Connector.And, Conditions = new List<Condition> { second } } }
+        };
+
+        // Keyed: the sets' own predicates are lifted out of Where(ConditionGroup) and OR-ed on the server.
+        string keyed = Sql(SegmentComposer.Compose(db.Items, sets));
+
+        // Keyless: a projected row has no key, so each set stays its own query and the rows are unioned.
+        string keyless = Sql(SegmentComposer.Compose(db.Items.Select(item => new TmRow { Id = item.Id, Name = item.Name }), sets));
+
+        foreach (string sql in new[] { keyed, keyless })
+        {
+            Assert.Contains("ILIKE '%ab%' ESCAPE", sql);
+            Assert.Contains("ILIKE '%cd' ESCAPE", sql);
+            Assert.DoesNotContain("lower(", sql);
+        }
+
+        Assert.Contains("UNION", keyless);
+        Assert.DoesNotContain("UNION", keyed);
     }
 
     [Fact]

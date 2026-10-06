@@ -4,7 +4,7 @@
 > opt-in field-level policy layer that decides what each caller may filter, sort, select, group,
 > aggregate and see, and a reflection cache that needs no setup.
 >
-> Version 3.4.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
+> Version 3.5.0 · targets net6.0 · runs on .NET 6, 7, 8, 9, 10 · EF Core 6+ · MIT
 > Docs: https://doc.dynamicwhere.com · Source: https://github.com/Sajadh92/DynamicWhere.ex
 
 This file is the whole library in one pass: every public type and member of the four packages, the
@@ -14,7 +14,7 @@ library. No other page is needed; where another page disagrees with this file, t
 Where a name is not in this file, it does not exist — do not invent members.
 
 ```
-dotnet add package DynamicWhere.ex --version 3.4.0
+dotnet add package DynamicWhere.ex --version 3.5.0
 dotnet add package DynamicWhere.ex.Policies.Redis                 # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.EntityFrameworkCore   # optional, same version as the core
 dotnet add package DynamicWhere.ex.Policies.AspNetCore            # optional, same version as the core

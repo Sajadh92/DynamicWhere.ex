@@ -205,6 +205,19 @@ namespace DynamicWhere.Tests.Policies
             }
         }
 
+        [Fact]
+        public void A_null_grouping_handed_to_group_is_a_null_argument_guarded_or_not()
+        {
+            // Group takes the grouping itself, so a null one is a bad call, not a malformed request; only a
+            // summary that leaves its grouping out is refused as one.
+            Assert.Equal("groupBy", Assert.Throws<ArgumentNullException>(() => _db.Items.Group(null!)).ParamName);
+
+            foreach (DwTier tier in new[] { DwTier.Strict, DwTier.Convenience })
+            {
+                Assert.Equal("groupBy", Assert.Throws<ArgumentNullException>(() => Guarded(tier).Group(null!)).ParamName);
+            }
+        }
+
         /// <summary>Every malformed segment, with the refusal it earns.</summary>
         public static TheoryData<string, string> Segments() => new()
         {

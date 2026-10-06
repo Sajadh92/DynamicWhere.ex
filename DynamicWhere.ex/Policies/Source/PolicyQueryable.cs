@@ -701,6 +701,7 @@ public sealed class PolicyQueryable<T> where T : class
 
     /// <summary>Groups and aggregates, unless the policy refuses a key or an aggregate.</summary>
     /// <param name="groupBy">The grouping to apply.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="groupBy"/> is null.</exception>
     /// <exception cref="PolicyException">Thrown when the policy refuses a key or an aggregated field.</exception>
     /// <remarks>
     /// Runs through the summary pipeline rather than core <c>Group</c>. The sanitizer adds the group
@@ -710,6 +711,13 @@ public sealed class PolicyQueryable<T> where T : class
     /// </remarks>
     public IQueryable Group(GroupBy groupBy)
     {
+        // A null argument, refused as core Group refuses it. Wrapped in a summary unchecked, it would be
+        // refused as a summary that names no grouping, a malformed request rather than a bad call.
+        if (groupBy is null)
+        {
+            throw new ArgumentNullException(nameof(groupBy));
+        }
+
         try
         {
             RefuseUnmaterialized(nameof(Group), "ToList(Summary)");

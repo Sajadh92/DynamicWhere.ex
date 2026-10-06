@@ -175,6 +175,7 @@ namespace DynamicWhere.Tests.Policies
             { "having", ErrorCode.NullEntry("Conditions") },
             { "having-subgroups", ErrorCode.NullEntry("SubConditionGroups") },
             { "orders", ErrorCode.NullEntry("Orders") },
+            { "groupBy", ErrorCode.GroupByMustHaveFields },
         };
 
         private static Summary MalformedSummary(string which) => which switch
@@ -184,6 +185,7 @@ namespace DynamicWhere.Tests.Policies
             "having" => new Summary { GroupBy = Grouping(), Having = Group(new List<Condition> { null! }) },
             "having-subgroups" => new Summary { GroupBy = Grouping(), Having = Group(new List<Condition>(), new List<ConditionGroup> { null! }) },
             "orders" => new Summary { GroupBy = Grouping(), Orders = new List<OrderBy> { null! } },
+            "groupBy" => new Summary(),
             _ => throw new ArgumentOutOfRangeException(nameof(which))
         };
 

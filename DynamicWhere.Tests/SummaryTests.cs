@@ -579,8 +579,13 @@ public class SummaryTests : SalesTestBase
     }
 
     [Fact]
-    public void SummaryRequiresGroupBy() =>
-        Assert.Throws<ArgumentNullException>(() => Products.Summary(new Summary()).ToDynamicList());
+    public void SummaryRequiresGroupBy()
+    {
+        // A request body without "groupBy" is malformed, not a server error: refused as an empty grouping is.
+        var ex = Assert.Throws<LogicException>(() => Products.Summary(new Summary()).ToDynamicList());
+
+        Assert.Equal(ErrorCode.GroupByMustHaveFields, ex.Message);
+    }
 
     [Fact]
     public void SummaryAllowsOrderingByAGroupField()

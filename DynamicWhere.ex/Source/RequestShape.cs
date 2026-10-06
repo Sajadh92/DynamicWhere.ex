@@ -22,7 +22,8 @@ namespace DynamicWhere.ex.Source;
 /// </para>
 /// <para>
 /// A list that is itself null is not this class's business. Each reader already says what an absent
-/// list means, and most read it as empty.
+/// list means, and most read it as empty. The one part a shape cannot do without is a summary's
+/// grouping, so a summary with none is refused here too, before anything reads it.
 /// </para>
 /// </remarks>
 internal static class RequestShape
@@ -69,14 +70,27 @@ internal static class RequestShape
         Refuse(segment.Orders);
     }
 
-    /// <summary>Refuses a summary with a null entry in any of its lists.</summary>
+    /// <summary>Refuses a summary with no grouping, or with a null entry in any of its lists.</summary>
     /// <param name="summary">The summary, which may be null.</param>
-    /// <exception cref="LogicException">Thrown when a list holds a null entry.</exception>
+    /// <remarks>
+    /// A summary groups or it is not one, so a missing <see cref="Summary.GroupBy"/> is refused here as an
+    /// empty one has always been refused, with <see cref="ErrorCode.GroupByMustHaveFields"/>. It used to
+    /// reach validation and leave as an <see cref="ArgumentNullException"/>, a server error for a request
+    /// body that only left out <c>"groupBy"</c>.
+    /// </remarks>
+    /// <exception cref="LogicException">
+    /// Thrown when the summary has no grouping, or a list holds a null entry.
+    /// </exception>
     internal static void Refuse(Summary? summary)
     {
         if (summary is null)
         {
             return;
+        }
+
+        if (summary.GroupBy is null)
+        {
+            throw new LogicException(ErrorCode.GroupByMustHaveFields);
         }
 
         Refuse(summary.ConditionGroup);

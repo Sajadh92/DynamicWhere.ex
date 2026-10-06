@@ -298,6 +298,21 @@ public class TextMatchingTests
     }
 
     [Fact]
+    public void A_predicate_the_caller_wrote_beneath_is_left_as_written()
+    {
+        using TmContext db = Npgsql();
+        using DwText.Scope scope = DwText.Use(ILike());
+
+        // Only the predicate the library parsed is the library's to rewrite.
+        string sql = Sql(db.Items
+            .Where(item => item.Name!.ToLower().Contains("zz"))
+            .Where(On("Name", Operator.IContains, "ab")));
+
+        Assert.Contains(""""lower(i."Name") LIKE '%zz%'"""", sql);
+        Assert.Contains(""""i."Name" ILIKE '%ab%' ESCAPE '\'"""", sql);
+    }
+
+    [Fact]
     public void A_summary_rewrites_its_row_filter_and_leaves_having_lowered()
     {
         using TmContext db = Npgsql();

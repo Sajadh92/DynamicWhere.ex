@@ -118,7 +118,11 @@ internal static class FilterSanitizer
 
         // The gate is built first now, because canonicalizing a name needs the type's alias map and
         // the gate is what carries it. Nothing the gate does depends on the paths being canonical.
-        Gate gate = new(typeof(T), resolver, context, options, trace) { Rows = rows ?? RowShape.Unknown };
+        Gate gate = new(typeof(T), resolver, context, options, trace)
+        {
+            Rows = rows ?? RowShape.Unknown,
+            RefusesSelects = SelectsRefusal.Of<T>.Declared
+        };
 
         // Before any name is resolved. Counting needs no name, and resolving every name of an
         // oversized request is exactly the work the caps exist to refuse.
@@ -692,7 +696,8 @@ internal static class FilterSanitizer
         Gate gate = new(typeof(T), resolver, context, options, trace)
         {
             InSegment = true,
-            Rows = rows ?? RowShape.Unknown
+            Rows = rows ?? RowShape.Unknown,
+            RefusesSelects = SelectsRefusal.Of<T>.Declared
         };
 
         EnforceCaps(working, gate);
@@ -1019,6 +1024,10 @@ internal static class FilterSanitizer
         {
             throw gate.Exception(WholeClause, PolicyFeature.Select, PolicyErrorCode.AllSelectsDenied, null);
         }
+
+        // After every name is gated, so a name the caller may not select is refused and audited as
+        // itself; only a list of names the caller may select reaches the type's own refusal.
+        gate.CheckSelectsTaken();
 
         segment.Selects = kept;
     }
@@ -1668,6 +1677,10 @@ internal static class FilterSanitizer
         {
             throw gate.Exception(WholeClause, PolicyFeature.Select, PolicyErrorCode.AllSelectsDenied, null);
         }
+
+        // After every name is gated, so a name the caller may not select is refused and audited as
+        // itself; only a list of names the caller may select reaches the type's own refusal.
+        gate.CheckSelectsTaken();
 
         filter.Selects = kept;
     }
@@ -2813,6 +2826,12 @@ internal static class FilterSanitizer
         /// </summary>
         internal RowShape Rows { get; init; } = RowShape.Unknown;
 
+        /// <summary>
+        /// True when the type declares <c>[DwEntity(RefuseSelects = true)]</c>, so a projection the caller
+        /// writes is refused once its names have been gated.
+        /// </summary>
+        internal bool RefusesSelects { get; init; }
+
         /// <summary>The caller this query is being sanitized for.</summary>
         internal DwPolicyContext Context => _context;
 
@@ -3944,6 +3963,36 @@ internal static class FilterSanitizer
                 PolicyErrorCode.QueryCostExceeded, WholeClause, PolicyFeature.None, _options.Tier)
             {
                 SourceOrigin = origin
+            };
+        }
+
+        /// <summary>
+        /// Refuses the projection the caller wrote, when the type declares it takes none.
+        /// </summary>
+        /// <remarks>
+        /// Called with a non-empty projection whose names have all been gated. Raised in both tiers:
+        /// dropping the list would return whole rows, an answer to a request the caller did not make. A
+        /// dry run records the decision and leaves the projection as the caller wrote it.
+        /// </remarks>
+        internal void CheckSelectsTaken()
+        {
+            if (!RefusesSelects)
+            {
+                return;
+            }
+
+            _trace.Add(new PolicyDecision(
+                WholeClause, PolicyFeature.Select, PolicyAction.Denied, SelectsRefusal.Origin));
+
+            if (IsDryRun)
+            {
+                return;
+            }
+
+            throw new PolicyException(
+                PolicyErrorCode.SelectsRefused, WholeClause, PolicyFeature.Select, _options.Tier)
+            {
+                SourceOrigin = SelectsRefusal.Origin
             };
         }
 

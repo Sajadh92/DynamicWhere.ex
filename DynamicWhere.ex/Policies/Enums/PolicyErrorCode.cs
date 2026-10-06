@@ -181,5 +181,19 @@ public enum PolicyErrorCode
     /// value is read, so a caller sees one column that never groups, never joins and never repeats,
     /// with nothing to say why.
     /// </remarks>
-    MissingTokenVault = 22
+    MissingTokenVault = 22,
+
+    /// <summary>
+    /// The caller sent a projection for a type that declares it takes none,
+    /// <c>[DwEntity(RefuseSelects = true)]</c>.
+    /// </summary>
+    /// <remarks>
+    /// Raised once every name in the projection has been gated, so it answers only a list of names
+    /// the caller may select. Under the strict tier a name the caller may not select is refused first, as
+    /// <see cref="FieldDeniedForSelect"/>, and audited under its own path; under either tier a list whose
+    /// every name was dropped is refused as <see cref="AllSelectsDenied"/>, as on any type. Both tiers
+    /// raise it, because returning the whole row instead would answer a request the caller did not make.
+    /// An empty or absent projection is not one and is never refused.
+    /// </remarks>
+    SelectsRefused = 23
 }

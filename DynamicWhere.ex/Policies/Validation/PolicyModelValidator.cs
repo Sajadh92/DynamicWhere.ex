@@ -71,6 +71,7 @@ public static class PolicyModelValidator
         Dictionary<string, string> aliases = new(StringComparer.OrdinalIgnoreCase);
 
         CheckDefaultOrder(type, errors, warnings);
+        CheckRefuseSelects(type, warnings);
 
         foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
@@ -108,6 +109,28 @@ public static class PolicyModelValidator
             CheckTokenVault(chain, member, options, errors);
             CheckOutputType(chain, property, member, errors);
             CheckMaskedButOrderable(chain, property, member, warnings);
+        }
+    }
+
+    /// <summary>
+    /// Warns when <c>[DwEntity(RefuseSelects = true)]</c> stands without <c>RequirePolicy</c>.
+    /// </summary>
+    /// <remarks>
+    /// The refusal is the policy's, so only a guarded query makes it. Without <c>RequirePolicy</c> the type
+    /// can still be queried unguarded, and that query honours a <c>Selects</c> the type declares it takes
+    /// none of. A warning rather than an error: a host that never queries the type unguarded loses nothing.
+    /// </remarks>
+    private static void CheckRefuseSelects(Type type, List<string> warnings)
+    {
+        if (Attribute.GetCustomAttribute(type, typeof(DwEntityAttribute)) is DwEntityAttribute
+            {
+                RefuseSelects: true,
+                RequirePolicy: false
+            })
+        {
+            warnings.Add(
+                $"{type.Name}: RefuseSelects is set without RequirePolicy, so a query that does not apply a "
+                + "policy still honours Selects.");
         }
     }
 

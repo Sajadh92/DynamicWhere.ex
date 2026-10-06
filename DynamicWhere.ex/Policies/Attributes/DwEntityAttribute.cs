@@ -66,4 +66,34 @@ public sealed class DwEntityAttribute : Attribute
     /// </para>
     /// </remarks>
     public string? DefaultOrder { get; set; }
+
+    /// <summary>
+    /// When true, a guarded query that sends a non-empty <c>Selects</c> for this type is refused with
+    /// <c>PolicyException</c> and <c>SelectsRefused</c>.
+    /// </summary>
+    /// <remarks>
+    /// For a row type that is meant to be read whole, such as a read-only projection, where a partial row
+    /// would report default values for every member the caller did not name. The refusal is the
+    /// policy's own, so it is traced, audited when the posture audits refusals, and reported by the
+    /// simulator; a host refusing the list in its endpoint before the gate runs would hide a probe from
+    /// all three.
+    /// <para>
+    /// The names in the list are gated first, exactly as on any other type. Under the strict tier a name
+    /// the caller may not select is refused as <c>FieldDeniedForSelect</c> and audited under its own path,
+    /// and under either tier a list whose every name was dropped is refused as <c>AllSelectsDenied</c>;
+    /// only a list of names the caller may select reaches <c>SelectsRefused</c>. Both tiers refuse, since
+    /// dropping the list would hand back whole rows the caller did not ask for. A dry run records the
+    /// decision and runs the query as written.
+    /// </para>
+    /// <para>
+    /// It applies wherever a guarded query takes a caller's projection: the <c>Filter</c> terminals,
+    /// <c>ToListAsync</c> with a <c>Segment</c>, the composable <c>Filter</c>, <c>FilterDynamic</c>,
+    /// <c>Select</c> and <c>SelectDynamic</c>, and the simulator. A <c>Selects</c> that is null or empty
+    /// asks for no projection and is never refused, and a projection the policy synthesizes to withhold
+    /// denied fields is the library's, not the caller's. An unguarded query never reads it, so pair it with
+    /// <see cref="RequirePolicy"/>; <c>PolicyModelValidator</c> warns when it stands alone. A
+    /// <c>[DwEntity]</c> on a derived type replaces this one, so repeat it there.
+    /// </para>
+    /// </remarks>
+    public bool RefuseSelects { get; set; }
 }

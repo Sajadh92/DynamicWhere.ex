@@ -239,6 +239,21 @@ public class RefuseSelectsTests
         }
     }
 
+    [Theory]
+    [MemberData(nameof(Tiers))]
+    public void An_empty_projection_means_what_it_means_on_any_type(DwTier tier)
+    {
+        // Never this flag's refusal. With nothing denied there is no projection to synthesize, so the empty
+        // list reaches the pipeline, which refuses it as it refuses one on any type.
+        LogicException refused = Assert.Throws<LogicException>(() => new List<RsLooseRow> { new() { Id = 1, Code = "A-1" } }
+            .AsQueryable()
+            .ApplyPolicy(Caller(), Options(tier), Attributes())
+            .ToList(new Filter { Selects = new List<string>() }));
+
+        Assert.IsNotType<PolicyException>(refused);
+        Assert.Equal(ErrorCode.MustHaveFields, refused.Message);
+    }
+
     [Fact]
     public void A_type_without_the_flag_still_takes_a_projection()
     {

@@ -193,7 +193,7 @@ public enum PolicyErrorCode
     /// <see cref="FieldDeniedForSelect"/>, and audited under its own path; under either tier a list whose
     /// every name was dropped is refused as <see cref="AllSelectsDenied"/>, as on any type. Both tiers
     /// raise it, because returning the whole row instead would answer a request the caller did not make.
-    /// An empty or absent projection is not one and is never refused.
+    /// A null or empty projection is never refused with it.
     /// </remarks>
     SelectsRefused = 23
 }

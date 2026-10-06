@@ -88,9 +88,9 @@ public sealed class DwEntityAttribute : Attribute
     /// <para>
     /// It applies wherever a guarded query takes a caller's projection: the <c>Filter</c> terminals,
     /// <c>ToListAsync</c> with a <c>Segment</c>, the composable <c>Filter</c>, <c>FilterDynamic</c>,
-    /// <c>Select</c> and <c>SelectDynamic</c>, and the simulator. A <c>Selects</c> that is null or empty
-    /// asks for no projection and is never refused, and a projection the policy synthesizes to withhold
-    /// denied fields is the library's, not the caller's. An unguarded query never reads it, so pair it with
+    /// <c>Select</c> and <c>SelectDynamic</c>, and the simulator. It never refuses a <c>Selects</c> that is
+    /// null or empty, which means what it means on any type, and a projection the policy synthesizes to
+    /// withhold denied fields is the library's, not the caller's. An unguarded query never reads it, so pair it with
     /// <see cref="RequirePolicy"/>; <c>PolicyModelValidator</c> warns when it stands alone. A
     /// <c>[DwEntity]</c> on a derived type replaces this one, so repeat it there.
     /// </para>

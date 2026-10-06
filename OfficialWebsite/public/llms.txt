@@ -98,15 +98,20 @@ DynamicWhere.ex.Policies.AspNetCore           MapDwPolicyAdmin, claims adapter, 
 - The engine parses every expression it builds with its own `ParsingConfig`: System.Linq.Dynamic.Core's defaults
   with `AreContextKeywordsEnabled = false`. It does not read `ParsingConfig.Default` (since 3.1.0), so a change a host
   makes there does not reach DynamicWhere queries.
+- `TextMatching.ILike` (3.5.0, section 4) translates through `Npgsql.EntityFrameworkCore.PostgreSQL`, which the host
+  references for its own provider. No package depends on it: `DwText.Configure` finds it by name, and refuses to
+  start without it.
 
 Namespace of every public type:
 
 ```
 DynamicWhere.ex.Source                    Extension (all core extension methods), DwDates, DwDateOptions (date formats, 3.1.0)
+                                          DwText, DwTextOptions (case-insensitive matching, 3.5.0)
 DynamicWhere.ex.Classes.Core              Condition ConditionGroup ConditionSet OrderBy GroupBy AggregateBy PageBy
 DynamicWhere.ex.Classes.Complex           Filter Segment Summary
 DynamicWhere.ex.Classes.Result            FilterResult<T> SegmentResult<T> SummaryResult
 DynamicWhere.ex.Enums                     DataType Operator Connector Direction Intersection Aggregator
+                                          TextMatching (3.5.0)
 DynamicWhere.ex.Exceptions                LogicException PolicyException
 
 DynamicWhere.ex.Policies.Source           PolicyExtensions (ApplyPolicy) PolicyQueryable<T>
@@ -206,7 +211,9 @@ Segment         ConditionSets       List<ConditionSet>    []          [] = runs 
                 Orders              List<OrderBy>?        []          applied in SQL to the combined rows; [] as for Filter
                 Page                PageBy?               null        applied in SQL after ordering
 Summary         ConditionGroup      ConditionGroup?       null        where, before grouping
-                GroupBy             GroupBy?              null        required; null throws ArgumentNullException
+                GroupBy             GroupBy?              null        required; null is refused (3.5.0) as
+                                                                      GroupByMustHasAtLeastOneField; it was
+                                                                      ArgumentNullException
                 Having              ConditionGroup?       null        each Condition.Field is an AggregateBy.Alias, not a path
                 Orders              List<OrderBy>?        null        each Field is a GroupBy field or an Alias
                 Page                PageBy?               null        pages the groups
@@ -272,10 +279,14 @@ Connector      And=0 Or=1
 Direction      Ascending=0 Descending=1
 Intersection   Union=0 Intersect=1 Except=2
 Aggregator     Count=0 CountDistinct=1 Sumation=2 Average=3 Minimum=4 Maximum=5 FirstOrDefault=6 LastOrDefault=7
+TextMatching   Lower=0 ILike=1                                          (3.5.0; process configuration, never sent)
 ```
 
 - `Sumation` has one `m`. There are no `Sum`, `Avg`, `Min` or `Max` members.
 - The `I` prefix means case-insensitive and exists only for text operators (`IEqual`, `IContains`, `IIn` …).
+- `TextMatching` is not part of any request. It is set once for the process with `DwText.Configure`, and decides how
+  the six case-insensitive pattern operators match: `Lower` (the default) lowers both sides, `ILike` uses PostgreSQL's
+  `ILIKE` (section 4, Case-insensitive matching).
 - `FirstOrDefault` / `LastOrDefault` return the smallest / largest value in the group, not the first / last row.
 
 ---
@@ -334,7 +345,9 @@ Equal / NotEqual                 f != null && f == V                 f != null &
 Contains / NotContains           f != null && f.Contains(V)          f != null && !f.Contains(V)
 StartsWith / NotStartsWith       f != null && f.StartsWith(V)        f != null && !f.StartsWith(V)
 EndsWith / NotEndsWith           f != null && f.EndsWith(V)          f != null && !f.EndsWith(V)
-I-variants (Text only)           f.ToLower() in place of f; V lowered in C# with string.ToLower() (server culture)
+I-variants (Text only)           f.ToLower() in place of f; V lowered in C# with string.ToLower() (server culture);
+                                 under TextMatching.ILike (3.5.0) the six pattern I-variants then compile to ILIKE
+                                 on EF Core (Case-insensitive matching, below)
 In                               f != null && (f == V1 || f == V2 || ...)
 NotIn                            f != null && (f != V1 && f != V2 && ...)
 GreaterThan … LessThanOrEqual    f != null && f > V                  (>=, <, <=)
@@ -372,7 +385,9 @@ V by DataType   Text, Guid, Enum    "v"                 Number, Boolean   v (unq
 - `Between` with V1 > V2 matches nothing; `NotBetween` with V1 > V2 matches every non-null row.
 - Plain text operators add no case handling: in memory they are ordinal; in SQL the provider and collation
   decide (SQLite: `==` and Contains case-sensitive, StartsWith/EndsWith case-insensitive for ASCII). The
-  I-variants are case-insensitive everywhere. `ToLower()` on the column can defeat an index.
+  I-variants are case-insensitive everywhere. `ToLower()` on the column can defeat an index. On PostgreSQL,
+  `TextMatching.ILike` (3.5.0) lets a `pg_trgm` index serve the six pattern I-variants (Case-insensitive matching,
+  below).
 
 ### Values
 
@@ -589,6 +604,92 @@ any other operator        1     else ConditionWithOperator[<Operator>]MustHasOnl
 
 Each condition is checked in this order: Field, value count, value format, DataType/Operator pair.
 
+### Case-insensitive matching — `DwText` (3.5.0)
+
+```csharp
+namespace DynamicWhere.ex.Enums;
+
+public enum TextMatching { Lower = 0, ILike = 1 }
+
+namespace DynamicWhere.ex.Source;
+
+public sealed class DwTextOptions
+{
+    public TextMatching CaseInsensitive { get; set; }   // Lower by default; read-only once configured
+    public bool IsFrozen { get; }
+}
+
+public static class DwText
+{
+    public static DwTextOptions Options { get; }   // frozen; Lower until configured
+    public static bool IsConfigured { get; }
+    public static void Configure(DwTextOptions options);
+    public static void Configure(Action<DwTextOptions> configure);
+    public static DwTextOptions Bind(this DwTextOptions options, IConfiguration section);   // extension
+}
+```
+
+```csharp
+DwText.Configure(o => o.CaseInsensitive = TextMatching.ILike);                 // once, at startup
+
+DwText.Configure(new DwTextOptions().Bind(configuration.GetSection("DynamicWhere:Text")));
+// appsettings.json: { "DynamicWhere": { "Text": { "CaseInsensitive": "ILike" } } }
+```
+
+- `Lower`, the default and the only behaviour before 3.5.0: both sides lowered, `f.ToLower().Contains(V)`, which a
+  relational provider writes as `lower(col) LIKE …`. A `pg_trgm` GIN or GiST index on `col` cannot serve that.
+- `ILike`: `IContains`, `INotContains`, `IStartsWith`, `INotStartsWith`, `IEndsWith` and `INotEndsWith` compile to
+  PostgreSQL's `ILIKE` through Npgsql's `EF.Functions.ILike(DbFunctions, string, string, string)`, which such an
+  index can serve. For `"ab"` on `Name`, on Npgsql:
+
+```
+IContains        i."Name" IS NOT NULL AND i."Name" ILIKE '%ab%' ESCAPE '\'
+INotContains     i."Name" IS NOT NULL AND NOT (i."Name" ILIKE '%ab%' ESCAPE '\')
+IStartsWith      i."Name" IS NOT NULL AND i."Name" ILIKE 'ab%' ESCAPE '\'
+INotStartsWith   i."Name" IS NOT NULL AND NOT (i."Name" ILIKE 'ab%' ESCAPE '\')
+IEndsWith        i."Name" IS NOT NULL AND i."Name" ILIKE '%ab' ESCAPE '\'
+INotEndsWith     i."Name" IS NOT NULL AND NOT (i."Name" ILIKE '%ab' ESCAPE '\')
+```
+
+  - The predicate string is built and parsed exactly as the Generated predicate table says, and the parsed lambda is
+    then rewritten: `f.ToLower()` followed by `Contains`, `StartsWith` or `EndsWith` with a constant becomes
+    `EF.Functions.ILike(f, pattern, escape)`, with a backslash as the escape character. The pattern is the value as
+    the condition sent it, trimmed and lowered, with every `\`, `%` and `_` in it escaped with a backslash, so it
+    matches as text and never as a pattern: `IContains` with `Ab%_\c'd` is `ILIKE '%ab\%\_\\c''d%' ESCAPE '\'`.
+  - The null guard stays in front, and a negation keeps its `NOT`.
+  - Not rewritten: `IEqual`, `INotEqual`, `IIn` and `INotIn`, which stay `lower(col) = V`, served by an index on
+    `lower(col)`; a `Having` condition, which stays lowered, since an aggregate uses no index; the case-sensitive
+    operators; and any predicate the caller composed with LINQ beneath the library's `Where`: only the predicate the
+    library parsed is rewritten.
+  - It happens in `Where(Condition)` and `Where(ConditionGroup)`, so on every path that filters through them: a
+    Filter, every set of a Segment (combined by key or unioned), a Summary's row filter and the forced predicates a
+    guarded query injects, a condition through a collection path included, guarded or not.
+  - Only a query EF Core's own provider translates is rewritten: the provider type
+    `Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider`, from EF Core's own assembly. LINQ to objects,
+    the `IEnumerable<T>` overloads and a provider that wraps EF Core's, such as LinqKit's `AsExpandable`, keep
+    lowering.
+  - `getQueryString` shows the `ILIKE` SQL; the predicate text and the builder are unchanged.
+  - Against PostgreSQL 16 it returns the same rows as lowering, and as LINQ to objects, for all six operators over
+    twelve ASCII values carrying `%`, `_`, `\` and quotes, through the plain, guarded and segment paths, and the
+    planner uses a trigram index for `ILIKE` where it cannot for `lower() LIKE`.
+- **The choice is the process's.** Every EF Core query in the process is rewritten, whatever database it reaches, so a
+  process that also queries another database through EF Core — SQLite in tests, say — must not choose `ILike`: such a
+  query fails translation with `InvalidOperationException` rather than matching wrongly (section 11, trap 18).
+- `Configure` freezes the options. Choosing `ILike` resolves
+  `Microsoft.EntityFrameworkCore.NpgsqlDbFunctionsExtensions.ILike(DbFunctions, string, string, string)` by name from
+  `Npgsql.EntityFrameworkCore.PostgreSQL`; when that cannot be loaded, `Configure` throws `InvalidOperationException`,
+  so a deployment without the provider refuses to start instead of failing its first search.
+- `Configure` throws `ArgumentNullException` for null and `ArgumentException` for a value `TextMatching` does not
+  define (`(TextMatching)7`).
+- A later `Configure` asking for the choice in force does nothing, so a process starting several hosts — one
+  `WebApplicationFactory` per test class — can run the same startup in each. One asking for a different choice throws
+  `InvalidOperationException`: "Text matching is already configured as Lower. DwText.Configure is called once, at
+  startup; a second call may only repeat it." `DwDates.Configure`, by contrast, refuses every second call.
+- Setting `CaseInsensitive` on frozen options throws `InvalidOperationException`.
+- `Bind` throws `InvalidOperationException` for a key nothing answers to (`ErrorOnUnknownConfiguration`), such as a
+  misspelt `CaseInsensitiv`; for a value it cannot read as a `TextMatching`, such as `"ILikee"`; for a single value
+  where the section belongs, `"DynamicWhere:Text": "ILike"`; and on frozen options. An absent section changes nothing.
+
 ### Groups and connectors
 
 ```
@@ -730,8 +831,9 @@ against 3.1 still binds.
 
 - The first statement is the `[DwEntity(RequirePolicy = true)]` guard: on such a T, a call outside `ApplyPolicy`
   throws `PolicyException` `PolicyRequired` (section 13). Then null arguments throw `ArgumentNullException`, then a
-  null entry in one of the shape's lists throws `ListOf[<list>]MustNotHasNullEntry` (3.3.0, section 8), then the
-  validation rules of section 8 throw `LogicException`.
+  `Summary` whose `GroupBy` is null throws `GroupByMustHasAtLeastOneField` (3.5.0, section 7), then a null entry in
+  one of the shape's lists throws `ListOf[<list>]MustNotHasNullEntry` (3.3.0, section 8), then the validation rules
+  of section 8 throw `LogicException`.
 - Composable methods validate and build when called, not when enumerated, so a bad field throws at the call.
 - The async terminals are `async` methods: every exception, validation included, surfaces at `await`.
 - Validation rewrites the caller's objects in place: path strings get the declared casing (`"price"` → `"Price"`)
@@ -833,6 +935,9 @@ fields                           emitted selector                               
 
 - `Where<T>(Condition)` validates the condition and adds one predicate (section 4).
 - `Where<T>(ConditionGroup)` adds the group's predicate; an empty group leaves the query unchanged.
+- Under `TextMatching.ILike` (3.5.0, section 4) both then rewrite the predicate they just parsed, on a query EF Core's
+  own provider translates: the six pattern I-variants become `EF.Functions.ILike`. Only that predicate: one the caller
+  composed beneath it with LINQ is left as written, and on any other provider nothing is rewritten.
 
 ### Order<T>
 
@@ -1025,9 +1130,17 @@ LastOrDefault   Select(f).OrderByDescending($).FirstOrDefault()    any simple ty
   (`CategoryName`) — or an Alias, case-insensitive; else
   `SummaryOrderField[<field>]MustExistInGroupByFieldsOrAggregateByAliases`. Emitted as `<field without dots> asc|desc`,
   sorted by Sort, with no collection rewriting and no duplicate-Sort check.
-- Summary validation order: a null entry in any list (3.3.0) → `GroupBy` null (`ArgumentNullException`, parameter
-  `GroupBy`) → GroupBy and AggregateBy rules → Orders → Page → Having → ConditionGroup → Having DataType/Operator
-  pairs.
+- Summary validation order: `GroupBy` null (`GroupByMustHasAtLeastOneField`, 3.5.0) → a null entry in any list
+  (3.3.0) → GroupBy and AggregateBy rules → Orders → Page → Having → ConditionGroup → Having DataType/Operator pairs.
+  The first two run before anything reads the request, guarded or not; under `ApplyPolicy` at the top of the
+  sanitizer.
+- A Summary with no `GroupBy` (a body without `"groupBy"`) is refused as one with empty `fields` always was:
+  `LogicException` `GroupByMustHasAtLeastOneField`, from `ToList` and `ToListAsync` with a Summary and the composable
+  `Summary`, in both tiers. Until 3.5.0 it reached validation and left as `ArgumentNullException` (parameter
+  `GroupBy`), which a host answers with a server error. Under a policy it is a `LogicException`, not a
+  `PolicyException`, so `AuditRefusals` does not record it, and `PolicySimulator.Simulate` throws it (section 23).
+  A null argument to `Group` is still `ArgumentNullException` for `groupBy`, guarded or not: `Group` takes the
+  grouping itself, so a null one is a bad call rather than a malformed request.
 - Aggregation runs in SQL on stored values. Under `ApplyPolicy`, transformed fields need `AllowAggregate`, every
   guarded summary is subject to the group floor (section 19), and `Caps.MaxAggregates` (default 50, 3.1.0) bounds how
   many `AggregateBy` entries one summary sends (section 12).
@@ -1079,7 +1192,8 @@ OrderField[<field>]CannotEndOnCollectionOfComplexElements              an order 
 PageNumberMustBeGreaterThanZero                                        PageNumber <= 0
 PageSizeMustBeGreaterThanZero                                          PageSize <= 0
 MustHasFields                                                          Select / SelectDynamic / Selects given an empty list
-GroupByMustHasAtLeastOneField                                          GroupBy.Fields empty
+GroupByMustHasAtLeastOneField                                          GroupBy.Fields empty; also a Summary whose GroupBy is null
+                                                                       (3.5.0; it was an ArgumentNullException)
 GroupByFieldsMustBeUnique                                              a group field repeated (case-insensitive)
 GroupByFieldCannotBeComplexType                                        a group field ends on a navigation or entity collection
 GroupByFieldCannotBeCollectionType                                     a group field ends on a collection of collections
@@ -1111,9 +1225,10 @@ The last one is a literal message; every other string above is a fixed code. Exa
 ### Other exceptions a caller can see
 
 ```
-ArgumentNullException          a null query or shape argument; Summary.GroupBy null (parameter "GroupBy"); a ConditionSet
-                               whose ConditionGroup is null. A null or blank Selects entry was one until 3.3.0; it is
-                               ConditionMustHasValidFieldName now
+ArgumentNullException          a null query or shape argument; a ConditionSet whose ConditionGroup is null. A null or
+                               blank Selects entry was one until 3.3.0; it is ConditionMustHasValidFieldName now. A null
+                               Summary.GroupBy (parameter "GroupBy") was one until 3.5.0; it is
+                               GroupByMustHasAtLeastOneField now
 NullReferenceException         in memory, a null reference navigation inside a path. A null element inside Conditions,
                                SubConditionGroups, ConditionSets, Orders or AggregateBy was one until 3.3.0; it is
                                ListOf[<list>]MustNotHasNullEntry now
@@ -1160,6 +1275,9 @@ Filter           ConditionGroup → Orders → Page → Selects, each only when 
   `ListOf[ConditionSets]MustNotHasNullEntry`, `ListOf[Orders]MustNotHasNullEntry`,
   `ListOf[AggregateBy]MustNotHasNullEntry`, and `ConditionMustHasValidFieldName` for a `Selects` entry that is null
   or blank. A list that is itself null still means what it meant — most readers read it as empty.
+- **A Summary's `GroupBy` is read first of all (3.5.0).** The same walk starts by refusing a Summary whose `GroupBy`
+  is null with `GroupByMustHasAtLeastOneField`, before its lists, in every method that takes a Summary, guarded or
+  not. So `GroupBy not null` above is a refusal, not an `ArgumentNullException`, and comes before any null entry.
 
 ---
 
@@ -1224,7 +1342,8 @@ and enum-typed members and group keys in `data`.
   (3.1.0, section 13); unguarded, no orders means no ordering.
 - Inside a Segment, a set whose group has no conditions stands for every row: a `Union` with it returns every row, an
   `Intersect` with it changes nothing, and an `Except` of it returns nothing.
-- A Summary with no `groupBy` throws `ArgumentNullException`, not `LogicException`.
+- A Summary with no `groupBy`, or `"groupBy": null`, throws `GroupByMustHasAtLeastOneField`, as `"fields": []` does
+  (3.5.0). It used to throw `ArgumentNullException`, which a host answers as a server error.
 - A `null` inside `values` is `""`, not SQL NULL (section 4).
 
 ### Results as JSON
@@ -1485,6 +1604,13 @@ Each of these compiles, passes validation, and returns something other than what
     Under a policy `[DwNoWhere]` on the member turns the error into a refusal, and since 3.4.0 it refuses a filter
     on the parts too (section 14); to keep the parts filterable, deny the member with
     `[DwDeny(PolicyFeature.Where, Overridable = true)]` and allow each part with a rule.
+18. **`TextMatching.ILike` is a choice for the whole process (3.5.0).** `DwText.Configure` sets it once, and from then
+    on the six pattern operators are rewritten in every condition this library adds to an EF Core query, whatever
+    database the query reaches. A test suite running the same startup against SQLite, or a service that also reads
+    another database through EF Core, fails translation with `InvalidOperationException` on every `IContains`,
+    `IStartsWith` or `IEndsWith` and their negations. Choose it only in a process whose EF Core queries all go to
+    PostgreSQL through Npgsql. Rows in memory and a provider wrapping EF Core's keep lowering, so they do not fail,
+    and they do not use `ILIKE` either.
 
 ---
 
@@ -2076,7 +2202,8 @@ Rules:
 - `Where`, `Order` and `Page` never fail with `AllSelectsDenied`: no projection is synthesized for a single clause.
 - `Group(GroupBy)` runs its sanitized summary through the summary pipeline, so forced predicates and the
   `MinGroupSize` floor both apply, as they would on `ToList(Summary)`. Core `Group` takes no `Having`, which is
-  why it is not the path used.
+  why it is not the path used. A null `groupBy` is checked first, as core `Group` checks it:
+  `ArgumentNullException` for `groupBy`, never the refusal a summary with no grouping gets (3.5.0).
 - `Summary(Summary)` applies the floor's HAVING too. Neither returns the floor's own `__dwGroupSize` column —
   both project it back out — and both keep canonical column names, because alias renaming happens on
   materialized rows.
@@ -2138,7 +2265,8 @@ public class Ticket { … }
   change places between pages.
 - `[DwEntity]` allows one attribute per type and is inherited the .NET way: a `[DwEntity]` on a derived type replaces
   its base type's instead of merging with it. `[DwEntity(RequirePolicy = true)]` on a type whose base declares
-  `DefaultOrder` has no default order, and the reverse drops `RequirePolicy`. Repeat both on the derived type.
+  `DefaultOrder` has no default order, and the reverse drops `RequirePolicy`; either drops a base type's
+  `RefuseSelects` (3.5.0). Repeat every setting on the derived type.
 - An entry naming a field the type does not have, one that is not a field and a direction (`"Id sideways"`), one
   the core refuses to order by, a path ending on a collection of entities (`"Tags"`), or one whose name the parser
   keeps for itself (`"Null"`, section 5) is skipped, never refused, and `PolicyModelValidator` reports all four
@@ -2175,6 +2303,54 @@ public class Ticket { … }
 - Not guarded:
   - plain EF Core or LINQ on the type (`db.Employees.ToListAsync()`, `.Where(e => ...)`);
   - anything done with `AsUnguardedQueryable()` that avoids DynamicWhere extension methods.
+
+### [DwEntity(RefuseSelects = true)] (3.5.0)
+
+```csharp
+[DwEntity(RequirePolicy = true, RefuseSelects = true)]   // a read-only row, read whole
+public class TicketRow
+{
+    public int Id { get; set; }
+    public string? Code { get; set; }
+    [DwNoSelect] public string? Secret { get; set; }
+}
+```
+
+- For a type meant to be read whole, such as a read-only projection, where a partial row would report a default
+  value for every member the caller did not name. A guarded query that sends a non-empty `Selects` for it throws
+  `PolicyException` `SelectsRefused` (23), `FieldPath` `"*"`, `Feature` `Select`, `SourceOrigin`
+  `"DwEntityAttribute(RefuseSelects = true)"`, in both tiers. `Convenience` does not drop the list, because the whole
+  row would then answer a request the caller did not make.
+- The names are gated first, exactly as on any type, and the refusal comes after them:
+  - under `Strict`, a name the caller may not select, or one that matches nothing, is refused as
+    `FieldDeniedForSelect` (inside a segment `FieldDeniedForSegment`), with `FieldPath` `"*"`, and audited under its
+    real path;
+  - under `Convenience`, a denied name is dropped (a `Dropped` decision) and a name that matches nothing fails
+    validation with `ConditionMustHasValidFieldName`, as on any type;
+  - under either tier, a list whose every name was dropped is `AllSelectsDenied`;
+  - only a list of names the caller may select reaches `SelectsRefused`.
+- In the sanitizer it is raised after the caps are checked and the conditions and orders gated, and before the strict
+  cost check, the forced predicates and `RequiredFilterMissing`.
+- Surfaces: `ToList`, `ToListAsync`, `ToListDynamic` and `ToListAsyncDynamic` with a `Filter`; `ToListAsync` with a
+  `Segment`; the composable `Filter`, `FilterDynamic`, `Select` and `SelectDynamic`; and `PolicySimulator`, so
+  `POST /simulate` too (section 23). The composable `Where`, `Order`, `Page`, `Group` and `Summary` take no projection.
+- Never refused: a `Selects` that is null or empty, which asks for no projection (null returns the whole row; an
+  empty list means what it means on any type: the policy synthesizes a projection where a denied field needs one,
+  and otherwise the pipeline refuses `[]` with `MustHasFields`); and the projection the policy synthesizes to withhold
+  denied fields, which is the library's, not the caller's.
+- The trace records a `Denied` decision with `FieldPath` `"*"`, `Feature` `Select` and reason
+  `DwEntityAttribute(RefuseSelects = true)`. A dry run records it and runs the projection as written. With
+  `AuditRefusals` on, the refusal is one `DwAuditEvent` with `FieldPath` `"*"`, `Feature` `Select`, `Effect` `Deny`
+  and `ErrorCode` `SelectsRefused`.
+- An unguarded query never reads the flag: a type without `RequirePolicy` can be queried unguarded, and that query
+  honours `Selects`. `PolicyModelValidator` warns when the flag stands alone (section 20).
+- Read from the `[DwEntity]` the type carries or inherits, once per type. A `[DwEntity]` on a derived type replaces
+  the base type's, so a subclass declaring `[DwEntity(RequirePolicy = true)]` takes projections again.
+- `PolicySchema.RefusesSelects`, `refusesSelects` in `POST /schema`, is true for such an entity (section 23). A
+  field's `CanSelect` keeps meaning whether its value comes back.
+- Why in the gate rather than the endpoint: a host refusing the list before `ApplyPolicy` records nothing in the
+  trace, the refusal audit or the simulator, and a probe for a denied member would go unrecorded; the gate refuses
+  that probe as itself, under the member's own path.
 
 ---
 
@@ -2214,6 +2390,7 @@ AttributeUsage (every attribute: Inherited = true)
 ```
 Access control
   [DwEntity]                                     RequirePolicy:bool = false  DefaultOrder:string? = null (3.1.0)
+                                                 RefuseSelects:bool = false (3.5.0)
   [DwDeny(PolicyFeature features)]               Features:PolicyFeature
   [DwDenied]                                     DwDeny(PolicyFeature.All)
   [DwNoWhere]                                    DwDeny(PolicyFeature.Where)
@@ -2260,8 +2437,12 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - `DefaultOrder` (3.1.0), e.g. `[DwEntity(DefaultOrder = "CreatedAt desc, Id")]`: the order a guarded query
   takes when its caller sends none, less the fields this caller may not order by. Unguarded calls ignore it.
   Entry syntax, entry points and exclusions are in section 13; `ValidateModel` checks it (section 20).
+- `RefuseSelects` (3.5.0), e.g. `[DwEntity(RequirePolicy = true, RefuseSelects = true)]`: a guarded query that
+  sends a non-empty `Selects` is refused with `PolicyException` `SelectsRefused` (23), in both tiers, once the names
+  have been gated. Null or empty `Selects` and a synthesized projection never raise it. Unguarded calls ignore
+  it, so pair it with `RequirePolicy`; `ValidateModel` warns when it stands alone. Details in section 13.
 - A derived type reads its own `[DwEntity]` when it has one, and that attribute replaces the base type's whole: set
-  `RequirePolicy` and `DefaultOrder` again on it.
+  `RequirePolicy`, `DefaultOrder` and `RefuseSelects` again on it.
 
 ### DwDeny family
 
@@ -2577,6 +2758,8 @@ GeneralizeMode    Round=0 Bucket=1 DatePart=2 Truncate=3
 DatePart          Year=0 Quarter=1 Month=2 Day=3
 TransformKind     Mutate=0 Generalize=1 Format=2 Mask=3 Truncate=4 Default=5
 StoreFailureMode  LastKnownGood=0 FailClosed=1 StaticOnly=2
+PolicyErrorCode   FieldDeniedForWhere=1 … MissingTokenVault=22 SelectsRefused=23 (3.5.0); every member, numbered,
+                  with when it is raised: section 30. Members are only appended, so a number never changes
 ```
 
 ```
@@ -2794,6 +2977,8 @@ SELECT a member that can carry a denied field no path names:
                                                              or throw where it
                                                              cannot be narrowed
 every requested SELECT dropped                               throw             -        AllSelectsDenied
+any SELECT left after the rows above, on a type declaring
+  [DwEntity(RefuseSelects = true)] (3.5.0)                   throw             throw    SelectsRefused
 no Selects while a denied field can reach the result (3.2.0) allowed members   allowed members
 GROUP BY a denied field                                      throw             throw    FieldDeniedForGroup
 AGGREGATE a denied field, or a transformed field lacking
@@ -3395,7 +3580,8 @@ DwPolicy.Configure(options, providers);
 - Validation never runs automatically.
 - It reads only the public instance properties of the listed types, so pass DTO and navigated types too.
 - It does not check runtime rules.
-- Each message starts with `Type.Member: `, except the `DefaultOrder` messages, which start with `Type: `.
+- Each message starts with `Type.Member: `, except the `DefaultOrder` and `RefuseSelects` messages, which start with
+  `Type: `.
 
 Errors:
 - two members of one type with the same `[DwAlias]`, compared case-insensitively
@@ -3446,6 +3632,10 @@ Warnings:
   `"{Type}: DefaultOrder names '{field}', which its attributes deny for ordering unless a rule allows it, so guarded queries leave it out until one does."`
 - `DefaultOrder` names a field the attributes allow ordering but deny for segments (3.1.0):
   `"{Type}: DefaultOrder names '{field}', which its attributes deny for segments, so guarded segments leave it out."`
+- `[DwEntity(RefuseSelects = true)]`, declared or inherited, without `RequirePolicy` (3.5.0). Only a guarded query
+  makes the refusal, so the type can still be queried unguarded, and that query honours `Selects`. A warning rather
+  than an error, because a host that never queries the type unguarded loses nothing:
+  `"{Type}: RefuseSelects is set without RequirePolicy, so a query that does not apply a policy still honours Selects."`
 
 Not checked; these throw at query time:
 - a blank, dotted or `"*"` alias
@@ -3781,7 +3971,7 @@ DwAuditEvent                                        sealed class
   - `EntityType` = the queried type's `FullName`; `Effect` = `Deny`; `DryRun` = false; `ErrorCode` = the refusal's code;
   - `Feature` and `Tier` = the refusal's own, so a store provider's refusal reports `All` and `Strict`;
   - `Subjects` and `Purpose` = the context's;
-  - `FieldPath` = the field the refusal was about, as its canonical path, in both tiers. A `FieldDeniedFor*`, `OperatorNotAllowed` or `RequiredFilterMissing` refusal, a `CapExceeded` refusal from `MaxNavigationDepth`, the audit buffer's refusal whichever code it carries, and `MissingContextValue`, which records the scoped field, are all recorded under the path although the refusal itself named the caller's alias or, under `Strict`, said `"*"`. A name that matches nothing (`Strict`) is recorded as the caller sent it, trimmed and with empty segments dropped. Every other refusal records its own `FieldPath` (section 30): `"*"` for a whole-request refusal such as `QueryStringDenied`, `QueryCostExceeded`, a cap on the request's size or `ApplyPolicy`'s `PolicyContextNotPrepared`; the entity's short type name for a store provider's refusal; the name as written for `AmbiguousFieldName`.
+  - `FieldPath` = the field the refusal was about, as its canonical path, in both tiers. A `FieldDeniedFor*`, `OperatorNotAllowed` or `RequiredFilterMissing` refusal, a `CapExceeded` refusal from `MaxNavigationDepth`, the audit buffer's refusal whichever code it carries, and `MissingContextValue`, which records the scoped field, are all recorded under the path although the refusal itself named the caller's alias or, under `Strict`, said `"*"`. A name that matches nothing (`Strict`) is recorded as the caller sent it, trimmed and with empty segments dropped. Every other refusal records its own `FieldPath` (section 30): `"*"` for a whole-request refusal such as `QueryStringDenied`, `QueryCostExceeded`, `SelectsRefused` (3.5.0), a cap on the request's size or `ApplyPolicy`'s `PolicyContextNotPrepared`; the entity's short type name for a store provider's refusal; the name as written for `AmbiguousFieldName`.
   - The recorded path is cut to its first 256 characters followed by `…` (3.1.0). Then every character in Unicode category Control (Cc), Format (Cf), Line Separator (Zl) or Paragraph Separator (Zp) is written as `\u` and four lowercase hex digits: a line feed as `\u000a`, U+2028 as `\u2028`, U+202E as `\u202e`. A character outside the Basic Multilingual Plane is judged whole, and both halves of its surrogate pair are escaped. A name that matches nothing is text the caller wrote: a line break in it would forge a second entry in a log written one event per line, a format character such as U+202E would reverse the text after it without showing itself, and a name a megabyte long would be kept whole.
 - Written at most once per refusal, from an exception filter: the refusal is never changed, caught or swallowed.
 - A full buffer (`Caps.MaxAuditEvents`) records nothing, and the original refusal is still thrown.
@@ -3846,6 +4036,9 @@ PolicySchema                                        sealed class
   Depth       : int                                 levels actually covered after clamping (largest over roots)
   MaxDepth    : int                                 Caps.MaxNavigationDepth
   Truncated   : bool                                MaxSchemaFields cut Fields short
+  RefusesSelects : bool { get; init; }              (3.5.0) the entity declares [DwEntity(RefuseSelects = true)]: its
+                                                    guarded queries refuse any Selects the caller sends and return
+                                                    whole rows. Said once for the entity, whatever Paths roots the view
   Fields      : IReadOnlyList<PolicySchemaField>    by Group (ungrouped last), Order (null last), Name; case-insensitive
   Nodes       : IReadOnlyList<PolicySchemaNode>     by Path
 
@@ -3880,6 +4073,9 @@ PolicySchemaNode                                    sealed class
 - A part of an application's struct is described as its struct member's policy leaves it (3.4.0):
   `[DwNoWhere, DwNoOrder]` on `LocalizedText Name` lists `Name.Ar` with `CanWhere` and `CanOrder` false and
   `CanSelect` true.
+- On an entity with `RefusesSelects` (3.5.0) each field's `CanSelect` keeps its meaning, whether the field's value
+  comes back: every field the caller may select still does, in a row the caller cannot narrow. A front end offers no
+  column picker for such an entity rather than hiding its columns.
 - The entity is level 1; a root path of n segments is level n + 1. A root at level L walks to `min(L + Depth - 1, MaxNavigationDepth)`.
   - A larger `Depth` is clamped, never refused; read `Depth` and `MaxDepth` back.
   - `Depth < 1` → `ArgumentException`.
@@ -3924,6 +4120,12 @@ if (!sim.WouldRun) logger.LogInformation("{Code}", sim.Refusal!.ErrorCode);
 - It sanitizes only: no database, no transforms, and no audit events on `context`, because it runs on a copy. The clause passed in is not modified.
 - A `PolicyException` becomes `Refusal`. Any other exception propagates, unwrapped even from the runtime overload.
   - Under `Strict`, outside dry run, a path that matches nothing is therefore a `Refusal` with the clause's `FieldDeniedFor*` code and `FieldPath` `"*"`, not a `LogicException` (3.1.0). The `Trace` names it.
+  - A `Summary` whose `GroupBy` is null throws `LogicException` `GroupByMustHasAtLeastOneField` (3.5.0), as the
+    query refuses it. Until 3.5.0 the sanitizer read past it and the simulation reported a summary that would run.
+  - A `Filter` or `Segment` that sends a non-empty `Selects` for a type declaring `[DwEntity(RefuseSelects = true)]`
+    is a `Refusal` with `SelectsRefused`, `FieldPath` `"*"`, `Feature` `Select` and `SourceOrigin`
+    `"DwEntityAttribute(RefuseSelects = true)"` (3.5.0), once its names have been gated as the query gates them, so a
+    denied name under `Strict` is still `FieldDeniedForSelect` there. The `Trace` holds the `Denied` decision on `"*"`.
 - A simulated `Filter` or `Segment` that sends no orders gets the type's `DefaultOrder` in `Clause.Orders`, less the fields the caller may not order by (3.1.0).
 - A simulation has no source, so it reads T as a source it cannot see into (3.2.0): every denial beneath a member
   counts, and with no `Selects` a synthesized `Clause.Selects` keeps only members holding a value. The guarded query
@@ -4347,7 +4549,7 @@ DwPolicyContext caller = await DwPolicy.PrepareAsync(new DwPolicyContext().WithS
 ## 27. Redis package — DynamicWhere.ex.Policies.Redis
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.3.0, StackExchange.Redis 2.8.24   namespace DynamicWhere.ex.Policies.Redis
+net6.0   dependencies: DynamicWhere.ex 3.5.0, StackExchange.Redis 2.8.24   namespace DynamicWhere.ex.Policies.Redis
 
 new RedisPolicyStore(IConnectionMultiplexer redis, string? prefix = null, Func<string, Type?>? resolveType = null)
     : IDwPolicyWritableStore
@@ -4408,7 +4610,7 @@ DwPolicy.Configure(options, await StorePolicyProvider.CreateAsync(store, options
 ## 28. Entity Framework Core package — DynamicWhere.ex.Policies.EntityFrameworkCore
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.3.0, Microsoft.EntityFrameworkCore.Relational 6.0.22
+net6.0   dependencies: DynamicWhere.ex 3.5.0, Microsoft.EntityFrameworkCore.Relational 6.0.22
 namespace DynamicWhere.ex.Policies.EntityFrameworkCore      no raw SQL; any EF Core relational provider; ships no migrations
 
 new EfPolicyStore(Func<DbContext> contexts, Func<string, Type?>? resolveType = null)    : IDwPolicyWritableStore
@@ -4497,7 +4699,7 @@ EfTokenVault:
 ## 29. ASP.NET Core package — DynamicWhere.ex.Policies.AspNetCore
 
 ```
-net6.0   dependencies: DynamicWhere.ex 3.3.0, FrameworkReference Microsoft.AspNetCore.App
+net6.0   dependencies: DynamicWhere.ex 3.5.0, FrameworkReference Microsoft.AspNetCore.App
 namespace DynamicWhere.ex.Policies.AspNetCore
 ```
 
@@ -4570,7 +4772,7 @@ RuleRequest(Guid? Id, string? SubjectKind, string? SubjectKey, string? EntityTyp
   - a path naming a value field the caller can see.
 - **404:** a path naming nothing, or a value field the caller cannot see: `'{path}' is not a navigation of '{entity}'.`
 ```
-{ entity, entityType, roots[], depth, maxDepth, truncated,
+{ entity, entityType, roots[], depth, maxDepth, truncated, refusesSelects,
   fields[ { path, name, parent, dataType, canWhere, canSelect, canOrder, canGroup, canAggregate, canSegment,
             isMasked, allowedOperators, allowedValues, isRequiredInWhere, costWeight, label, description, group, order } ],
   nodes[  { path, name, parent, entity, depth, expanded, remainingDepth } ] }
@@ -4579,6 +4781,8 @@ RuleRequest(Guid? Id, string? SubjectKind, string? SubjectKey, string? EntityTyp
   - `depth` = the levels actually covered.
   - `maxDepth` = `Caps.MaxNavigationDepth`.
   - `truncated` = `MaxSchemaFields` cut the list short.
+  - `refusesSelects` (3.5.0) = the entity declares `[DwEntity(RefuseSelects = true)]`, so its guarded queries refuse
+    any `selects` and return whole rows. A field's `canSelect` is unchanged: it still says whether the value comes back.
 - **Field entries:** `name` = the alias, or the path. `parent` = the owning node's path, or null.
 - **Node entries:**
   - `expanded` = its fields were described.
@@ -4653,6 +4857,10 @@ rule = { id, subjectKind, subjectKey, level, entityType, fieldPath, features, ef
   trace[ { field, feature, action, reason } ] }
 ```
 - **A policy refusal** is 200 with `wouldRun: false` and `filter: null`.
+  - A filter with `selects` for an entity declaring `[DwEntity(RefuseSelects = true)]` (3.5.0), once its names are
+    gated as the query gates them: `refusal` `{ code: "SelectsRefused", field: "*", feature: "Select",
+    reason: "DwEntityAttribute(RefuseSelects = true)" }`, and a `trace` entry with the same field, feature and reason
+    and `action` `Denied`. In both tiers.
 - **Otherwise** `filter` is the sanitized copy: denied parts dropped, predicates injected, names made canonical, and, when it sent no orders, the type's `DefaultOrder` added (3.1.0).
 
 ### GET /health
@@ -4726,7 +4934,8 @@ PolicyException : LogicException                                   namespace Dyn
                                       PolicyContextNotPrepared ApplyPolicy raises; under the Strict tier "*" for
                                       codes 1–6, CapExceeded and MissingContextValue too (3.1.0), and for
                                       AmbiguousGroupKey, TransformRequiresMaterialization, MissingHashSalt and
-                                      MissingTokenVault (3.3.0); the entity's
+                                      MissingTokenVault (3.3.0); "*" in both tiers for SelectsRefused
+                                      (3.5.0); the entity's
                                       short type name for PolicyRequired, StoreUnavailable and a store provider's
                                       PolicyContextNotPrepared;
                                       the transformed paths joined by ", " for TransformRequiresMaterialization and
@@ -4741,7 +4950,8 @@ PolicyException : LogicException                                   namespace Dyn
                                       MissingContextValue under the Strict tier (3.1.0), and for
                                       AmbiguousGroupKey, MissingHashSalt and MissingTokenVault (3.3.0).
                                       TransformRequiresMaterialization keeps its origin, which names the method
-                                      and what to call instead, never a field
+                                      and what to call instead, never a field. SelectsRefused (3.5.0) carries
+                                      "DwEntityAttribute(RefuseSelects = true)" in both tiers
   Message       "<Code>: field '<FieldPath>', feature '<Feature>', tier '<Tier>'."
 ```
 
@@ -4805,6 +5015,14 @@ through `PolicySimulator` or in dry run to see the decisions).
                                       FieldPath "*" and no SourceOrigin (3.3.0)
 22  MissingTokenVault                 MaskStrategy.Tokenize while DwPolicyOptions.TokenVault is null; under      throws
                                       Strict FieldPath "*" and no SourceOrigin (3.3.0)
+23  SelectsRefused                    a non-empty Selects for a [DwEntity(RefuseSelects = true)] type, once      recorded
+                                      every name has been gated: a Filter terminal, ToListAsync(Segment), the
+                                      composable Filter, FilterDynamic, Select or SelectDynamic, or the
+                                      simulator (3.5.0). Both tiers; FieldPath "*", Feature Select, SourceOrigin
+                                      "DwEntityAttribute(RefuseSelects = true)". Under Strict a denied or
+                                      unknown name is refused first as code 2 (6 in a segment); under either
+                                      tier a list whose every name was dropped is code 7. Null or empty
+                                      Selects, and a synthesized projection, never raise it
 ```
 
 "recorded" means dry run writes a `Denied` decision to the trace and runs the query anyway.
@@ -4911,6 +5129,7 @@ tokens that must match      one explicit TokenScope            the scope follows
 any policy                  [DwEntity(RequirePolicy = true)]   a DynamicWhere call without ApplyPolicy reads all
 a purpose's page caps       the purpose set by the host        a caller picks its own caps and purpose-bound grants
 a composed value's parts    an initializer, not a constructor  every clause on a part is refused under Strict
+RefuseSelects (3.5.0)       RequirePolicy                      an unguarded query narrows the row as asked
 ```
 
 ### Inference channels
@@ -5109,10 +5328,11 @@ Read before generating policy attributes.
     A default field the caller may not order by is left out without an error. End every
     order meant for paging with a unique field, such as the key.
 38. **A `[DwEntity]` on a derived type replaces its base type's.** The attribute allows one per type, and .NET
-    inheritance hands a derived type its own when it declares one, so the base type's `RequirePolicy` and
-    `DefaultOrder` are gone rather than merged. `[DwEntity(DefaultOrder = "Id")]` on a subclass of a
-    `RequirePolicy` type lets a DynamicWhere call on the subclass run without `ApplyPolicy`. Repeat every setting on
-    the derived type.
+    inheritance hands a derived type its own when it declares one, so the base type's `RequirePolicy`,
+    `DefaultOrder` and `RefuseSelects` (3.5.0) are gone rather than merged. `[DwEntity(DefaultOrder = "Id")]` on a
+    subclass of a `RequirePolicy` type lets a DynamicWhere call on the subclass run without `ApplyPolicy`, and
+    `[DwEntity(RequirePolicy = true)]` on a subclass of a `RefuseSelects` type lets its callers narrow it again.
+    Repeat every setting on the derived type.
 39. **The purpose is the host's, never the caller's (3.4.0).** `DwPolicyContext.Purpose` selects a purpose's page
     caps in `DwCaps.Purposes` and every purpose-bound rule. Bound from a request header, a query string or a body, it
     lets a caller pick the largest page any purpose allows, and whatever a purpose-bound rule grants. Set it in the
@@ -5133,6 +5353,11 @@ Read before generating policy attributes.
     struct that is a dictionary's value cannot be, and the query fails with `InvalidOperationException` rather than
     return the stored value. Give such a member a setter and hold such structs in a list or an array. Until 3.4.0
     no transform on a struct's member was applied at all (section 18).
+43. **`RefuseSelects` refuses nothing without a policy (3.5.0).** `[DwEntity(RefuseSelects = true)]` is read by the
+    gate, so only a guarded query refuses a caller's `Selects`. A type that sets it without `RequirePolicy` can still
+    be queried with the core methods, and that query projects as asked: the partial row the flag exists to prevent.
+    Write `[DwEntity(RequirePolicy = true, RefuseSelects = true)]`; `ValidateModel` warns about the flag alone, and a
+    derived type that declares a `[DwEntity]` of its own needs both again.
 
 ---
 
@@ -5579,6 +5804,57 @@ MemoryCalculationInput
 ### History
 
 ```
+3.5.0   A row type can refuse a caller's projection inside the policy gate, where the refusal is traced and audited;
+        the case-insensitive pattern operators can match by ILIKE on PostgreSQL, so a trigram index serves them; and
+        a summary with no grouping is refused as a malformed request rather than failing as a server error.
+        - Behaviour change. A Summary whose GroupBy is null is refused with LogicException
+          GroupByMustHasAtLeastOneField (ErrorCode.GroupByMustHaveFields), the refusal an empty grouping always had,
+          by ToList and ToListAsync with a Summary and the composable Summary, guarded or not, before anything reads
+          the request: it is the first check of the walk that refuses a null list entry, which runs ahead of
+          validation and, under ApplyPolicy, at the top of the sanitizer. It used to reach validation and leave as
+          ArgumentNullException (parameter "GroupBy"), which a host answers as a server error, for a body that only
+          left out "groupBy". Under a policy it is a LogicException, not a PolicyException, so AuditRefusals does not
+          record it, as it records no other malformed request. PolicySimulator.Simulate with such a summary throws the
+          same LogicException, where it reported a summary that would run. A null argument to Group, guarded or not,
+          is still ArgumentNullException for groupBy: Group takes the grouping itself, so it is a bad call. A
+          ConditionSet whose ConditionGroup is null is still ArgumentNullException. This replaces the 3.3.0 statement
+          that a null Summary.GroupBy is still an ArgumentNullException. Sections 7 and 8.
+        - New. [DwEntity(RefuseSelects = true)] refuses a non-empty Selects for a type meant to be read whole, such as
+          a read-only projection, where a partial row would report defaults for every member the caller did not name:
+          PolicyException with the new PolicyErrorCode.SelectsRefused (23), FieldPath "*", Feature Select and
+          SourceOrigin "DwEntityAttribute(RefuseSelects = true)". The refusal is the gate's own, so it is traced,
+          audited when AuditRefusals is on (FieldPath "*", ErrorCode SelectsRefused) and reported by the simulator and
+          POST /simulate, which a host refusing the list in its endpoint could never do. The names are gated first:
+          under Strict a name the caller may not select, or one that matches nothing, is still FieldDeniedForSelect
+          (FieldDeniedForSegment in a segment) and audited under its own path; a list whose every name was dropped is
+          still AllSelectsDenied; only a list of selectable names reaches SelectsRefused. Both tiers refuse, since
+          dropping the list would hand back whole rows the caller did not ask for, and a dry run records a Denied
+          decision on "*" for Select and runs the projection as written. It covers the Filter terminals, ToListAsync
+          with a Segment, the composable Filter, FilterDynamic, Select and SelectDynamic, and the simulator. A null or
+          empty Selects and the projection the policy synthesizes to withhold denied fields never raise it. An
+          unguarded query never reads the flag, so PolicyModelValidator warns when it stands without RequirePolicy,
+          and a [DwEntity] on a derived type replaces the base type's. PolicySchema.RefusesSelects (bool, init),
+          refusesSelects in POST /schema, says it once for the entity; PolicySchemaField.CanSelect keeps meaning
+          whether the field's value comes back. Sections 13, 14, 20, 23, 29 and 30.
+        - New. DwText.Configure(o => o.CaseInsensitive = TextMatching.ILike), or "DynamicWhere": { "Text":
+          { "CaseInsensitive": "ILike" } } through DwTextOptions.Bind, compiles IContains, INotContains, IStartsWith,
+          INotStartsWith, IEndsWith and INotEndsWith to column ILIKE pattern ESCAPE '\' through Npgsql's
+          EF.Functions.ILike, which a pg_trgm GIN or GiST index on the column can serve where lower(column) LIKE
+          cannot. The predicate the library parsed is rewritten after Where(Condition) and Where(ConditionGroup), so
+          the predicate text is unchanged and getQueryString shows the ILIKE SQL; a backslash, % and _ in a value are
+          escaped with a backslash, so it still matches as text; a negation keeps its NOT and the null guard stays.
+          IEqual, INotEqual, IIn and INotIn stay lower(column) = value, which an index on lower(column) serves, and
+          HAVING stays lowered. Only a query EF Core's own provider translates is rewritten, so LINQ to objects, the
+          IEnumerable overloads and a provider wrapping EF Core's keep lowering; but every EF Core query in the
+          process is, so a process that also queries another database through EF Core must not choose it: there the
+          query fails translation with InvalidOperationException. Configure finds NpgsqlDbFunctionsExtensions.ILike by
+          name and throws InvalidOperationException when Npgsql.EntityFrameworkCore.PostgreSQL cannot be loaded, so a
+          deployment without it refuses to start; an undefined value is ArgumentException; a second Configure with
+          the same choice does nothing and a different one throws InvalidOperationException; Bind refuses an unknown
+          key, a value it cannot read and a single value where the section belongs. Against PostgreSQL 16 it returns
+          the same rows as lowering for all six operators over ASCII values carrying %, _, \ and quotes. New public
+          types: TextMatching (DynamicWhere.ex.Enums), DwText and DwTextOptions (DynamicWhere.ex.Source). The
+          default, TextMatching.Lower, is unchanged. Sections 1, 3, 4 and 11.
 3.4.0   Page caps per declared purpose; the parts of a struct, a nullable one's included, policed as the struct is,
         and a transform on a struct's member applied; a path through a member a constructor builds refused under
         Strict rather than failing in the provider; and a typed selection through a struct, or beneath a collection of
@@ -5910,7 +6186,8 @@ MemoryCalculationInput
           the list, ListOf[Conditions]MustNotHasNullEntry. A Selects entry that is null or blank is
           ConditionMustHasValidFieldName, the refusal a null or blank GroupBy field has always had. A list that is
           itself null still means what it meant; a ConditionSet whose ConditionGroup is null is still an
-          ArgumentNullException, as is a null Summary.GroupBy; and a null element inside Condition.Values still
+          ArgumentNullException, as is a null Summary.GroupBy (until 3.5.0, which refuses it as
+          GroupByMustHasAtLeastOneField); and a null element inside Condition.Values still
           reads as "". Clone copies a null entry as a null entry rather than failing on it, so the refusal is the
           running method's and reads the same for a copy. Sections 2 and 8.
         - New. A token vault can hold a key, so a copy of the store gives no value back. The key a vault stores a
@@ -6164,7 +6441,17 @@ MemoryCalculationInput
 - `Select<T>` needs a public parameterless constructor on T. Records with only positional constructors, and
   classes whose constructors all take arguments, cannot be targets; use `SelectDynamic`.
 - The I-variants call `ToLower()` on both sides. On a case-sensitive collation (PostgreSQL with the `C` locale) the
-  database may not use an index for `LOWER(column)`; add a functional index or use the plain operators.
+  database may not use an index for `LOWER(column)`; add a functional index or use the plain operators. On
+  PostgreSQL, `TextMatching.ILike` (3.5.0, section 4) compiles the six pattern I-variants to `ILIKE`, which a
+  `pg_trgm` index serves; `IEqual`, `INotEqual`, `IIn`, `INotIn` and `Having` stay lowered.
+- `TextMatching` is one choice for the whole process (3.5.0, section 4). With `ILike`, the six pattern operators are
+  rewritten in every condition the library adds to an EF Core query, whatever database the query reaches, so a process
+  whose EF Core queries also reach a database other than PostgreSQL cannot use it: there they fail translation with
+  `InvalidOperationException`. There is no per-query or per-context setting.
+- A `ConditionSet` whose `ConditionGroup` is null is still an `ArgumentNullException`, not a `LogicException`
+  (section 8). A `Summary` whose `GroupBy` is null is refused as a malformed request since 3.5.0.
+- `[DwEntity(RefuseSelects = true)]` is read by guarded queries only (3.5.0, section 13): an unguarded query on such
+  a type honours `Selects`, so pair the flag with `RequirePolicy`.
 - Values are inlined as escaped literals, not SQL parameters. EF Core escapes them for SQL, so this is not an
   injection path, but every distinct value is a distinct statement and a separate plan-cache entry.
 - A path through a collection means "any element matches". There is no `All()` and no negated `Any()`.

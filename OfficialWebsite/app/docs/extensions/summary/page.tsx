@@ -84,7 +84,10 @@ export default function Page() {
       <ul>
         <li>
           <code>GroupBy</code> is required (not null) —{" "}
-          <code>ArgumentNullException</code>.
+          <code>GroupByMustHaveFields</code>, the refusal an empty grouping has,
+          checked before anything reads the request, guarded or not. Until 3.5.0
+          it was an <code>ArgumentNullException</code>; see{" "}
+          <Link href="/docs/breaking-changes#summary-without-groupby">breaking changes</Link>.
         </li>
         <li>
           GroupBy validation — see{" "}

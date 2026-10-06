@@ -173,6 +173,18 @@ export default function Page() {
         support.
       </Callout>
 
+      <Callout tone="info" title="Case-insensitive matching on PostgreSQL (3.5.0)">
+        When the process chose <code>TextMatching.ILike</code> with{" "}
+        <code>DwText.Configure</code>, both overloads rewrite the predicate they
+        just parsed on a query EF Core&apos;s own provider translates:{" "}
+        <code>IContains</code>, <code>IStartsWith</code>, <code>IEndsWith</code>{" "}
+        and their negations become <code>ILIKE</code>, which a{" "}
+        <code>pg_trgm</code> index serves. A predicate the caller composed with
+        LINQ is left as written, and on any other provider nothing is rewritten.
+        See{" "}
+        <Link href="/docs/enums/operator#text-matching">case-insensitive matching</Link>.
+      </Callout>
+
       <h2 id="example-single">Example — single condition</h2>
       <Code lang="csharp">{`var condition = new Condition
 {

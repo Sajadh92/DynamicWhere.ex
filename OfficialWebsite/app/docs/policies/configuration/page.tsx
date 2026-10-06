@@ -1042,6 +1042,16 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
         one does; and <code>Region</code> is left out only of guarded segments,
         which refuse it in any clause, while a filter still orders by it.
       </p>
+      <p>
+        Since 3.5.0 the scan also warns when{" "}
+        <Link href="/docs/policies/attributes#refuse-selects"><code>[DwEntity(RefuseSelects = true)]</code></Link>,
+        declared or inherited, stands without <code>RequirePolicy</code>. The
+        refusal is the policy&apos;s, so only a guarded query makes it, and an
+        unguarded query on the type honours <code>Selects</code>. It is a warning
+        rather than an error, because a host that never queries the type
+        unguarded loses nothing:
+      </p>
+      <Code lang="text">{`TicketRow: RefuseSelects is set without RequirePolicy, so a query that does not apply a policy still honours Selects.`}</Code>
 
       <h2 id="configuring-twice">Configuring twice</h2>
       <p>
@@ -1235,7 +1245,7 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
   -- --filter "*PolicyBenchmarks*" --job medium`}</Code>
 
       <h2 id="errors">Error codes</h2>
-      <p><code>PolicyException.ErrorCode</code>, values 1 to 22:</p>
+      <p><code>PolicyException.ErrorCode</code>, values 1 to 23:</p>
       <table>
         <thead><tr><th>Code</th><th>Raised when</th></tr></thead>
         <tbody>
@@ -1256,6 +1266,7 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
           <tr><td><code>GroupTooSmall</code> (20)</td><td>A summary already uses the alias the group floor reserves.</td></tr>
           <tr><td><code>MissingHashSalt</code> (21)</td><td>A field masks to a hash and no salt was configured.</td></tr>
           <tr><td><code>MissingTokenVault</code> (22)</td><td>A field masks to a token and no vault was configured.</td></tr>
+          <tr><td><code>SelectsRefused</code> (23)</td><td>New in 3.5.0. A non-empty <code>Selects</code> for a type declaring <Link href="/docs/policies/attributes#refuse-selects"><code>[DwEntity(RefuseSelects = true)]</code></Link>, once every name has been gated. Both tiers; <code>FieldPath</code> <code>&quot;*&quot;</code> and <code>SourceOrigin</code> <code>DwEntityAttribute(RefuseSelects = true)</code> in both. A dry run records it and runs the projection as written.</td></tr>
         </tbody>
       </table>
     </DocPage>

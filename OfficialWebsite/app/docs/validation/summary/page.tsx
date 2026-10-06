@@ -31,8 +31,12 @@ export default function Page() {
         </thead>
         <tbody>
           <tr>
-            <td><code>GroupBy</code> is required (not null)</td>
-            <td><code>ArgumentNullException</code></td>
+            <td>
+              <code>GroupBy</code> is required (not null). Refused before anything
+              reads the request, guarded or not, as an empty grouping is; until
+              3.5.0 it was an <code>ArgumentNullException</code>
+            </td>
+            <td><code>GroupByMustHaveFields</code></td>
           </tr>
           <tr>
             <td>

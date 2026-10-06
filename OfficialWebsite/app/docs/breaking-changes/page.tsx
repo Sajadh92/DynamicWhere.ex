@@ -17,10 +17,21 @@ export default function Page() {
       <h1>Breaking Changes & Known Limitations</h1>
       <p>
         DynamicWhere.ex is intentionally opinionated about how queries are shaped.
-        The fifty-four points below cover constraints, surprises, and corner cases —
+        The fifty-seven points below cover constraints, surprises, and corner cases —
         read them before designing an API around the library so you can pick the
         right entry points and avoid runtime exceptions in production.
       </p>
+      <Callout tone="danger" title="Behaviour changes in 3.5.0">
+        Points&nbsp;55 to 57 changed in <strong>3.5.0</strong>. A summary with no{" "}
+        <code>groupBy</code> is refused as a malformed request, with{" "}
+        <code>GroupByMustHasAtLeastOneField</code>, where it failed as a server
+        error (point&nbsp;55). Two new features change nothing until a deployment
+        uses them: a row type can refuse a caller&apos;s <code>Selects</code>{" "}
+        inside the policy gate with <code>[DwEntity(RefuseSelects = true)]</code>,
+        where the refusal is traced, audited and simulated (point&nbsp;56), and on
+        PostgreSQL the case-insensitive pattern operators can match with{" "}
+        <code>ILIKE</code>, so a trigram index serves them (point&nbsp;57).
+      </Callout>
       <Callout tone="danger" title="Behaviour changes in 3.4.0">
         Points&nbsp;46 to 54 changed in <strong>3.4.0</strong>. A declared purpose
         can carry page caps of its own, so an export reads every match in one
@@ -182,6 +193,18 @@ export default function Page() {
         a functional index on <code>LOWER(column)</code> or use the case‑sensitive
         operator variants.
       </Callout>
+      <p>
+        Since <strong>3.5.0</strong> a deployment on PostgreSQL can opt in to{" "}
+        <code>ILIKE</code> for the six pattern operators — <code>IContains</code>,{" "}
+        <code>IStartsWith</code>, <code>IEndsWith</code> and their negations — with{" "}
+        <code>{`DwText.Configure(o => o.CaseInsensitive = TextMatching.ILike)`}</code>,
+        so that a <code>pg_trgm</code> index on the column can serve them, where
+        it cannot serve <code>lower(column) LIKE</code>. <code>IEqual</code>,{" "}
+        <code>INotEqual</code>, <code>IIn</code>, <code>INotIn</code> and{" "}
+        <code>Having</code> stay lowered, nothing changes without the opt-in, and
+        the choice is the whole process&apos;s. See point&nbsp;57 and{" "}
+        <Link href="/docs/enums/operator#text-matching">case-insensitive matching</Link>.
+      </p>
 
       <h2 id="enum-string-storage">4. Enum Filtering Matches the Member Name, Whatever the Column Stores</h2>
       <p>
@@ -2211,8 +2234,9 @@ await query.ToListAsync(filter, cancellationToken);    // the new overload`}</Co
         </li>
         <li>
           A <code>ConditionSet</code> whose <code>ConditionGroup</code> is null is
-          still <code>ArgumentNullException</code>, and so is a null{" "}
-          <code>Summary.GroupBy</code>.
+          still <code>ArgumentNullException</code>. A null{" "}
+          <code>Summary.GroupBy</code> was one too, until <strong>3.5.0</strong>{" "}
+          refused it as an empty grouping is refused (point&nbsp;55).
         </li>
         <li>
           A null element inside <code>Condition.Values</code> still reads as the
@@ -2740,6 +2764,157 @@ public LocalizedText Name { get; set; }`}</Code>
         See <Link href="/docs/policies/configuration#from-a-file">Configuration from a file</Link>.
       </p>
 
+      <h2 id="summary-without-groupby">55. A <code>Summary</code> With No <code>GroupBy</code> Is a Malformed Request</h2>
+      <p>
+        A request body that leaves out <code>&quot;groupBy&quot;</code> binds a{" "}
+        <code>Summary</code> whose <code>GroupBy</code> is null. A summary groups or
+        it is not one.
+      </p>
+      <Callout tone="danger" title="Fixed: a missing groupBy surfaced as a server error">
+        It reached validation and left as an <code>ArgumentNullException</code>{" "}
+        (parameter <code>&quot;GroupBy&quot;</code>), which a host maps to a
+        five-hundred, for a request that was simply malformed. Until{" "}
+        <strong>3.5.0</strong>.
+      </Callout>
+      <p>
+        It is refused now as an empty grouping has always been refused: a{" "}
+        <code>LogicException</code> whose message is{" "}
+        <code>GroupByMustHasAtLeastOneField</code>{" "}
+        (<code>ErrorCode.GroupByMustHaveFields</code>).
+      </p>
+      <ul>
+        <li>
+          <code>ToList</code> with a <code>Summary</code>, on a query and on an{" "}
+          <code>IEnumerable&lt;T&gt;</code>, <code>ToListAsync</code> with a{" "}
+          <code>Summary</code> and the composable <code>Summary</code> refuse it,
+          guarded or not, before anything reads the request. It is the first check
+          of the walk that refuses a null list entry (point&nbsp;45), which runs
+          ahead of validation and, under <code>ApplyPolicy</code>, at the top of
+          the sanitizer.
+        </li>
+        <li>
+          Under a policy it is a <code>LogicException</code>, not a{" "}
+          <code>PolicyException</code>, so{" "}
+          <Link href="/docs/policies/configuration#audit-refusals"><code>AuditRefusals</code></Link>{" "}
+          does not record it, as it records no other malformed request.
+        </li>
+        <li>
+          <code>PolicySimulator.Simulate</code> with such a summary throws the same{" "}
+          <code>LogicException</code>, where it used to report a summary that
+          would run.
+        </li>
+        <li>
+          A null argument to <code>Group</code> is still an{" "}
+          <code>ArgumentNullException</code> for <code>groupBy</code>, guarded or
+          not: <code>Group</code> takes the grouping itself, so a null one is a bad
+          call rather than a malformed request.
+        </li>
+        <li>
+          Unchanged: a <code>ConditionSet</code> whose <code>ConditionGroup</code>{" "}
+          is null is still <code>ArgumentNullException</code>.
+        </li>
+      </ul>
+      <p>
+        <strong>Who is affected:</strong> an endpoint that turned that{" "}
+        <code>ArgumentNullException</code> into a response of its own, or matched
+        its parameter name <code>&quot;GroupBy&quot;</code>, now gets a{" "}
+        <code>LogicException</code>, which middleware written for this library
+        already maps to a <code>400</code>. See{" "}
+        <Link href="/docs/validation/summary">Summary validation</Link>.
+      </p>
+
+      <h2 id="refuse-selects">56. A Row Type Can Refuse a Caller&apos;s <code>Selects</code></h2>
+      <p>
+        New in <strong>3.5.0</strong>.{" "}
+        <code>[DwEntity(RefuseSelects = true)]</code> declares a type that is read
+        whole, such as a read-only projection, where a partial row would report a
+        default value for every member the caller did not name. A guarded query
+        that sends a non-empty <code>Selects</code> for it is refused with{" "}
+        <code>PolicyException</code> and the new{" "}
+        <code>PolicyErrorCode.SelectsRefused</code> (23), <code>FieldPath</code>{" "}
+        <code>&quot;*&quot;</code>, <code>Feature</code> <code>Select</code> and{" "}
+        <code>SourceOrigin</code>{" "}
+        <code>&quot;DwEntityAttribute(RefuseSelects = true)&quot;</code>, in both
+        tiers.
+      </p>
+      <ul>
+        <li>
+          The names are gated first, as on any type: under <code>Strict</code> a
+          denied or unknown name is still <code>FieldDeniedForSelect</code>,
+          audited under its own path, and under either tier a list whose every
+          name was dropped is still <code>AllSelectsDenied</code>. Only a list of
+          names the caller may select reaches <code>SelectsRefused</code>.
+        </li>
+        <li>
+          The refusal is the gate&apos;s own, so it is traced, audited when{" "}
+          <code>AuditRefusals</code> is on, and reported by the simulator and{" "}
+          <code>POST /simulate</code> — none of which a host refusing the list in
+          its endpoint could do.
+        </li>
+        <li>
+          A null or empty <code>Selects</code>, and the projection the policy
+          synthesizes to withhold a denied member, never raise it: null returns
+          the whole row, and an empty list means what it means on any type.
+        </li>
+        <li>
+          An unguarded query never reads the flag, so pair it with{" "}
+          <code>RequirePolicy</code>; <code>PolicyModelValidator</code> warns when
+          it stands alone. <code>PolicySchema.RefusesSelects</code>,{" "}
+          <code>refusesSelects</code> in <code>POST /schema</code>, says it once
+          for the entity, and a field&apos;s <code>canSelect</code> keeps its
+          meaning.
+        </li>
+      </ul>
+      <p>
+        <strong>Who is affected:</strong> nobody who does not set the flag. Code
+        that switches over <code>PolicyErrorCode</code> meets a new member,
+        appended after <code>MissingTokenVault</code>, so every existing number is
+        unchanged. See{" "}
+        <Link href="/docs/policies/attributes#refuse-selects">Refusing a caller&apos;s projection</Link>.
+      </p>
+
+      <h2 id="ilike">57. On PostgreSQL the Pattern Operators Can Match With <code>ILIKE</code></h2>
+      <p>
+        New in <strong>3.5.0</strong>, and opt-in. <code>IContains</code> compiles
+        to <code>lower(column) LIKE &apos;%value%&apos;</code>, which a{" "}
+        <code>pg_trgm</code> index on the column cannot serve.
+      </p>
+      <Code lang="csharp">{`DwText.Configure(o => o.CaseInsensitive = TextMatching.ILike);   // once, at startup
+
+// IContains "ab" on Name, on Npgsql:
+//   i."Name" IS NOT NULL AND i."Name" ILIKE '%ab%' ESCAPE '\\'`}</Code>
+      <ul>
+        <li>
+          <code>IContains</code>, <code>INotContains</code>,{" "}
+          <code>IStartsWith</code>, <code>INotStartsWith</code>,{" "}
+          <code>IEndsWith</code> and <code>INotEndsWith</code> compile to{" "}
+          <code>ILIKE</code> through Npgsql&apos;s <code>EF.Functions.ILike</code>,
+          which such an index can serve, with <code>%</code>, <code>_</code> and
+          the backslash in a value escaped, so it still matches as text.{" "}
+          <code>IEqual</code>, <code>INotEqual</code>, <code>IIn</code>,{" "}
+          <code>INotIn</code> and <code>Having</code> stay lowered.
+        </li>
+        <li>
+          The choice is the process&apos;s. Every EF Core query in the process is
+          rewritten, so a process that also queries another database through EF
+          Core must not choose it: such a query fails translation with{" "}
+          <code>InvalidOperationException</code>. LINQ to objects and a provider
+          wrapping EF Core&apos;s keep lowering.
+        </li>
+        <li>
+          A deployment that cannot load{" "}
+          <code>Npgsql.EntityFrameworkCore.PostgreSQL</code> refuses to start, and
+          a second <code>DwText.Configure</code> asking for a different choice is
+          refused; one asking for the same choice does nothing.
+        </li>
+      </ul>
+      <p>
+        <strong>Who is affected:</strong> nobody who does not opt in. Without{" "}
+        <code>DwText.Configure</code>, or with <code>TextMatching.Lower</code>,
+        every query is the one 3.4.0 ran. See{" "}
+        <Link href="/docs/enums/operator#text-matching">case-insensitive matching</Link>.
+      </p>
+
       <h2 id="next">See also</h2>
       <ul>
         <li>
@@ -2813,6 +2988,18 @@ public LocalizedText Name { get; set; }`}</Code>
         <li>
           <Link href="/docs/policies/configuration#from-a-file">Configuration from a file →</Link>{" "}
           context for point 54.
+        </li>
+        <li>
+          <Link href="/docs/validation/summary">Summary validation →</Link>{" "}
+          context for point 55.
+        </li>
+        <li>
+          <Link href="/docs/policies/attributes#refuse-selects">Attributes → refusing a caller&apos;s projection</Link>{" "}
+          context for point 56.
+        </li>
+        <li>
+          <Link href="/docs/enums/operator#text-matching"><code>Operator</code> → case-insensitive matching</Link>{" "}
+          context for points 3 and 57.
         </li>
       </ul>
     </DocPage>

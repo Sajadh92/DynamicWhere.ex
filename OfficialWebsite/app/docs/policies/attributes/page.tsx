@@ -34,6 +34,10 @@ export default function Page() {
             <td><code>[DwEntity(DefaultOrder = &quot;CreatedAt desc, Id&quot;)]</code></td>
             <td>The order a guarded query takes when its caller sends none. See <Link href="/docs/policies/attributes#default-order">Default order</Link>.</td>
           </tr>
+          <tr>
+            <td><code>[DwEntity(RefuseSelects = true)]</code></td>
+            <td>A guarded query that sends a non-empty <code>Selects</code> is refused with <code>SelectsRefused</code> (3.5.0). Unguarded calls ignore it, so pair it with <code>RequirePolicy</code>. See <Link href="/docs/policies/attributes#refuse-selects">Refusing a caller&apos;s projection</Link>.</td>
+          </tr>
         </tbody>
       </table>
       <Callout tone="warn" title="RequirePolicy is the one that catches a forgotten guard">
@@ -203,9 +207,116 @@ var unordered = db.Tickets
       <Callout tone="warn" title="A derived type's [DwEntity] replaces its base type's">
         <code>[DwEntity]</code> allows one per type, and .NET attribute inheritance
         hands a derived type its own when it declares one. The base type&apos;s{" "}
-        <code>DefaultOrder</code> and <code>RequirePolicy</code> are then gone, not
-        merged: a subclass declaring <code>[DwEntity(DefaultOrder = &quot;Id&quot;)]</code>{" "}
-        no longer requires a policy. Repeat both on the derived type.
+        <code>DefaultOrder</code>, <code>RequirePolicy</code> and{" "}
+        <code>RefuseSelects</code> are then gone, not merged: a subclass declaring{" "}
+        <code>[DwEntity(DefaultOrder = &quot;Id&quot;)]</code> no longer requires a
+        policy, and one declaring <code>[DwEntity(RequirePolicy = true)]</code>{" "}
+        takes projections again. Repeat every setting on the derived type.
+      </Callout>
+
+      <h2 id="refuse-selects">Refusing a caller&apos;s projection</h2>
+      <p>
+        New in <strong>3.5.0</strong>. Some row types are meant to be read whole.
+        A read-only projection is the usual case: a caller who narrows it gets a
+        row that reports a default value for every member they did not name, and
+        a default reads as data. <code>RefuseSelects</code> makes the policy
+        refuse the narrowing.
+      </p>
+      <Code lang="csharp">{`[DwEntity(RequirePolicy = true, RefuseSelects = true)]
+public class TicketRow
+{
+    public int Id { get; set; }
+    public string? Code { get; set; }
+    public string? Title { get; set; }
+
+    [DwNoSelect]
+    public string? Secret { get; set; }
+}
+
+IQueryable<TicketRow> rows = db.Tickets.Select(t =>
+    new TicketRow { Id = t.Id, Code = t.Code, Title = t.Title, Secret = t.Secret });
+
+// Refused in both tiers: PolicyException, SelectsRefused, FieldPath "*", Feature Select.
+await rows.ApplyPolicy(caller).ToListAsync(new Filter { Selects = new() { "Code" } });
+
+// Runs: the whole row, less Secret, which the policy withholds itself.
+await rows.ApplyPolicy(caller).ToListAsync(new Filter());`}</Code>
+      <p>
+        A guarded query that sends a non-empty <code>Selects</code> for such a type
+        is refused with <code>PolicyException</code>{" "}
+        <code>SelectsRefused</code> (23), whose <code>FieldPath</code> is{" "}
+        <code>&quot;*&quot;</code>, <code>Feature</code> <code>Select</code> and{" "}
+        <code>SourceOrigin</code>{" "}
+        <code>&quot;DwEntityAttribute(RefuseSelects = true)&quot;</code>. Both
+        tiers refuse: dropping the list would hand back whole rows, an answer to a
+        request the caller did not make.
+      </p>
+      <ul>
+        <li>
+          <strong>The names are gated first</strong>, exactly as on any other type.
+          Under <code>Strict</code> a name the caller may not select, or one that
+          matches nothing, is refused as <code>FieldDeniedForSelect</code> —{" "}
+          <code>FieldDeniedForSegment</code> inside a segment — and audited under
+          its own path. Under <code>Convenience</code> a denied name is dropped and
+          a name that matches nothing fails validation, as on any type. Under
+          either tier a list whose every name was dropped is{" "}
+          <code>AllSelectsDenied</code>. Only a list of names the caller may select
+          reaches <code>SelectsRefused</code>, so a denied name and one that
+          matches nothing are still refused alike, and the refusal tells a caller
+          no more than a type without the flag would by returning the columns
+          they named.
+        </li>
+        <li>
+          <strong>Where it applies:</strong> wherever a guarded query takes a
+          caller&apos;s projection — <code>ToList</code>, <code>ToListAsync</code>,{" "}
+          <code>ToListDynamic</code> and <code>ToListAsyncDynamic</code> with a{" "}
+          <code>Filter</code>, <code>ToListAsync</code> with a{" "}
+          <code>Segment</code>, the composable <code>Filter</code>,{" "}
+          <code>FilterDynamic</code>, <code>Select</code> and{" "}
+          <code>SelectDynamic</code> — and{" "}
+          <Link href="/docs/policies/admin#simulate">the simulator</Link>.
+        </li>
+        <li>
+          <strong>What it never refuses.</strong> A <code>Selects</code> that is
+          null or empty is never refused as <code>SelectsRefused</code>: null
+          returns the whole row, and an empty list means what it means on any
+          type — the policy synthesizes a projection where a denied member needs
+          one, and otherwise the pipeline refuses <code>[]</code> as{" "}
+          <code>MustHasFields</code>. The projection the policy
+          synthesizes to withhold a denied member is the library&apos;s, not the
+          caller&apos;s, so a whole <code>TicketRow</code> still comes back
+          without <code>Secret</code>.
+        </li>
+        <li>
+          <strong>Traced, audited and simulated.</strong> The trace records a{" "}
+          <code>Denied</code> decision on <code>&quot;*&quot;</code> for{" "}
+          <code>Select</code>, with <code>DwEntityAttribute(RefuseSelects = true)</code>{" "}
+          as its reason. With{" "}
+          <Link href="/docs/policies/configuration#audit-refusals"><code>AuditRefusals</code></Link>{" "}
+          on, the refusal is recorded with <code>FieldPath</code>{" "}
+          <code>&quot;*&quot;</code> and <code>ErrorCode</code>{" "}
+          <code>SelectsRefused</code>. A dry run records the decision and runs the
+          projection as written. A host refusing the list in its endpoint, before
+          the gate, could do none of this, and a probe for a denied member would
+          leave no record there; the gate refuses it, and records it, under the
+          member&apos;s own path.
+        </li>
+        <li>
+          <strong>The schema says it once.</strong>{" "}
+          <code>PolicySchema.RefusesSelects</code>, <code>refusesSelects</code> in{" "}
+          <Link href="/docs/policies/admin#schema"><code>POST /schema</code></Link>,
+          is true for such an entity. A field&apos;s <code>CanSelect</code> keeps
+          meaning whether its value comes back, which it does, in a row the caller
+          cannot narrow, so a front end offers no column picker rather than hiding
+          the columns.
+        </li>
+      </ul>
+      <Callout tone="warn" title="Pair it with RequirePolicy">
+        An unguarded query never reads the flag, so without{" "}
+        <code>RequirePolicy</code> the type can still be queried unguarded, and
+        that query honours <code>Selects</code>.{" "}
+        <Link href="/docs/policies/configuration#validate">Startup validation</Link>{" "}
+        warns when the flag stands alone, declared or inherited.
       </Callout>
 
       <h2 id="access">Access control</h2>

@@ -134,6 +134,16 @@ export default function Page() {
         Cache enums live in <code>DynamicWhere.ex.Optimization.Cache.Enums</code>.
       </p>
 
+      <Callout tone="info" title="One more enum, set once for the process">
+        <code>TextMatching</code> (3.5.0), also in{" "}
+        <code>DynamicWhere.ex.Enums</code>, is part of no request. A deployment
+        sets it once, with <code>DwText.Configure</code>, to choose how the
+        case-insensitive operators match: <code>Lower</code>, the default, lowers
+        both sides, and <code>ILike</code> uses PostgreSQL&apos;s{" "}
+        <code>ILIKE</code> for the six pattern operators. See{" "}
+        <Link href="/docs/enums/operator#text-matching">Operator → case-insensitive matching</Link>.
+      </Callout>
+
       <Callout tone="note">
         Every enum sub-page lists <strong>every value</strong> from the source
         of truth — no abbreviation. Use the table above as a quick map, then

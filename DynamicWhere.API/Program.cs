@@ -253,12 +253,18 @@ static async Task ConfigureDynamicWherePoliciesAsync(EfPolicyStore store, ILogge
 
     options.Entities.Expose<Employee>("Employee");
 
+    // The two 3.5.0 row types, read through the same administrative surface: /schema reports
+    // refusesSelects for the card, and /simulate shows the queue's tiebreak after a caller's orders.
+    options.Entities
+        .Expose<EmployeeCardRow>("EmployeeCard")
+        .Expose<EmployeeQueueRow>("EmployeeQueue");
+
     // Contradictions in the model, reported rather than thrown, so every one shows up in a single
     // run instead of one per restart. The Email/[DwNoOrder] pairing on Employee exists because this
     // check names it: a masked field that can still be sorted on ranks the real values.
     // Passed the options as well as the types: one check needs both halves. A [DwMask] that hashes
     // is only as good as the salt this deployment supplies, and no attribute can carry a salt.
-    PolicyModelReport report = DwPolicy.ValidateModel(options, typeof(Employee));
+    PolicyModelReport report = DwPolicy.ValidateModel(options, typeof(Employee), typeof(EmployeeCardRow), typeof(EmployeeQueueRow));
 
     foreach (string warning in report.Warnings)
     {

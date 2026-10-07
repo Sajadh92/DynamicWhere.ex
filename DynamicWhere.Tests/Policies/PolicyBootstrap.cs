@@ -21,6 +21,12 @@ namespace DynamicWhere.Tests.Policies
         /// <summary>The name the endpoint suites address <c>Staff</c> by.</summary>
         internal const string StaffName = "staff";
 
+        /// <summary>The name the 3.5.0 endpoint suite addresses <c>EpCardRow</c> by.</summary>
+        internal const string CardRowName = "card-row";
+
+        /// <summary>The name the 3.5.0 endpoint suite addresses <c>EpQueueRow</c> by.</summary>
+        internal const string QueueRowName = "queue-row";
+
         /// <summary>Configures the posture, or confirms the one already in force is it.</summary>
         internal static void Ensure()
         {
@@ -28,7 +34,9 @@ namespace DynamicWhere.Tests.Policies
 
             options.Entities
                 .Expose<Staff>(StaffName)
-                .Expose<Person>();
+                .Expose<Person>()
+                .Expose<EpCardRow>(CardRowName)
+                .Expose<EpQueueRow>(QueueRowName);
 
             if (Type.GetType("DynamicWhere.API.Models.Employee, DynamicWhere.API") is { } employee)
             {

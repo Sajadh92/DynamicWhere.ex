@@ -18,6 +18,7 @@ public sealed class DwPolicyOptions
     private bool _dryRun;
     private bool? _includeTraceInResult;
     private bool _auditRefusals;
+    private bool _defaultOrderAsTiebreak;
     private string _hashSalt = string.Empty;
     private IServiceProvider? _services;
     private IDwTokenVault? _tokenVault;
@@ -100,6 +101,32 @@ public sealed class DwPolicyOptions
         {
             Guard();
             _auditRefusals = value;
+        }
+    }
+
+    /// <summary>
+    /// When true, every type that declares <c>[DwEntity(DefaultOrder = ...)]</c> appends that default to a
+    /// guarded caller's orders as a final tiebreak, as <c>DwEntityAttribute.DefaultOrderAsTiebreak</c> does
+    /// for one type. Off by default.
+    /// </summary>
+    /// <remarks>
+    /// A caller sorting by a field many rows share leaves the order of those rows to the database, so
+    /// paging can show one row twice and another never. With this on, the default's fields the caller did
+    /// not name follow the caller's orders, less any this caller may not order by. A type that declares no
+    /// default is unaffected. The order becomes total only where the default ends with a unique field, such
+    /// as the key; ties on every field the default names can still change places.
+    /// <para>
+    /// A type cannot opt out while this is on. Off by default because it changes the order, and so the
+    /// pages, a caller who sends orders has always received.
+    /// </para>
+    /// </remarks>
+    public bool DefaultOrderAsTiebreak
+    {
+        get => _defaultOrderAsTiebreak;
+        set
+        {
+            Guard();
+            _defaultOrderAsTiebreak = value;
         }
     }
 

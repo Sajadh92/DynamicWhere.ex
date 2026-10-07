@@ -32,8 +32,8 @@ public sealed class DwEntityAttribute : Attribute
     /// <c>ToList</c>, <c>ToListAsync</c>, <c>ToListDynamic</c> and <c>ToListAsyncDynamic</c> with a
     /// <c>Filter</c>, <c>ToListAsync</c> with a <c>Segment</c>, the composable <c>Filter</c> and
     /// <c>FilterDynamic</c>, and <c>Page</c>. An unguarded query never reads it, and is ordered only as
-    /// its caller asks. A caller who sends orders gets exactly those; the default is never appended to
-    /// them. A query already ordered keeps that order, whether an <c>OrderBy</c> ordered it before
+    /// its caller asks. A caller who sends orders gets exactly those, unless <see cref="DefaultOrderAsTiebreak"/>
+    /// or the posture's <c>DefaultOrderAsTiebreak</c> appends the default to them. A query already ordered keeps that order, whether an <c>OrderBy</c> ordered it before
     /// <c>ApplyPolicy</c> or a composed <c>Order</c> did, even one whose every order the policy dropped. A
     /// projected query takes the default when its outermost <c>Select</c> builds the type in an object
     /// initializer and assigns every field the default names a column — a member the model maps, read
@@ -66,6 +66,37 @@ public sealed class DwEntityAttribute : Attribute
     /// </para>
     /// </remarks>
     public string? DefaultOrder { get; set; }
+
+    /// <summary>
+    /// When true, a guarded query whose caller sends orders ends them with every field of
+    /// <see cref="DefaultOrder"/> the caller did not name, so rows tied on the caller's fields keep one
+    /// order from page to page.
+    /// </summary>
+    /// <remarks>
+    /// A caller sorting by a field many rows share, such as a status or a timestamp, leaves the order of
+    /// those rows to the database, which may return them differently on every query: paging then shows one
+    /// row on two pages and another on none, while the total stays right. With this set, the default's
+    /// fields follow the caller's last <c>Sort</c>, in their declared direction. A field the caller already
+    /// orders by keeps the caller's place and direction, and is not added again.
+    /// <para>
+    /// The order is total only when the default ends with a unique field, such as the key. The default's
+    /// own rules hold: a field this caller may not order by is left out, and in a <c>Segment</c> so is a
+    /// field the caller may not use there. A caller whose every order was dropped gets the whole default.
+    /// It applies wherever a guarded query takes a caller's orders: the <c>Filter</c> terminals,
+    /// <c>ToListAsync</c> with a <c>Segment</c>, the composable <c>Filter</c>, <c>FilterDynamic</c> and
+    /// <c>Order</c>, and the simulator. A projection that leaves out a field the default names, or a
+    /// <c>Select</c> composed on the guarded handle, leaves the caller's orders as they are, as it leaves
+    /// the default out. A summary's orders rank groups and never take it. A query whose source was ordered
+    /// before <c>ApplyPolicy</c> still takes it after the caller's orders, which replace that order.
+    /// </para>
+    /// <para>
+    /// The posture's <c>DwPolicyOptions.DefaultOrderAsTiebreak</c> turns it on for every type that
+    /// declares a default; this property turns it on for one. A type without a usable
+    /// <see cref="DefaultOrder"/> has nothing to append, and <c>PolicyModelValidator</c> warns when this
+    /// property is set on one. A <c>[DwEntity]</c> on a derived type replaces this one, so repeat it there.
+    /// </para>
+    /// </remarks>
+    public bool DefaultOrderAsTiebreak { get; set; }
 
     /// <summary>
     /// When true, a guarded query that sends a non-empty <c>Selects</c> for this type is refused with

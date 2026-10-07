@@ -535,7 +535,8 @@ public sealed class PolicyQueryable<T> where T : class
             Segment sanitized = FilterSanitizer.Sanitize<T>(
                 segment, _resolver, _context, _options, trace,
                 applyDefaultOrder: TakesDefaultOrder,
-                rows: RowShape.Of(_source));
+                rows: RowShape.Of(_source),
+                tiebreak: TakesTiebreak);
 
             using (PolicyScope.Enter(_context, LastTrace))
             {
@@ -657,7 +658,9 @@ public sealed class PolicyQueryable<T> where T : class
     {
         try
         {
-            Filter sanitized = SanitizeClause(new Filter { Orders = orders });
+            // The one clause that carries a caller's orders, so the one that ends them with the type's
+            // default when the type or the posture asks for it as a tiebreak.
+            Filter sanitized = SanitizeClause(new Filter { Orders = orders }, tiebreak: TakesTiebreak);
 
             using (PolicyScope.Enter(_context, LastTrace))
             {
@@ -915,6 +918,20 @@ public sealed class PolicyQueryable<T> where T : class
         !_ordered && !_projected && DefaultOrder.Applies(_source.Expression, typeof(T));
 
     /// <summary>
+    /// True when the type's default ends a caller's orders on this handle: the type or the posture asks for
+    /// it, the caller composed no projection, and no projection in the source hides a field the default names.
+    /// </summary>
+    /// <remarks>
+    /// An order already on the query does not matter here, as it does for <see cref="TakesDefaultOrder"/>:
+    /// the caller's orders replace it, and the tiebreak follows them. The request is read first, so a type
+    /// that never asks for a tiebreak never has its source walked for one.
+    /// </remarks>
+    private bool TakesTiebreak =>
+        DefaultOrder.Tiebreaks(typeof(T), _options)
+        && !_projected
+        && !DefaultOrder.HidesDefault(_source.Expression, typeof(T));
+
+    /// <summary>
     /// Refuses a method that hands back a query the caller materializes, when this type's values
     /// are transformed on the way out.
     /// </summary>
@@ -1040,7 +1057,8 @@ public sealed class PolicyQueryable<T> where T : class
         Filter sanitized = FilterSanitizer.Sanitize<T>(
             filter, _resolver, _context, _options, trace,
             applyDefaultOrder: TakesDefaultOrder,
-            rows: RowShape.Of(_source));
+            rows: RowShape.Of(_source),
+            tiebreak: TakesTiebreak);
 
         return sanitized;
     }
@@ -1065,7 +1083,7 @@ public sealed class PolicyQueryable<T> where T : class
     /// <c>Where</c> call fail with "every projection field denied" on a type whose fields are all
     /// refused for select.
     /// </remarks>
-    private Filter SanitizeClause(Filter clause, bool applyDefaultOrder = false)
+    private Filter SanitizeClause(Filter clause, bool applyDefaultOrder = false, bool tiebreak = false)
     {
         PolicyTrace trace = NewTrace();
 
@@ -1073,7 +1091,7 @@ public sealed class PolicyQueryable<T> where T : class
 
         Filter sanitized = FilterSanitizer.Sanitize<T>(
             clause, _resolver, _context, _options, trace, synthesizeProjection: false, applyDefaultOrder,
-            rows: RowShape.Of(_source));
+            rows: RowShape.Of(_source), tiebreak: tiebreak);
 
         return sanitized;
     }

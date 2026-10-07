@@ -1713,7 +1713,7 @@ DwPolicy                                                                    stat
   the lock that configures, so a caller needs no `IsConfigured` check of its own — that check is a check-then-act two
   hosts starting at once can both pass. This is what lets an integration suite start several
   `WebApplicationFactory<Program>` hosts over one composition root.
-  - Compared: `Tier`, `DryRun`, `IncludeTraceInResult`, `AuditRefusals`, `HashSalt`, `StoreFailure`,
+  - Compared: `Tier`, `DryRun`, `IncludeTraceInResult`, `AuditRefusals`, `DefaultOrderAsTiebreak` (3.5.0), `HashSalt`, `StoreFailure`,
     `MaxSnapshotAge`, `RefreshInterval`, every `DwCaps` value and every purpose's page caps (3.4.0), the exposed
     catalogue — the same types under the same names, every name each type answers to, and the name each type is
     reported under — and the provider **types**, in the order supplied, with `AttributePolicyProvider` left out of
@@ -1805,14 +1805,15 @@ builder.Services.AddSingleton(options);
 ### Configuration keys
 
 ```
-Tier                  "Convenience" | "Strict"
-DryRun                true | false
-IncludeTraceInResult  true | false; leave it out to follow the tier (3.1.0)
-AuditRefusals         true | false (3.1.0)
-HashSalt              string; supply via user secrets, an environment variable or a vault, never a committed file
-StoreFailure          "LastKnownGood" | "FailClosed" | "StaticOnly"
-MaxSnapshotAge        TimeSpan "hh:mm:ss", e.g. "00:15:00"
-RefreshInterval       TimeSpan "hh:mm:ss", e.g. "00:00:30"
+Tier                    "Convenience" | "Strict"
+DryRun                  true | false
+IncludeTraceInResult    true | false; leave it out to follow the tier (3.1.0)
+AuditRefusals           true | false (3.1.0)
+DefaultOrderAsTiebreak  true | false (3.5.0)
+HashSalt                string; supply via user secrets, an environment variable or a vault, never a committed file
+StoreFailure            "LastKnownGood" | "FailClosed" | "StaticOnly"
+MaxSnapshotAge          TimeSpan "hh:mm:ss", e.g. "00:15:00"
+RefreshInterval         TimeSpan "hh:mm:ss", e.g. "00:00:30"
 Caps:MaxPageSize  Caps:DefaultPageSize  Caps:MaxConditions  Caps:MaxConditionDepth  Caps:MaxConditionSets
 Caps:MaxConditionValues  Caps:MaxAggregates  Caps:MaxOrderFields  Caps:MaxNavigationDepth  Caps:MaxQueryCost
 Caps:DefaultFieldCost  Caps:MaxAuditEvents  Caps:MinGroupSize  Caps:SchemaDepth  Caps:SchemaCycleLimit
@@ -1845,6 +1846,8 @@ DwPolicyOptions                            sealed class; every setter throws Inv
   DryRun                  bool               false
   IncludeTraceInResult    bool?              null          3.1.0. null follows the tier: off under Strict, on under Convenience
   AuditRefusals           bool               false         3.1.0. true also writes every refused guarded query to the audit
+  DefaultOrderAsTiebreak  bool               false         3.5.0. true ends every guarded caller's orders with the type's
+                                                           DefaultOrder fields they did not name, on every type declaring one
   HashSalt                string             ""            "" = none; null → ArgumentNullException; 1–15 chars → ArgumentException
   TokenVault              IDwTokenVault?     null          required only by MaskStrategy.Tokenize
   Services                IServiceProvider?  null          resolves [DwMutate] transformers
@@ -1880,6 +1883,8 @@ StoreFailureMode  LastKnownGood=0  FailClosed=1  StaticOnly=2
   - The trace is still recorded on `PolicyQueryable<T>.LastTrace`, and audit events do not depend on the setting.
 - `AuditRefusals` (3.1.0, default false) also writes every refusal a guarded query raises to the caller's audit buffer, drained to `IDwAuditSink` like `[DwAudit]` events (section 22).
   - Off by default because it changes what reaches a sink, and the ASP.NET Core audit middleware warns on every request whose events find no sink.
+- `DefaultOrderAsTiebreak` (3.5.0, default false) ends every guarded caller's orders with the fields of the type's `[DwEntity(DefaultOrder)]` the caller did not name, on every type that declares one, as `[DwEntity(DefaultOrderAsTiebreak = true)]` does for one type (section 13).
+  - Off by default because it changes the order, and so the pages, a caller who sends orders has always received. A type cannot opt out while it is on; a type without a default is unaffected.
 - `DryRun` takes effect per query as `DwPolicyOptions.DryRun || DwPolicyContext.DryRun`.
   - Decisions that would throw or drop are recorded in the trace and not enforced, and `PolicyTrace.DryRun` is true.
   - The group floor is recorded but not applied.
@@ -2238,7 +2243,8 @@ public class Ticket { … }
   - by an unguarded call. The core methods of section 6 on a plain `IQueryable<T>` or `IEnumerable<T>`, `Page`
     included, never read the attribute and order only as their caller asks, exactly as in 3.0; so does a DynamicWhere
     method called on what `AsUnguardedQueryable()` returns;
-  - when the caller sends orders: the default is not appended as a tiebreak;
+  - in place of the caller's orders. When the caller sends orders, the default is appended to them only as a
+    tiebreak, when the type or the posture asks for it (3.5.0, below);
   - to a source already ordered, before it was guarded (`db.Tickets.OrderBy(t => t.Title).ApplyPolicy(ctx)`) or by
     a composed `Order` earlier in the chain — even one whose every order the policy dropped, because the caller
     still sent orders. A composed `Filter` that sent orders counts the same way (3.2.0). Only the query's expression
@@ -2259,14 +2265,15 @@ public class Ticket { … }
     leaves the rest of the chain unordered even when it keeps every default field, so
     `guarded.Select(["Id", "Title"]).Page(page)` pages as it did in 3.0.0, unordered. The default is for the rows the
     caller's source makes;
-  - to a `Summary`, or by the composable `Where`, `Select` and `Order`.
+  - to a `Summary`, or by the composable `Where`, `Select` and `Order`; a composed `Order` takes it only as a
+    tiebreak.
 - A type that declares no `DefaultOrder` is never ordered by the library, guarded or not; only a caller's own
   orders apply. End a default with a unique field, such as the key, or rows sharing the leading values can still
   change places between pages.
 - `[DwEntity]` allows one attribute per type and is inherited the .NET way: a `[DwEntity]` on a derived type replaces
   its base type's instead of merging with it. `[DwEntity(RequirePolicy = true)]` on a type whose base declares
   `DefaultOrder` has no default order, and the reverse drops `RequirePolicy`; either drops a base type's
-  `RefuseSelects` (3.5.0). Repeat every setting on the derived type.
+  `DefaultOrderAsTiebreak` and `RefuseSelects` (3.5.0). Repeat every setting on the derived type.
 - An entry naming a field the type does not have, one that is not a field and a direction (`"Id sideways"`), one
   the core refuses to order by, a path ending on a collection of entities (`"Tags"`), or one whose name the parser
   keeps for itself (`"Null"`, section 5) is skipped, never refused, and `PolicyModelValidator` reports all four
@@ -2284,8 +2291,49 @@ public class Ticket { … }
     default leaves out is not recorded: the query does not order by it, and the caller never named it. A dry run
     keeps the field, so it records it, with its `Order` effect (`Deny` for a field the caller may not order by) and
     `DryRun` true (section 22);
-  - a caller whose sent orders were all dropped (Convenience) gets no default in their place;
+  - a caller whose sent orders were all dropped (Convenience) gets no default in their place, unless the default is
+    a tiebreak, which then follows an empty list;
   - it is added after the caps and after the cost is counted, so it counts toward no cap and costs nothing.
+
+### [DwEntity(DefaultOrderAsTiebreak = true)] (3.5.0)
+
+```csharp
+[DwEntity(DefaultOrder = "CreatedAt desc, Id", DefaultOrderAsTiebreak = true)]
+public class Instruction { … }
+
+DwPolicy.Configure(new DwPolicyOptions { DefaultOrderAsTiebreak = true });   // the same for every type with a default
+```
+
+- Why: a caller who orders by a field many rows share (a status, a count, a timestamp one batch wrote) leaves the
+  order of the tied rows to the database. PostgreSQL may return them differently on every query, by index walk or
+  by sort, so `Page`, `Skip` and `Take` can show a row on two pages and another on none while `totalCount` is right.
+- What: after the caller's orders are gated, every field of the default the caller did not name follows the
+  caller's last `Sort`, in its declared direction. A caller ordering by `Status` reads
+  `ORDER BY Status, CreatedAt DESC, Id`; one sending `Id desc` reads `ORDER BY Id DESC, CreatedAt DESC`, because a
+  field the caller names keeps the caller's place and direction and is not added again. The sanitized copy applies
+  the caller's orders by `Sort`, as the pipeline always did, numbered from zero, then the default's; the caller's
+  `Filter` is never modified.
+- The default's rules hold for what is appended: a field this caller may not order by is left out and recorded
+  (`Dropped`, reason `left out of the default order`), in either tier; in a `Segment` so is a field the caller may
+  not use there; a field audited for `Order` is recorded as a use when appended, and a field the caller named is
+  recorded once, for the caller's order; a dry run keeps every field.
+- A caller whose orders were all dropped under `Convenience` gets the whole default. `Strict` still refuses that
+  caller with `FieldDeniedForOrder`.
+- Like the default, it is added after the caps and the cost: `MaxOrderFields` and `MaxQueryCost` bound the caller's
+  own orders, and the appended fields count toward neither.
+- Applies wherever a guarded query takes a caller's orders: `ToList`, `ToListAsync`, `ToListDynamic` and
+  `ToListAsyncDynamic` with a `Filter`; `ToListAsync(Segment)`; the composable `Filter`, `FilterDynamic` and `Order`,
+  so `guarded.Order(byStatus).Page(page)` is total too; and `PolicySimulator` (section 23), whose sanitized clause
+  shows it. A source ordered before `ApplyPolicy` takes it after the caller's orders, which replace that order.
+- Skipped where the default is: a projection that could hide a default field, and a `Select`, or a `Filter` with
+  `Selects`, composed earlier on the handle, whose rows the caller orders. A `Summary` never takes it; unguarded
+  calls never read it.
+- Total only when the default ends with a unique field, such as the key: rows tied on every default field can still
+  change places.
+- Switches: the attribute turns it on for one type; `DwPolicyOptions.DefaultOrderAsTiebreak` (section 12) for every
+  type that declares a usable default, with no per-type opt-out. A type without a default is unaffected by either.
+  The option freezes with the posture, binds from `DefaultOrderAsTiebreak`, and `DwPolicy.Configure` compares it.
+  `ValidateModel` warns when the attribute is set on a type whose `DefaultOrder` names no usable field (section 20).
 
 ### [DwEntity(RequirePolicy = true)] enforcement
 
@@ -2390,6 +2438,7 @@ AttributeUsage (every attribute: Inherited = true)
 ```
 Access control
   [DwEntity]                                     RequirePolicy:bool = false  DefaultOrder:string? = null (3.1.0)
+                                                 DefaultOrderAsTiebreak:bool = false (3.5.0)
                                                  RefuseSelects:bool = false (3.5.0)
   [DwDeny(PolicyFeature features)]               Features:PolicyFeature
   [DwDenied]                                     DwDeny(PolicyFeature.All)
@@ -2437,12 +2486,15 @@ No named attribute refuses `Segment`: write `[DwDeny(PolicyFeature.Segment)]`.
 - `DefaultOrder` (3.1.0), e.g. `[DwEntity(DefaultOrder = "CreatedAt desc, Id")]`: the order a guarded query
   takes when its caller sends none, less the fields this caller may not order by. Unguarded calls ignore it.
   Entry syntax, entry points and exclusions are in section 13; `ValidateModel` checks it (section 20).
+- `DefaultOrderAsTiebreak` (3.5.0), e.g. `[DwEntity(DefaultOrder = "CreatedAt desc, Id", DefaultOrderAsTiebreak = true)]`:
+  a guarded caller's orders end with every `DefaultOrder` field they did not name, so tied rows keep one order from
+  page to page. `DwPolicyOptions.DefaultOrderAsTiebreak` does it for every type. Details in section 13.
 - `RefuseSelects` (3.5.0), e.g. `[DwEntity(RequirePolicy = true, RefuseSelects = true)]`: a guarded query that
   sends a non-empty `Selects` is refused with `PolicyException` `SelectsRefused` (23), in both tiers, once the names
   have been gated. Null or empty `Selects` and a synthesized projection never raise it. Unguarded calls ignore
   it, so pair it with `RequirePolicy`; `ValidateModel` warns when it stands alone. Details in section 13.
 - A derived type reads its own `[DwEntity]` when it has one, and that attribute replaces the base type's whole: set
-  `RequirePolicy`, `DefaultOrder` and `RefuseSelects` again on it.
+  `RequirePolicy`, `DefaultOrder`, `DefaultOrderAsTiebreak` and `RefuseSelects` again on it.
 
 ### DwDeny family
 
@@ -3580,8 +3632,8 @@ DwPolicy.Configure(options, providers);
 - Validation never runs automatically.
 - It reads only the public instance properties of the listed types, so pass DTO and navigated types too.
 - It does not check runtime rules.
-- Each message starts with `Type.Member: `, except the `DefaultOrder` and `RefuseSelects` messages, which start with
-  `Type: `.
+- Each message starts with `Type.Member: `, except the `DefaultOrder`, `DefaultOrderAsTiebreak` and `RefuseSelects`
+  messages, which start with `Type: `.
 
 Errors:
 - two members of one type with the same `[DwAlias]`, compared case-insensitively
@@ -3636,6 +3688,10 @@ Warnings:
   makes the refusal, so the type can still be queried unguarded, and that query honours `Selects`. A warning rather
   than an error, because a host that never queries the type unguarded loses nothing:
   `"{Type}: RefuseSelects is set without RequirePolicy, so a query that does not apply a policy still honours Selects."`
+- `[DwEntity(DefaultOrderAsTiebreak = true)]`, declared or inherited, on a type whose `DefaultOrder` names no usable
+  field (3.5.0), so nothing is appended. Whether the default ends with a unique field is not checked: without the
+  model a key configured in code is invisible to the scan. The posture's switch is never reported:
+  `"{Type}: DefaultOrderAsTiebreak is set, but DefaultOrder names no field a query can order by, so nothing is appended to a caller's orders."`
 
 Not checked; these throw at query time:
 - a blank, dotted or `"*"` alias
@@ -4127,6 +4183,8 @@ if (!sim.WouldRun) logger.LogInformation("{Code}", sim.Refusal!.ErrorCode);
     `"DwEntityAttribute(RefuseSelects = true)"` (3.5.0), once its names have been gated as the query gates them, so a
     denied name under `Strict` is still `FieldDeniedForSelect` there. The `Trace` holds the `Denied` decision on `"*"`.
 - A simulated `Filter` or `Segment` that sends no orders gets the type's `DefaultOrder` in `Clause.Orders`, less the fields the caller may not order by (3.1.0).
+  One that sends orders gets them followed by the default's fields they do not name when `DefaultOrderAsTiebreak`
+  asks for it, on the type or the posture (3.5.0, section 13); so does the `filter` `POST /simulate` returns.
 - A simulation has no source, so it reads T as a source it cannot see into (3.2.0): every denial beneath a member
   counts, and with no `Selects` a synthesized `Clause.Selects` keeps only members holding a value. The guarded query
   over a projected row keeps its assigned objects, one over an entity keeps its columns, owned and complex members
@@ -5318,9 +5376,9 @@ Read before generating policy attributes.
     records a refused query: its `Effect` is `Deny`, its `FieldPath` can be `"*"` or a name that matches nothing
     on the type, and it is written whether or not any field carries `[DwAudit]`. Branch on `ErrorCode` before
     counting an event as an access.
-37. **`[DwEntity(DefaultOrder = ...)]` orders only guarded queries, and is never a tiebreak.** Unguarded calls
-    ignore it. A caller who sends any `Orders` gets exactly those, so rows tied on them can still move between
-    pages, and an `IQueryable` ordered before `ApplyPolicy`, or by a composed `Order` before `Page`, keeps its own
+37. **`[DwEntity(DefaultOrder = ...)]` orders only guarded queries, and is a tiebreak only when asked.** Unguarded
+    calls ignore it. A caller who sends any `Orders` gets exactly those, so rows tied on them can still move between
+    pages, unless `DefaultOrderAsTiebreak` (3.5.0, on the type or the posture) ends them with the default, and an `IQueryable` ordered before `ApplyPolicy`, or by a composed `Order` before `Page`, keeps its own
     order; a list sorted in memory before `ApplyPolicy` is not seen as ordered and gets the default, so send the
     order with the filter. A projected query takes the default only when its outermost `Select` builds T in an
     object initializer assigning every default field a column (3.2.0); a computed value, even one EF Core could
@@ -5329,7 +5387,7 @@ Read before generating policy attributes.
     order meant for paging with a unique field, such as the key.
 38. **A `[DwEntity]` on a derived type replaces its base type's.** The attribute allows one per type, and .NET
     inheritance hands a derived type its own when it declares one, so the base type's `RequirePolicy`,
-    `DefaultOrder` and `RefuseSelects` (3.5.0) are gone rather than merged. `[DwEntity(DefaultOrder = "Id")]` on a
+    `DefaultOrder`, `DefaultOrderAsTiebreak` and `RefuseSelects` (3.5.0) are gone rather than merged. `[DwEntity(DefaultOrder = "Id")]` on a
     subclass of a `RequirePolicy` type lets a DynamicWhere call on the subclass run without `ApplyPolicy`, and
     `[DwEntity(RequirePolicy = true)]` on a subclass of a `RefuseSelects` type lets its callers narrow it again.
     Repeat every setting on the derived type.
@@ -5805,8 +5863,9 @@ MemoryCalculationInput
 
 ```
 3.5.0   A row type can refuse a caller's projection inside the policy gate, where the refusal is traced and audited;
-        the case-insensitive pattern operators can match by ILIKE on PostgreSQL, so a trigram index serves them; and
-        a summary with no grouping is refused as a malformed request rather than failing as a server error.
+        the case-insensitive pattern operators can match by ILIKE on PostgreSQL, so a trigram index serves them; a
+        type's default order can end a caller's orders as a tiebreak, so paging is total; and a summary with no
+        grouping is refused as a malformed request rather than failing as a server error.
         - Behaviour change. A Summary whose GroupBy is null is refused with LogicException
           GroupByMustHasAtLeastOneField (ErrorCode.GroupByMustHaveFields), the refusal an empty grouping always had,
           by ToList and ToListAsync with a Summary and the composable Summary, guarded or not, before anything reads
@@ -5855,6 +5914,18 @@ MemoryCalculationInput
           the same rows as lowering for all six operators over ASCII values carrying %, _, \ and quotes. New public
           types: TextMatching (DynamicWhere.ex.Enums), DwText and DwTextOptions (DynamicWhere.ex.Source). The
           default, TextMatching.Lower, is unchanged. Sections 1, 3, 4 and 11.
+        - New. [DwEntity(DefaultOrderAsTiebreak = true)], or DwPolicyOptions.DefaultOrderAsTiebreak for every type that
+          declares a DefaultOrder, ends a guarded caller's orders with every default field the caller did not name,
+          in its declared direction, after the caller's last Sort, so rows tied on the caller's fields (a status, a
+          shared timestamp) keep one order from page to page instead of one row showing on two pages and another on
+          none. A field the caller names keeps the caller's place and direction; a field this caller may not order by
+          is left out and recorded, and in a Segment so is one the caller may not use there; an audited field is
+          recorded once. It covers the Filter terminals, ToListAsync with a Segment, the composable Filter,
+          FilterDynamic and Order, and the simulator; a projection hiding a default field, one composed on the handle,
+          and a Summary never take it. A caller whose orders were all dropped under Convenience gets the whole
+          default. The order is total only when the default ends with a unique field. The option is off by default,
+          freezes with the posture, binds from DefaultOrderAsTiebreak, and is compared by a second Configure;
+          ValidateModel warns when the attribute is set on a type with no usable DefaultOrder. Sections 12, 13 and 20.
 3.4.0   Page caps per declared purpose; the parts of a struct, a nullable one's included, policed as the struct is,
         and a transform on a struct's member applied; a path through a member a constructor builds refused under
         Strict rather than failing in the provider; and a typed selection through a struct, or beneath a collection of

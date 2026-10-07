@@ -35,7 +35,7 @@
       <PackageLicenseExpression>MIT</PackageLicenseExpression>
       <!-- Locked to the core's version; see the note in the Redis package. -->
       <Version>3.5.0</Version>
-      <PackageReleaseNotes>v3.5.0 — Released in lockstep with DynamicWhere.ex 3.5.0, which it now requires. No change in this package. The core's new [DwEntity(RefuseSelects = true)] and TextMatching.ILike take nothing from a store: the first is an attribute on the row type, the second a choice the host makes once at startup.
+      <PackageReleaseNotes>v3.5.0 — Released in lockstep with DynamicWhere.ex 3.5.0, which it now requires. No change in this package. The core's new [DwEntity(RefuseSelects = true)], DefaultOrderAsTiebreak and TextMatching.ILike take nothing from a store: the first is an attribute on the row type, the second an attribute or a posture option, the third a choice the host makes once at startup.
 
 v3.4.0 — Released in lockstep with DynamicWhere.ex 3.4.0, which it now requires. No change in this package. A rule it stores that is bound to a purpose now matches a context whose purpose differs from the rule's only by outer spaces, because the core stores a context's purpose trimmed, as the rule's already was; and a rule denying a member that holds an application's own struct now denies every path beneath that member.
 

@@ -35,6 +35,10 @@ export default function Page() {
             <td>The order a guarded query takes when its caller sends none. See <Link href="/docs/policies/attributes#default-order">Default order</Link>.</td>
           </tr>
           <tr>
+            <td><code>[DwEntity(DefaultOrderAsTiebreak = true)]</code></td>
+            <td>A guarded caller&apos;s orders end with every <code>DefaultOrder</code> field they did not name, so tied rows keep one order from page to page (3.5.0). See <Link href="/docs/policies/attributes#default-order-tiebreak">The default as a tiebreak</Link>.</td>
+          </tr>
+          <tr>
             <td><code>[DwEntity(RefuseSelects = true)]</code></td>
             <td>A guarded query that sends a non-empty <code>Selects</code> is refused with <code>SelectsRefused</code> (3.5.0). Unguarded calls ignore it, so pair it with <code>RequirePolicy</code>. See <Link href="/docs/policies/attributes#refuse-selects">Refusing a caller&apos;s projection</Link>.</td>
           </tr>
@@ -87,8 +91,10 @@ public class Ticket
           3.0.0.
         </li>
         <li>
-          The caller&apos;s own orders win, and the default is not appended to
-          them as a tiebreak. A query that is already ordered keeps its order,
+          The caller&apos;s own orders win. The default is appended to them only
+          as a tiebreak, when the type or the posture asks for it (3.5.0,{" "}
+          <Link href="/docs/policies/attributes#default-order-tiebreak">below</Link>).
+          A query that is already ordered keeps its order,
           whether an <code>IQueryable&lt;T&gt;</code> was ordered before it was
           guarded —{" "}
           <code>{`db.Tickets.OrderBy(t => t.Title).ApplyPolicy(caller)`}</code> — or
@@ -101,7 +107,8 @@ public class Ticket
           <code>OrderBy</code> in it, so it takes the default; send that order with
           the filter instead. A <code>Summary</code> never takes the default, and
           neither do the composable <code>Where</code>, <code>Select</code> and{" "}
-          <code>Order</code>.
+          <code>Order</code>, except that <code>Order</code> takes it as a
+          tiebreak.
         </li>
         <li>
           A projection made before <code>ApplyPolicy</code> takes the default only
@@ -171,7 +178,8 @@ var unordered = db.Tickets
         same way, because a segment refuses that field in any clause; a filter
         still orders by it. A dry run keeps the field and still records the
         decision, and a caller whose own orders were all dropped under the{" "}
-        <code>Convenience</code> tier gets no default in their place.
+        <code>Convenience</code> tier gets no default in their place, unless the
+        default is a tiebreak, which then follows an empty list.
       </p>
       <p>
         A field the default keeps that is audited for <code>Order</code>, by{" "}
@@ -204,11 +212,74 @@ var unordered = db.Tickets
         between pages. End the default with the key —{" "}
         <code>&quot;CreatedAt desc, Id&quot;</code> — so that no two rows tie.
       </Callout>
+      <h3 id="default-order-tiebreak">The default as a tiebreak</h3>
+      <p>
+        <em>New in 3.5.0, opt-in.</em> A caller who sorts by a field many rows
+        share — a status, a count, a timestamp one batch wrote — leaves the order of
+        the tied rows to the database. PostgreSQL may return them differently on
+        every query, depending on whether the planner walks an index or sorts, so
+        paging can show one row on two pages and another on none while{" "}
+        <code>totalCount</code> stays right. The default can end the
+        caller&apos;s orders instead:
+      </p>
+      <Code lang="csharp">{`[DwEntity(DefaultOrder = "CreatedAt desc, Id", DefaultOrderAsTiebreak = true)]
+public class Instruction { /* ... */ }
+
+// Or for every type that declares a DefaultOrder:
+DwPolicy.Configure(new DwPolicyOptions { DefaultOrderAsTiebreak = true });
+
+// A caller ordering by Status now reads ORDER BY Status, CreatedAt DESC, Id.`}</Code>
+      <ul>
+        <li>
+          Every field of the default the caller did not name follows the
+          caller&apos;s last <code>Sort</code>, in its declared direction. A field
+          the caller already orders by keeps the caller&apos;s place and direction
+          and is not added again. The caller&apos;s own <code>Filter</code> is
+          never modified.
+        </li>
+        <li>
+          The default&apos;s own rules hold: a field this caller may not order by is
+          left out and recorded, in a <code>Segment</code> so is a field the caller
+          may not use there, an audited field is recorded as a use when it is
+          appended, and a dry run keeps every field. A caller whose orders were all
+          dropped under <code>Convenience</code> gets the whole default.
+        </li>
+        <li>
+          It applies wherever a guarded query takes a caller&apos;s orders: the{" "}
+          <code>Filter</code> terminals, <code>ToListAsync</code> with a{" "}
+          <code>Segment</code>, the composable <code>Filter</code>,{" "}
+          <code>FilterDynamic</code> and <code>Order</code> — so{" "}
+          <code>{`guarded.Order(byStatus).Page(page)`}</code> is total too — and the
+          simulator, whose sanitized clause shows it. A source ordered before{" "}
+          <code>ApplyPolicy</code> takes it after the caller&apos;s orders, which
+          replace that order.
+        </li>
+        <li>
+          It is skipped where the default is: a projection that could hide a field
+          the default names, and a projection composed on the handle. A{" "}
+          <code>Summary</code> orders groups and never takes it.
+        </li>
+        <li>
+          <code>DwPolicyOptions.DefaultOrderAsTiebreak</code> turns it on for every
+          type that declares a default, and a type cannot opt out while it is on; a
+          type without a default is unaffected. The option freezes with the posture,
+          binds from <code>DefaultOrderAsTiebreak</code>, and a second{" "}
+          <code>DwPolicy.Configure</code> asking for a different value is refused.{" "}
+          <Link href="/docs/policies/configuration#validate">Startup validation</Link>{" "}
+          warns when the attribute is set on a type whose <code>DefaultOrder</code>{" "}
+          names no usable field.
+        </li>
+      </ul>
+      <Callout tone="warn" title="Total only with a unique last field">
+        The tiebreak makes the order total only when the default ends with a unique
+        field, such as the key. Rows tied on every field the default names can still
+        change places.
+      </Callout>
       <Callout tone="warn" title="A derived type's [DwEntity] replaces its base type's">
         <code>[DwEntity]</code> allows one per type, and .NET attribute inheritance
         hands a derived type its own when it declares one. The base type&apos;s{" "}
-        <code>DefaultOrder</code>, <code>RequirePolicy</code> and{" "}
-        <code>RefuseSelects</code> are then gone, not merged: a subclass declaring{" "}
+        <code>DefaultOrder</code>, <code>DefaultOrderAsTiebreak</code>,{" "}
+        <code>RequirePolicy</code> and <code>RefuseSelects</code> are then gone, not merged: a subclass declaring{" "}
         <code>[DwEntity(DefaultOrder = &quot;Id&quot;)]</code> no longer requires a
         policy, and one declaring <code>[DwEntity(RequirePolicy = true)]</code>{" "}
         takes projections again. Repeat every setting on the derived type.

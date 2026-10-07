@@ -104,7 +104,7 @@ DynamicWhere.ex code. It is the complete API surface.`}</Code>
           parameters, the six precedence levels, enforcement tier by tier, the
           transform chain with the exact output of every mask and generalize mode,
           the group floor, dynamic rules and stores, the admin API, and all
-          twenty-two policy error codes.
+          twenty-three policy error codes.
         </li>
         <li>
           <strong>The reflection cache.</strong> Every <code>CacheExpose</code>{" "}
@@ -112,8 +112,8 @@ DynamicWhere.ex code. It is the complete API surface.`}</Code>
           actually does.
         </li>
         <li>
-          <strong>Fifty-four traps</strong> that produce silently wrong code:
-          sixteen for the query engine, thirty-eight for policies. A mask without{" "}
+          <strong>Sixty-one traps</strong> that produce silently wrong code:
+          eighteen for the query engine, forty-three for policies. A mask without{" "}
           <code>[DwNoOrder]</code> leaking through sorting is the one an agent
           reproduces most often, because the attribute reads as sufficient on its
           own.
@@ -136,7 +136,7 @@ DynamicWhere.ex code. It is the complete API surface.`}</Code>
       <CopyBlock text={text} lines={lines} />
 
       <Callout tone="warn" title="It says what the library does, not what it should do">
-        The reference is written against version 3.4.0 from the source, by
+        The reference is written against version 3.5.0 from the source, by
         hand, and checked by running the library, so it states behaviour — including the
         parts that are deliberately blunt, such as neither hashing nor
         tokenization hiding equality. Where a page in these docs disagrees with it,

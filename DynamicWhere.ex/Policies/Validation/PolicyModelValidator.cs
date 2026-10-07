@@ -71,6 +71,8 @@ public static class PolicyModelValidator
         Dictionary<string, string> aliases = new(StringComparer.OrdinalIgnoreCase);
 
         CheckDefaultOrder(type, errors, warnings);
+        CheckTiebreak(type, warnings);
+        CheckRefuseSelects(type, warnings);
 
         foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
@@ -108,6 +110,47 @@ public static class PolicyModelValidator
             CheckTokenVault(chain, member, options, errors);
             CheckOutputType(chain, property, member, errors);
             CheckMaskedButOrderable(chain, property, member, warnings);
+        }
+    }
+
+    /// <summary>
+    /// Warns when <c>[DwEntity(DefaultOrderAsTiebreak = true)]</c> has no default order to append.
+    /// </summary>
+    /// <remarks>
+    /// The tiebreak is the type's <c>DefaultOrder</c>, less what the caller named, so a type that declares
+    /// none, or none a query can use, appends nothing and its pages are exactly as stable as before. A
+    /// warning rather than an error, since nothing is refused or widened. Whether the default ends with a
+    /// unique field is not checked: without the model a key configured in code is invisible here.
+    /// </remarks>
+    private static void CheckTiebreak(Type type, List<string> warnings)
+    {
+        if (DefaultOrder.DeclaresTiebreak(type) && DefaultOrder.For(type).Count == 0)
+        {
+            warnings.Add(
+                $"{type.Name}: DefaultOrderAsTiebreak is set, but DefaultOrder names no field a query can order by, "
+                + "so nothing is appended to a caller's orders.");
+        }
+    }
+
+    /// <summary>
+    /// Warns when <c>[DwEntity(RefuseSelects = true)]</c> stands without <c>RequirePolicy</c>.
+    /// </summary>
+    /// <remarks>
+    /// The refusal is the policy's, so only a guarded query makes it. Without <c>RequirePolicy</c> the type
+    /// can still be queried unguarded, and that query honours a <c>Selects</c> the type declares it takes
+    /// none of. A warning rather than an error: a host that never queries the type unguarded loses nothing.
+    /// </remarks>
+    private static void CheckRefuseSelects(Type type, List<string> warnings)
+    {
+        if (Attribute.GetCustomAttribute(type, typeof(DwEntityAttribute)) is DwEntityAttribute
+            {
+                RefuseSelects: true,
+                RequirePolicy: false
+            })
+        {
+            warnings.Add(
+                $"{type.Name}: RefuseSelects is set without RequirePolicy, so a query that does not apply a "
+                + "policy still honours Selects.");
         }
     }
 

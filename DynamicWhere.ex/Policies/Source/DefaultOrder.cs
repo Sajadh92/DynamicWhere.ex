@@ -6,6 +6,7 @@ using DynamicWhere.ex.Enums;
 using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Optimization.Cache.Source;
 using DynamicWhere.ex.Policies.Attributes;
+using DynamicWhere.ex.Policies.Config;
 using DynamicWhere.ex.Source;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -14,7 +15,8 @@ namespace DynamicWhere.ex.Policies.Source;
 
 /// <summary>
 /// The order a type declares for a guarded query whose caller sends none:
-/// <see cref="DwEntityAttribute.DefaultOrder"/>.
+/// <see cref="DwEntityAttribute.DefaultOrder"/>. When the type or the posture asks for it, the same
+/// order also ends a caller's own, as a tiebreak.
 /// </summary>
 /// <remarks>
 /// Nothing is ever ordered by a default the type's own code did not declare. An entry naming a field
@@ -48,6 +50,8 @@ internal static class DefaultOrder
 
     private static readonly ConcurrentDictionary<Type, IReadOnlyList<Entry>> Declared = new();
 
+    private static readonly ConcurrentDictionary<Type, bool> TiebreakDeclared = new();
+
     /// <summary>The core's own conversion of an order clause, which refuses what it cannot sort by.</summary>
     private static readonly MethodInfo OrderAsString = typeof(Converter)
         .GetMethods(BindingFlags.Public | BindingFlags.Static)
@@ -56,6 +60,23 @@ internal static class DefaultOrder
 
     /// <summary>The usable entries a type declares, or none.</summary>
     internal static IReadOnlyList<Entry> For(Type type) => Declared.GetOrAdd(type, Read);
+
+    /// <summary>
+    /// True when the type itself asks for its default to end a caller's orders:
+    /// <see cref="DwEntityAttribute.DefaultOrderAsTiebreak"/>.
+    /// </summary>
+    internal static bool DeclaresTiebreak(Type type) =>
+        TiebreakDeclared.GetOrAdd(
+            type,
+            static candidate => Attribute.GetCustomAttribute(candidate, typeof(DwEntityAttribute))
+                is DwEntityAttribute { DefaultOrderAsTiebreak: true });
+
+    /// <summary>
+    /// True when a caller's orders on this type end with its default: the type asks for it, or the posture
+    /// asks for it on every type.
+    /// </summary>
+    internal static bool Tiebreaks(Type type, DwPolicyOptions options) =>
+        options.DefaultOrderAsTiebreak || DeclaresTiebreak(type);
 
     /// <summary>The entries as the order clauses a caller would have sent.</summary>
     internal static List<OrderBy> ToOrders(IEnumerable<Entry> entries) =>

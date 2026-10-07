@@ -6,6 +6,7 @@ using DynamicWhere.ex.Policies.Context;
 using DynamicWhere.ex.Policies.DTOs;
 using DynamicWhere.ex.Policies.Enums;
 using DynamicWhere.ex.Policies.Resolution;
+using DynamicWhere.ex.Policies.Source;
 
 namespace DynamicWhere.ex.Policies.Discovery;
 
@@ -149,7 +150,10 @@ public static class PolicySchemaBuilder
             options.Caps.MaxNavigationDepth,
             walker.Truncated,
             walker.Fields,
-            walker.Nodes);
+            walker.Nodes)
+        {
+            RefusesSelects = SelectsRefusal.Declared(entityType)
+        };
     }
 
     /// <summary>

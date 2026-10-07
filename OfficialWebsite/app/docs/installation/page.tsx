@@ -28,14 +28,14 @@ export default function Page() {
       </p>
 
       <h2 id="cli">dotnet CLI</h2>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 3.4.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex --version 3.5.0`}</Code>
 
       <h2 id="package-manager">Package Manager (Visual Studio)</h2>
-      <Code lang="powershell">{`Install-Package DynamicWhere.ex -Version 3.4.0`}</Code>
+      <Code lang="powershell">{`Install-Package DynamicWhere.ex -Version 3.5.0`}</Code>
 
       <h2 id="package-reference">PackageReference (csproj)</h2>
       <Code lang="xml">{`<ItemGroup>
-  <PackageReference Include="DynamicWhere.ex" Version="3.4.0" />
+  <PackageReference Include="DynamicWhere.ex" Version="3.5.0" />
 </ItemGroup>`}</Code>
 
       <h2 id="dependencies">Dependencies</h2>
@@ -72,7 +72,7 @@ export default function Page() {
           <tr>
             <td><code>Microsoft.Extensions.Configuration.Abstractions</code></td>
             <td><code>6.0.0</code></td>
-            <td>Provides <code>IConfiguration</code>, the section <code>DwPolicyOptions</code> and <code>DwDateOptions</code> bind from.</td>
+            <td>Provides <code>IConfiguration</code>, the section <code>DwPolicyOptions</code>, <code>DwDateOptions</code> and <code>DwTextOptions</code> bind from.</td>
           </tr>
           <tr>
             <td><code>Microsoft.Extensions.Configuration.Binder</code></td>
@@ -125,6 +125,15 @@ using DynamicWhere.ex.Optimization.Cache.Enums;  // CacheEvictionStrategy, Cache
         <li>
           <strong>Database collation:</strong> case-insensitive <code>I*</code> operators emit <code>.ToLower()</code> on both sides. See{" "}
           <Link href="/docs/breaking-changes">Breaking Changes</Link> for performance notes.
+        </li>
+        <li>
+          <strong>PostgreSQL and trigram indexes:</strong> since 3.5.0 a deployment can have{" "}
+          <code>IContains</code>, <code>IStartsWith</code>, <code>IEndsWith</code> and their negations
+          match with <code>ILIKE</code>, which a <code>pg_trgm</code> index serves, by calling{" "}
+          <code>DwText.Configure</code> once at startup. It needs{" "}
+          <code>Npgsql.EntityFrameworkCore.PostgreSQL</code>, which no DynamicWhere.ex package
+          references, and applies to every EF Core query in the process. See{" "}
+          <Link href="/docs/enums/operator#text-matching">case-insensitive matching</Link>.
         </li>
         <li>
           <strong>Enum storage:</strong> the <code>Enum</code> data type compares the member name you send, and works whether the column stores names or integers. See{" "}

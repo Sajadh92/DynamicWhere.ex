@@ -175,6 +175,7 @@ namespace DynamicWhere.Tests.Policies
             { "having", ErrorCode.NullEntry("Conditions") },
             { "having-subgroups", ErrorCode.NullEntry("SubConditionGroups") },
             { "orders", ErrorCode.NullEntry("Orders") },
+            { "groupBy", ErrorCode.GroupByMustHaveFields },
         };
 
         private static Summary MalformedSummary(string which) => which switch
@@ -184,6 +185,7 @@ namespace DynamicWhere.Tests.Policies
             "having" => new Summary { GroupBy = Grouping(), Having = Group(new List<Condition> { null! }) },
             "having-subgroups" => new Summary { GroupBy = Grouping(), Having = Group(new List<Condition>(), new List<ConditionGroup> { null! }) },
             "orders" => new Summary { GroupBy = Grouping(), Orders = new List<OrderBy> { null! } },
+            "groupBy" => new Summary(),
             _ => throw new ArgumentOutOfRangeException(nameof(which))
         };
 
@@ -200,6 +202,19 @@ namespace DynamicWhere.Tests.Policies
                 Assert.Equal(message, Assert.Throws<LogicException>(() => Guarded(tier).ToList(MalformedSummary(which))).Message);
                 Assert.Equal(message, Assert.Throws<LogicException>(() => Guarded(tier).Summary(MalformedSummary(which))).Message);
                 Assert.Equal(message, (await Assert.ThrowsAsync<LogicException>(() => Guarded(tier).ToListAsync(MalformedSummary(which)))).Message);
+            }
+        }
+
+        [Fact]
+        public void A_null_grouping_handed_to_group_is_a_null_argument_guarded_or_not()
+        {
+            // Group takes the grouping itself, so a null one is a bad call, not a malformed request; only a
+            // summary that leaves its grouping out is refused as one.
+            Assert.Equal("groupBy", Assert.Throws<ArgumentNullException>(() => _db.Items.Group(null!)).ParamName);
+
+            foreach (DwTier tier in new[] { DwTier.Strict, DwTier.Convenience })
+            {
+                Assert.Equal("groupBy", Assert.Throws<ArgumentNullException>(() => Guarded(tier).Group(null!)).ParamName);
             }
         }
 

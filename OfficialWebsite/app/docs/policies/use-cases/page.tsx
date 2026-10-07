@@ -524,6 +524,11 @@ IQueryable<TenantRow> rows = db.Tenants.Select(t => new TenantRow
             <td>an initializer, not a constructor</td>
             <td>every filter, sort or grouping on a half is refused under <code>Strict</code>, and fails in the provider elsewhere</td>
           </tr>
+          <tr>
+            <td><code>[DwEntity(RefuseSelects = true)]</code> (3.5.0)</td>
+            <td><code>RequirePolicy</code></td>
+            <td>an unguarded query honours <code>Selects</code> and returns the partial row the flag exists to refuse</td>
+          </tr>
         </tbody>
       </table>
 

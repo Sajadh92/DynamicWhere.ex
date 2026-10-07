@@ -159,6 +159,7 @@ public static class DwPolicy
             || inForce.DryRun != asked.DryRun
             || inForce.TraceInResult != asked.TraceInResult
             || inForce.AuditRefusals != asked.AuditRefusals
+            || inForce.DefaultOrderAsTiebreak != asked.DefaultOrderAsTiebreak
             || !string.Equals(inForce.HashSalt, asked.HashSalt, StringComparison.Ordinal)
             || inForce.StoreFailure != asked.StoreFailure
             || inForce.MaxSnapshotAge != asked.MaxSnapshotAge

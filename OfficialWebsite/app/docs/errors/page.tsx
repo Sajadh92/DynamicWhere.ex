@@ -55,10 +55,20 @@ export default function Page() {
         for a request that was simply malformed. They are{" "}
         <code>{`ListOf[{list}]MustNotHasNullEntry`}</code> and{" "}
         <code>ConditionMustHasValidFieldName</code> now. A{" "}
-        <code>ConditionSet</code> whose <code>ConditionGroup</code> is null, and a
-        null <code>Summary.GroupBy</code>, are still{" "}
-        <code>ArgumentNullException</code>. See{" "}
+        <code>ConditionSet</code> whose <code>ConditionGroup</code> is null is
+        still <code>ArgumentNullException</code>. See{" "}
         <Link href="/docs/breaking-changes#null-entries">breaking point 45</Link>.
+      </Callout>
+      <Callout tone="danger" title="Changed in 3.5.0: a summary with no groupBy is a LogicException">
+        A <code>Summary</code> whose <code>GroupBy</code> is null — a request
+        body that left out <code>&quot;groupBy&quot;</code> — used to leave
+        validation as <code>ArgumentNullException</code>, a five-hundred. It is
+        refused now as an empty grouping always was, with{" "}
+        <code>GroupByMustHasAtLeastOneField</code>, by every summary terminal and
+        the composable <code>Summary</code>, guarded or not, before anything
+        reads the request. Under a policy it is a <code>LogicException</code>,
+        not a <code>PolicyException</code>. See{" "}
+        <Link href="/docs/breaking-changes#summary-without-groupby">breaking point 55</Link>.
       </Callout>
       <Callout tone="danger" title="Changed in 3.3.0: no Number value reaches the parser">
         A <code>DataType.Number</code> value is read as the expression parser
@@ -299,7 +309,7 @@ export default function Page() {
           <tr>
             <td><code>GroupByMustHaveFields</code></td>
             <td><code>GroupByMustHasAtLeastOneField</code></td>
-            <td><code>GroupBy</code> with no fields</td>
+            <td><code>GroupBy</code> with no fields, and since 3.5.0 a <code>Summary</code> with no <code>GroupBy</code> at all, where it used to be an <code>ArgumentNullException</code></td>
           </tr>
           <tr>
             <td><code>GroupByFieldsMustBeUnique</code></td>

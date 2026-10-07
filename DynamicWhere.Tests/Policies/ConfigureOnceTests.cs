@@ -46,6 +46,7 @@ namespace DynamicWhere.Tests.Policies
                 DryRun = inForce.DryRun,
                 IncludeTraceInResult = inForce.IncludeTraceInResult,
                 AuditRefusals = inForce.AuditRefusals,
+                DefaultOrderAsTiebreak = inForce.DefaultOrderAsTiebreak,
                 StoreFailure = inForce.StoreFailure,
                 MaxSnapshotAge = inForce.MaxSnapshotAge,
                 RefreshInterval = inForce.RefreshInterval
@@ -213,6 +214,17 @@ namespace DynamicWhere.Tests.Policies
             DwPolicyOptions different = Copy();
 
             different.AuditRefusals = !DwPolicy.Options.AuditRefusals;
+
+            Refused(different);
+        }
+
+        [Fact]
+        public void A_different_tiebreak_flag_is_refused()
+        {
+            // It changes the order, and so the pages, every guarded caller who sends orders receives.
+            DwPolicyOptions different = Copy();
+
+            different.DefaultOrderAsTiebreak = !DwPolicy.Options.DefaultOrderAsTiebreak;
 
             Refused(different);
         }

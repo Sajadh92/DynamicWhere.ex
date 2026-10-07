@@ -107,6 +107,18 @@ public sealed class PolicySchema
     /// </remarks>
     public bool Truncated { get; }
 
+    /// <summary>
+    /// True when the entity declares <c>[DwEntity(RefuseSelects = true)]</c>: a guarded query for it
+    /// refuses any <c>Selects</c> the caller sends, and returns whole rows.
+    /// </summary>
+    /// <remarks>
+    /// Said once for the entity rather than through each field's <see cref="PolicySchemaField.CanSelect"/>,
+    /// which keeps meaning what it always meant: whether the field's value comes back at all. On such an
+    /// entity every field the caller may select still comes back, in a row the caller cannot narrow, so a
+    /// front end should offer no column picker rather than hide the columns.
+    /// </remarks>
+    public bool RefusesSelects { get; init; }
+
     /// <summary>The fields this caller may use, grouped and ordered as declared.</summary>
     public IReadOnlyList<PolicySchemaField> Fields { get; }
 

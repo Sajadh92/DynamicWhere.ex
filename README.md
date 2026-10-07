@@ -47,13 +47,13 @@ Stop concatenating LINQ predicates by hand. Your front-end sends one JSON shape;
 ## Install
 
 ```bash
-dotnet add package DynamicWhere.ex --version 3.4.0
+dotnet add package DynamicWhere.ex --version 3.5.0
 ```
 
 Or via Package Manager:
 
 ```powershell
-Install-Package DynamicWhere.ex -Version 3.4.0
+Install-Package DynamicWhere.ex -Version 3.5.0
 ```
 
 Dependencies (restored automatically):
@@ -376,6 +376,15 @@ The complete reference — every enum, class, extension method, validation rule,
 
 ---
 
+## Version 3.5.0 highlights
+
+**Upgrade note — one change turns a server error into a refusal, and three new features change nothing until a deployment opts in. Read the first before bumping.**
+
+- **Changed: a summary with no `groupBy` is refused as a malformed request.** A request body that leaves out `"groupBy"` binds a `Summary` whose `GroupBy` is null, which reached validation and left as an `ArgumentNullException` — a five-hundred for a request that was simply malformed. It is refused now as an empty grouping always was, with `LogicException` `GroupByMustHasAtLeastOneField`, by every summary terminal and the composable `Summary`, guarded or not, before anything reads the request. Under a policy it is a `LogicException`, not a `PolicyException`, so it is not refusal-audited, like every other malformed request, and `PolicySimulator.Simulate` throws it where it used to report a summary that would run. A `ConditionSet` whose `ConditionGroup` is null is still an `ArgumentNullException`.
+- **New: a row type can refuse a caller's projection inside the policy gate.** `[DwEntity(RefuseSelects = true)]` is for a type meant to be read whole, such as a read-only projection, where a partial row would report defaults for every member the caller did not name. A guarded query that sends a non-empty `Selects` for it is refused with `PolicyException` and the new `PolicyErrorCode.SelectsRefused` (23), in both tiers, and because the refusal is the gate's own it is traced, audited when `AuditRefusals` is on, and reported by the simulator and `POST /simulate` — none of which a host refusing the list in its endpoint could do. The names are gated first, so under `Strict` a denied or unknown name is still `FieldDeniedForSelect`, audited under its own path, and a list with every name dropped is still `AllSelectsDenied`. A null or empty `Selects`, and the projection the policy synthesizes to withhold a denied member, are never this refusal. An unguarded query never reads the flag, so pair it with `RequirePolicy`: `PolicyModelValidator` warns when it stands alone. `PolicySchema.RefusesSelects`, `refusesSelects` in `POST /schema`, says so once for the entity, and a field's `canSelect` keeps its meaning.
+- **New: on PostgreSQL the case-insensitive pattern operators can match with `ILIKE`.** `lower(column) LIKE '%value%'`, which `IContains` compiles to, cannot use a `pg_trgm` index on the column. `DwText.Configure(o => o.CaseInsensitive = TextMatching.ILike)`, or `"DynamicWhere": { "Text": { "CaseInsensitive": "ILike" } }` through `DwTextOptions.Bind`, compiles `IContains`, `IStartsWith`, `IEndsWith` and their negations to `column ILIKE pattern ESCAPE '\'` through Npgsql's `EF.Functions.ILike`, which a trigram index can serve, with `%`, `_` and the backslash in a value escaped so it still matches as text. Against PostgreSQL 16 it returns the same rows as lowering for all six operators, over ASCII values carrying `%`, `_`, backslashes and quotes. `IEqual`, `INotEqual`, `IIn`, `INotIn` and `HAVING` stay lowered. The choice is process-wide: LINQ to objects and a provider wrapping EF Core's keep lowering, but every EF Core query in the process is rewritten, so a process that also queries another database through EF Core must not choose it. Npgsql's provider is found by name when the options are configured, so a deployment without it refuses to start. The default is unchanged.
+- **New: a type's default order can end a caller's orders, so paging is total.** A caller sorting by a field many rows share — a status, or a timestamp one batch wrote — leaves the order of the tied rows to the database, and PostgreSQL may return them differently on every query, so a paged read can show one row twice and another never while `totalCount` stays right. `[DwEntity(DefaultOrder = "CreatedAt desc, Id", DefaultOrderAsTiebreak = true)]`, or `DwPolicyOptions.DefaultOrderAsTiebreak` for every type that declares a `DefaultOrder`, appends the default's fields the caller did not name after the caller's own, so ordering by `Status` reads `ORDER BY Status, CreatedAt DESC, Id`. A field the caller already names keeps the caller's place and direction, and a field this caller may not order by is left out, as the default always left it out. It covers the `Filter` terminals, the `Segment` terminal and the composable `Filter`, `FilterDynamic` and `Order`; a projection that could hide a default field, one composed on the handle, and a `Summary` never take it. The order is total only when the default ends with a unique field such as the key. Off by default.
+
 ## Version 3.4.0 highlights
 
 **Upgrade note — four security fixes, and changes that refuse or fail what used to run, beside a new way to give an export its own page. Read these before bumping.**
@@ -498,7 +507,7 @@ See **[Breaking Changes & Known Limitations](https://doc.dynamicwhere.com/docs/b
 - **.NET:** 6, 7, 8, 9, 10
 - **EF Core providers:** SQL Server, PostgreSQL (Npgsql), MySQL (Pomelo), SQLite — anything that supports `ToQueryString()` for the optional `getQueryString: true` flag.
 - **Enum storage:** either. `DataType.Enum` matches by member name (any case) or by number, and translates against an `int` column as readily as a `string` one. What it does not do is the string operators: `Contains` and friends throw against an enum-typed member, so a `string` column that merely holds enum names wants `DataType.Text`.
-- **Case-insensitive operators:** emit `.ToLower()` on both sides. Works well on SQL Server's default collation; watch for case-sensitive PostgreSQL `C` locale.
+- **Case-insensitive operators:** emit `.ToLower()` on both sides. Works well on SQL Server's default collation; watch for case-sensitive PostgreSQL `C` locale. On PostgreSQL the six pattern operators can opt in to `ILIKE` with `DwText.Configure` (3.5.0), so a `pg_trgm` index on the column serves them — a choice for the whole process.
 
 ---
 

@@ -20,7 +20,10 @@ export default function Page() {
         <Link href="/docs/classes/condition"><code>Condition</code></Link>.
         There are 28 operators total. Every operator that starts with{" "}
         <code>I</code> is the case-insensitive variant — both sides are
-        normalized with <code>.ToLower()</code> before comparison.
+        normalized with <code>.ToLower()</code> before comparison. On PostgreSQL
+        the six pattern variants can match with <code>ILIKE</code> instead, since
+        3.5.0 — see{" "}
+        <Link href="/docs/enums/operator#text-matching">case-insensitive matching</Link>.
       </p>
 
       <h2 id="value-counts">Required values at a glance</h2>
@@ -184,7 +187,10 @@ export default function Page() {
         on both sides of the comparison. On SQL Server this is typically free
         (default collations are case-insensitive). On case-sensitive collations
         (e.g. PostgreSQL with <code>C</code> locale) this still works but may
-        sidestep an index.
+        sidestep an index. On PostgreSQL,{" "}
+        <Link href="/docs/enums/operator#text-matching"><code>TextMatching.ILike</code></Link>{" "}
+        lets a <code>pg_trgm</code> index serve <code>IContains</code>,{" "}
+        <code>IStartsWith</code>, <code>IEndsWith</code> and their negations.
       </Callout>
 
       <h2 id="in">In / NotIn (set membership)</h2>
@@ -348,6 +354,215 @@ export default function Page() {
   "values": []
 }`}</Code>
 
+      <h2 id="text-matching">Case-insensitive matching on PostgreSQL</h2>
+      <p>
+        New in <strong>3.5.0</strong>. By default the <code>I*</code> operators
+        lower both sides, <code>{`field.ToLower().Contains("value")`}</code>, which
+        a relational provider writes as <code>lower(column) LIKE …</code>. A{" "}
+        <code>pg_trgm</code> GIN or GiST index on the column cannot serve that,
+        and it can serve <code>column ILIKE &apos;%value%&apos;</code>. How the
+        case-insensitive operators match is one choice for the whole process,{" "}
+        <code>TextMatching</code>, in <code>DynamicWhere.ex.Enums</code>; no
+        request carries it.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Value</th>
+            <th>Meaning</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>Lower</code> (0)</td>
+            <td>
+              Both sides lowered. The default, unchanged, and what every provider
+              and LINQ to objects can run.
+            </td>
+          </tr>
+          <tr>
+            <td><code>ILike</code> (1)</td>
+            <td>
+              PostgreSQL&apos;s <code>ILIKE</code>, through Npgsql&apos;s{" "}
+              <code>EF.Functions.ILike</code>, for <code>IContains</code>,{" "}
+              <code>INotContains</code>, <code>IStartsWith</code>,{" "}
+              <code>INotStartsWith</code>, <code>IEndsWith</code> and{" "}
+              <code>INotEndsWith</code>.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p>A deployment on PostgreSQL chooses it once, at startup:</p>
+      <Code lang="csharp">{`using DynamicWhere.ex.Enums;
+using DynamicWhere.ex.Source;
+
+DwText.Configure(o => o.CaseInsensitive = TextMatching.ILike);
+
+// Or from configuration. A key nothing answers to — "CaseInsensitiv" — refuses to start,
+// and so does a single value where the section belongs: "DynamicWhere:Text": "ILike".
+DwText.Configure(new DwTextOptions().Bind(configuration.GetSection("DynamicWhere:Text")));`}</Code>
+      <Code lang="json">{`{
+  "DynamicWhere": {
+    "Text": {
+      "CaseInsensitive": "ILike"
+    }
+  }
+}`}</Code>
+      <p>
+        With <code>ILike</code> chosen, a condition on <code>Name</code> with the
+        value <code>&quot;ab&quot;</code> compiles on Npgsql to:
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Operator</th>
+            <th>SQL</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>IContains</code></td>
+            <td><code>{`i."Name" IS NOT NULL AND i."Name" ILIKE '%ab%' ESCAPE '\\'`}</code></td>
+          </tr>
+          <tr>
+            <td><code>INotContains</code></td>
+            <td><code>{`i."Name" IS NOT NULL AND NOT (i."Name" ILIKE '%ab%' ESCAPE '\\')`}</code></td>
+          </tr>
+          <tr>
+            <td><code>IStartsWith</code></td>
+            <td><code>{`i."Name" IS NOT NULL AND i."Name" ILIKE 'ab%' ESCAPE '\\'`}</code></td>
+          </tr>
+          <tr>
+            <td><code>INotStartsWith</code></td>
+            <td><code>{`i."Name" IS NOT NULL AND NOT (i."Name" ILIKE 'ab%' ESCAPE '\\')`}</code></td>
+          </tr>
+          <tr>
+            <td><code>IEndsWith</code></td>
+            <td><code>{`i."Name" IS NOT NULL AND i."Name" ILIKE '%ab' ESCAPE '\\'`}</code></td>
+          </tr>
+          <tr>
+            <td><code>INotEndsWith</code></td>
+            <td><code>{`i."Name" IS NOT NULL AND NOT (i."Name" ILIKE '%ab' ESCAPE '\\')`}</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>
+          The predicate is built and parsed exactly as before, and the parsed
+          lambda is then rewritten into <code>EF.Functions.ILike</code>, with a
+          backslash as the escape character. The value is the one the condition
+          sent, trimmed and lowered, with every backslash, <code>%</code> and{" "}
+          <code>_</code> in it escaped, so it matches as text and never as a
+          pattern. A negation keeps its <code>NOT</code>, and the null guard stays
+          in front. <code>getQueryString</code> shows the <code>ILIKE</code> SQL.
+        </li>
+        <li>
+          <code>IEqual</code>, <code>INotEqual</code>, <code>IIn</code> and{" "}
+          <code>INotIn</code> stay <code>lower(column) = value</code>, which an
+          index on <code>lower(column)</code> serves, and a <code>Having</code>{" "}
+          condition stays lowered, since an aggregate uses no index. The
+          case-sensitive operators are not affected.
+        </li>
+        <li>
+          It applies wherever the library filters through <code>Where</code>: a{" "}
+          <code>Filter</code>, every set of a <code>Segment</code> and a{" "}
+          <code>Summary</code>&apos;s row filter, guarded or not. Only the
+          predicate the library parsed is rewritten; one the caller composed with
+          LINQ beneath it is left as written.
+        </li>
+        <li>
+          Only a query EF Core&apos;s own provider translates is rewritten. LINQ
+          to objects, the <code>IEnumerable&lt;T&gt;</code> overloads and a
+          provider that wraps EF Core&apos;s, such as LinqKit&apos;s{" "}
+          <code>AsExpandable()</code>, keep lowering.
+        </li>
+        <li>
+          Against PostgreSQL 16 it returns the same rows as lowering, and as LINQ
+          to objects, for all six operators over ASCII values carrying{" "}
+          <code>%</code>, <code>_</code>, backslashes and quotes, through the
+          plain, guarded and segment paths.
+        </li>
+      </ul>
+      <Callout tone="warn" title="The choice is the whole process's">
+        Every EF Core query in the process is rewritten, whatever database it
+        reaches. A process that also queries another database through EF Core —
+        SQLite in tests, say — must not choose <code>ILike</code>: such a query
+        fails translation with <code>InvalidOperationException</code> rather than
+        match wrongly.
+      </Callout>
+      <table>
+        <thead>
+          <tr>
+            <th>Member (<code>DynamicWhere.ex.Source</code>)</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>DwText.Configure(Action&lt;DwTextOptions&gt;)</code></td>
+            <td>Fills in a fresh <code>DwTextOptions</code> and configures it.</td>
+          </tr>
+          <tr>
+            <td><code>DwText.Configure(DwTextOptions)</code></td>
+            <td>
+              Checks and freezes the options and sets them for the process. Throws{" "}
+              <code>ArgumentNullException</code> for <code>null</code>;{" "}
+              <code>ArgumentException</code> for a value <code>TextMatching</code>{" "}
+              does not define; <code>InvalidOperationException</code> when{" "}
+              <code>ILike</code> is chosen and{" "}
+              <code>Npgsql.EntityFrameworkCore.PostgreSQL</code> cannot be loaded —
+              its <code>EF.Functions.ILike</code> is found by name, so the package
+              references no provider and a deployment without it refuses to start
+              — and <code>InvalidOperationException</code> on a later call asking
+              for a different choice. A later call asking for the choice in force
+              does nothing, so several hosts in one process, such as{" "}
+              <code>WebApplicationFactory</code> hosts in one test run, can run the
+              same startup. <code>DwDates.Configure</code>, by contrast, refuses
+              every second call.
+            </td>
+          </tr>
+          <tr>
+            <td><code>DwText.Options</code></td>
+            <td>
+              The <code>DwTextOptions</code> in force. Frozen;{" "}
+              <code>Lower</code> until a deployment configures otherwise.
+            </td>
+          </tr>
+          <tr>
+            <td><code>DwText.IsConfigured</code></td>
+            <td><code>true</code> once <code>Configure</code> has succeeded.</td>
+          </tr>
+          <tr>
+            <td><code>DwTextOptions.CaseInsensitive</code></td>
+            <td>
+              <code>TextMatching</code>, <code>Lower</code> by default. Setting it
+              once the options are frozen throws{" "}
+              <code>InvalidOperationException</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>DwTextOptions.IsFrozen</code></td>
+            <td>
+              <code>true</code> once the options have been handed to{" "}
+              <code>DwText.Configure</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>DwTextOptions.Bind(IConfiguration)</code></td>
+            <td>
+              Extension method. Reads <code>CaseInsensitive</code> from a section
+              and returns the same instance; an absent section changes nothing.
+              Throws <code>InvalidOperationException</code> for a key nothing
+              answers to, for a value it cannot read as a{" "}
+              <code>TextMatching</code> such as a misspelt{" "}
+              <code>&quot;ILikee&quot;</code>, for a single value where the section
+              belongs (<code>&quot;DynamicWhere:Text&quot;: &quot;ILike&quot;</code>),
+              or when the options are already frozen.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
       <h2 id="related">Related</h2>
       <ul>
         <li>
@@ -360,6 +575,10 @@ export default function Page() {
         </li>
         <li>
           <Link href="/docs/errors">Error codes →</Link> full reference.
+        </li>
+        <li>
+          <Link href="/docs/breaking-changes#ilike">Breaking changes →</Link> what
+          opting in to <code>ILIKE</code> changes, and for whom.
         </li>
       </ul>
     </DocPage>

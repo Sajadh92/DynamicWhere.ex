@@ -17,16 +17,17 @@ export default function Page() {
       <h1>Configuration</h1>
       <Code lang="csharp">{`DwPolicy.Configure(new DwPolicyOptions
 {
-    Tier                 = DwTier.Convenience,
-    DryRun               = false,
-    IncludeTraceInResult = null,               // null follows the tier: on here, off under Strict
-    AuditRefusals        = false,              // true also audits every refused guarded query
-    HashSalt             = secret,             // 16 characters or more
-    TokenVault           = tokenVault,         // needed only by MaskStrategy.Tokenize
-    Services             = serviceProvider,    // resolves IValueTransformer
-    StoreFailure         = StoreFailureMode.LastKnownGood,
-    MaxSnapshotAge       = TimeSpan.FromMinutes(15),
-    RefreshInterval      = TimeSpan.FromSeconds(30),
+    Tier                   = DwTier.Convenience,
+    DryRun                 = false,
+    IncludeTraceInResult   = null,              // null follows the tier: on here, off under Strict
+    AuditRefusals          = false,             // true also audits every refused guarded query
+    DefaultOrderAsTiebreak = false,             // true ends every caller's orders with the type's DefaultOrder
+    HashSalt               = secret,            // 16 characters or more
+    TokenVault             = tokenVault,        // needed only by MaskStrategy.Tokenize
+    Services               = serviceProvider,   // resolves IValueTransformer
+    StoreFailure           = StoreFailureMode.LastKnownGood,
+    MaxSnapshotAge         = TimeSpan.FromMinutes(15),
+    RefreshInterval        = TimeSpan.FromSeconds(30),
 }, providers);`}</Code>
       <Callout tone="warn" title="Frozen at startup">
         The posture is read by every request thread without synchronization. A
@@ -1042,6 +1043,42 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
         one does; and <code>Region</code> is left out only of guarded segments,
         which refuse it in any clause, while a filter still orders by it.
       </p>
+      <p>
+        Since 3.5.0 the scan also warns when{" "}
+        <Link href="/docs/policies/attributes#refuse-selects"><code>[DwEntity(RefuseSelects = true)]</code></Link>,
+        declared or inherited, stands without <code>RequirePolicy</code>. The
+        refusal is the policy&apos;s, so only a guarded query makes it, and an
+        unguarded query on the type honours <code>Selects</code>. It is a warning
+        rather than an error, because a host that never queries the type
+        unguarded loses nothing:
+      </p>
+      <Code lang="text">{`TicketRow: RefuseSelects is set without RequirePolicy, so a query that does not apply a policy still honours Selects.`}</Code>
+      <p>
+        It also warns when{" "}
+        <Link href="/docs/policies/attributes#default-order-tiebreak"><code>[DwEntity(DefaultOrderAsTiebreak = true)]</code></Link>,
+        declared or inherited, sits on a type whose <code>DefaultOrder</code>{" "}
+        names no usable field, so there is nothing to append. Whether the default
+        ends with a unique field is not checked: without the model, a key
+        configured in code is invisible to the scan.
+      </p>
+      <Code lang="text">{`Instruction: DefaultOrderAsTiebreak is set, but DefaultOrder names no field a query can order by, so nothing is appended to a caller's orders.`}</Code>
+
+      <h2 id="tiebreak">The default order as a tiebreak</h2>
+      <p>
+        <code>DefaultOrderAsTiebreak</code> (<code>bool</code>, default{" "}
+        <code>false</code>, new in 3.5.0) ends a guarded caller&apos;s orders with
+        every field of the type&apos;s{" "}
+        <Link href="/docs/policies/attributes#default-order"><code>DefaultOrder</code></Link>{" "}
+        the caller did not name, on every type that declares one, so rows tied on
+        the caller&apos;s fields keep one order from page to page.{" "}
+        <code>[DwEntity(DefaultOrderAsTiebreak = true)]</code> does the same for one
+        type; a type cannot opt out while the option is on, and a type without a
+        default is unaffected. It is off by default because it changes the order,
+        and so the pages, a caller who sends orders has always received. The option
+        freezes with the posture and binds from{" "}
+        <code>DefaultOrderAsTiebreak</code>. See{" "}
+        <Link href="/docs/policies/attributes#default-order-tiebreak">The default as a tiebreak</Link>.
+      </p>
 
       <h2 id="configuring-twice">Configuring twice</h2>
       <p>
@@ -1068,7 +1105,7 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
         <thead><tr><th>Compared</th><th>Not compared</th></tr></thead>
         <tbody>
           <tr>
-            <td><code>Tier</code>, <code>DryRun</code>, <code>AuditRefusals</code>, and <code>IncludeTraceInResult</code> by the value that applies</td>
+            <td><code>Tier</code>, <code>DryRun</code>, <code>AuditRefusals</code>, <code>DefaultOrderAsTiebreak</code> (3.5.0), and <code>IncludeTraceInResult</code> by the value that applies</td>
             <td><code>TokenVault</code></td>
           </tr>
           <tr>
@@ -1235,7 +1272,7 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
   -- --filter "*PolicyBenchmarks*" --job medium`}</Code>
 
       <h2 id="errors">Error codes</h2>
-      <p><code>PolicyException.ErrorCode</code>, values 1 to 22:</p>
+      <p><code>PolicyException.ErrorCode</code>, values 1 to 23:</p>
       <table>
         <thead><tr><th>Code</th><th>Raised when</th></tr></thead>
         <tbody>
@@ -1256,6 +1293,7 @@ Ticket: DefaultOrder names 'Region', which its attributes deny for segments, so 
           <tr><td><code>GroupTooSmall</code> (20)</td><td>A summary already uses the alias the group floor reserves.</td></tr>
           <tr><td><code>MissingHashSalt</code> (21)</td><td>A field masks to a hash and no salt was configured.</td></tr>
           <tr><td><code>MissingTokenVault</code> (22)</td><td>A field masks to a token and no vault was configured.</td></tr>
+          <tr><td><code>SelectsRefused</code> (23)</td><td>New in 3.5.0. A non-empty <code>Selects</code> for a type declaring <Link href="/docs/policies/attributes#refuse-selects"><code>[DwEntity(RefuseSelects = true)]</code></Link>, once every name has been gated. Both tiers; <code>FieldPath</code> <code>&quot;*&quot;</code> and <code>SourceOrigin</code> <code>DwEntityAttribute(RefuseSelects = true)</code> in both. A dry run records it and runs the projection as written.</td></tr>
         </tbody>
       </table>
     </DocPage>

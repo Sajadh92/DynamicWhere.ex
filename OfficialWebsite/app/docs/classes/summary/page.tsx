@@ -48,7 +48,10 @@ export default function Page() {
               <Link href="/docs/classes/group-by"><code>GroupBy?</code></Link>
             </td>
             <td>
-              <strong>Required.</strong> Grouping and aggregation config.
+              <strong>Required.</strong> Grouping and aggregation config. A
+              summary without one is refused with{" "}
+              <code>GroupByMustHasAtLeastOneField</code>, as an empty one is
+              (3.5.0).
             </td>
           </tr>
           <tr>

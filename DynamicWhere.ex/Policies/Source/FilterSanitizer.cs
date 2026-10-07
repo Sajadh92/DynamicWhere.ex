@@ -65,6 +65,11 @@ internal static class FilterSanitizer
     /// What the query's source puts in the members of its rows, which decides what a synthesized
     /// projection keeps. Null for an entity query whose model is unknown.
     /// </param>
+    /// <param name="tiebreak">
+    /// When true and the caller sent orders, the type's default order ends them, if the type or the
+    /// posture asks for that: <see cref="Tiebreak{T}"/>. False when the rows cannot be ordered by the
+    /// default's fields, such as rows a composed projection made.
+    /// </param>
     /// <returns>A sanitized copy, safe to hand to the existing pipeline.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     /// <exception cref="LogicException">
@@ -83,7 +88,8 @@ internal static class FilterSanitizer
         PolicyTrace trace,
         bool synthesizeProjection = true,
         bool applyDefaultOrder = true,
-        RowShape? rows = null)
+        RowShape? rows = null,
+        bool tiebreak = true)
         where T : class
     {
         if (filter is null)
@@ -118,7 +124,11 @@ internal static class FilterSanitizer
 
         // The gate is built first now, because canonicalizing a name needs the type's alias map and
         // the gate is what carries it. Nothing the gate does depends on the paths being canonical.
-        Gate gate = new(typeof(T), resolver, context, options, trace) { Rows = rows ?? RowShape.Unknown };
+        Gate gate = new(typeof(T), resolver, context, options, trace)
+        {
+            Rows = rows ?? RowShape.Unknown,
+            RefusesSelects = SelectsRefusal.Of<T>.Declared
+        };
 
         // Before any name is resolved. Counting needs no name, and resolving every name of an
         // oversized request is exactly the work the caps exist to refuse.
@@ -142,12 +152,20 @@ internal static class FilterSanitizer
         GateConditions(working.ConditionGroup, gate);
 
         // Read before gating: a caller whose every order was dropped still sent orders, and gets
-        // what they asked for rather than a default in their place.
+        // what they asked for rather than a default in their place. A default the type asks for as a
+        // tiebreak follows the caller's orders instead, so it follows an empty list as well.
         bool callerOrdered = working.Orders is { Count: > 0 };
 
         GateOrders(working, gate);
 
-        if (applyDefaultOrder && !callerOrdered && DefaultOrders<T>(gate) is { Count: > 0 } defaults)
+        if (callerOrdered)
+        {
+            if (tiebreak && DefaultOrder.Tiebreaks(typeof(T), options))
+            {
+                working.Orders = Tiebreak<T>(working.Orders!, gate);
+            }
+        }
+        else if (applyDefaultOrder && DefaultOrders<T>(gate) is { Count: > 0 } defaults)
         {
             working.Orders = defaults;
         }
@@ -639,6 +657,10 @@ internal static class FilterSanitizer
     /// What the query's source puts in the members of its rows, which decides what a synthesized
     /// projection keeps. Null for an entity query whose model is unknown.
     /// </param>
+    /// <param name="tiebreak">
+    /// When true and the caller sent orders, the type's default order ends them, if the type or the
+    /// posture asks for that. False when the rows cannot be ordered by the default's fields.
+    /// </param>
     /// <remarks>
     /// Every condition set is gated independently, because each one becomes its own subquery and a
     /// field refused in one must not be reachable through another.
@@ -656,7 +678,8 @@ internal static class FilterSanitizer
         DwPolicyOptions options,
         PolicyTrace trace,
         bool applyDefaultOrder = true,
-        RowShape? rows = null)
+        RowShape? rows = null,
+        bool tiebreak = true)
         where T : class
     {
         if (segment is null)
@@ -692,7 +715,8 @@ internal static class FilterSanitizer
         Gate gate = new(typeof(T), resolver, context, options, trace)
         {
             InSegment = true,
-            Rows = rows ?? RowShape.Unknown
+            Rows = rows ?? RowShape.Unknown,
+            RefusesSelects = SelectsRefusal.Of<T>.Declared
         };
 
         EnforceCaps(working, gate);
@@ -752,7 +776,14 @@ internal static class FilterSanitizer
 
         GateSegmentOrders(working, gate);
 
-        if (applyDefaultOrder && !callerOrdered && DefaultOrders<T>(gate, segment: true) is { Count: > 0 } defaults)
+        if (callerOrdered)
+        {
+            if (tiebreak && DefaultOrder.Tiebreaks(typeof(T), options))
+            {
+                working.Orders = Tiebreak<T>(working.Orders!, gate, segment: true);
+            }
+        }
+        else if (applyDefaultOrder && DefaultOrders<T>(gate, segment: true) is { Count: > 0 } defaults)
         {
             working.Orders = defaults;
         }
@@ -1019,6 +1050,10 @@ internal static class FilterSanitizer
         {
             throw gate.Exception(WholeClause, PolicyFeature.Select, PolicyErrorCode.AllSelectsDenied, null);
         }
+
+        // After every name is gated, so a name the caller may not select is refused and audited as
+        // itself; only a list of names the caller may select reaches the type's own refusal.
+        gate.CheckSelectsTaken();
 
         segment.Selects = kept;
     }
@@ -1605,12 +1640,24 @@ internal static class FilterSanitizer
     /// </remarks>
     /// <param name="gate">The per-query state.</param>
     /// <param name="segment">True for a segment, where a field denied for segments is left out too.</param>
-    private static List<OrderBy> DefaultOrders<T>(Gate gate, bool segment = false) where T : class
+    /// <param name="named">
+    /// The caller's own orders, when the default ends them. A field among them is skipped before anything
+    /// is resolved or recorded for it: it is the caller's, in the caller's place and direction.
+    /// </param>
+    private static List<OrderBy> DefaultOrders<T>(
+        Gate gate, bool segment = false, IReadOnlyCollection<OrderBy>? named = null)
+        where T : class
     {
         List<DefaultOrder.Entry> kept = new();
 
         foreach (DefaultOrder.Entry entry in DefaultOrder.For(typeof(T)))
         {
+            if (named is not null
+                && named.Any(order => string.Equals(order.Field, entry.Field, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
             // Resolved without recording a use, which is recorded below only for a field the query keeps.
             FieldPolicy policy = gate.PolicyFor(entry.Field, PolicyFeature.None);
 
@@ -1632,6 +1679,43 @@ internal static class FilterSanitizer
         }
 
         return DefaultOrder.ToOrders(kept);
+    }
+
+    /// <summary>
+    /// The caller's gated orders followed by every field of the type's default they do not name: the
+    /// tiebreak <c>DefaultOrderAsTiebreak</c> asks for.
+    /// </summary>
+    /// <remarks>
+    /// The pipeline applies orders by <c>Sort</c>, in a stable sort, so the caller's are put in that order
+    /// first and numbered from zero, and the default's follow them. Numbering after the caller's largest
+    /// <c>Sort</c> instead would wrap past <see cref="int.MaxValue"/> and put the tiebreak first. The orders
+    /// are the sanitizer's copies, never the caller's own.
+    /// <para>
+    /// The default's own rules apply to what is appended, through <see cref="DefaultOrders{T}"/>: a field
+    /// this caller may not order by is left out and recorded, and an audited one is recorded as a use. A
+    /// field the caller named is the caller's, so it is neither appended again nor recorded twice. A caller
+    /// whose every order was dropped is left with an empty list, and so gets the whole default.
+    /// </para>
+    /// </remarks>
+    /// <param name="orders">The caller's orders, after gating.</param>
+    /// <param name="gate">The per-query state.</param>
+    /// <param name="segment">True for a segment, where a field denied for segments is left out too.</param>
+    private static List<OrderBy> Tiebreak<T>(List<OrderBy> orders, Gate gate, bool segment = false) where T : class
+    {
+        List<OrderBy> ordered = orders.OrderBy(order => order.Sort).ToList();
+
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            ordered[i].Sort = i;
+        }
+
+        foreach (OrderBy appended in DefaultOrders<T>(gate, segment, named: ordered))
+        {
+            appended.Sort = ordered.Count;
+            ordered.Add(appended);
+        }
+
+        return ordered;
     }
 
     /// <summary>
@@ -1668,6 +1752,10 @@ internal static class FilterSanitizer
         {
             throw gate.Exception(WholeClause, PolicyFeature.Select, PolicyErrorCode.AllSelectsDenied, null);
         }
+
+        // After every name is gated, so a name the caller may not select is refused and audited as
+        // itself; only a list of names the caller may select reaches the type's own refusal.
+        gate.CheckSelectsTaken();
 
         filter.Selects = kept;
     }
@@ -2813,6 +2901,12 @@ internal static class FilterSanitizer
         /// </summary>
         internal RowShape Rows { get; init; } = RowShape.Unknown;
 
+        /// <summary>
+        /// True when the type declares <c>[DwEntity(RefuseSelects = true)]</c>, so a projection the caller
+        /// writes is refused once its names have been gated.
+        /// </summary>
+        internal bool RefusesSelects { get; init; }
+
         /// <summary>The caller this query is being sanitized for.</summary>
         internal DwPolicyContext Context => _context;
 
@@ -3944,6 +4038,36 @@ internal static class FilterSanitizer
                 PolicyErrorCode.QueryCostExceeded, WholeClause, PolicyFeature.None, _options.Tier)
             {
                 SourceOrigin = origin
+            };
+        }
+
+        /// <summary>
+        /// Refuses the projection the caller wrote, when the type declares it takes none.
+        /// </summary>
+        /// <remarks>
+        /// Called with a non-empty projection whose names have all been gated. Raised in both tiers:
+        /// dropping the list would return whole rows, an answer to a request the caller did not make. A
+        /// dry run records the decision and leaves the projection as the caller wrote it.
+        /// </remarks>
+        internal void CheckSelectsTaken()
+        {
+            if (!RefusesSelects)
+            {
+                return;
+            }
+
+            _trace.Add(new PolicyDecision(
+                WholeClause, PolicyFeature.Select, PolicyAction.Denied, SelectsRefusal.Origin));
+
+            if (IsDryRun)
+            {
+                return;
+            }
+
+            throw new PolicyException(
+                PolicyErrorCode.SelectsRefused, WholeClause, PolicyFeature.Select, _options.Tier)
+            {
+                SourceOrigin = SelectsRefusal.Origin
             };
         }
 

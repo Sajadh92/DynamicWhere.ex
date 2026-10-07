@@ -15,7 +15,7 @@ export default function Page() {
   return (
     <DocPage pathname="/docs/policies/admin">
       <h1>Admin API</h1>
-      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.AspNetCore --version 3.4.0`}</Code>
+      <Code lang="bash">{`dotnet add package DynamicWhere.ex.Policies.AspNetCore --version 3.5.0`}</Code>
       <Code lang="csharp">{`app.MapDwPolicyAdmin(options =>
 {
     options.RoutePrefix  = "/dw-policies";    // the default; mount it anywhere
@@ -80,7 +80,7 @@ export default function Page() {
       </p>
       <Code lang="json">{`{
   "entity": "employee",
-  "roots": ["Manager"], "depth": 2, "maxDepth": 4, "truncated": false,
+  "roots": ["Manager"], "depth": 2, "maxDepth": 4, "truncated": false, "refusesSelects": false,
   "fields": [ { "path": "Manager.FirstName", "parent": "Manager", ... } ],
   "nodes":  [ { "path": "Manager.Address", "parent": "Manager", "entity": "address",
                 "depth": 3, "expanded": false, "remainingDepth": 0 } ]
@@ -123,6 +123,17 @@ export default function Page() {
         overridable is absent for the masked feature and still writable for the
         overridable one. A field sealed on every feature is absent entirely.
       </Callout>
+      <p>
+        <code>refusesSelects</code> (3.5.0, <code>PolicySchema.RefusesSelects</code>)
+        is true when the entity declares{" "}
+        <Link href="/docs/policies/attributes#refuse-selects"><code>[DwEntity(RefuseSelects = true)]</code></Link>:
+        its guarded queries refuse any <code>selects</code> the caller sends and
+        return whole rows. It is said once for the entity, whatever{" "}
+        <code>paths</code> the request roots it at. Each field&apos;s{" "}
+        <code>canSelect</code> keeps meaning whether its value comes back, so a
+        front end offers no column picker for such an entity rather than hiding
+        its columns.
+      </p>
 
       <h2 id="explain">Explain</h2>
       <p>
@@ -186,6 +197,16 @@ export default function Page() {
         query refuses it. See{" "}
         <Link href="/docs/policies/configuration#no-selects">A request that sends no Selects</Link>.
       </p>
+      <p>
+        A filter that sends <code>selects</code> for an entity declaring{" "}
+        <Link href="/docs/policies/attributes#refuse-selects"><code>[DwEntity(RefuseSelects = true)]</code></Link>{" "}
+        is simulated as the query is refused (3.5.0): once its names are gated as
+        the query gates them, the answer is <code>wouldRun: false</code> with this
+        refusal, in both tiers, and the trace holds a <code>Denied</code> entry
+        with the same field, feature and reason.
+      </p>
+      <Code lang="json">{`"refusal": { "code": "SelectsRefused", "field": "*", "feature": "Select",
+             "reason": "DwEntityAttribute(RefuseSelects = true)" }`}</Code>
 
       <h2 id="claims">From a ClaimsPrincipal</h2>
       <Code lang="csharp">{`var caller = await httpContext.GetPolicyContextAsync(claimsOptions);

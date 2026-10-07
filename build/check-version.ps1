@@ -101,7 +101,10 @@ $targets = [ordered]@{
     # stale, and an agent reading a stale version writes against an API that shipped before it.
     'OfficialWebsite/public/llms.txt' = @(
         "Version ($semver) . targets net6\.0",
-        "DynamicWhere\.ex --version ($semver)"
+        "DynamicWhere\.ex --version ($semver)",
+        # The dependency line of each companion package's section. Unguarded, all three still named 3.3.0
+        # through the 3.4.0 release.
+        "dependencies: DynamicWhere\.ex ($semver),"
     )
     # The page that serves that reference says which version it was written against, in prose
     # none of the patterns above reach.

@@ -106,6 +106,10 @@
          reflection, found by name, which is what differs between 6 and 8. It carries its own SQLite
          model. -->
     <Compile Include="CancellationTests.cs" />
+    <!-- Kept: whether a tiebreak can follow a caller's orders on a projected source is read from the
+         EF Core model, and the order it appends is translated by the provider, both of which differ
+         between 6 and 8. It carries its own SQLite model. -->
+    <Compile Include="DefaultOrderTiebreakTests.cs" />
     <Compile Remove="Policies/EfPolicyModelTests.cs" />
     <Compile Remove="Policies/EfPolicyStoreTests.cs" />
     <Compile Remove="Policies/EfStoreConformanceTests.cs" />

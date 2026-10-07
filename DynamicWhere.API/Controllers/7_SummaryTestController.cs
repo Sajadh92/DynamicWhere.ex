@@ -2,6 +2,7 @@ using DynamicWhere.API.Data;
 using DynamicWhere.ex.Classes.Complex;
 using DynamicWhere.ex.Classes.Core;
 using DynamicWhere.ex.Enums;
+using DynamicWhere.ex.Exceptions;
 using DynamicWhere.ex.Source;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -983,6 +984,67 @@ public class SummaryTestController : ControllerBase
 
     #endregion
 
+    #region Malformed requests
+
+    /// <summary>
+    /// Summary: no groupBy — a malformed request, refused as one (3.5.0).
+    /// </summary>
+    /// <remarks>
+    /// A request body that leaves out <c>"groupBy"</c> binds a Summary whose GroupBy is null. It used to
+    /// reach validation and leave as ArgumentNullException, which a host answers with a five-hundred; since
+    /// 3.5.0 it is refused before anything reads it, as an empty grouping always was.
+    /// </remarks>
+    [HttpGet("summary/no-groupby-is-malformed")]
+    public async Task<ActionResult<PerformanceResult>> TestSummaryWithoutGroupBy()
+    {
+        var metrics = new PerformanceMetrics();
+        var summary = new Summary
+        {
+            ConditionGroup = new ConditionGroup
+            {
+                Connector = Connector.And,
+                Conditions = [new Condition { Sort = 1, Field = "IsActive", DataType = DataType.Boolean, Operator = Operator.Equal, Values = [true] }]
+            }
+        };
+
+        try
+        {
+            await _context.Products.ToListAsync(summary);
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Summary Without GroupBy - malformed request",
+                Metrics = metrics, Input = summary, Success = false,
+                Message = "Expected LogicException GroupByMustHasAtLeastOneField, and the summary ran."
+            });
+        }
+        catch (LogicException ex)
+        {
+            bool right = ex.Message == "GroupByMustHasAtLeastOneField";
+
+            return Ok(new PerformanceResult
+            {
+                TestName = "Summary Without GroupBy - malformed request",
+                Metrics = metrics, Input = summary, Success = right,
+                Message = right
+                    ? "Refused as a malformed request (LogicException GroupByMustHasAtLeastOneField), as an empty grouping is."
+                    : $"Refused with '{ex.Message}' rather than GroupByMustHasAtLeastOneField."
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TestSummaryWithoutGroupBy");
+            return Ok(new PerformanceResult
+            {
+                TestName = "Summary Without GroupBy - malformed request", Success = false,
+                Message = $"Expected LogicException GroupByMustHasAtLeastOneField. It threw {ex.GetType().Name}: {ex.Message}",
+                Metrics = new PerformanceMetrics()
+            });
+        }
+    }
+
+    #endregion
+
     #region Run All Tests
 
     /// <summary>
@@ -1018,7 +1080,9 @@ public class SummaryTestController : ControllerBase
             ("Orders By Paid",          TestOrdersByPaid),
             // Multi-entity customers
             ("Customers By Gender",     TestCustomersByGender),
-            ("Customers By Tier",       TestCustomersByTier)
+            ("Customers By Tier",       TestCustomersByTier),
+            // Malformed requests
+            ("Summary Without GroupBy", TestSummaryWithoutGroupBy)
         };
 
         foreach (var (name, method) in testMethods)

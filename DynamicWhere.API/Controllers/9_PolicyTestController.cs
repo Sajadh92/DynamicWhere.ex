@@ -1005,6 +1005,253 @@ public class PolicyTestController : ControllerBase
 
     #endregion
 
+    #region 3.5.0: a row read whole, a summary with no grouping, and pages that are total
+
+    /// <summary>The active employees as cards, projected before the guard as a read model is.</summary>
+    private IQueryable<EmployeeCardRow> Cards() => _context.Employees
+        .Where(e => e.IsActive)
+        .Select(e => new EmployeeCardRow
+        {
+            Id = e.Id,
+            FirstName = e.FirstName,
+            LastName = e.LastName,
+            Department = e.Department,
+            Position = e.Position
+        });
+
+    /// <summary>The active employees as a work queue, projected the same way.</summary>
+    private IQueryable<EmployeeQueueRow> Queue() => _context.Employees
+        .Where(e => e.IsActive)
+        .Select(e => new EmployeeQueueRow
+        {
+            Id = e.Id,
+            FirstName = e.FirstName,
+            LastName = e.LastName,
+            Department = e.Department,
+            Position = e.Position
+        });
+
+    /// <summary>
+    /// A caller who narrows a row type declared RefuseSelects is refused.
+    /// </summary>
+    [HttpGet("refuse-selects/selects-refused")]
+    public async Task<ActionResult<PerformanceResult>> TestSelectsRefused()
+    {
+        DwPolicyContext caller = await CallerAsync();
+
+        return await Refuses(
+            "RefuseSelects - a caller narrows a card",
+            PolicyErrorCode.SelectsRefused,
+            "EmployeeCardRow is [DwEntity(RefuseSelects = true)]: a card is read whole, and a narrowed one "
+            + "would report an empty string for every member the caller did not name. The names are gated "
+            + "first, so a denied one would still be FieldDeniedForSelect; both of these may be selected, so "
+            + "the list itself is refused, in either tier.",
+            async () => await Cards().ApplyPolicy(caller).ToListAsync(new Filter
+            {
+                Selects = ["FirstName", "Department"],
+                Page = new PageBy { PageNumber = 1, PageSize = 3 }
+            }));
+    }
+
+    /// <summary>
+    /// The same row type read without Selects comes back whole.
+    /// </summary>
+    [HttpGet("refuse-selects/whole-cards")]
+    public async Task<ActionResult<PerformanceResult>> TestWholeCards()
+    {
+        DwPolicyContext caller = await CallerAsync();
+
+        return await Allows(
+            "RefuseSelects - a card read whole",
+            "With no Selects the same query runs and every card comes back whole. A null or empty Selects is "
+            + "never this refusal, and neither is a projection the policy synthesizes to withhold a denied member.",
+            async () =>
+            {
+                FilterResult<EmployeeCardRow> result = await Cards().ApplyPolicy(caller).ToListAsync(new Filter
+                {
+                    Page = new PageBy { PageNumber = 1, PageSize = 3 }
+                });
+
+                if (result.Data.Count == 0
+                    || result.Data.Exists(card => card.FirstName.Length == 0 || card.Department.Length == 0))
+                {
+                    throw new InvalidOperationException(
+                        "Expected whole cards, and a card came back narrowed, or none came back.");
+                }
+
+                return result.Data;
+            });
+    }
+
+    /// <summary>
+    /// A dry run records the refusal and runs the projection as written.
+    /// </summary>
+    [HttpGet("refuse-selects/dry-run-traced")]
+    public async Task<ActionResult<PerformanceResult>> TestSelectsRefusedInDryRun()
+    {
+        DwPolicyContext canary = new() { DryRun = true };
+
+        canary
+            .WithSubject(DwSubjectKind.User, "u-1001")
+            .WithSubject(DwSubjectKind.Role, "Support")
+            .WithSubject(DwSubjectKind.Tenant, "acme");
+
+        DwPolicyContext caller = await DwPolicy.PrepareAsync(canary);
+
+        return await Allows(
+            "RefuseSelects - a canary caller in dry run",
+            "A dry run refuses nothing and records everything: the narrowed query runs as written, and the "
+            + "trace holds the Denied decision on \"*\" for Select whose reason names the attribute, which is "
+            + "what an operator rolling the flag out reads before turning it on.",
+            async () =>
+            {
+                PolicyQueryable<EmployeeCardRow> guarded = Cards().ApplyPolicy(caller);
+
+                FilterResult<EmployeeCardRow> result = await guarded.ToListAsync(new Filter
+                {
+                    Selects = ["FirstName"],
+                    Page = new PageBy { PageNumber = 1, PageSize = 3 }
+                });
+
+                PolicyDecision? recorded = guarded.LastTrace?.Decisions.FirstOrDefault(decision =>
+                    decision.FieldPath == "*"
+                    && decision.Feature == PolicyFeature.Select
+                    && decision.Action == PolicyAction.Denied
+                    && decision.Reason == "DwEntityAttribute(RefuseSelects = true)");
+
+                if (recorded is null)
+                {
+                    throw new InvalidOperationException(
+                        "The dry run ran, and its trace does not record what enforcement would have refused.");
+                }
+
+                return new { Rows = result.Data, Recorded = recorded };
+            });
+    }
+
+    /// <summary>
+    /// A summary with no grouping is a malformed request under a policy too.
+    /// </summary>
+    [HttpGet("summary/no-groupby-is-malformed")]
+    public async Task<ActionResult<PerformanceResult>> TestSummaryWithoutGroupBy()
+    {
+        const string name = "Summary - no groupBy under a policy";
+        const string why =
+            "A request body that leaves out \"groupBy\" binds a Summary whose GroupBy is null. Since 3.5.0 it "
+            + "is refused as a malformed request, LogicException GroupByMustHasAtLeastOneField, as an empty "
+            + "grouping always was, and under a policy it is not a PolicyException. It used to leave as "
+            + "ArgumentNullException, which a host answers with a five-hundred.";
+
+        DwPolicyContext caller = await CallerAsync();
+        var metrics = new PerformanceMetrics();
+
+        try
+        {
+            await _context.Employees.ApplyPolicy(caller).ToListAsync(new Summary { ConditionGroup = InDepartment() });
+
+            return Ok(new PerformanceResult
+            {
+                TestName = name,
+                Metrics = metrics,
+                Input = why,
+                Success = false,
+                Message = "Expected a malformed-request refusal, and the summary ran."
+            });
+        }
+        catch (PolicyException refusal)
+        {
+            return Ok(new PerformanceResult
+            {
+                TestName = name,
+                Metrics = metrics,
+                Input = why,
+                Success = false,
+                Message = $"Refused by the policy with {refusal.ErrorCode}, where a malformed request is a LogicException."
+            });
+        }
+        catch (LogicException malformed)
+        {
+            bool right = malformed.Message == "GroupByMustHasAtLeastOneField";
+
+            return Ok(new PerformanceResult
+            {
+                TestName = name,
+                Metrics = metrics,
+                Input = why,
+                Output = new { malformed.Message },
+                Success = right,
+                Message = right
+                    ? "Refused as a malformed request, as it should be."
+                    : $"Refused with '{malformed.Message}' rather than GroupByMustHasAtLeastOneField."
+            });
+        }
+    }
+
+    /// <summary>
+    /// Paging by a field a whole team shares returns every row once, because the default breaks the ties.
+    /// </summary>
+    [HttpGet("tiebreak/pages-are-total")]
+    public async Task<ActionResult<PerformanceResult>> TestTiebreakPagesAreTotal()
+    {
+        DwPolicyContext caller = await CallerAsync();
+
+        return await Allows(
+            "DefaultOrderAsTiebreak - paging by a shared department",
+            "EmployeeQueueRow is [DwEntity(DefaultOrder = \"LastName, Id\", DefaultOrderAsTiebreak = true)]. A "
+            + "caller ordering by Department, which a whole team shares, reads ORDER BY Department, LastName, Id: "
+            + "the default's fields follow the caller's, so every row comes back once across the pages.",
+            async () =>
+            {
+                const int pageSize = 4;
+
+                List<Guid> read = [];
+                int total = 0;
+                string orderBy = string.Empty;
+
+                for (int page = 1; page == 1 || read.Count < total; page++)
+                {
+                    FilterResult<EmployeeQueueRow> result = await Queue().ApplyPolicy(caller).ToListAsync(
+                        new Filter
+                        {
+                            Orders = [new OrderBy { Sort = 1, Field = "Department" }],
+                            Page = new PageBy { PageNumber = page, PageSize = pageSize }
+                        },
+                        getQueryString: page == 1);
+
+                    if (page == 1)
+                    {
+                        total = result.TotalCount;
+                        orderBy = result.QueryString is { } sql
+                            ? sql[sql.LastIndexOf("ORDER BY", StringComparison.Ordinal)..]
+                            : string.Empty;
+                    }
+
+                    if (result.Data.Count == 0)
+                    {
+                        break;
+                    }
+
+                    read.AddRange(result.Data.Select(row => row.Id));
+                }
+
+                int twice = read.Count - read.Distinct().Count();
+                int never = total - read.Distinct().Count();
+
+                if (total == 0 || twice != 0 || never != 0
+                    || !orderBy.Contains("\"LastName\"", StringComparison.Ordinal)
+                    || !orderBy.Contains("\"Id\"", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Expected every one of {total} rows once, ordered by Department, LastName and Id. "
+                        + $"{twice} came back twice and {never} never; {orderBy}");
+                }
+
+                return new { Total = total, PageSize = pageSize, Read = read.Count, OrderBy = orderBy };
+            });
+    }
+
+    #endregion
+
     /// <summary>Collects audit events in memory so an endpoint can show them.</summary>
     private sealed class CollectingSink : IDwAuditSink
     {
